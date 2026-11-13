@@ -969,6 +969,7 @@ def _util_text(text: str) -> str:
     electric and gas, ComEd and hydro are electric, Nicor is gas, refuse and rubbish are trash, cable is internet.
     "Valet trash" is a service fee, not a utility, so it is hidden from the utility readers."""
     text = _UTIL_PAREN.sub(lambda m: m.group(1), text)  # "Electric (PG&E), gas" -> "Electric, gas"
+    text = re.sub(r"[!?]+(?=[ \t]+\S)", ".", text)  # "except electric! Heat + water included" is two sentences
     text = _INCL_ABBREV[0].sub("all utilities included", text)
     text = _INCL_ABBREV[1].sub("utilities included", text)
     text = _INCL_ABBREV[2].sub(lambda m: "includes " + m.group(1), text)
@@ -1005,7 +1006,7 @@ def _billed_back(text: str) -> tuple[str, float] | None:
         m2 = re.search(r"\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*(?:is\s+|are\s+)?(?:billed|charged|passed)\s*(?:back|through)?\s*(?:for|on|to cover)\s+"
                        r"((?:(?:" + words + r")[ \t]*(?:,|/|&|and|\+)?[ \t]*(?:and[ \t]+)?){1,6})", low)
         if not m2:
-            return _billed_back_loose(low, words)
+            return _billed_back_loose(low, words) or _billed_back_unnamed(low)
         found = re.findall(words, m2.group(2))
         return (_ordered_utilities(found), float(m2.group(1))) if found else None
     found = re.findall(words, m.group(1))
@@ -1029,12 +1030,29 @@ def _billed_back_loose(low: str, words: str) -> tuple[str, float] | None:
     return None
 
 
+def _billed_back_unnamed(low: str) -> tuple[str, float] | None:
+    """"Utilities billed back via RUBS, avg $120/mo": a monthly amount with no utility named. Returns ("", 120)."""
+    monthly = r"(?:/\s*mo(?:nth)?|per month|monthly|a month)"
+    if not re.search(r"\brubs\b|\bbilled[ -]back\b|\bratio utility billing\b|\butilities? (?:are )?billed\b|\bsubmetered\b", low):
+        return None
+    m = re.search(r"\b(?:avg\.?|average|averages|about|approx\.?|approximately|around|~|roughly|typically|usually)?\s*\$\s?(\d{1,4})(?:\.\d\d)?\s*" + monthly, low)
+    if not m or re.search(r"deposit|fee|one[- ]time|set[- ]?up", low[max(0, m.start() - 25):m.end() + 25]):
+        return None
+    return ("", float(m.group(1)))
+
+
 def listing_billed_names(text: str) -> list[str]:
     """Public: the utilities a listing's billed-back amount covers ("trash" for "$25/mo billed back for trash"), or []."""
     try:
         billed = _billed_back(_util_text(_tidy(text or "")))
         if billed:
-            return [w.strip() for w in billed[0].split(",") if w.strip()]
+            names = [w.strip() for w in billed[0].split(",") if w.strip()]
+            if not names:
+                # an amount that names no utility: assume water, sewer and trash, minus anything named as tenant-paid elsewhere
+                utext = _util_text(_tidy(text or ""))
+                paid = set(_utility_roles(utext)["tenant"]) | set(w.strip() for w in _tenant_pays(utext).split(",")) | set(_util_sections(utext)["pays"])
+                names = [w for w in ("water", "sewer", "trash") if w not in paid]
+            return names
         return [w.strip() for w in _ordered_utilities(list(_utility_roles(_util_text(_tidy(text or "")))["billed"])).split(",") if w.strip()]
     except Exception:
         return []
@@ -1044,7 +1062,7 @@ _ROLE_WORD = (r"hot water|water|sewer|sewage|trash removal|trash|garbage|gas|ele
 _ROLE_ITEM = r"\b(?:" + _ROLE_WORD + r")\b(?!\s+(?:stove|range|oven|fireplace|cooktop|grill|appliances?|water heater|pump|bill\b|meter))"
 _ROLE_LIST = re.compile(_ROLE_ITEM + r"(?:\s*(?:,|/|&|\+|\band\b|\bor\b)\s*" + _ROLE_ITEM + r")*", re.I)
 _TENANT_SUFFIX = re.compile(
-    r"^\s*(?:(?:is|are)\s+)?(?:paid\s+(?:for\s+)?by\s+(?:the\s+)?(?:tenants?|residents?|renters?)\b|(?:the\s+)?(?:tenants?|residents?|renters?)'?s?\s+(?:responsibility|expense)\b|"
+    r"^(?:\s*[:\-]\s*[a-z][\w&'.]*(?:\s+[a-z][\w&'.]*){0,2}\s*,)?[\s,]*(?:(?:is|are)\s+)?(?:(?:the\s+)?(?:tenants?|residents?|renters?)\s+(?:pays?|sets?\s+up|signs?\s+up|arranges?|opens?\s+(?:the|an?)\s+account)\b|paid\s+(?:for\s+)?by\s+(?:the\s+)?(?:tenants?|residents?|renters?)\b|(?:the\s+)?(?:tenants?|residents?|renters?)'?s?\s+(?:responsibility|expense)\b|"
     r"extra\b|not\s+(?:included|covered|provided)\b|(?:paid\s+|billed\s+|metered\s+)?separate(?:ly)?\b|billed\b|charged\b|passed\s+through\b|"
     r"your\s+own\b|additional\b|excluded\b|at\s+(?:the\s+)?(?:tenant|resident)'?s?\s+expense\b)", re.I)
 _LANDLORD_SUFFIX = re.compile(
@@ -1123,11 +1141,139 @@ def listing_billed_amount(text: str) -> float | None:
         return None
 
 
+_UTIL_HDR = re.compile(
+    r"(?P<incl_a>\b(?:utilities\s+included|included\s+utilities|utilities\s+incl\w*|included)(?:[ \t]*[:\-]|[ \t]*(?=\n)))"
+    r"|(?P<incl_b>\b(?:rent\s+includes?|includes|landlord\s+(?:pays|covers)|owner\s+(?:pays|covers))\b)"
+    r"|(?P<pay_a>\b(?:(?:tenants?|residents?|renters?)\s+(?:pays?|responsib\w+|sets?\s+up)(?:\s+for)?|not\s+included|excluded|paid\s+by\s+(?:the\s+)?(?:tenants?|residents?|renters?))(?:[ \t]*[:\-]|[ \t]*(?=\n)))"
+    r"|(?P<pay_b>\b(?:(?:tenants?|residents?|renters?|you)\s+(?:pays?|will\s+pay|must\s+pay|are\s+responsible\s+for|is\s+responsible\s+for|responsible\s+for|sets?\s+up)|tenant\s+responsib\w+)\b)"
+    r"|(?P<full>\butilities[ \t]*:)", re.I)
+_UTIL_ITEM = re.compile(_ROLE_ITEM, re.I)
+_UTIL_OTHER = re.compile(r"(?:all\s+(?:the\s+)?(?:other|remaining)\s+utilit(?:y|ies)|any\s+other\s+utilit(?:y|ies)|other\s+utilit(?:y|ies)|everything\s+else)\b", re.I)
+_UTIL_NONE = re.compile(r"(?:none|n/?a|nothing|no)\b", re.I)
+_UTIL_UNPLACED = re.compile(r"(?:recycling|pest\s+control|snow\s+removal|lawn\s+care|landscaping|propane|heating\s+oil|oil|steam|fuel)\b", re.I)
+_UTIL_EXCEPT = re.compile(r"(?:except(?:\s+for)?|excluding|other\s+than|but\s+not)\b", re.I)
+_UTIL_SEP = re.compile(r"(?:[\s,/&+*•·]+|\band\b|\bor\b|\balso\b|[:\-]+(?=\s))+", re.I)
+_COMMON_UTILITIES = ("electric", "gas", "water", "sewer", "trash", "internet")
+
+
+def _read_util_items(text: str, pos: int) -> tuple[dict[str, Any], int]:
+    """Read one list that follows a header like "Utilities included:" or "Tenant pays": one per line, or with commas, slashes,
+    bullets, "+" or "and". Stops at the first thing that is not a utility word (or at a period). Returns the items, a
+    "none" flag, an "other" flag ("all other utilities"), words it can't place, the words after an "except", and where it stopped."""
+    got: dict[str, Any] = {"items": [], "none": False, "other": False, "unplaced": [], "exc": []}
+    into = "items"
+    first = True
+    while pos < len(text):
+        m = _UTIL_SEP.match(text, pos)
+        if m:
+            pos = m.end()
+        if pos >= len(text):
+            break
+        if _UTIL_OTHER.match(text, pos):
+            got["other"] = True
+            pos = _UTIL_OTHER.match(text, pos).end()
+        elif _UTIL_EXCEPT.match(text, pos) and into == "items" and got["items"]:
+            into = "exc"
+            pos = _UTIL_EXCEPT.match(text, pos).end()
+        elif _UTIL_ITEM.match(text, pos):
+            m = _UTIL_ITEM.match(text, pos)
+            got[into] += re.findall(_ROLE_WORD, m.group(0).lower())
+            pos = m.end()
+        elif _UTIL_UNPLACED.match(text, pos):
+            m = _UTIL_UNPLACED.match(text, pos)
+            got["unplaced"].append(m.group(0).lower())
+            pos = m.end()
+        elif first and _UTIL_NONE.match(text, pos):
+            m = _UTIL_NONE.match(text, pos)
+            got["none"] = True
+            pos = m.end()
+        else:
+            break
+        first = False
+    return got, pos
+
+
+def _util_sections(text: str) -> dict[str, Any]:
+    """The lists under headers such as "Utilities included", "Tenant pays" and "Utilities:" (a full list), read from the
+    listing text. Keys: incl, pays, full, exc (moved out of included), other, none, unplaced, found (True when any header
+    list was read)."""
+    low = text.lower()
+    res: dict[str, Any] = {"incl": [], "pays": [], "full": [], "exc": [], "other": False, "none": False, "unplaced": [], "found": False}
+    pos = 0
+    while True:
+        h = _UTIL_HDR.search(low, pos)
+        if not h:
+            break
+        got, end = _read_util_items(low, h.end())
+        kind = h.lastgroup
+        if kind in ("incl_a", "incl_b"):
+            res["incl"] += got["items"]
+            res["exc"] += got["exc"]
+            res["none"] = res["none"] or got["none"]
+        elif kind in ("pay_a", "pay_b"):
+            res["pays"] += got["items"] + got["exc"]
+            res["other"] = res["other"] or got["other"]
+        else:
+            res["full"] += got["items"]
+        if got["items"] or got["none"] or got["other"]:
+            res["found"] = True
+        res["unplaced"] += got["unplaced"]
+        pos = max(end, h.end())
+    if re.search(r"\bno\s+utilities\s+(?:are\s+)?(?:included|covered|paid)\b|\bnone\s+included\b", low):
+        res["none"] = True
+    return res
+
+
+def _apply_util_sections(text: str, included: str, pays: str, facts: list[str]) -> tuple[str, str]:
+    """Fold the header lists into what the older readers found. "All" survives only when the listing says all utilities
+    are included. A list under "Utilities included" is the included list, "Tenant pays" is what the tenant pays, a full
+    "Utilities:" list with a shorter included list leaves the rest to the tenant, "None" means nothing is included."""
+    sec = _util_sections(text)
+    if sec["unplaced"]:
+        names = ", ".join(dict.fromkeys(sec["unplaced"]))
+        facts.append(f"The listing mentions {names} but doesn't say who pays for it. Ask the landlord.")
+    low = text.lower()
+    inc = [w for w in (included.split(", ") if included and included != "all" else []) if w]
+    said_all = bool(re.search(r"\ball[- ]utilities[- ](?:are[- ])?(?:included|paid|covered)|\ball[- ]inclusive|\bincludes all utilities|\bincluded utilities\s*[:\-]\s*all\b", low))
+    pay = [w for w in pays.split(", ") if w]
+    if sec["none"] and not sec["incl"]:
+        inc, included = [], ""
+    elif sec["incl"]:
+        if included == "all" and said_all:
+            pass
+        else:
+            if sec["full"]:
+                # a full "Utilities: gas, water" list is not the included list; only the "Included:" list is
+                inc = [w for w in inc if w not in sec["full"] or w in sec["incl"]]
+            included = _ordered_utilities(inc + sec["incl"])
+    norm = {"garbage": "trash", "trash removal": "trash", "sewage": "sewer", "electricity": "electric"}
+    sec_incl = [norm.get(w, w) for w in sec["incl"]]
+    sec_full = [norm.get(w, w) for w in sec["full"]]
+    if sec_full and sec_incl:
+        pay += [w for w in sec_full if w not in sec_incl and w != "hot water"]
+    pay += sec["pays"] + sec["exc"]
+    if re.search(r"\bheat(?:ing)?\s+(?:is|are)\s+(?:by\s+)?gas\b", low) and "gas" in [norm.get(w, w) for w in pay]:
+        pay.append("heat")
+    if sec["exc"]:
+        keep = [w for w in (included.split(", ") if included and included != "all" else []) if w not in [norm.get(x, x) for x in sec["exc"]]]
+        included = _ordered_utilities(keep)
+    if sec["other"]:
+        have = {w for w in (included.split(", ") if included and included != "all" else [])}
+        if included != "all":
+            pay += [w for w in _COMMON_UTILITIES if w not in have]
+    return included, _ordered_utilities(pay)
+
+
 def _reconcile_utilities(included: str, pays: str, facts: list[str]) -> tuple[str, str]:
     """A utility goes in one list only. When the listing says a utility is both included and paid by the renter, it is kept
     as something the renter pays (the safer reading for the cost) and a note says the listing is unclear."""
     if not included or not pays:
         return included, pays
+    if included == "all":
+        # "All utilities included" can't hold when the listing also names something the tenant pays. Nothing is called
+        # included then, and the note says what to ask.
+        facts.append(f"The listing says utilities are included, but it also says you pay {pays}. Ask the landlord what the rent really covers.")
+        return "", pays
     norm = {"wifi": "internet", "cable": "internet", "hot water": "water"}
     pay_set = {norm.get(w.strip(), w.strip()) for w in pays.split(",") if w.strip()}
     have = list(_ALL_UTILITIES) + ["internet"] if included == "all" else [w.strip() for w in included.split(",") if w.strip()]
@@ -1581,8 +1727,11 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     if kept_out:
         # "All utilities included except electric": the rest is included, and the renter pays what is left out.
         gone = [w.strip() for w in kept_out.split(",") if w.strip()]
-        included = _ordered_utilities([w for w in _ALL_UTILITIES if w not in gone])
+        named = [w for w in roles["landlord"] if w not in gone]
+        # when the listing names what is included ("Heat + water + trash included"), only those are included
+        included = _ordered_utilities(named if roles["landlord"] else [w for w in _ALL_UTILITIES if w not in gone])
         pays = _ordered_utilities([w.strip() for w in (pays + ", " + kept_out).split(",") if w.strip()])
+    included, pays = _try(lambda: _apply_util_sections(utext, included, pays, facts)) or (included, pays)
     billed = _try(lambda: _billed_back(utext))
 
     def take_out_of_included(names: str) -> str:
@@ -1596,10 +1745,13 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
         return ", ".join(hit)
 
     if billed:
-        moved = take_out_of_included(billed[0])
+        moved = take_out_of_included(billed[0]) if billed[0] else ""
         pays = _ordered_utilities([w.strip() for w in (pays + ", " + billed[0]).split(",") if w.strip()])
         put("utilities_estimate", billed[1])  # their own monthly figure, so it is counted in the cost
-        facts.append(f"{billed[0].capitalize()} are billed back at ${billed[1]:,.0f}/month, counted as your utilities estimate.")
+        if billed[0]:
+            facts.append(f"{billed[0].capitalize()} are billed back at ${billed[1]:,.0f}/month, counted as your utilities estimate.")
+        else:
+            facts.append(f"The listing gives a billed-back average of ${billed[1]:,.0f} a month but doesn't say which utilities it covers. Ask the landlord.")
         if moved:
             facts.append(f"The listing also says {moved} is included, but a billed-back amount means you pay it, so it is not counted as included.")
     elif roles["billed"]:
