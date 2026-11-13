@@ -90,11 +90,11 @@ PLACE_TEXT = ("title", "address", "unit", "city", "state", "zip", "url", "source
               "fit_notes", "red_flags", "pet_breed_note", "special_assessment_payer", "listing_agent", "tenant_pays")
 PLACE_REAL = ("lat", "lng", "price", "beds", "baths", "parking_cost", "pet_rent", "pet_fee", "utilities_estimate", "pet_weight_limit", "pet_deposit",
               "deposit", "application_fee", "other_monthly_fees", "move_in_fees", "broker_fee", "hoa", "property_tax",
-              "insurance", "special_assessment", "closing_costs")
+              "insurance", "special_assessment", "closing_costs", "seller_credit")
 PLACE_INT = ("sqft", "year_built", "lease_months", "rating", "fit_score", "pet_count_limit", "days_on_market", "months_up_front")
-TENANT_PAYS_CHOICES = ("electric", "gas", "water", "trash", "internet", "heat")
+TENANT_PAYS_CHOICES = ("electric", "gas", "water", "sewer", "trash", "internet", "heat")
 PLACE_DATES = ("available_from", "lease_start", "lease_end")
-PLACE_FIELDS: tuple[str, ...] = (PLACE_TEXT + PLACE_REAL + PLACE_INT + ("photo_urls", "dishwasher", "fenced_yard", "hidden", "is_sample"))
+PLACE_FIELDS: tuple[str, ...] = (PLACE_TEXT + PLACE_REAL + PLACE_INT + ("photo_urls", "dishwasher", "fenced_yard", "hidden", "is_sample", "application_fee_per_adult"))
 # What a form or the AI may set (stage goes through move_stage).
 PLACE_EDITABLE: tuple[str, ...] = tuple(f for f in PLACE_FIELDS if f not in ("is_sample",))
 TEXT_LIMITS = {"title": 300, "address": 300, "unit": 40, "city": 120, "state": 60, "zip": 20, "url": 2000, "source": 120,
@@ -361,7 +361,15 @@ ALTER TABLE places ADD COLUMN months_up_front INTEGER;
 ALTER TABLE places ADD COLUMN tenant_pays TEXT NOT NULL DEFAULT '';
 """
 
-_MIGRATIONS: list[str] = [_SCHEMA_V1, _SCHEMA_V2_PLACE_DATES, _MIGRATION_PEOPLE, _MIGRATION_PETS_APPLY, _MIGRATION_OPINIONS, _MIGRATION_BUYER_FIELDS, _MIGRATION_RENT_UPFRONT]
+# Seller credit toward closing (buyer), an application fee charged per adult, and how many adults sign the lease. One
+# self-contained step so it can be renumbered at merge time.
+_MIGRATION_CREDIT_ADULTS = """
+ALTER TABLE places ADD COLUMN seller_credit REAL;
+ALTER TABLE places ADD COLUMN application_fee_per_adult INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE searches ADD COLUMN adults INTEGER;
+"""
+
+_MIGRATIONS: list[str] = [_SCHEMA_V1, _SCHEMA_V2_PLACE_DATES, _MIGRATION_PEOPLE, _MIGRATION_PETS_APPLY, _MIGRATION_OPINIONS, _MIGRATION_BUYER_FIELDS, _MIGRATION_RENT_UPFRONT, _MIGRATION_CREDIT_ADULTS]
 
 
 class NotFound(LookupError):
@@ -968,6 +976,11 @@ class Store:
             if n != int(n) or not 1 <= n <= MAX_PEOPLE:
                 raise ValueError(f"People sharing the cost is a whole number from 1 to {MAX_PEOPLE}.")
             out["people"] = int(n)
+        if "adults" in fields:
+            n = to_number(fields["adults"], "the number of adults")
+            if n is not None and (n != int(n) or not 1 <= n <= MAX_PEOPLE):
+                raise ValueError(f"Adults who will sign the lease is a whole number from 1 to {MAX_PEOPLE}, or empty.")
+            out["adults"] = None if n is None else int(n)
         if "pet_kind" in fields:
             kind = _text(fields["pet_kind"], 10).lower()
             if kind not in ("", "cat", "dog", "both", "none"):
@@ -1300,6 +1313,8 @@ class Store:
             out["photo_urls"] = json.dumps(photo_list(fields["photo_urls"]))
         if "dishwasher" in fields:
             out["dishwasher"] = clean_bool(fields["dishwasher"])
+        if "application_fee_per_adult" in fields:
+            out["application_fee_per_adult"] = 1 if clean_bool(fields["application_fee_per_adult"]) else 0
         if "fenced_yard" in fields:
             out["fenced_yard"] = clean_bool(fields["fenced_yard"])
         if "hidden" in fields:

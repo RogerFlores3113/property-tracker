@@ -73,6 +73,9 @@ def test_migration_adds_place_dates_to_an_old_database(tmp_path):
         con.execute(f"ALTER TABLE places DROP COLUMN {col}")  # nor the buyer fields added in the later step
     for col in ("months_up_front", "tenant_pays"):
         con.execute(f"ALTER TABLE places DROP COLUMN {col}")  # nor the rent-upfront fields of the newest step
+    for col in ("seller_credit", "application_fee_per_adult"):
+        con.execute(f"ALTER TABLE places DROP COLUMN {col}")  # nor the credit and per-adult fee fields of cycle 4
+    con.execute("ALTER TABLE searches DROP COLUMN adults")
     con.execute("PRAGMA user_version = 1")
     con.commit()
     con.close()

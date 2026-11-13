@@ -120,7 +120,7 @@ def test_update_search_description_and_tenant_pays_all(store):
     call(srv, "add_place", title="T")
     pid = store.list_places(store.current_search()["id"])[0]["id"]
     call(srv, "update_place", place_id=pid, tenant_pays="all")
-    assert store.get_place(pid)["tenant_pays"] == "electric, gas, water, trash, internet, heat"
+    assert store.get_place(pid)["tenant_pays"] == "electric, gas, water, sewer, trash, heat"
     out = text(call(srv, "update_place", place_id=pid, ai_notes="hello"))
     assert "Claude's note was added" in out and "Your note" not in out
 
