@@ -47,6 +47,7 @@
     <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ score_pill(p.score_total, p.band) }}
       <span class="item-sub">{{ p.stage }}{% if p.cost_total %} &middot; about {{ p.cost_total|money }} a month{% endif %}{% if p.score.unknown %} &middot; {{ p.score.unknown|length }} thing{{ 's' if p.score.unknown|length != 1 }} still to check: {{ p.score.unknown|join('; ') }}{% endif %}</span>
       {% if p.score.concerns %}<div class="fine">Check: {{ p.score.concerns|join('; ') }}</div>{% endif %}
+      {% if p.score.notes %}<div class="fine">{{ p.score.notes|join('; ') }}</div>{% endif %}
       {% if p.caution %}<div class="fine flag">{{ p.caution }}</div>{% endif %}</div></li>
     {% endfor %}
   </ol>

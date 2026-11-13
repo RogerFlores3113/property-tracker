@@ -82,3 +82,16 @@ def test_csv_rows_sorted_by_fit_state_then_score(store):
     rows = list(csv.DictReader(io.StringIO(body)))
     titles = [r.get("Title") or r.get("Name") or list(r.values())[0] for r in rows]
     assert titles[-1] == "Scam 1" and set(titles) == {"Scam 1", "Fit Low", "Fit High"}
+
+
+def test_nice_to_have_commute_note_shows_on_today_and_in_list_places(store):
+    s = store.add_search("R", "rent")
+    a = store.add_anchor("Campus", address="1 Main St", lat=40.0, lng=-88.0)
+    store.add_criterion(s["id"], "commute", weight=50, dealbreaker=False, target={"anchor_id": a["id"], "mode": "bike", "minutes": 20})
+    store.add_criterion(s["id"], "beds", weight=50, target={"min": 1})
+    p, _ = store.add_place(title="Far", address="1 A St", price=1000, beds=1, lat=40.01, lng=-88.0, utilities_included="all", deposit=500)
+    store.set_commute(p["id"], a["id"], "bike", 24, "you")
+    note = "over your 20 min, cost 10 points"
+    assert note in local_client(store).get("/today").text
+    out = text(call(server(store), "list_places"))
+    assert note in out

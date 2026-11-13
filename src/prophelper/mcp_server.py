@@ -515,6 +515,8 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
         bits.append("FAILS " + _labs(e["score"]["failed"]))
     elif e["score"].get("fit_label") == "Fits, but check":
         bits.append("Fits, but check: " + "; ".join(_t(c, "fit reason", 120) for c in e["score"]["concerns"]))
+    if e["score"].get("fit") == "fits" and e["score"].get("fit_label") != "Fits, but check" and e["score"].get("notes"):
+        bits.append("Note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
     if compare_mod.ai_text_only(e):
         bits.append(compare_mod.AI_TEXT_FIT)
     elif e["flags"] and e["score"].get("fit") != "check_first":
