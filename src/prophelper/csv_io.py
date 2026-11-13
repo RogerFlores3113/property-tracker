@@ -41,6 +41,17 @@ EXPORT_COLUMNS: list[tuple[str, str]] = [
 ]
 EXPORT_ONLY = {"fit_score", "red_flags"}  # written on export, never read back (the AI and the local check own them)
 
+_COMPUTED_HEADS = {"true monthly cost", "cost per person per month", "score out of 100"}
+
+
+def is_computed_header(heading: Any) -> bool:
+    """A column our own export adds that the app works out itself (fit score, red flags, costs, commutes, each person's
+    rating). Reading it back would only copy stale numbers, so import ignores it, quietly."""
+    n = _norm_header(heading)
+    return (n in _COMPUTED_HEADS or SYNONYMS.get(n) in EXPORT_ONLY or n in ("fit score", "red flags")
+            or bool(re.match(r"^commute to .+ (minutes|way)( fastest way)?$", n)) or bool(re.search(r" s rating$", n)))
+
+
 _EXTRA_NAMES: dict[str, tuple[str, ...]] = {
     "title": ("name", "property", "property name", "listing", "place", "building"),
     "address": ("street address", "street", "addr", "location", "address line 1"),
@@ -127,25 +138,54 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _fastest_minutes(place: dict[str, Any], anchor_id: Any) -> Any:
-    times = [c["minutes"] for c in place.get("commutes") or [] if c.get("anchor_id") == anchor_id and c.get("minutes") is not None]
-    return round(min(times)) if times else ""
+def _commute_for(place: dict[str, Any], anchor_id: Any) -> dict[str, Any] | None:
+    """The commute the place page shows for this important place: the way of its commute criterion (your typed time wins),
+    else the fastest known way. ``enrich.enrich_place`` works it out as ``commute_all``."""
+    for c in place.get("commute_all") or []:
+        if c.get("anchor_id") == anchor_id and c.get("minutes") is not None:
+            return c
+    times = [c for c in place.get("commutes") or [] if c.get("anchor_id") == anchor_id and c.get("minutes") is not None]
+    return min(times, key=lambda c: c["minutes"]) if times else None
 
 
-def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | None = None, people: Any = 1) -> str:
+def _red_flags_text(place: dict[str, Any]) -> str:
+    """The things to check the place page lists (the local check), then anything the AI wrote down."""
+    bits = [str(f) for f in place.get("flags") or []]
+    ai = str(place.get("red_flags") or "").strip()
+    if ai and ai not in bits:
+        bits.append(ai)
+    return "; ".join(bits)
+
+
+def _combined_rating(place: dict[str, Any], opinions: dict[str, Any]) -> Any:
+    """Your own rating when you gave one, else the average of each person's rating."""
+    if place.get("rating") is not None:
+        return place["rating"]
+    rated = [v for v in opinions.values() if v is not None]
+    return round(sum(rated) / len(rated), 1) if rated else ""
+
+
+def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | None = None, people: Any = 1,
+               people_names: list[str] | None = None, opinions: dict[Any, dict[str, Any]] | None = None) -> str:
     """The places as CSV. Pass places from ``enrich.enrich_places`` (and the anchors) to add the true monthly cost, the cost per
-    person (``people`` people share it), the score and each anchor's fastest commute. Places that are not enriched leave those
-    cells empty. The extra columns are for reading in a spreadsheet and are never matched on import."""
+    person (``people`` people share it), the score and each anchor's commute (the same minutes and way the place page shows).
+    Fit score, Red flags and the per-person ratings come from the same checks the place page uses; ``people_names`` adds one
+    "Name's rating" column each, filled from ``opinions`` ({place id: {name: rating}}). Places that are not enriched leave
+    those cells empty. The computed columns are for reading in a spreadsheet and are never matched on import."""
     try:
         people = max(1, int(people or 1))
     except (TypeError, ValueError):
         people = 1
     anchors = anchors or []
+    names = [str(n) for n in (people_names or [])]
+    opinions = opinions or {}
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\r\n")
-    writer.writerow([h for h, _ in EXPORT_COLUMNS] + ["True monthly cost", "Cost per person per month", "Score out of 100"]
-                    + [f"Commute to {a.get('name', '')} (minutes, fastest way)" for a in anchors])
+    writer.writerow([h for h, _ in EXPORT_COLUMNS] + [_safe_cell(f"{n}'s rating") for n in names]
+                    + ["True monthly cost", "Cost per person per month", "Score out of 100"]
+                    + [_safe_cell(h) for a in anchors for h in (f"Commute to {a.get('name', '')} (minutes)", f"Commute to {a.get('name', '')} (way)")])
     for p in places:
+        mine = opinions.get(p.get("id")) or {}
         row = []
         for _, field in EXPORT_COLUMNS:
             v = p.get(field)
@@ -153,14 +193,29 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
                 v = "" if v is None else ("yes" if v else "no")
             elif field in PLAIN_WORDS:
                 v = PLAIN_WORDS[field].get(str(v), v) if v else ""
+            elif field == "fit_score":
+                v = p.get("score_total") if p.get("score_total") is not None else v
+            elif field == "red_flags":
+                v = _red_flags_text(p)
+            elif field == "rating":
+                v = _combined_rating(p, mine)
             row.append(_safe_cell(_plain(v)))
+        row += [_plain(mine.get(n)) for n in names]
         total = p.get("cost_total")
         row.append(_plain(total))
         row.append("" if total is None else round(float(total) / people, 2))
         row.append(_plain(p.get("score_total")))
-        row += [_fastest_minutes(p, a.get("id")) for a in anchors]
+        for a in anchors:
+            c = _commute_for(p, a.get("id"))
+            row.append(round(c["minutes"]) if c else "")
+            row.append(_safe_cell(_way_text(c)) if c else "")
         writer.writerow(row)
     return out.getvalue()
+
+
+def _way_text(c: dict[str, Any]) -> str:
+    mode = str(c.get("mode") or "")
+    return mode + (" (your time)" if c.get("source") == "you" else " (estimate)" if c.get("source") == "estimate" else "")
 
 
 # ----------------------------------------------------------------------------- reading a file
@@ -250,7 +305,7 @@ def plan_import(store: Store, search_id: int, headers: list[str], rows: list[lis
         item: dict[str, Any] = {"row": n, "status": "new", "reason": "", "values": {}, "stage": None, "warnings": [], "label": "", "existing": None}
         plan.append(item)
         if not any(c.strip() for c in row):
-            item.update(status="skip", reason="The row is blank.")
+            item.update(status="skip", reason="The row is blank.", blank=True)
             continue
         raw = {field: _cell(row, i) for i, field in mapping.items()}
         mapped_cells = [c for c in raw.values() if c]
@@ -305,10 +360,25 @@ def plan_import(store: Store, search_id: int, headers: list[str], rows: list[lis
 
 
 def summarize(plan: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"new": 0, "match": 0, "repeat": 0, "skip": 0}
+    """Counts of places, not lines: blank rows are not counted at all. ``places`` is every row that holds a place
+    (new, already saved, repeated or skipped for a reason); ``blank`` is the empty rows left out silently."""
+    counts = {"new": 0, "match": 0, "repeat": 0, "skip": 0, "blank": 0}
     for item in plan:
-        counts[item["status"]] += 1
+        if item.get("blank"):
+            counts["blank"] += 1
+        else:
+            counts[item["status"]] += 1
+    counts["places"] = counts["new"] + counts["match"] + counts["repeat"] + counts["skip"]
     return counts
+
+
+def left_out_text(plan: list[dict[str, Any]], limit: int = 3) -> str:
+    """Why rows were left out, in plain words ("Row 4: It repeats row 2 in this file"), for the summary after an import."""
+    why = [f"row {i['row']}: {i['reason'].rstrip('.')}" for i in plan if i["status"] in ("repeat", "skip") and not i.get("blank")]
+    if not why:
+        return ""
+    shown = "; ".join(why[:limit]) + (f"; and {len(why) - limit} more" if len(why) > limit else "")
+    return f"{len(why)} row{'s' if len(why) != 1 else ''} left out ({shown})."
 
 
 def apply_plan(store: Store, search_id: int, plan: list[dict[str, Any]]) -> dict[str, Any]:

@@ -153,8 +153,17 @@ def close_tour_notes(tours: list[dict[str, Any]]) -> dict[int, str]:
         if a.date() != b.date() or gap > 60:
             continue
         first, second = helpers.clock_text(ta["starts_at"]), helpers.clock_text(tb["starts_at"])
-        notes[tb["id"]] = (f"{first} and {second} start at the same time; check the drive" if gap <= 0
-                           else f"{first} and {second} are {gap} minutes apart; check the drive")
+        try:
+            length = int(ta.get("duration_minutes") or 30)  # a tour with no length counts as the usual 30 minutes
+        except (TypeError, ValueError):
+            length = 30
+        if gap <= 0:
+            notes[tb["id"]] = f"{first} and {second} start at the same time; check the drive"
+        elif length > gap:
+            notes[tb["id"]] = (f"{first} and {second} are {gap} minutes apart; check the drive. The {first} tour lasts {length} minutes, "
+                               f"so the two overlap")
+        else:
+            notes[tb["id"]] = f"{first} and {second} are {gap} minutes apart; check the drive"
     return notes
 
 

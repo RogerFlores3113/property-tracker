@@ -54,7 +54,7 @@ def test_export_has_cost_score_and_commute_columns(store):
     table = list(csv.reader(io.StringIO(r.text)))
     head, row = table[0], dict(zip(table[0], table[1]))
     assert {"True monthly cost", "Cost per person per month", "Score out of 100"} <= set(head)
-    assert row["Commute to Campus (minutes, fastest way)"] == "5"
+    assert row["Commute to Campus (minutes)"] == "5"
     assert float(row["True monthly cost"]) >= 1400
     people = store.get_search(s["id"]).get("people") or 1
     assert abs(float(row["Cost per person per month"]) - float(row["True monthly cost"]) / people) < 0.01

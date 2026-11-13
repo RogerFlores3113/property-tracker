@@ -41,14 +41,15 @@ def _preview_page(request: Request, token: str, state: dict, mapping: dict[int, 
     store = get_store(request)
     search = store.get_search(state["search_id"])
     plan = csv_io.plan_import(store, state["search_id"], state["headers"], state["rows"], mapping)
-    shown = [p for p in plan if p["status"] != "new"][:60]
+    shown = [p for p in plan if p["status"] != "new" and not p.get("blank")][:60]
     new_sample = [p for p in plan if p["status"] == "new"][:8]
     examples = [next((r[i].strip()[:40] for r in state["rows"][:50] if i < len(r) and r[i].strip()), "") for i in range(len(state["headers"]))]
     unmatched = [h for i, h in enumerate(state["headers"]) if i not in mapping and h]
+    counts = csv_io.summarize(plan)
     return render(request, "import_preview.html", status_code=status, token=token, search=search, filename=state["filename"], examples=examples,
                   headers=state["headers"], mapping=mapping, field_options=list(csv_io.FIELD_LABELS.items()), plan=plan,
-                  counts=csv_io.summarize(plan), others=shown, new_sample=new_sample, unmatched=unmatched,
-                  total_rows=len(state["rows"]), form_error=error)
+                  counts=counts, others=shown, computed={i for i, h in enumerate(state["headers"]) if csv_io.is_computed_header(h)}, new_sample=new_sample, unmatched=unmatched,
+                  total_rows=counts["places"], blank_rows=counts["blank"], form_error=error)
 
 
 @router.get("/import", include_in_schema=False)
@@ -131,6 +132,9 @@ async def import_apply(request: Request):
     if result["filled"]:
         bits.append(f"filled in empty details on {result['filled']} you already had")
     msg = "Import done: " + (", ".join(bits) or "nothing new") + "."
+    left = csv_io.left_out_text(plan)
+    if left:
+        msg += " " + left
     if result["failed"]:
         msg += f" {len(result['failed'])} row{'s' if len(result['failed']) != 1 else ''} could not be saved ({result['failed'][0]})."
     store.set_current_search(state["search_id"])
@@ -153,5 +157,9 @@ def places_csv(request: Request, search_id: int | None = None, stage: str = "", 
     slug = re.sub(r"[^a-z0-9]+", "-", search["name"].lower()).strip("-")[:40] or "places"
     name = f"places-{slug}-{datetime.now().strftime('%Y-%m-%d')}.csv"
     rows = enrich.enrich_places(store, search, places)
-    return Response(csv_io.export_csv(rows, store.list_anchors(), search.get("people") or 1), media_type="text/csv; charset=utf-8",
+    from .store import people_slots
+
+    names = people_slots(search)
+    opinions = {r["id"]: {o["person"]: o["rating"] for o in store.list_opinions(r["id"])} for r in rows} if names else {}
+    return Response(csv_io.export_csv(rows, store.list_anchors(), search.get("people") or 1, names, opinions), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
