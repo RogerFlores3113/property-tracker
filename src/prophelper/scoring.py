@@ -391,6 +391,32 @@ def _score_parking(c: dict[str, Any], place: dict[str, Any]) -> dict[str, Any]:
 _PROFILE_WANT = {"cat": "cats", "dog": "dogs", "both": "both"}
 
 
+def miss_score(failed_items: list[dict[str, Any]]) -> int:
+    """The shown score ceiling for a place that fails a must-have: under the fit floor (CAP_DEALBREAKER) and lower the
+    further it misses, so near misses can be ranked. Each failed must-have costs up to 30 points by how far over its
+    limit it is (a binary miss counts as half way), and each extra failed must-have costs 4 more. Never below 1."""
+    if not failed_items:
+        return CAP_DEALBREAKER
+    sev = 0.0
+    for i in failed_items:
+        pct = i.get("over_pct")
+        sev += min(1.0, float(pct)) if pct is not None else 0.5
+    return max(1, CAP_DEALBREAKER - int(round(30 * sev)) - 4 * (len(failed_items) - 1))
+
+
+def _pet_limit_problems(profile: dict[str, Any], place: dict[str, Any]) -> list[str]:
+    """Plain reasons the listing's stated weight or count limit is below your pets (used when the pet policy is empty)."""
+    kind = profile.get("kind") or ""
+    weight, count = _num(profile.get("weight")), _num(profile.get("count"))
+    w_limit, c_limit = _num(place.get("pet_weight_limit")), _num(place.get("pet_count_limit"))
+    out: list[str] = []
+    if kind in ("dog", "both") and weight and w_limit is not None and weight > w_limit:
+        out.append(f"Your dog is {_fmt(weight)} lb; the listing says {_fmt(w_limit)} lb limit")
+    if count and c_limit is not None and count > c_limit:
+        out.append(f"You have {_fmt(count)} pets; the listing says {_fmt(c_limit)} pet limit")
+    return out
+
+
 def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """The pet policy, then (when the search says what pets you have) the place's weight and count limits."""
     profile = (ctx or {}).get("pets") or {}
@@ -399,6 +425,11 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
     have = str(place.get("pets") or "")
     target = f"{want} allowed" if want else "pets allowed"
     if have not in ("cats", "dogs", "both", "none"):
+        # The policy is not filled in, but a stated limit that your pets break is still a clear no.
+        limit_fail = _pet_limit_problems(profile, place) if kind else []
+        if limit_fail:
+            text = "; ".join(limit_fail)
+            return _result(0.0, "", target, text + ".", known=True, passes=False, gap=text)
         return _unknown(target, "The pet policy")
     ok = have in PETS_OK.get(want, ("cats", "dogs", "both"))
     value = have if have != "none" else "no pets"
@@ -613,7 +644,7 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     parts_ = near_parts({"items": items}, ctx["cost"]) if (failed or near) else []
     if failed:
         fit = "near_miss" if parts_ else "doesnt_fit"
-        cap(CAP_DEALBREAKER, "a must-have fails")
+        cap(miss_score([i for i in items if i["dealbreaker_status"] == "fail"]), "a must-have fails")
     elif near:
         fit = "near_miss"
     if near:

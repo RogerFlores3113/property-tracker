@@ -138,9 +138,10 @@ def test_near_miss_line(store):
     assert texts["Far"] == ""
     assert texts["Maple Court"] == "$35 over because pet rent counts"
     data = today.build(store, s)
-    assert [r["place"]["title"] for r in data["near_miss"]] == ["Maple Court"] and not data["fits"]
+    # cycle 9: with nothing fitting, the near misses lead the "Closest so far" list (nearest first)
+    assert [r["place"]["title"] for r in data["closest"]][0] == "Maple Court" and not data["fits"]
     html = local_client(store).get("/today").text
-    assert "Near miss" in html and "$35 over because pet rent counts" in html
+    assert "Closest so far" in html and "$35 over because pet rent counts" in html
 
 
 def test_near_miss_not_for_other_failures(store):

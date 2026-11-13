@@ -3,12 +3,12 @@
 <article class="card kcard" draggable="true" data-id="{{ p.id }}" data-search="{{ (p.title ~ ' ' ~ p.address ~ ' ' ~ p.city)|lower }}" data-stage="{{ p.stage }}">
   <a class="kcard-title" href="/places/{{ p.id }}">{{ p.title }}</a>{% if p.is_sample %} {{ sample_badge(true) }}{% endif %}
   <div class="kcard-meta">
-    {% if p.score.fit != 'doesnt_fit' %}{{ score_pill(p.score_total, p.band) }}{% endif %}
+    {% if p.score.fit != 'doesnt_fit' %}{{ score_pill(p.score_total, p.band, p.check_first) }}{% endif %}
     <strong>{% if p.cost_total is not none %}{{ p.cost_total|money }}/mo{% else %}<span class="missing">no cost yet</span>{% endif %}</strong>
     <span class="fine">{% if p.beds is not none %}{{ p.beds|beds }}{% endif %}</span>
   </div>
   {% if p.cost.mode == 'buy' and p.price %}<div class="fine">Price {{ p.price|money }}</div>{% endif %}
-  {% if p.score.fit != 'fits' or p.score.concerns %}<div class="kcard-fit">{{ fit_badge(p) }}</div>{% endif %}
+  {% if p.score.fit != 'fits' or p.score.concerns or p.check_first %}<div class="kcard-fit">{{ fit_badge(p) }}</div>{% endif %}
   {% if p.cost_total is not none and p.cost.uncounted %}<div class="fine">{{ p.cost.uncounted|join(', ') }} not counted yet</div>{% endif %}
   {% if p.per_person is not none %}<div class="fine">{{ p.per_person|money }} per person ({{ p.people }} {{ p.split_noun or "people" }})</div>{% endif %}
   {% if p.opinions %}<div class="fine">Average of {{ p.opinions.count }}: {{ p.opinions.average }} of 5</div>{% endif %}

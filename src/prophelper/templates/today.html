@@ -60,6 +60,19 @@
 </section>
 {% endif %}
 
+{% if closest %}
+<section class="card" aria-labelledby="closest-h">
+  <h2 id="closest-h">Closest so far <span class="count">{{ closest|length|num }}</span></h2>
+  <ul class="items">
+    {% for n in closest %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a> {{ score_pill(n.place.score_total, n.place.band) }}
+      <span class="item-sub">{{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">None of these has every must have, so they are not best fits. These come closest. <a href="/board">See the whole board</a>.</p>
+</section>
+{% endif %}
+
 {% if needs_price %}
 <section class="card" aria-labelledby="needs-price-h">
   <h2 id="needs-price-h">Needs a price <span class="count">{{ needs_price|length|num }}</span></h2>

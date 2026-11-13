@@ -87,6 +87,10 @@ target (JSON), sort_order. Kinds and their target:
   on the place page): yes/no style, 1 or 0.
 Unknown values score 0.5 and are listed as "unknown" so the user can fill them; an unknown never fails a
 dealbreaker, it shows "check this". Total score = 100 * sum(weight * score) / sum(weight), rounded.
+A place that fails a must-have never shows 50 or more, but its shown score is not a flat 49: it is 49 minus how far
+it misses (up to 30 points per failed must-have by how far over its limit it is, 4 more for each extra failed
+must-have), so Compare, lists and the Board rank near misses above far misses. A must-have broken by a stated pet
+limit counts as failed even when the pet policy is empty.
 
 **anchors** (saved places for commutes, global): id, name ("Campus", "Work"), address, lat, lng.
 
