@@ -29,7 +29,7 @@ from starlette.formparsers import MultiPartParser
 from . import ai_key, backups, geocode, paths, share
 from .deps import get_store, redirect, render
 from .sample_data import load_sample_data
-from .store import STRICT_ADDS_PER_CALL, STRICT_ADDS_PER_HOUR, NotFound, Store
+from .store import STRICT_ADDS_PER_CALL, STRICT_ADDS_PER_HOUR, NotFound, Store, normalize_url
 
 router = APIRouter()
 
@@ -376,10 +376,12 @@ async def search_import_upload(request: Request):
     s = doc["search"]
     shown = get_store(request)
     new_name = share.imported_name(s.get("name"))
-    report = share.dry_run(doc)
-    left_out = share.left_out_lines({**report, "link_dropped": 0, "places_skipped": report.get("places_skipped", 0),
-                                      "criteria_skipped": report.get("criteria_skipped", 0)})
-    return render(request, "share_import.html", token=token, filename=filename, headline=share.preview_text(doc),
+    report = share.dry_run(doc)  # the same checks the real import makes, so what it says here is what happens
+    if report.get("failed"):
+        return redirect("/search", error=f"That search can't be added ({report['failed']}), so nothing was changed.")
+    in_use = sum(1 for p in doc["places"] if isinstance(p.get("url"), str) and normalize_url(p["url"]) and shown.find_duplicate(url=p["url"]) is not None)
+    left_out = share.left_out_lines({**report, "link_dropped": in_use})
+    return render(request, "share_import.html", token=token, filename=filename, headline=share.preview_text(doc, report.get("places")),
                   mode=str(s.get("mode") or "rent"), criteria=len(doc["criteria"]) - report.get("criteria_skipped", 0), anchors=len(doc["anchors"]),
                   new_name=new_name, left_out=left_out,
                   same_name=any(x["name"].lower() == new_name.lower() for x in shown.list_searches(include_archived=True)))

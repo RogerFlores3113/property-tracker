@@ -725,12 +725,13 @@ class Store:
         if self.path != ":memory:":
             self._conn.execute("PRAGMA journal_mode = WAL")
             self._conn.execute("PRAGMA synchronous = NORMAL")
-        had_data = self._conn.execute("PRAGMA user_version").fetchone()["user_version"] >= 1
+        was_new = self._conn.execute("PRAGMA user_version").fetchone()["user_version"] == 0
         self._migrate()
-        if had_data and self._row("SELECT 1 FROM settings WHERE key = 'map_tiles'") is None:
-            # Map pictures are off for a new data folder. A folder from before that change keeps what it had: on.
+        if self._row("SELECT 1 FROM settings WHERE key = 'map_tiles'") is None:
+            # Map pictures are off for a brand-new data folder (written right away, so a later open can't flip it).
+            # Only a real old folder from before that change keeps what it had: on.
             with self._write():
-                self._exec("INSERT OR IGNORE INTO settings(key, value) VALUES ('map_tiles', '1')")
+                self._exec("INSERT OR IGNORE INTO settings(key, value) VALUES ('map_tiles', ?)", ("0" if was_new else "1",))
 
     def _migrate(self) -> None:
         with self._lock:

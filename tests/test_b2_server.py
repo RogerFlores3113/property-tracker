@@ -355,7 +355,7 @@ def test_compare_places_side_by_side(srv):
 
 def test_compare_refuses_places_from_two_searches(store, srv):
     other = structured(call(srv, "create_search", name="Other"))["search_id"]
-    a = structured(add(srv, title="A", address="1 A"))["place_id"]
+    a = structured(add(srv, title="A", address="1 A", search_id=store.current_search()["id"]))["place_id"]  # two searches: a search_id is required (C4 G1)
     b = structured(add(srv, title="B", address="2 B", search_id=other))["place_id"]
     assert "different searches" in err(srv, "compare_places", place_ids=[a, b])
 

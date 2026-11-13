@@ -7,6 +7,7 @@ through ``deps.py``, so routers never import this file.
 """
 from __future__ import annotations
 
+import re
 import base64
 import hashlib
 import hmac
@@ -169,10 +170,27 @@ def create_app(store: Store, key: str | None = None) -> FastAPI:
             response.headers["Cache-Control"] = "no-store"
         return response
 
+    def csp_photos(path: str) -> str:
+        """Only the sites this place's own saved photo links point to may send pictures (not any https site). A page that isn't
+        about one place, or a place with no photo links, gets no outside picture source at all."""
+        m = re.match(r"^/places/(\d+)(?:/|$)", path)
+        if not m:
+            return CSP
+        try:
+            links = store.get_place(int(m.group(1))).get("photo_urls") or []
+        except Exception:
+            return CSP
+        hosts: list[str] = []
+        for link in links:
+            h = re.match(r"^https://([A-Za-z0-9.-]+(?::\d{1,5})?)(?:[/?#]|$)", str(link), re.I)
+            if h and "https://" + h.group(1).lower() not in hosts:
+                hosts.append("https://" + h.group(1).lower())
+        return CSP_TEMPLATE.format(img=" ".join(["'self'", "data:", *hosts]))
+
     def csp_for(path: str) -> str:
         try:
             if path.startswith("/places/") and store.get_setting_bool("show_photos"):
-                return CSP_PHOTOS
+                return csp_photos(path)
             if path == "/map" and store.get_setting_bool("map_tiles"):
                 return CSP_MAP
         except Exception:
