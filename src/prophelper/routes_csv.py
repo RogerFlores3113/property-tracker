@@ -43,7 +43,7 @@ def _preview_page(request: Request, token: str, state: dict, mapping: dict[int, 
     plan = csv_io.plan_import(store, state["search_id"], state["headers"], state["rows"], mapping)
     shown = [p for p in plan if p["status"] != "new" and not p.get("blank")][:60]
     new_rows = [p for p in plan if p["status"] == "new"]
-    new_sample = sorted(new_rows, key=lambda p: (not p["warnings"], p["row"]))[:8]  # rows with something to check come first
+    new_sample = sorted(new_rows, key=lambda p: (not p["warnings"], p["row"]))[:max(8, min(20, sum(1 for p in new_rows if p["warnings"])))]  # rows with something to check come first
     new_sample.sort(key=lambda p: p["row"])
     examples = [next((r[i].strip()[:40] for r in state["rows"][:50] if i < len(r) and r[i].strip()), "") for i in range(len(state["headers"]))]
     unmatched = [h for i, h in enumerate(state["headers"]) if i not in mapping and h]
@@ -132,7 +132,7 @@ async def import_apply(request: Request):
     if result["added"]:
         bits.append(f"added {result['added']} place{'s' if result['added'] != 1 else ''}")
     if result["filled"]:
-        bits.append(f"filled in empty details on {result['filled']} you already had")
+        bits.append(f"filled in empty details on {result['filled']} place{'s' if result['filled'] != 1 else ''} you already had")
     msg = "Import done: " + (", ".join(bits) or "nothing new") + "."
     left = csv_io.left_out_text(plan)
     if left:

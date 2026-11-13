@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from . import backups, commute, enrich, helpers, movein, parsers, paths, redflags, scoring, stages, today
 from .routes_geocode import lookup_for_anchor
 from .deps import get_store, is_htmx, redirect, render
-from .store import COMMUTE_MODES, CRITERION_KINDS, NotFound, StageRuleError, Store
+from .store import COMMUTE_MODES, CRITERION_KINDS, NotFound, StageRuleError, Store, has_userinfo
 
 router = APIRouter()
 
@@ -104,7 +104,8 @@ def board_page(request: Request, show_hidden: int = 0):
         cards.sort(key=scoring.sort_key)  # places that fit first, then the ones that miss a deal-breaker or need a check
     totals = {s: len(c) for s, c in columns.items()}
     return render(request, "board.html", search=search, columns=columns, totals=totals, stages=mode_stages,
-                  hidden_dealbreaker=hidden_deal, hidden_hand=hidden_hand, show_hidden=bool(show_hidden), total=len(rows))
+                  hidden_dealbreaker=hidden_deal, hidden_hand=hidden_hand, show_hidden=bool(show_hidden), total=len(rows),
+                  some_added_earlier=any((helpers.days_since(r.get("created_at")) or 0) > 0 for r in rows))
 
 
 def _toured_hint(store: Store, place: dict[str, Any]) -> str:
@@ -639,6 +640,9 @@ async def add_parse(request: Request):
     url, text = str(form.get("url", "")).strip(), str(form.get("text", ""))
     if not url and not text.strip():
         return _add_page(request, status=400, error="Paste a link, the listing text, or both first.")
+    if url and has_userinfo(url):
+        return _add_page(request, status=400, text=text, url="",
+                         error="That link has a user name or password in it, so I won't use it. Paste the plain listing address without it.")
     values = parsers.parse_listing(text, url)
     if url:
         values["url"] = url

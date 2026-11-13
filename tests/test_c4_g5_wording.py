@@ -90,6 +90,8 @@ def test_plain_words_pages(store):
 def test_board_card_label(store):
     s = store.add_search("Rent", "rent")
     store.add_place(search_id=s["id"], title="Flat", address="2 Elm St")
+    old, _ = store.add_place(search_id=s["id"], title="Old", address="3 Elm St")
+    store._exec("UPDATE places SET created_at = '2020-01-01T00:00:00Z', stage_changed_at = '2020-01-01T00:00:00Z' WHERE id = ?", (old["id"],))
     html = local_client(store).get("/board").text
     assert "Added today" in html  # a place that has never moved says Added (cycle 5)
 
