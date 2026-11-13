@@ -395,6 +395,7 @@ def _cash_lines(e: dict[str, Any]) -> list[str]:
     if cash:
         label = "Cash to close" if cost.get("mode") == "buy" else "Cash needed on move-in day"
         out.append(f"{label}: {_money(cash['total'])} (" + ", ".join(f"{pt['label']} {_money(pt['amount'])}" for pt in cash["parts"]) + ")"
+                   + (" (security deposit not filled in, so this is at least that much)" if cost.get("mode") != "buy" and compare_mod._deposit_unknown(e, cash) else "")
                    + ". Not part of the monthly cost.")
     if cost.get("listing_estimate_note"):
         out.append("The listing's own estimate: " + _t(cost["listing_estimate_note"], "listing estimate", 300))
@@ -404,7 +405,7 @@ def _cash_lines(e: dict[str, Any]) -> list[str]:
 def _cost_text(e: dict[str, Any]) -> str:
     cost = e["cost"]
     if cost["total"] is None:
-        return "True monthly cost: unknown (" + ", ".join(cost["missing"]) + ")"
+        return "True monthly cost: unknown (" + ", ".join(compare_mod._missing_names(e) or cost["missing"]) + ")"
     parts = [f"{l['label'].split(' (')[0].lower()} {helpers.money(l['amount'])}" for l in cost["lines"]
              if l["amount"] and not l["key"].startswith("one_time")]
     one = next((l for l in cost["lines"] if l["key"] == "one_time" and l["amount"]), None)
@@ -413,8 +414,9 @@ def _cost_text(e: dict[str, Any]) -> str:
     text = f"True monthly cost {helpers.money(cost['total'])}" + (" (" + " + ".join(parts) + ")" if len(parts) > 1 else "")
     if _per_person_text(e):
         text += "; " + _per_person_text(e)
-    if cost["missing"]:
-        text += "; missing: " + ", ".join(cost["missing"])
+    unknown_costs = compare_mod.cost_unknowns(e)
+    if unknown_costs:  # the same names the Compare page and "Still unknown" use
+        text += "; missing: " + ", ".join(unknown_costs)
     return text + (". " + cost["notes"][0] if cost["notes"] and cost["mode"] == "buy" else "")
 
 
@@ -464,7 +466,7 @@ def _deal_text(e: dict[str, Any]) -> str:
         return "Deal-breakers: none failed, but check " + _labs(s["check"])
     if s.get("conditional"):
         return "Deal-breakers: none failed, but " + "; ".join(f"{_lab(c)} passes only if the unknown costs are small" for c in s["conditional"]) \
-            + " (" + "; ".join(s.get("conditional_costs") or []) + " not counted yet)"
+            + " (" + "; ".join(compare_mod.flat_cost_name(c) for c in s.get("conditional_costs") or []) + " not counted yet)"
     return "Deal-breakers: all passed"
 
 
