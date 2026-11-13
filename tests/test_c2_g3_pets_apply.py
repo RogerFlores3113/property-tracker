@@ -196,4 +196,4 @@ def test_search_form_saves_pets_and_fenced_yard_criterion(store):
     html = c.get(f"/search?id={s['id']}").text
     assert "Your pets" in html and "Fenced yard" in html
     c.post(f"/search/{s['id']}/criteria", data={"kind": "fenced_yard", "weight": "10"})
-    assert [x["kind"] for x in store.list_criteria(s["id"])] == ["fenced_yard"]
+    assert [x["kind"] for x in store.list_criteria(s["id"])] == ["pets", "fenced_yard"]

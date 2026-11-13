@@ -1549,9 +1549,9 @@ def build_server(store: Store) -> FastMCP:
         s = store.add_search(name, mode, **fields)
         a_lines = add_anchors(a_clean)
         c_lines = add_criteria(s["id"], c_clean)
-        for sc in scoring.starter_criteria(s["mode"], s.get("budget_max"), bedrooms, {c["kind"] for c in c_clean}):  # must-haves from the budget and bedroom count
+        for sc in scoring.starter_criteria(s["mode"], s.get("budget_max"), bedrooms, {c["kind"] for c in c_clean}, pet_kind=s.get("pet_kind")):  # must-haves from the budget, bedroom count and pets
             row = store.add_criterion(s["id"], sc["kind"], label=sc["label"], weight=sc["weight"], dealbreaker=True, target=sc["target"])
-            c_lines.append(f"[{row['id']}] {row['label']} (weight {row['weight']:g}, deal-breaker, added from the search's own {'budget' if sc['kind'] == 'price' else 'bedroom count'})")
+            c_lines.append(f"[{row['id']}] {row['label']} (weight {row['weight']:g}, deal-breaker, added from the search's own {({'price': 'budget', 'pets': 'pets'}).get(sc['kind'], 'bedroom count')})")
         cur = store.current_search()
         lines = [f"Created search {s['id']} {_sname(s)} ({_mode_word(s['mode'])})" + ("." if cur and cur["id"] == s["id"] else ". It is not the current search; the user can switch on the Search page. Pass search_id to add_place to use it.")]
         if _split_count(s) > 1:
@@ -1634,8 +1634,14 @@ def build_server(store: Store) -> FastMCP:
         stop_with(problems, "changed")
         notes: list[str] = []
         if fields:
+            before_pet = s.get("pet_kind") or ""
             s = store.update_search(s["id"], **fields)
             notes.append("Changed " + ", ".join(k.replace("_", " ") for k in fields) + ".")
+            if "pet_kind" in fields and (s.get("pet_kind") or "") != before_pet:
+                have = {c["kind"] for c in store.list_criteria(s["id"])} | {c["kind"] for c in c_clean}
+                for sc in scoring.starter_criteria(s["mode"], None, None, have, pet_kind=s.get("pet_kind")):
+                    row = store.add_criterion(s["id"], sc["kind"], label=sc["label"], weight=sc["weight"], dealbreaker=True, target=sc["target"])
+                    notes.append(f"Added a pets must-have [{row['id']}] (weight {row['weight']:g}, deal-breaker) so places that don't allow the user's pets don't fit.")
         a_lines = add_anchors(a_clean)
         if a_lines:
             notes.append("Anchors: " + "; ".join(a_lines))

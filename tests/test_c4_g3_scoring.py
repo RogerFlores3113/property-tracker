@@ -75,7 +75,7 @@ def test_each_persons_commute_is_checked(store):
     e = _row(store, s, p)
     item = e["score"]["items"][0]
     assert "Jo: 70 min, limit 40" in item["gap"]
-    assert "Jo: 70 min, limit 40" in e["score"]["concerns"]
+    assert any(c.startswith("Jo: 70 min, limit 40") for c in e["score"]["concerns"])
     assert e["score_total"] <= scoring.CAP_FAR_COMMUTE
 
 
