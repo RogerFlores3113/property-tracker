@@ -382,14 +382,16 @@ async def create_search(request: Request):
                              budget_max=form.get("budget_max", ""), notes=form.get("notes", ""),
                              **({"people": form.get("people")} if form.get("people") else {}),
                              **({"adults": form.get("adults")} if form.get("adults") else {}),
-                             **({"down_payment_pct": form.get("down_payment_pct")} if str(form.get("down_payment_pct", "")).strip() else {}))
+                             **({"down_payment_pct": form.get("down_payment_pct")} if str(form.get("down_payment_pct", "")).strip() else {}),
+                             **({"pet_kind": form.get("pet_kind")} if form.get("pet_kind") else {}))
         store.set_current_search(s["id"])
         beds = str(form.get("bedrooms", "")).strip()
-        for c in scoring.starter_criteria(s["mode"], s.get("budget_max"), beds):
+        for c in scoring.starter_criteria(s["mode"], s.get("budget_max"), beds, pet_kind=s.get("pet_kind")):
             store.add_criterion(s["id"], c["kind"], label=c["label"], weight=c["weight"], dealbreaker=c["dealbreaker"], target=c["target"])
     except ValueError as exc:
         return redirect("/search", error=str(exc))
-    made = [("the price limit" if c["kind"] == "price" else "the bedroom count") for c in store.list_criteria(s["id"])]
+    names = {"price": "the price limit", "beds": "the bedroom count", "pets": "the pet rule"}
+    made = [names.get(c["kind"], "") for c in store.list_criteria(s["id"]) if c["kind"] in names]
     extra = f" I added {' and '.join(made)} as must-haves." if made else ""
     return redirect(f"/search?id={s['id']}", notice=f"Made the search '{s['name']}' and switched to it.{extra} Add what you want below.")
 
@@ -400,13 +402,20 @@ async def update_search(request: Request, search_id: int):
     form = await request.form()
     values: dict[str, Any] = {k: form.get(k) for k in ("name", "mode", "area", "move_in", "target_close", "budget_max", "notes", "people", "adults", "pet_kind", "pet_weight", "pet_count", "people_names", "down_payment_pct") if k in form}
     values["hide_dealbreakers"] = "1" if form.get("hide_dealbreakers") == "1" else "0"
+    added = ""
     try:
-        store.update_search(search_id, **values)
+        before = store.get_search(search_id)
+        after = store.update_search(search_id, **values)
+        if "pet_kind" in values and (after.get("pet_kind") or "") != (before.get("pet_kind") or ""):
+            have = {c["kind"] for c in store.list_criteria(search_id)}
+            for c in scoring.starter_criteria(after["mode"], None, None, have, pet_kind=after.get("pet_kind")):
+                store.add_criterion(search_id, c["kind"], label=c["label"], weight=c["weight"], dealbreaker=c["dealbreaker"], target=c["target"])
+                added = " I added a pet rule as a must-have: places that don't allow your pets won't fit."
     except NotFound:
         raise HTTPException(404, "That search doesn't exist.") from None
     except ValueError as exc:
         return redirect(f"/search?id={search_id}", error=str(exc))
-    return redirect(f"/search?id={search_id}", notice="Saved.")
+    return redirect(f"/search?id={search_id}", notice="Saved." + added)
 
 
 @router.post("/search/{search_id}/switch", include_in_schema=False)

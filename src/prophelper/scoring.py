@@ -346,7 +346,7 @@ def _score_commute(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]
     r = _result(score, value, target, detail, known=True, passes=not over, gap=gap)
     if over:
         r["over_amount"], r["over_pct"] = worst - mins, (worst - mins) / mins
-        r["concern"] = gap
+        r["concern"] = gap if many else f"Commute {over[0][1]['minutes']:.0f} min {mode}, over your {mins:.0f} min"
     return r
 
 
@@ -498,9 +498,10 @@ def has_serious_flag(place: dict[str, Any], peer_prices: Iterable[float] = ()) -
     return redflags.is_serious(place, peer_prices)
 
 
-def starter_criteria(mode: str, budget_max: Any, bedrooms: Any, have_kinds: Iterable[str] = ()) -> list[dict[str, Any]]:
+def starter_criteria(mode: str, budget_max: Any, bedrooms: Any, have_kinds: Iterable[str] = (),
+                     pet_kind: Any = "") -> list[dict[str, Any]]:
     """The must-haves a new search gets by itself: Bedrooms (when it names a bedroom count of 1 or more) and Monthly cost
-    or Price (when it has a budget). A kind the caller already has is skipped, so nothing doubles. Each is
+    or Price (when it has a budget) and Pets (when the search has a cat, a dog or both). A kind the caller already has is skipped, so nothing doubles. Each is
     ``{kind, label, weight, dealbreaker, target}`` ready for ``store.add_criterion``; the target is marked ``auto``."""
     have = set(have_kinds)
     out: list[dict[str, Any]] = []
@@ -511,7 +512,29 @@ def starter_criteria(mode: str, budget_max: Any, bedrooms: Any, have_kinds: Iter
     if beds and beds >= 1 and "beds" not in have:
         t = {"min": beds, "auto": True}
         out.append({"kind": "beds", "label": default_label("beds", t, mode), "weight": 15, "dealbreaker": True, "target": t})
+    if str(pet_kind or "").strip().lower() in _PROFILE_WANT and "pets" not in have:
+        # no "want": the rule follows the search's pets, so a later change of pet needs no edit here
+        out.append({"kind": "pets", "label": "Pets allowed", "weight": 15, "dealbreaker": True, "target": {"auto": True}})
     return out
+
+
+def _join_and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _unknown_price_concerns(place: dict[str, Any], cost: dict[str, Any], mode: str) -> tuple[str, str] | None:
+    """(concern, cap reason) when the place has no rent or price, or (buying) an unknown tax, insurance or HOA. The
+    same "Fits, but check" wording the price rule uses for unknown rent-side costs. None when nothing is unknown."""
+    if _num(place.get("price")) is None:
+        word = "price" if mode == "buy" else "rent"
+        return f"{word} not known yet", f"the {word} is not known yet"
+    if mode == "buy":
+        names = {"property tax": "property tax", "insurance": "insurance", "hoa": "HOA"}
+        unknown = [names[u.lower()] for u in cost.get("uncounted") or [] if u.lower() in names]
+        if unknown:
+            text = _join_and(unknown)
+            return f"{text} not counted yet, so the monthly cost is low", f"{text} not known yet"
+    return None
 
 
 def _late_opening(place: dict[str, Any], search: dict[str, Any] | None, mode: str) -> str:
@@ -552,7 +575,10 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     scam = has_serious_flag(place) if serious_flag is None else bool(serious_flag)
     reasons = [i["gap"] or f"Fails: {i['label']}" for i in items if i["dealbreaker_status"] == "fail"]
     concerns = [i["gap"] for i in items if i["dealbreaker_status"] == "near" and i["gap"]]
-    concerns += [i["concern"] for i in items if i.get("concern") and i["dealbreaker_status"] != "fail"]
+    for i in items:
+        if i.get("concern") and i["dealbreaker_status"] != "fail":
+            pts = int(round(100 * max(0.0, float(i["weight"] or 0)) * (1 - i["score"]) / total_w + 1e-9)) if total_w > 0 and not i["dealbreaker"] else 0
+            concerns.append(f"{i['concern']}, cost {pts} point{'' if pts == 1 else 's'}" if pts else i["concern"])
     far_commute = any(i.get("concern") and (i.get("over_pct") or 0) > 0.25 for i in items)
     late = _late_opening(place, search, mode)
     if late:
@@ -563,6 +589,9 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     for i in items:
         if i.get("conditional") and i["dealbreaker_status"] == "pass":
             concerns.append(f"{i['label']} passes only if the unknown costs are small ({i['conditional']})")
+    unknown_bits = _unknown_price_concerns(place, ctx["cost"], mode)
+    if unknown_bits:
+        concerns.append(unknown_bits[0])
     fit = "fits"
     total = raw
     caps: list[str] = []
@@ -584,6 +613,8 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
         cap(CAP_FAR_COMMUTE, "someone's commute is well over the limit")
     if conditional:
         cap(CAP_UNKNOWN_COST, "a cost is not known yet, so the price only passes if it is small")
+    if unknown_bits:
+        cap(CAP_UNKNOWN_COST, unknown_bits[1])
     if check:  # unknown must-haves: neutral-ish, but never a high score
         cap({1: 80, 2: 65}.get(len(check), 55), f"{len(check)} must-have{'s' if len(check) != 1 else ''} not known yet")
     unknown_n = sum(1 for i in items if not i["known"])
