@@ -786,15 +786,20 @@ def build_server(store: Store) -> FastMCP:
                                      "Send the facts you can read yourself."]
             return
         filled: list[str] = []
+        already_sent = 0
         for key, value in found.items():
             if key == "found_in_listing" or key not in PLACE_KEYS or key == "listing_text" or value in (None, ""):
                 continue
             if _is_blank(fields.get(key)):
                 fields[key] = value
                 filled.append(key.replace("_", " "))
-        fields["_text_notes"] = ([f"Read from the listing text and filled in: {', '.join(filled)}. Check them against the listing; "
-                                  f"anything you sent yourself was kept as you sent it."] if filled else
-                                 ["The listing text was saved and read, but I found no facts in it to fill in. Send the facts you can read yourself."])
+            else:
+                already_sent += 1
+        if filled:
+            fields["_text_notes"] = [f"Read from the listing text and filled in: {', '.join(filled)}. Check them against the listing; "
+                                     f"anything you sent yourself was kept as you sent it."]
+        elif not already_sent:  # said only when the reader really found nothing; if the caller sent every field itself, nothing to say
+            fields["_text_notes"] = ["The listing text was saved and read, but I found no facts in it to fill in. Send the facts you can read yourself."]
 
     def check_fields(fields: dict[str, Any], where: str = "") -> dict[str, Any]:
         apply_utilities_source(fields, where)
@@ -892,6 +897,8 @@ def build_server(store: Store) -> FastMCP:
         search = _search_of(store, place)
         head = (f"Added {_title(e)} (id {e['id']}) to search {_sname(search, 60)} as {e['stage']}." if created
                 else f"Updated {_title(e)} (id {e['id']}).")
+        if search.get("mode") == "buy":
+            notes = [compare_mod.for_buyer(n) for n in notes]
         lines = [head, *notes, *_card(e)[1:], *seen_not_counted(place)]
         if not place.get("listing_text"):
             lines.append("No listing text is saved yet. If you can, call update_place with listing_text so the details survive when the listing comes down.")
@@ -1230,8 +1237,9 @@ def build_server(store: Store) -> FastMCP:
         if p["stage"] == "Saved" and after["stage"] == "Tour booked":
             extra = " Moved from Saved to Tour booked (skipped Contacted, since a tour is booked)."
         past = " That time has already passed." if t["starts_at"] < datetime.now(timezone.utc).isoformat() else ""
+        who = "seller or listing agent" if (_search_of(store, p).get("mode") == "buy") else "landlord or agent"
         return reply(f"Recorded for {_title(p)} (id {p['id']}). {tour_line(t)}.{extra}{past}{overlap_note(t)} "
-                     "Nothing was sent or booked with anyone; ask the user before you contact the landlord or agent.",
+                     f"Nothing was sent or booked with anyone; ask the user before you contact the {who}.",
                      tour_id=t["id"], place_id=p["id"], stage=after["stage"])
 
     @mcp.tool(annotations=SAME_AGAIN)

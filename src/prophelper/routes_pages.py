@@ -25,7 +25,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import backups, commute, enrich, helpers, movein, parsers, paths, redflags, scoring, stages, today
+from . import backups, commute, compare, enrich, helpers, movein, parsers, paths, redflags, scoring, stages, today
 from .routes_geocode import lookup_for_anchor
 from .deps import get_store, is_htmx, redirect, render
 from .store import COMMUTE_MODES, CRITERION_KINDS, NotFound, StageRuleError, Store, clean_bool, has_userinfo
@@ -702,6 +702,8 @@ async def add_parse(request: Request):
         chosen = store.current_search()
     if chosen and int(chosen.get("adults") or chosen.get("people") or 1) > 1:
         parsers.app_fee_note_for_people(values, int(chosen.get("adults") or chosen["people"]))
+    if chosen and chosen.get("mode") == "buy" and values.get("found_in_listing"):
+        values["found_in_listing"] = compare.for_buyer(values["found_in_listing"])  # no landlord wording on a purchase
     return _add_page(request, values=values, parsed=True, text=text, url=url, search_id=int(sid) if str(sid or "").isdigit() else None)
 
 

@@ -519,6 +519,22 @@ def _utilities_cell(p: dict[str, Any]) -> dict[str, Any]:
     return _cell(text)
 
 
+_LANDLORD_PHRASES = (
+    (re.compile(r"\bask the landlord\b", re.I), "ask the seller or listing agent"),
+    (re.compile(r"\bcheck with the landlord\b", re.I), "check with the seller or listing agent"),
+    (re.compile(r"\bthe landlord's approval\b", re.I), "the seller's approval"),
+    (re.compile(r"\bthe landlord\b", re.I), "the seller"),
+)
+
+
+def for_buyer(text: str) -> str:
+    """Wording for a buy search: a note written for renters says seller or listing agent, and the special assessment note says what to do."""
+    out = str(text)
+    for pat, repl in _LANDLORD_PHRASES:
+        out = pat.sub(repl, out)
+    return out
+
+
 def _pet_limits_text(p: dict[str, Any]) -> str:
     """'Dogs, up to 50 lb, 2 pets at most', from the facts a place has. Empty when none is known."""
     bits: list[str] = []

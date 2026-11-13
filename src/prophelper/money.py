@@ -396,7 +396,7 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
     elif sa and payer == "seller":
         notes.append(f"A special assessment of {_dollars(sa)} is paid by the seller, so it is not counted.")
     elif sa:
-        notes.append(f"A special assessment of {_dollars(sa)} is listed but who pays it is not filled in, so it is not counted. Ask.")
+        notes.append(f"A special assessment of {_dollars(sa)} is listed but who pays it is not filled in, so it is not counted. Ask who pays it, then set Who pays on this page.")
     listing_note = _listing_estimate_note(place, total, lines)
     return {"mode": "buy", "listing_estimate_note": listing_note, "total": total, "lines": lines, "missing": missing, "uncounted": uncounted,
             "notes": notes, "deposit": None,
