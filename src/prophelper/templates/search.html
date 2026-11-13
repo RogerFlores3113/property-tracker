@@ -35,6 +35,7 @@
         {{ select("Renting or buying?", "mode", [("rent", "Renting"), ("buy", "Buying")], "rent") }}
         {{ field("Area", "area", "", placeholder="Champaign, IL") }}
         {{ field("Most you can spend per month, or the most you'd pay for the home when buying", "budget_max", "", kind="number", step="any", hint="Pick Renting or Buying first. For buying, this is the most you would pay for the home.", id="new-budget") }}
+        {{ field("Bedrooms you need", "bedrooms", "", kind="number", step="1", hint="Optional. A place with fewer bedrooms then shows as not fitting. Leave empty if any size is fine.", id="new-bedrooms") }}
         {{ field("Move in by (renting)", "move_in", "", kind="date") }}
         {{ field("Target close date (buying)", "target_close", "", kind="date") }}
       </div>
@@ -115,7 +116,8 @@
     <div class="crit-form">
       <div class="field" data-kinds="price"><label for="nc-max">{{ "Price: most you'd pay for the home" if shown.mode == 'buy' else 'Price: most per month, all in' }}</label><input id="nc-max" name="t_max" type="number" step="any"></div>
       <div class="field" data-kinds="beds baths sqft"><label for="nc-min">Bedrooms, bathrooms or size: at least</label><input id="nc-min" name="t_min" type="number" step="any"></div>
-      <div class="field" data-kinds="commute"><label for="nc-anchor">Commute: to</label><select id="nc-anchor" name="t_anchor_id"><option value="">The first important place</option>{% for a in anchors %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+      <div class="field" data-kinds="commute"><label for="nc-anchor">Commute: to</label><select id="nc-anchor" name="t_anchor_id"><option value="">The first important place</option>{% if anchors|length > 1 %}<option value="all">Everyone's places (each one is checked)</option>{% endif %}{% for a in anchors %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+      {% if shown.mode != 'buy' %}<div class="field" data-kinds="price"><label for="nc-count">Price: what is compared</label><select id="nc-count" name="t_count"><option value="">All in (rent plus utilities and fees)</option><option value="rent">Rent only</option></select></div>{% endif %}
       <div class="field" data-kinds="commute"><label for="nc-mode">Commute: by</label><select id="nc-mode" name="t_mode">{% for m in COMMUTE_MODES %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
       <div class="field" data-kinds="commute"><label for="nc-minutes">Commute: minutes or less</label><input id="nc-minutes" name="t_minutes" type="number" step="1"></div>
       <div class="field" data-kinds="laundry"><label for="nc-want-laundry">Laundry: you want</label>

@@ -303,7 +303,8 @@ async def delete_place(request: Request, place_id: int):
 # --------------------------------------------------------------------------- Search
 KIND_TARGET_KEYS = {"price": ("max",), "beds": ("min",), "baths": ("min",), "sqft": ("min",),
                     "commute": ("anchor_id", "mode", "minutes"), "laundry": ("want",), "parking": ("want",),
-                    "pets": ("want",), "newer": ("year",), "fenced_yard": ()}
+                    "pets": ("want",), "newer": ("year",), "fenced_yard": (), }
+KIND_TARGET_KEYS["price"] = ("max", "count")
 
 
 def _target_from_form(kind: str, form: Any) -> dict[str, Any]:
@@ -320,6 +321,8 @@ def _target_from_form(kind: str, form: Any) -> dict[str, Any]:
 
 def _commute_target(store: Store, target: dict[str, Any]) -> dict[str, Any]:
     """A commute with no place chosen means the first important place: say which one, so the label can name it."""
+    if target.get("anchor_id") == "all":  # "everyone's places": each one is checked against the limit
+        return {k: v for k, v in target.items() if k != "anchor_id"} | {"all_anchors": True}
     if target.get("anchor_id") in (None, ""):
         anchors = store.list_anchors()
         if anchors:
@@ -379,9 +382,14 @@ async def create_search(request: Request):
                              **({"people": form.get("people")} if form.get("people") else {}),
                              **({"adults": form.get("adults")} if form.get("adults") else {}))
         store.set_current_search(s["id"])
+        beds = str(form.get("bedrooms", "")).strip()
+        for c in scoring.starter_criteria(s["mode"], s.get("budget_max"), beds):
+            store.add_criterion(s["id"], c["kind"], label=c["label"], weight=c["weight"], dealbreaker=c["dealbreaker"], target=c["target"])
     except ValueError as exc:
         return redirect("/search", error=str(exc))
-    return redirect(f"/search?id={s['id']}", notice=f"Made the search '{s['name']}' and switched to it. Add what you want below.")
+    made = [("the price limit" if c["kind"] == "price" else "the bedroom count") for c in store.list_criteria(s["id"])]
+    extra = f" I added {' and '.join(made)} as must-haves." if made else ""
+    return redirect(f"/search?id={s['id']}", notice=f"Made the search '{s['name']}' and switched to it.{extra} Add what you want below.")
 
 
 @router.post("/search/{search_id}", include_in_schema=False)
@@ -470,6 +478,10 @@ async def add_criterion(request: Request, search_id: int):
             target = _commute_target(store, target)
             label = label or _commute_label(store, target)
         existing = store.list_criteria(search_id)
+        for old in existing:  # their own rule replaces the one made for them at the start, so nothing counts twice
+            if old["kind"] == kind and kind in ("price", "beds") and old["target"].get("auto"):
+                store.delete_criterion(old["id"])
+        existing = [c for c in existing if not (c["kind"] == kind and kind in ("price", "beds") and c["target"].get("auto"))]
         dupe = any(c["kind"] == kind and _same_target(c["target"], target) for c in existing) if kind != "custom" else False
         store.add_criterion(search_id, kind, label=label, weight=form.get("weight") or 10,
                             dealbreaker=form.get("dealbreaker") == "1", target=target)

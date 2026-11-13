@@ -23,10 +23,10 @@ def _row(store, search, place):
 # ---- 1. score agrees with deal-breakers and scam flags
 def test_failing_a_deal_breaker_shows_the_gap_not_a_high_score(store):
     s = _rent(store)
-    p, _ = store.add_place(title="Near miss", address="1 A St", price=1500, utilities_estimate=106, beds=1)
+    p, _ = store.add_place(title="Near miss", address="1 A St", price=1500, utilities_estimate=200, beds=1)
     e = _row(store, s, p)
     assert e["score"]["fit"] == "doesnt_fit"
-    assert e["score"]["fit_reasons"] == ["Over budget by $6"]
+    assert len(e["score"]["fit_reasons"]) == 1 and "over $1,600 by $100" in e["score"]["fit_reasons"][0]  # c4: says what was compared
     assert e["score_total"] <= scoring.CAP_DEALBREAKER
     assert e["score"]["raw_total"] > e["score_total"] or e["score"]["raw_total"] <= scoring.CAP_DEALBREAKER
 
@@ -58,7 +58,7 @@ def test_board_sorts_fitting_places_first_and_shows_badges(client, store):
     store.add_place(title="Scam", address="6 A St", price=400, utilities_estimate=50, beds=3, listing_text=SCAM_TEXT)
     html = client.get("/board").text
     assert html.index("Fine") < html.index("Miss") and html.index("Fine") < html.index("Scam")
-    assert "Doesn't fit" in html and "Over budget by $" in html and "Check first: possible scam" in html
+    assert "Doesn't fit" in html and "over $1,600 by $150" in html and "Check first: possible scam" in html
     rows = enrich.enrich_places(store, s)
     ordered = sorted(rows, key=scoring.sort_key)
     assert ordered[0]["title"] == "Fine"

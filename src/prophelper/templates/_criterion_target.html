@@ -1,11 +1,13 @@
 {# Inputs for a criterion's target. `kind` and `t` (a dict, may be empty) and `pre` (an id prefix) come from the includer. #}
 {% if kind == 'price' %}
 <div class="field"><label for="{{ pre }}-max">{{ "Most you'd pay for the home" if search_mode == 'buy' else 'Most per month, all in' }}</label><input id="{{ pre }}-max" name="t_max" type="number" step="any" value="{{ t.get('max', '') }}"></div>
+{% if search_mode != 'buy' %}<div class="field"><label for="{{ pre }}-count">What is compared</label>
+  <select id="{{ pre }}-count" name="t_count"><option value="">All in (rent plus utilities and fees)</option><option value="rent"{% if t.get('count') == 'rent' %} selected{% endif %}>Rent only</option></select></div>{% endif %}
 {% elif kind in ('beds', 'baths', 'sqft') %}
 <div class="field"><label for="{{ pre }}-min">At least</label><input id="{{ pre }}-min" name="t_min" type="number" step="any" value="{{ t.get('min', '') }}"></div>
 {% elif kind == 'commute' %}
 <div class="field"><label for="{{ pre }}-anchor">Commute to</label>
-  <select id="{{ pre }}-anchor" name="t_anchor_id"><option value="">The first important place</option>{% for a in anchors %}<option value="{{ a.id }}"{% if t.get('anchor_id') == a.id %} selected{% endif %}>{{ a.name }}</option>{% endfor %}</select></div>
+  <select id="{{ pre }}-anchor" name="t_anchor_id"><option value="">The first important place</option>{% if anchors|length > 1 %}<option value="all"{% if t.get('all_anchors') %} selected{% endif %}>Everyone's places (each one is checked)</option>{% endif %}{% for a in anchors %}<option value="{{ a.id }}"{% if t.get('anchor_id') == a.id %} selected{% endif %}>{{ a.name }}</option>{% endfor %}</select></div>
 <div class="field"><label for="{{ pre }}-mode">By</label>
   <select id="{{ pre }}-mode" name="t_mode">{% for m in COMMUTE_MODES %}<option value="{{ m }}"{% if (t.get('mode') or 'bike') == m %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></div>
 <div class="field"><label for="{{ pre }}-min">Minutes or less</label><input id="{{ pre }}-min" name="t_minutes" type="number" step="1" value="{{ t.get('minutes', '') }}"></div>
