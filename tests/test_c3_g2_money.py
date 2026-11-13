@@ -109,7 +109,7 @@ def test_scam_sorts_after_failing():
     fail = scoring.score_place({"beds": 1}, crit, serious_flag=False)
     scam = scoring.score_place({"beds": 2}, crit, serious_flag=True)
     scam_fail = scoring.score_place({"beds": 1}, crit, serious_flag=True)
-    assert [x["sort_group"] for x in (fit, fail, scam, scam_fail)] == [0, 1, 2, 2]
+    assert [x["sort_group"] for x in (fit, fail, scam, scam_fail)] == [0, 2, 3, 3]
     rows = [{"title": n, "score": s, "score_total": s["total"]} for n, s in (("scam", scam), ("fail", fail), ("fit", fit))]
     rows.sort(key=scoring.sort_key)
     assert [r["title"] for r in rows] == ["fit", "fail", "scam"]

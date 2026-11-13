@@ -82,7 +82,8 @@ def test_score_is_weighted_and_unknown_counts_half():
     cost = money.true_monthly_cost(place, "rent")
     r = scoring.score_place(place, _criteria(), mode="rent", cost=cost)
     # price 1.0*30 + laundry 1.0*20 + beds unknown 0.5*10 = 55 of 60
-    assert r["total"] == round(100 * 55 / 60)
+    assert r["raw_total"] == round(100 * 55 / 60)
+    assert r["total"] == 85  # the price only passes while the utilities are unknown, so the score stops at 85
     assert r["unknown"] and not r["fails_dealbreaker"]
 
 

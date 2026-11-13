@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from . import enrich, helpers, redflags, stages
+from . import enrich, helpers, redflags, scoring, stages
 from .store import PLACE_DATE_LABELS, Store
 
 COMING_UP_DAYS = 14
@@ -42,7 +42,8 @@ def fits(place: dict[str, Any], high_messages: Any = None) -> bool:
 
 def is_near(place: dict[str, Any]) -> bool:
     """A must-have is missed by a little (only because of a guess): a near miss, so not a best fit."""
-    return bool((place.get("score") or {}).get("near"))
+    score = place.get("score") or {}
+    return bool(score.get("near")) or score.get("fit") == "near_miss"
 
 
 def is_best_fit(place: dict[str, Any]) -> bool:
@@ -53,44 +54,32 @@ def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[st
     """The top places by score that fit. ``rows`` are enriched places. Passed, won and hidden places are skipped."""
     open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and is_best_fit(p)]
     open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), -p["score_total"], p["title"].lower()))
-    return open_rows[:limit]
+    top = open_rows[:limit]
+    for p in top:
+        p["caution"] = caution(p)
+    return top
 
 
-NEAR_MISS_PCT = 0.03  # over the budget by less than this share counts as a near miss
+AI_TEXT_CAUTION = "Caution: the listing has text aimed at AI tools. Read it yourself before you rely on this score."
 
 
-def _near_miss_reason(place: dict[str, Any], over: float) -> str:
-    """' because pet rent counts' for the first cost line that, left out, would bring the place under the budget."""
-    names = {"pet_rent": ("pet rent", "counts"), "utilities": ("the utilities estimate", "counts"), "parking": ("parking", "counts"),
-             "other": ("the other monthly fees", "count"), "one_time": ("the one-time fees", "count")}
-    for line in (place.get("cost") or {}).get("lines") or []:
-        if line["key"] in names and (line["amount"] or 0) >= over - 1e-9 and (line["amount"] or 0) > 0:
-            name, verb = names[line["key"]]
-            return f" because {name} {verb}"
-    return ""
+def caution(place: dict[str, Any]) -> str:
+    """A short caution for a place shown as a best fit: its listing has text aimed at AI tools ('' otherwise).
+    A possible scam never gets here (it is not a best fit at all)."""
+    return AI_TEXT_CAUTION if any("aimed at AI tools" in str(f) for f in place.get("flags") or []) else ""
+
+
+NEAR_MISS_PCT = scoring.NEAR_MISS_PCT  # over the budget by less than this share counts as a near miss
 
 
 def near_miss_text(place: dict[str, Any]) -> str:
     """'$5 over because pet rent counts' when the place misses a must-have by a little (under 3 percent, or a price
     rule over only because of a guess) and fails nothing else (no other deal-breaker, no scam sign), else ''.
-    Any must-have that can be missed by a small amount (cost, commute minutes, size) can be the miss."""
+    The same rule as the place's shared fit state (``score.fit == "near_miss"``)."""
     score = place.get("score") or {}
     if place.get("score_total") is None or possible_scam(place):
         return ""
-    items = score.get("items") or []
-    misses = [i for i in items if i.get("dealbreaker_status") in ("fail", "near")]
-    if not misses:
-        return ""
-    texts = []
-    for item in misses:
-        over, pct = item.get("over_amount"), item.get("over_pct")
-        if over is None or pct is None or over <= 0 or (pct >= NEAR_MISS_PCT and item.get("dealbreaker_status") != "near"):
-            return ""
-        if item["kind"] == "price":
-            texts.append(f"${over:,.0f} over" + _near_miss_reason(place, over))
-        else:
-            texts.append(item.get("gap") or f"{item.get('label', 'A must-have')} is just short")
-    return "; ".join(texts)
+    return "; ".join(p["text"] for p in scoring.near_parts(score, place.get("cost")))
 
 
 def near_misses(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
