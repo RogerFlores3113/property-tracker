@@ -457,7 +457,7 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
         return _result(None, value, target, "The " + " and the ".join(unknown) + " is not filled in, so it counts as a maybe.",
                        known=False, passes=None)
     limits = ([f"limit {_fmt(w_limit)} lb"] if has_dog and weight and w_limit is not None else []) \
-        + ([f"up to {_fmt(c_limit)} pets"] if count and c_limit is not None else [])
+        + ([f"up to {_fmt(c_limit)} pet" + ("" if c_limit == 1 else "s")] if count and c_limit is not None else [])
     return _result(1.0, value, target, "Fits your pets" + (f" ({', '.join(limits)})." if limits else "."), known=True, passes=True)
 
 
