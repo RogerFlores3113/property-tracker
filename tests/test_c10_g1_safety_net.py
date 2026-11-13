@@ -53,9 +53,9 @@ def test_every_amount_is_placed_or_noted(listing, amount):
 
 
 def test_cleaning_fee_note_text():
-    r = parsers.parse_listing("2 bed apartment $1,400/mo. There is a $200 cleaning fee at move-in.")
+    r = parsers.parse_listing("2 bed apartment $1,400/mo. There is a $75 key fob fee at move-in.")
     assert r["price"] == 1400
-    assert 'The listing also says "There is a $200 cleaning fee at move-in". It is not counted anywhere. Check what it is for.' in r["found_in_listing"]
+    assert 'The listing also says "There is a $75 key fob fee at move-in". It is not counted anywhere. Check what it is for.' in r["found_in_listing"]
 
 
 def test_weight_limits_are_placed_or_noted():
@@ -135,7 +135,7 @@ def test_net_never_changes_a_field():
 
 
 # ---- saved notes
-LISTING = "2 bed apartment $1,400/mo. 12 month lease. 12 Elm St, Champaign, IL. There is a $200 cleaning fee at move-in."
+LISTING = "2 bed apartment $1,400/mo. 12 month lease. 12 Elm St, Champaign, IL. There is a $75 key fob fee at move-in."
 
 
 def _search(store, mode="rent"):
@@ -169,9 +169,9 @@ def test_web_save_keeps_notes_and_the_place_page_shows_them(client, store):
                     follow_redirects=False)
     assert r.status_code == 303
     p = store.list_places()[0]
-    assert "$200 cleaning fee" in p["reader_notes"]
+    assert "$75 key fob fee" in p["reader_notes"]
     html = client.get(f"/places/{p['id']}").text
-    assert "From the listing when it was added" in html and "$200 cleaning fee at move-in" in html
+    assert "From the listing when it was added" in html and "$75 key fob fee at move-in" in html
 
 
 def test_web_save_escapes_html_in_notes(client, store):
@@ -195,11 +195,11 @@ def test_mcp_add_place_reply_get_place_and_compare(store):
     _search(store)
     srv = server(store)
     out = text(call(srv, "add_place", title="Elm", address="12 Elm St", listing_text=LISTING))
-    assert "$200 cleaning fee" in out and "<untrusted" in out
+    assert "$75 key fob fee" in out and "<untrusted" in out
     p = store.list_places()[0]
-    assert "$200 cleaning fee" in p["reader_notes"]
+    assert "$75 key fob fee" in p["reader_notes"]
     got = text(call(srv, "get_place", place_id=p["id"]))
-    assert 'source="notes the reader made from the listing when it was added"' in got and "$200 cleaning fee" in got
+    assert 'source="notes the reader made from the listing when it was added"' in got and "$75 key fob fee" in got
     q, _ = store.add_place(title="Other", address="9 Oak St", price=1300)
     cmp_text = text(call(srv, "compare_places", place_ids=[p["id"], q["id"]]))
     assert "Listing notes" in cmp_text
