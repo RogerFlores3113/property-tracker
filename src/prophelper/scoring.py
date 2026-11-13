@@ -327,11 +327,17 @@ def _score_commute(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]
     if over:
         who = [f"{a['name']}: {f['minutes']:.0f} min, limit {mins:.0f}" for a, f in over] if many \
             else [f"Commute {over[0][1]['minutes']:.0f} min, limit {mins:.0f}"]
-        detail = ("; ".join(who) + ".") if many else f"{worst - mins:.0f} min over your limit."
+        tag = {"ai": " (added by Claude)", "you": " (you added)"}
+        who_text = [f"{a['name']}: {f['minutes']:.0f} min{tag.get(f['source'], '')}, limit {mins:.0f}" for a, f in over]
+        detail = ("; ".join(who_text) + ".") if many else f"{worst - mins:.0f} min over your limit."
+        if not many and over[0][1]["source"] in tag:
+            detail += " The time was" + tag[over[0][1]["source"]].replace("(", "").replace(")", "") + "."
     else:
         detail = "Everyone is within your limit." if many else "Within your limit."
-    if any(f["source"] == "estimate" for _, f in found_all):
-        detail += " This is an estimate from the map, so check it."
+    guessed = [x for x, f in found_all if f["source"] == "estimate"]
+    if guessed:  # only a time the app worked out is an estimate; a saved time is never called one
+        detail += (" This is an estimate from the map, so check it." if len(guessed) == len(found_all)
+                   else f" The time for {', '.join(x['name'] for x in guessed)} is an estimate from the map, so check it.")
     if missing:
         detail += " No time yet for " + ", ".join(a["name"] for a in missing) + "."
     gap = "; ".join(who) if over else ""

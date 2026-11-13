@@ -369,7 +369,16 @@ ALTER TABLE places ADD COLUMN application_fee_per_adult INTEGER NOT NULL DEFAULT
 ALTER TABLE searches ADD COLUMN adults INTEGER;
 """
 
-_MIGRATIONS: list[str] = [_SCHEMA_V1, _SCHEMA_V2_PLACE_DATES, _MIGRATION_PEOPLE, _MIGRATION_PETS_APPLY, _MIGRATION_OPINIONS, _MIGRATION_BUYER_FIELDS, _MIGRATION_RENT_UPFRONT, _MIGRATION_CREDIT_ADULTS]
+# Important places belong to one search (search_id; NULL for the ones saved before this step, which every search still
+# sees), and a buy search can have its own down payment percent (NULL means use the Settings value).
+_MIGRATION_SEARCH_ANCHORS = """
+ALTER TABLE anchors ADD COLUMN search_id INTEGER;
+CREATE INDEX idx_anchors_search ON anchors(search_id);
+ALTER TABLE searches ADD COLUMN down_payment_pct REAL;
+"""
+
+_MIGRATIONS: list[str] = [_SCHEMA_V1, _SCHEMA_V2_PLACE_DATES, _MIGRATION_PEOPLE, _MIGRATION_PETS_APPLY, _MIGRATION_OPINIONS, _MIGRATION_BUYER_FIELDS, _MIGRATION_RENT_UPFRONT, _MIGRATION_CREDIT_ADULTS,
+                          _MIGRATION_SEARCH_ANCHORS]
 
 
 class NotFound(LookupError):
@@ -941,10 +950,16 @@ class Store:
         out.update({r["key"]: r["value"] for r in self._rows("SELECT key, value FROM settings")})
         return out
 
-    def buy_settings(self) -> dict[str, str]:
-        """down_payment_pct, mortgage_rate, loan_years and pmi_rate_pct as saved (text), for :mod:`money`."""
+    def buy_settings(self, search_id: int | None = None) -> dict[str, str]:
+        """down_payment_pct, mortgage_rate, loan_years and pmi_rate_pct as saved (text), for :mod:`money`. With a
+        ``search_id`` whose search has its own down payment, that one replaces the Settings value."""
         s = self.all_settings()
-        return {k: s[k] for k in ("down_payment_pct", "mortgage_rate", "loan_years", "pmi_rate_pct", "closing_cost_pct")}
+        out = {k: s[k] for k in ("down_payment_pct", "mortgage_rate", "loan_years", "pmi_rate_pct", "closing_cost_pct")}
+        if search_id is not None:
+            row = self._row("SELECT down_payment_pct FROM searches WHERE id = ?", (int(search_id),))
+            if row and row["down_payment_pct"] is not None:
+                out["down_payment_pct"] = str(_tidy_num(row["down_payment_pct"]))
+        return out
 
     # ------------------------------------------------------------------ searches
     def _search_values(self, fields: dict[str, Any], partial: bool) -> dict[str, Any]:
@@ -1004,6 +1019,11 @@ class Store:
             out["pet_count"] = None if n is None else int(n)
         if "people_names" in fields:
             out["people_names"] = json.dumps(clean_people_names(fields["people_names"]))
+        if "down_payment_pct" in fields:
+            n = to_number(fields["down_payment_pct"], "the down payment")
+            if n is not None and not 0 <= n <= 100:
+                raise ValueError("The down payment is a percent from 0 to 100, or empty to use the one in Settings.")
+            out["down_payment_pct"] = n
         if "is_sample" in fields:
             out["is_sample"] = 1 if fields["is_sample"] else 0
         return out
@@ -1140,6 +1160,7 @@ class Store:
         """Delete a search with its criteria, places and everything on them. App window only."""
         self.get_search(search_id)
         with self._write():
+            self._exec("DELETE FROM anchors WHERE search_id = ?", (search_id,))  # its own important places (and their saved times) go too
             self._exec("DELETE FROM searches WHERE id = ?", (search_id,))
             if self.get_setting("current_search_id", "") == str(search_id):
                 self.set_setting("current_search_id", "")
@@ -1247,8 +1268,13 @@ class Store:
             out["is_sample"] = 1 if fields["is_sample"] else 0
         return out
 
-    def add_anchor(self, name: str, address: str = "", lat: Any = None, lng: Any = None, *, is_sample: bool = False) -> dict[str, Any]:
+    def add_anchor(self, name: str, address: str = "", lat: Any = None, lng: Any = None, *, is_sample: bool = False,
+                   search_id: int | None = None) -> dict[str, Any]:
+        """Add an important place. ``search_id`` ties it to one search (None: a shared one every search sees)."""
         values = self._anchor_values({"name": name, "address": address, "lat": lat, "lng": lng, "is_sample": is_sample}, False)
+        if search_id is not None:
+            self.get_search(search_id)
+            values["search_id"] = int(search_id)
         cur = self._exec(f"INSERT INTO anchors({', '.join(values)}) VALUES ({', '.join('?' * len(values))})",
                          tuple(values.values()))
         return self.get_anchor(cur.lastrowid)
@@ -1267,8 +1293,12 @@ class Store:
             self._exec(f"UPDATE anchors SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?", (*values.values(), anchor_id))
         return self.get_anchor(anchor_id)
 
-    def list_anchors(self) -> list[dict[str, Any]]:
-        return [_tidy_row(r) for r in self._rows("SELECT * FROM anchors ORDER BY id")]
+    def list_anchors(self, search_id: int | None = None) -> list[dict[str, Any]]:
+        """The important places of one search, plus the older shared ones (no search). With no ``search_id``: all of them
+        (only for backups, exports of everything and the like)."""
+        if search_id is None:
+            return [_tidy_row(r) for r in self._rows("SELECT * FROM anchors ORDER BY id")]
+        return [_tidy_row(r) for r in self._rows("SELECT * FROM anchors WHERE search_id IS NULL OR search_id = ? ORDER BY id", (int(search_id),))]
 
     def delete_anchor(self, anchor_id: int) -> bool:
         """Delete an anchor and the commute times saved for it."""

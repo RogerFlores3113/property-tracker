@@ -50,7 +50,7 @@
     {% set c = place.cost %}
     {% if c.lines %}
     {% if c.total is not none %}<p class="cost-headline"><strong>{{ c.headline }}</strong>{% if c.per_person is not none %}<br><strong>{{ c.per_person|money }} per person</strong> <span class="fine">({{ c.people }} {{ c.split_noun or "people" }} sharing)</span>{% endif %}</p>{% endif %}
-    {% if c.mode == 'buy' and c.down_payment is not none %}<p class="fine">Down payment {{ c.down_payment|money }} ({{ c.settings.down_payment_pct|round(1) }}%). Loan {{ c.loan_amount|money }}.{% if c.pmi is not none %} Mortgage insurance (PMI) is a rough estimate of {{ c.pmi|money }} a month, since you put down under 20%.{% endif %}</p>{% endif %}
+    {% if c.mode == 'buy' and c.down_payment is not none %}<p class="fine">Down payment {{ c.down_payment|money }} ({{ '%g'|format(c.settings.down_payment_pct) }}%). Loan {{ c.loan_amount|money }}.{% if c.pmi is not none %} Mortgage insurance (PMI) is a rough estimate of {{ c.pmi|money }} a month, since you put down under 20%.{% endif %}</p>{% endif %}
     <table class="cost-table">
       {% for l in c.lines %}<tr><td>{{ l.label }}{% if l.note %}<div class="fine">{{ l.note }}</div>{% endif %}</td>
         <td class="amt">{% if l.amount is none %}<span class="missing">unknown</span>{% elif l.unset %}<span class="fine">Not known</span>{% else %}{{ l.amount|money(cents=True) }}{% endif %}</td></tr>{% endfor %}
@@ -191,6 +191,7 @@
           {% if place.address %}<form method="post" action="/places/{{ place.id }}/geocode" class="inline">{{ button("Find on map", small=True) }}</form>
           {% else %}Save an address under Facts, then press Find on map.{% endif %}
         {% endif %}
+        {% for o in r.others if o.found and o.found.source in ('you', 'ai') %}<br>Also saved: {{ o.found.minutes|round|int }} min {{ o.mode }}{{ ' (added by Claude)' if o.found.source == 'ai' else ' (you added)' }}{% endfor %}
         {% if not r.found and not r.anchor_has_point and not r.place_has_point %}
         <br>This place has no map point yet either.
           {% if place.address %}<form method="post" action="/places/{{ place.id }}/geocode" class="inline">{{ button("Find on map for this place", small=True) }}</form>{% endif %}

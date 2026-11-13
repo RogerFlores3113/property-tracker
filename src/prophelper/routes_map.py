@@ -22,7 +22,7 @@ router = APIRouter()
 def map_page(request: Request, anchor: str = "", show_hidden: int = 0):
     store = get_store(request)
     search = store.current_search()
-    anchors = store.list_anchors()
+    anchors = store.list_anchors(search["id"] if search else None)
     tiles = store.get_setting_bool("map_tiles")
     if search is None:
         return render(request, "map.html", search=None, anchors=anchors, chosen=None, tiles=tiles, data=mapdata.build([], anchors, tiles=tiles, anchor=None)["data"],

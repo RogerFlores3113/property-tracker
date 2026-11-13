@@ -69,7 +69,7 @@ def load_sample_data(store: Store) -> int:
         return 0
     search = store.add_search(SEARCH_NAME, "rent", area="Champaign-Urbana near campus", move_in="2027-07-31",
                               budget_max=1600, is_sample=True)
-    anchor = store.add_anchor(ANCHOR["name"], ANCHOR["address"], ANCHOR["lat"], ANCHOR["lng"], is_sample=True)
+    anchor = store.add_anchor(ANCHOR["name"], ANCHOR["address"], ANCHOR["lat"], ANCHOR["lng"], is_sample=True, search_id=search["id"])
     sid = search["id"]
     store.add_criterion(sid, "price", label="Monthly cost, at most $1,600", weight=30, dealbreaker=True, target={"max": 1600})
     store.add_criterion(sid, "laundry", label="Washer and dryer in the unit", weight=20, dealbreaker=True, target={"want": "in_unit"})

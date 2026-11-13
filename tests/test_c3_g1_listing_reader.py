@@ -161,6 +161,9 @@ def test_migration_adds_the_two_columns(tmp_path):
     for col in ("seller_credit", "application_fee_per_adult"):
         con.execute(f"ALTER TABLE places DROP COLUMN {col}")  # the step after these two
     con.execute("ALTER TABLE searches DROP COLUMN adults")
+    con.execute("DROP INDEX idx_anchors_search")  # nor the per-search anchors and down payment of cycle 6
+    con.execute("ALTER TABLE anchors DROP COLUMN search_id")
+    con.execute("ALTER TABLE searches DROP COLUMN down_payment_pct")
     con.execute("PRAGMA user_version = 6")
     con.commit()
     con.close()

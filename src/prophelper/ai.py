@@ -268,7 +268,7 @@ def _place_block(store: Store, place: dict[str, Any], search: dict[str, Any], fu
             parts.append(f"{label}: {guards.inline(search[key], 200)}")
     if search.get("budget_max"):
         parts.append(f"Budget: {_money(search['budget_max'])}" + (" a month" if search["mode"] == "rent" else ""))
-    parts.append("WHAT I WANT (my criteria, heavier weight matters more):\n" + _criteria_lines(store.list_criteria(search["id"]), store.list_anchors()))
+    parts.append("WHAT I WANT (my criteria, heavier weight matters more):\n" + _criteria_lines(store.list_criteria(search["id"]), store.list_anchors(search["id"])))
     lines = [f"Name: {guards.inline(place['title'], 300)}"]
     for key, label in _FACTS:
         if search.get("mode") == "buy" and key in ("lease_months", "utilities_included"):

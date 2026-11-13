@@ -122,7 +122,7 @@ def export_search(store: Store, search_id: int) -> dict[str, Any]:
     criteria = store.list_criteria(search_id)
     places = store.list_places(search_id)
     commutes = store.list_commutes_for_search(search_id)
-    anchors_by_id = {a["id"]: a for a in store.list_anchors()}
+    anchors_by_id = {a["id"]: a for a in store.list_anchors(search_id)}
     used: list[int] = []
 
     def anchor_index(anchor_id: Any) -> int | None:
@@ -170,7 +170,7 @@ def export_search(store: Store, search_id: int) -> dict[str, Any]:
         "format": FORMAT_NAME, "version": FORMAT_VERSION, "exported_on": date.today().isoformat(),
         "search": {"name": search["name"], "mode": search["mode"], "area": search["area"], "move_in": search["move_in"],
                    "target_close": search["target_close"], "budget_max": search["budget_max"],
-                   "hide_dealbreakers": bool(search["hide_dealbreakers"]), "people": search["people"], "adults": search.get("adults"),
+                   "hide_dealbreakers": bool(search["hide_dealbreakers"]), "people": search["people"], "adults": search.get("adults"), "down_payment_pct": search.get("down_payment_pct"),
                    "people_names": list(search.get("people_names") or [])},
         "criteria": crit_out, "anchors": anchors_out, "places": places_out,
     }
@@ -296,17 +296,17 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
     fields_skipped: list[str] = []
     with store._write():
         mode = str(s.get("mode") or "rent")
-        fields = {k: s.get(k) for k in ("area", "move_in", "target_close", "budget_max", "people", "adults", "people_names") if s.get(k) not in (None, "")}
+        fields = {k: s.get(k) for k in ("area", "move_in", "target_close", "budget_max", "people", "adults", "people_names", "down_payment_pct") if s.get(k) not in (None, "")}
         fields["hide_dealbreakers"] = bool(s.get("hide_dealbreakers"))
         for key in [k for k in fields if k != "hide_dealbreakers"]:  # a value that can't be read is left out, the rest is kept
             try:
                 store._search_values({key: fields[key]}, partial=True)  # noqa: SLF001
             except (ValueError, TypeError, OverflowError):
                 fields.pop(key)
-                fields_skipped.append({"move_in": "move-in date", "target_close": "closing date", "budget_max": "budget"}.get(key, key.replace("_", " ")))
+                fields_skipped.append({"move_in": "move-in date", "target_close": "closing date", "budget_max": "budget", "down_payment_pct": "down payment"}.get(key, key.replace("_", " ")))
         search = store.add_search(imported_name(s.get("name")), mode, **fields)
         sid = search["id"]
-        existing = store.list_anchors()
+        existing = store.list_anchors(sid)
         anchor_ids: dict[int, int] = {}
         for i, a in enumerate(doc["anchors"]):
             name = " ".join(str(a.get("name") or "").split())
@@ -315,7 +315,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
             addr = str(a.get("address") or "").strip()
             match = next((e for e in existing if e["name"].lower() == name.lower() and (e["address"] or "").lower() == addr.lower()), None)
             try:
-                made = match or store.add_anchor(name, addr, a.get("lat"), a.get("lng"))
+                made = match or store.add_anchor(name, addr, a.get("lat"), a.get("lng"), search_id=sid)
             except ValueError:
                 anchors_skipped += 1
                 continue

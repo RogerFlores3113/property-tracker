@@ -37,11 +37,11 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     ``hidden_by_dealbreaker``, ``people`` and ``per_person`` (the cost split, when more than one person shares it).
     A place is never hidden by a deal-breaker when it has a tour, a linked contact or a stage past Saved
     (``protected``; looked up when left as None)."""
-    anchors = store.list_anchors() if anchors is None else anchors
+    anchors = store.list_anchors(search["id"]) if anchors is None else anchors
     commutes = store.list_commutes(place["id"]) if commutes is None else commutes
     criteria = store.list_criteria(search["id"]) if criteria is None else criteria
     tours = store.list_tours(place["id"]) if tours is None else tours
-    settings = store.buy_settings() if settings is None else settings
+    settings = store.buy_settings(search["id"]) if settings is None else settings
     people = int(search.get("people") or 1)
     cost = money.true_monthly_cost(place, search["mode"], settings, people, pets=money.has_pets(search.get("pet_kind")),
                                    adults=search.get("adults"))
@@ -82,13 +82,13 @@ def enrich_places(store: Store, search: dict[str, Any], places: list[dict[str, A
     """Enrich many places of one search with the shared lookups done once. ``places`` defaults to the search's
     open (not archived) places."""
     places = store.list_places(search["id"]) if places is None else places
-    anchors = store.list_anchors()
+    anchors = store.list_anchors(search["id"])
     criteria = store.list_criteria(search["id"])
     commutes = store.list_commutes_for_search(search["id"])
     tours_by: dict[int, list[dict[str, Any]]] = {}
     for t in store.list_tours(search_id=search["id"]):
         tours_by.setdefault(t["place_id"], []).append(t)
-    settings = store.buy_settings()
+    settings = store.buy_settings(search["id"])
     protected = store.protected_place_ids(search["id"])
     all_prices = [p["price"] for p in store.list_places(search["id"]) if p.get("price")]
     out = []
