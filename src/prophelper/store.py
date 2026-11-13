@@ -1303,6 +1303,8 @@ class Store:
                 # normalized form. A link typed without http(s):// gets https:// so it still opens.
                 if text and not normalize_url(text):
                     raise ValueError("That link doesn't look like a web address (it should start with https://).")
+                if text and re.match(r"^(https?://)?[^/?#\s]*@", text, re.I):
+                    raise ValueError("That link has a user name or password in it, so I won't save it. Use the plain listing address without it.")
                 out[key] = text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text
             else:
                 out[key] = _text(raw, TEXT_LIMITS.get(key, 500))

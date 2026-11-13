@@ -42,12 +42,14 @@ def _preview_page(request: Request, token: str, state: dict, mapping: dict[int, 
     search = store.get_search(state["search_id"])
     plan = csv_io.plan_import(store, state["search_id"], state["headers"], state["rows"], mapping)
     shown = [p for p in plan if p["status"] != "new" and not p.get("blank")][:60]
-    new_sample = [p for p in plan if p["status"] == "new"][:8]
+    new_rows = [p for p in plan if p["status"] == "new"]
+    new_sample = sorted(new_rows, key=lambda p: (not p["warnings"], p["row"]))[:8]  # rows with something to check come first
+    new_sample.sort(key=lambda p: p["row"])
     examples = [next((r[i].strip()[:40] for r in state["rows"][:50] if i < len(r) and r[i].strip()), "") for i in range(len(state["headers"]))]
     unmatched = [h for i, h in enumerate(state["headers"]) if i not in mapping and h]
     counts = csv_io.summarize(plan)
     return render(request, "import_preview.html", status_code=status, token=token, search=search, filename=state["filename"], examples=examples,
-                  headers=state["headers"], mapping=mapping, field_options=list(csv_io.FIELD_LABELS.items()), plan=plan,
+                  headers=state["headers"], mapping=mapping, field_options=list(csv_io.FIELD_LABELS.items()), field_labels=csv_io.FIELD_LABELS, plan=plan,
                   counts=counts, others=shown, computed={i for i, h in enumerate(state["headers"]) if csv_io.is_computed_header(h)}, new_sample=new_sample, unmatched=unmatched,
                   total_rows=counts["places"], blank_rows=counts["blank"], form_error=error)
 

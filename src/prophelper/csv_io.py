@@ -250,6 +250,10 @@ def read_table(data: bytes) -> tuple[list[str], list[list[str]]]:
         raise CsvProblem(f"That file couldn't be read as a spreadsheet (CSV) ({exc}).") from None
     if len(rows) < 2:
         raise CsvProblem("The file needs a heading row and at least one place under it.")
+    while len(rows) > 1 and not rows[-1]:
+        rows.pop()  # empty lines at the very end (a final newline) are not rows; a row of empty cells (",,") still counts as empty
+    if len(rows) < 2:
+        raise CsvProblem("The file needs a heading row and at least one place under it.")
     headers = [h.strip() for h in rows[0]]
     if len(headers) > MAX_COLUMNS:
         raise CsvProblem(f"That file has {len(headers)} columns. The most I read is {MAX_COLUMNS}.")
@@ -371,6 +375,7 @@ def summarize(plan: list[dict[str, Any]]) -> dict[str, int]:
         else:
             counts[item["status"]] += 1
     counts["places"] = counts["new"] + counts["match"] + counts["repeat"] + counts["skip"]
+    counts["unreadable"] = sum(1 for i in plan if i["status"] in ("new", "match") and i["warnings"])  # rows with a value I could not read
     return counts
 
 

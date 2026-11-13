@@ -91,7 +91,7 @@ def test_board_card_label(store):
     s = store.add_search("Rent", "rent")
     store.add_place(search_id=s["id"], title="Flat", address="2 Elm St")
     html = local_client(store).get("/board").text
-    assert "Moved today" in html
+    assert "Added today" in html  # a place that has never moved says Added (cycle 5)
 
 
 def test_map_passed_pin_dimmed_and_labelled():

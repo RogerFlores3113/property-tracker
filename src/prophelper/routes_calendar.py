@@ -230,7 +230,11 @@ async def book_tour(request: Request, place_id: int):
         said += f" The place stays at {after['stage']}. Move it yourself when you are ready."
     clash = store.overlapping_tour(tour, buffer_minutes=60)
     if clash:
-        said += f" Heads up: it is close to your tour at {clash['title']} ({helpers.local_time(clash['starts_at'])}). Check you can get from one to the other."
+        at = f"{clash['title']} ({helpers.local_time(clash['starts_at'])})"
+        if store.overlapping_tour(tour, buffer_minutes=0):
+            said += f" Heads up: it overlaps your tour at {at}. You can't be at both, so move one of them."
+        else:
+            said += f" Heads up: it is close to your tour at {at}. Check you can get from one to the other."
     return redirect(f"/places/{place_id}#tours", notice=said)
 
 
