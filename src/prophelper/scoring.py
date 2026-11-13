@@ -246,6 +246,9 @@ def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[
             text = f"${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near")))
         else:
             text = item.get("gap") or f"{item.get('label', 'A must-have')} is just short"
+            pts = item.get("points_lost") or 0
+            if item["kind"] == "commute" and pts:
+                text += f", cost {pts} point{'' if pts == 1 else 's'}"
         shown = ("Price" if (cost or {}).get("mode") == "buy" else KIND_LABELS["price"]) if item["kind"] == "price" else item.get("label") or ""
         out.append({"label": shown, "kind": item["kind"], "text": text})
     return out
@@ -326,10 +329,10 @@ def _score_commute(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]
     score = 1.0 if worst <= mins else 1 - (worst - mins) / mins
     if over:
         who = [f"{a['name']}: {f['minutes']:.0f} min, limit {mins:.0f}" for a, f in over] if many \
-            else [f"Commute {over[0][1]['minutes']:.0f} min, limit {mins:.0f}"]
+            else [f"Commute to {over[0][0]['name']} {over[0][1]['minutes']:.0f} min, limit {mins:.0f}"]
         tag = {"ai": " (added by Claude)", "you": " (you added)"}
         who_text = [f"{a['name']}: {f['minutes']:.0f} min{tag.get(f['source'], '')}, limit {mins:.0f}" for a, f in over]
-        detail = ("; ".join(who_text) + ".") if many else f"{worst - mins:.0f} min over your limit."
+        detail = ("; ".join(who_text) + ".") if many else f"{over[0][0]['name']}: {worst - mins:.0f} min over your limit."
         if not many and over[0][1]["source"] in tag:
             detail += " The time was" + tag[over[0][1]["source"]].replace("(", "").replace(")", "") + "."
     else:
@@ -341,12 +344,10 @@ def _score_commute(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]
     if missing:
         detail += " No time yet for " + ", ".join(a["name"] for a in missing) + "."
     gap = "; ".join(who) if over else ""
-    if over and not many and len(ctx.get("anchors", {})) > 1:
-        gap += f" ({over[0][0]['name']})"
     r = _result(score, value, target, detail, known=True, passes=not over, gap=gap)
     if over:
         r["over_amount"], r["over_pct"] = worst - mins, (worst - mins) / mins
-        r["concern"] = gap if many else f"Commute {over[0][1]['minutes']:.0f} min {mode}, over your {mins:.0f} min"
+        r["concern"] = gap if many else f"Commute to {over[0][0]['name']} {over[0][1]['minutes']:.0f} min {mode}, over your {mins:.0f} min"
     return r
 
 
@@ -566,6 +567,9 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
            "custom_scores": custom_scores or {}, "mode": mode, "pets": pets or {}, "people": people}
     items = [score_criterion(c, place, ctx) for c in criteria]
     total_w = sum(max(0.0, float(i["weight"] or 0)) for i in items)
+    for i in items:  # points this criterion costs the score (a must-have too), for the plain "cost N points" notes
+        i["points_lost"] = int(round(100 * max(0.0, float(i["weight"] or 0)) * (1 - i["score"]) / total_w + 1e-9)) if total_w > 0 else 0
+    notes: list[str] = []
     raw = None
     if items and total_w > 0:
         raw = int(round(100 * sum(max(0.0, float(i["weight"] or 0)) * i["score"] for i in items) / total_w + 1e-9))
@@ -577,8 +581,12 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     concerns = [i["gap"] for i in items if i["dealbreaker_status"] == "near" and i["gap"]]
     for i in items:
         if i.get("concern") and i["dealbreaker_status"] != "fail":
-            pts = int(round(100 * max(0.0, float(i["weight"] or 0)) * (1 - i["score"]) / total_w + 1e-9)) if total_w > 0 and not i["dealbreaker"] else 0
-            concerns.append(f"{i['concern']}, cost {pts} point{'' if pts == 1 else 's'}" if pts else i["concern"])
+            pts = i["points_lost"] if not i["dealbreaker"] else 0
+            text = f"{i['concern']}, cost {pts} point{'' if pts == 1 else 's'}" if pts else i["concern"]
+            if not i["dealbreaker"] and not (i.get("over_pct") or 0) > 0.25:
+                notes.append(text)  # a nice-to-have a little over its limit is a plain fit with a note, not "Fits, but check"
+            else:
+                concerns.append(text)
     far_commute = any(i.get("concern") and (i.get("over_pct") or 0) > 0.25 for i in items)
     late = _late_opening(place, search, mode)
     if late:
@@ -637,7 +645,7 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
             "failed": failed, "near": near, "concerns": concerns, "caps": caps, "check": check, "fails_dealbreaker": bool(failed), "needs_check": bool(check),
             "fit": fit, "fit_label": fit_label, "fit_reasons": reasons, "near_texts": near_texts, "near_parts": parts_ if fit == "near_miss" else [], "conditional": conditional,
             "conditional_costs": [i["conditional"] for i in items if i.get("conditional") and i["dealbreaker_status"] == "pass"],
-            "late_penalty": LATE_PENALTY if late else 0, "late_note": late,
+            "late_penalty": LATE_PENALTY if late else 0, "late_note": late, "notes": notes,
             "scam": scam, "sort_group": SORT_GROUPS[fit], "cost": ctx["cost"]}
 
 

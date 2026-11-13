@@ -76,10 +76,12 @@ def test_ai_text_flag_gets_a_caution_in_best_fits_and_scams_are_left_out(store):
     assert titles["Scam"]["possible_scam"]
     best = today.best_fits(rows)
     assert [p["title"] for p in best] == ["Ai"] and best[0]["caution"]
-    assert "Caution" in text(call(server(store), "todays_list"))
-    assert "Caution" in local_client(store).get("/").text
+    assert "Check first: text aimed at AI tools in the listing" in text(call(server(store), "todays_list"))
+    assert "Check first: text aimed at AI tools in the listing" in local_client(store).get("/").text
     out = text(call(server(store), "todays_list"))
-    assert "Scam" not in out.split("Tours in the next")[0]
+    # C7: a possible scam is not a best fit, but Today lists it under "Check first" instead of hiding it
+    assert "Scam" not in out.split("Best fits right now:")[1].split("Check first: #")[0]
+    assert "Check first: #2" in out
 
 
 def test_late_opening_reason_shows_and_lowers_score(store):

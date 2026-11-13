@@ -92,7 +92,7 @@ def test_build_rows_marks_the_cheapest_and_highest_score(sample_store):
     assert not any(c["best"] for c in cost["cells"]) and not any(c["best"] for c in rows["score"]["cells"])
     # C6: the one lowest-cost rule names the only place that fits, and says it is the lowest of the places that fit
     lines = compare.summary_lines(places, sections)
-    assert any("Maple Row Flats has the lowest true monthly cost (of the places that fit)" in line for line in lines)
+    assert any("Maple Row Flats has the lowest true monthly cost of the places that fit" in line for line in lines)
     assert not any("Prairie Commons has the lowest" in line or "Quad View Lofts has the lowest" in line for line in lines)
 
 

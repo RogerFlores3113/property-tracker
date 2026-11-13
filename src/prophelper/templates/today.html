@@ -58,6 +58,31 @@
 </section>
 {% endif %}
 
+{% if needs_price %}
+<section class="card" aria-labelledby="needs-price-h">
+  <h2 id="needs-price-h">Needs a price <span class="count">{{ needs_price|length|num }}</span></h2>
+  <ul class="items">
+    {% for p in needs_price %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ score_pill(p.score_total, p.band) }}
+      <span class="item-sub">No price yet. It can't be ranked until you add one.</span></div></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if check_first %}
+<section class="card" aria-labelledby="check-first-h">
+  <h2 id="check-first-h">Check first <span class="count">{{ check_first|length|num }}</span></h2>
+  <ul class="items">
+    {% for n in check_first %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a>
+      <span class="item-sub flag">{{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">These are not in Best fits or New places. They stay on the <a href="/board">board</a>.</p>
+</section>
+{% endif %}
+
 {% if near_miss %}
 <section class="card" aria-labelledby="near-h">
   <h2 id="near-h">Near miss <span class="count">{{ near_miss|length|num }}</span></h2>

@@ -106,8 +106,9 @@ def _commute_setup(store, dealbreaker):
 def test_nice_to_have_commute_says_points_lost(store):
     s, p = _commute_setup(store, False)
     sc = _row(store, s, p)["score"]
-    assert sc["fit_label"] == "Fits, but check"
-    assert "Commute 24 min bike, over your 20 min, cost 10 points" in sc["concerns"]
+    # C7: a nice-to-have commute a little over its limit is a plain fit; the cost is a note in the score line
+    assert sc["fit_label"] == "Fits" and not sc["concerns"]
+    assert "Commute to Campus 24 min bike, over your 20 min, cost 10 points" in sc["notes"]
 
 
 def test_must_have_commute_over_limit_does_not_fit(store):
