@@ -134,6 +134,30 @@ def criterion_modes(criteria: Iterable[dict[str, Any]], anchors: Iterable[dict[s
     return out
 
 
+def assumed_modes(criteria: Iterable[dict[str, Any]], anchors: Iterable[dict[str, Any]], people: int = 1) -> dict[Any, str]:
+    """{anchor id: mode} for the places no commute rule names, when the search has at least one commute rule: they
+    take the way of the first rule, so a bike search never shows a drive time for its other places."""
+    anchors = list(anchors)
+    criteria = list(criteria)
+    named = criterion_modes(criteria, anchors, people)
+    rules = [c for c in criteria if c.get("kind") == "commute"]
+    if not rules:
+        return {}
+    first = (rules[0].get("target") or {}).get("mode") or "bike"
+    return {a["id"]: first for a in anchors if a["id"] not in named}
+
+
+ASSUMED_FASTEST = "No commute rule names a way for this place, so this assumes the fastest of walk, bike and drive."
+ASSUMED_RULE = "No commute rule is set for this place, so this uses the way of your other commute rule ({mode})."
+
+
+def assumption_note(rule_mode: str | None, assumed_mode: str | None, found: dict[str, Any] | None) -> str:
+    """Plain words saying which way an estimate assumes, or "" when a rule or a saved time decided it."""
+    if not found or found.get("source") != "estimate" or rule_mode:
+        return ""
+    return ASSUMED_RULE.format(mode=assumed_mode) if assumed_mode else ASSUMED_FASTEST
+
+
 def show_commute(place: dict[str, Any], anchor: dict[str, Any], stored: Iterable[dict[str, Any]] = (),
                  mode: str | None = None) -> dict[str, Any] | None:
     """The ONE commute to show for a place and an important place (Compare, share, CSV, cards, the place page, Claude).
@@ -183,11 +207,13 @@ def all_commutes(place: dict[str, Any], anchors: Iterable[dict[str, Any]], store
     anchors = list(anchors)
     stored = list(stored)
     modes = criterion_modes(criteria, anchors, people)
+    guess = assumed_modes(criteria, anchors, people)
     out = []
     for a in anchors:
-        r = show_commute(place, a, stored, modes.get(a["id"]))
+        r = show_commute(place, a, stored, modes.get(a["id"]) or guess.get(a["id"]))
         if r:
-            out.append({"anchor": a.get("name", ""), "anchor_id": a.get("id"), **r})
+            note = assumption_note(modes.get(a["id"]), guess.get(a["id"]), r)
+            out.append({"anchor": a.get("name", ""), "anchor_id": a.get("id"), **r, **({"assumed": note} if note else {})})
     return out
 
 
@@ -199,9 +225,13 @@ def place_rows(place: dict[str, Any], anchors: Iterable[dict[str, Any]], stored:
     stored = list(stored)
     anchors = list(anchors)
     crit = criterion_modes(criteria, anchors, people)
+    guess = assumed_modes(criteria, anchors, people)
     rows = []
     for a in anchors:
-        mode, found = pick_for_anchor(place, a, stored, crit.get(a["id"]))
+        mode, found = pick_for_anchor(place, a, stored, crit.get(a["id"]) or guess.get(a["id"]))
+        if found:
+            note = assumption_note(crit.get(a["id"]), guess.get(a["id"]), found)
+            found = {**found, **({"assumed": note} if note else {})}
         mode = mode or "bike"
         others = [{"mode": m, "found": resolve(place, a, m, stored)} for m in MODES if m != mode]
         rows.append({"anchor": a, "mode": mode, "found": found, "others": others,

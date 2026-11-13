@@ -272,6 +272,18 @@ def _deposit_unknown(p: dict[str, Any], c: dict[str, Any] | None) -> bool:
     return p.get("deposit") in (None, "")
 
 
+def cash_unknown_names(p: dict[str, Any]) -> list[str]:
+    """What a renter's move-in cash leaves out because nobody filled it in, besides the deposit: 'pet charges', 'parking'."""
+    if p["cost"].get("mode") == "buy" or not p["cost"].get("cash_at_move_in"):
+        return []
+    out = []
+    if _pet_charges_unknown(p):
+        out.append("pet charges")
+    if str(p.get("parking") or "") in ("garage", "covered", "lot") and p.get("parking_cost") in (None, ""):
+        out.append("parking")  # a kind of parking that usually costs something, with no price filled in
+    return out
+
+
 def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     """Cash due up front: for a buyer, down payment + closing costs (a guess when not entered) + a special assessment the
     buyer pays; for a renter, the move-in cash (at least that much when the deposit is not known, so it can't win)."""
@@ -288,11 +300,9 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
         notes.append(f"includes a {helpers.money(sa['amount'])} special assessment you pay")
     if notes:
         cell["text"] += f" ({', '.join(notes)})"
-    if _deposit_unknown(p, c):
-        cell["text"] = f"at least {helpers.money(c['total'])} (deposit not known)"
-        cell["incomplete"] = True
-    elif not buy and _pet_charges_unknown(p):
-        cell["text"] = f"at least {helpers.money(c['total'])} (pet charges not known)"
+    unknown = (["deposit"] if _deposit_unknown(p, c) else []) + cash_unknown_names(p)
+    if unknown:
+        cell["text"] = f"at least {helpers.money(c['total'])} ({_join_and(unknown)} not known)"
         cell["incomplete"] = True
     return cell
 
@@ -519,6 +529,59 @@ def _utilities_cell(p: dict[str, Any]) -> dict[str, Any]:
     return _cell(text)
 
 
+_LANDLORD_PHRASES = (
+    (re.compile(r"\bask the landlord\b", re.I), "ask the seller or listing agent"),
+    (re.compile(r"\bcheck with the landlord\b", re.I), "check with the seller or listing agent"),
+    (re.compile(r"\bthe landlord's approval\b", re.I), "the seller's approval"),
+    (re.compile(r"\bthe landlord\b", re.I), "the seller"),
+)
+
+
+def for_buyer(text: str) -> str:
+    """Wording for a buy search: a note written for renters says seller or listing agent, and the special assessment note says what to do."""
+    out = str(text)
+    for pat, repl in _LANDLORD_PHRASES:
+        out = pat.sub(repl, out)
+    return out
+
+
+def _pet_limits_text(p: dict[str, Any]) -> str:
+    """'Dogs, up to 50 lb, 2 pets at most', from the facts a place has. Empty when none is known."""
+    bits: list[str] = []
+    allowed = PETS_TEXT.get(p.get("pets") or "")
+    if allowed:
+        bits.append(allowed)
+    w = p.get("pet_weight_limit")
+    if w not in (None, ""):
+        bits.append(f"up to {float(w):g} lb")
+    n = p.get("pet_count_limit")
+    if n not in (None, ""):
+        bits.append(f"{int(n)} pet{'s' if int(n) != 1 else ''} at most")
+    return ", ".join(bits)
+
+
+def _pet_limits_cell(p: dict[str, Any]) -> dict[str, Any]:
+    return _cell(_pet_limits_text(p) or None)
+
+
+def _fenced_yard_cell(p: dict[str, Any]) -> dict[str, Any]:
+    return _yes_no(p.get("fenced_yard"))
+
+
+def _search_cares_about(places: list[dict[str, Any]], *kinds: str) -> bool:
+    """True when the search has a rule of one of these kinds (the scored items say so)."""
+    return any(i.get("kind") in kinds for p in places for i in (p.get("score") or {}).get("items") or [])
+
+
+def shows_pet_limits(places: list[dict[str, Any]]) -> bool:
+    return any(p.get("pet_weight_limit") not in (None, "") or p.get("pet_count_limit") not in (None, "") for p in places) \
+        or _search_cares_about(places, "pets")
+
+
+def shows_fenced_yard(places: list[dict[str, Any]]) -> bool:
+    return any(p.get("fenced_yard") is not None for p in places) or _search_cares_about(places, "fenced_yard")
+
+
 def _line_unset(p: dict[str, Any], key: str) -> bool:
     """True when a $0 cost line is really "never filled in" (pet rent with pets unknown, parking never set)."""
     if key == "pet_rent":
@@ -589,7 +652,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # ---- the headline numbers
     section("The short version", [
         row("cost", "True monthly cost", [_cost_cell(p) for p in places], "low"),
-        row("per_person", "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
+        row("per_person", "Each adult each month" if all(p.get("split_noun") == "adults" for p in places if p.get("per_person") is not None) else "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
         if any(p.get("per_person") is not None for p in places) else None,
         row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" or p["score"].get("fit_label") == "Fits, but check" or ai_text_only(p) or p["score"].get("notes") for p in places) else None,
         row("score", "Fit score (out of 100)", [_score_cell(p) for p in places], "high"),
@@ -644,6 +707,8 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row("dishwasher", "Dishwasher", [_yes_no(p.get("dishwasher")) for p in places], "high"),
         row("parking", "Parking", [_cell(PARKING_TEXT.get(p.get("parking") or ""), PARKING_RANK.get(p.get("parking") or "")) for p in places], None),
         row("pets", "Pets", [_cell(PETS_TEXT.get(p.get("pets") or "")) for p in places]),
+        row("pet_limits", "Pet limits (kinds, weight, how many)", [_pet_limits_cell(p) for p in places]) if shows_pet_limits(places) else None,
+        row("fenced_yard", "Fenced yard", [_fenced_yard_cell(p) for p in places], "high") if shows_fenced_yard(places) else None,
         row("utilities", "Utilities included", [_utilities_cell(p) for p in places], only_if_any=True),
     ])
     section("Dates and money up front", [
