@@ -45,13 +45,24 @@
   <ol class="items">
     {% for p in fits %}
     <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ score_pill(p.score_total, p.band) }}
-      <span class="item-sub">{{ p.stage }}{% if p.cost_total %} &middot; about {{ p.cost_total|money }} a month{% endif %}{% if p.score.unknown %} &middot; {{ p.score.unknown|length }} thing{{ 's' if p.score.unknown|length != 1 }} still to check: {{ p.score.unknown|join('; ') }}{% endif %}</span>
+      <span class="item-sub">{{ p.stage }}{% if not p.address %} &middot; <span class="flag">no address yet</span>{% endif %}{% if p.cost_total %} &middot; about {{ p.cost_total|money }} a month{% endif %}{% if p.score.unknown %} &middot; {{ p.score.unknown|length }} thing{{ 's' if p.score.unknown|length != 1 }} still to check: {{ p.score.unknown|join('; ') }}{% endif %}</span>
       {% if p.score.concerns %}<div class="fine">Check: {{ p.score.concerns|join('; ') }}</div>{% endif %}
       {% if p.score.notes %}<div class="fine">{{ p.score.notes|join('; ') }}</div>{% endif %}
       {% if p.caution %}<div class="fine flag">{{ p.caution }}</div>{% endif %}</div></li>
     {% endfor %}
   </ol>
   <p class="fine">The highest scores among places that have every must have. <a href="/board">See the whole board</a>.</p>
+</section>
+{% elif unconfirmed %}
+<section class="card" aria-labelledby="fits-h">
+  <h2 id="fits-h">Best fits right now</h2>
+  <p class="fine">Nothing is confirmed yet. These fit if the unknowns check out:</p>
+  <ul class="items">
+    {% for n in unconfirmed %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a> {{ score_pill(n.place.score_total, n.place.band) }}
+      <span class="item-sub">Fits, but check: {{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
 </section>
 {% elif place_count and not no_criteria %}
 <section class="card" aria-labelledby="fits-h">

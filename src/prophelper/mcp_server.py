@@ -352,7 +352,8 @@ def _extra_facts(p: dict[str, Any]) -> list[str]:
     out: list[str] = []
     pet = []
     if p.get("pet_weight_limit") is not None:
-        pet.append(f"dogs up to {p['pet_weight_limit']:g} lb")
+        who = "cats" if str(p.get("pets") or "") == "cats" else "dogs"  # a weight limit is a dog limit unless the place takes cats only
+        pet.append(f"{who} up to {p['pet_weight_limit']:g} lb")
     if p.get("pet_count_limit") is not None:
         pet.append(f"up to {p['pet_count_limit']} pets")
     if p.get("pet_rent") is not None:
@@ -377,7 +378,7 @@ def _extra_facts(p: dict[str, Any]) -> list[str]:
     buy = []
     if p.get("days_on_market") is not None:
         buy.append(f"{p['days_on_market']} days on the market")
-    if p.get("special_assessment") is not None:
+    if (p.get("special_assessment") or 0) != 0:  # $0 is no assessment: no line
         who = {"buyer": "the buyer pays it", "seller": "the seller pays it"}.get(str(p.get("special_assessment_payer") or ""), "who pays it is not filled in")
         buy.append(f"special assessment {_money(p['special_assessment'])} ({who})")
     if p.get("closing_costs") is not None:
@@ -953,7 +954,7 @@ def build_server(store: Store) -> FastMCP:
             else:
                 lines.append("The current search has no criteria yet, so places have no score. update_search can add some.")
             es = [e for e in enrich_places(store, cur) if not e["hidden_by_dealbreaker"] and e["stage"] != st.PASSED and not e.get("hidden")]
-            es.sort(key=lambda e: (e["score"].get("sort_group", 0), -(e["score_total"] if e["score_total"] is not None else -1), e["id"]))
+            es.sort(key=scoring.list_key)
             if es:
                 lines.append("Top places:")
                 lines += ["  " + _line(e) for e in es[:3]]
@@ -998,8 +999,7 @@ def build_server(store: Store) -> FastMCP:
             es = [e for e in es if e["cost_total"] is not None and e["cost_total"] <= max_cost]
         if min_score is not None:
             es = [e for e in es if e["score_total"] is not None and e["score_total"] >= min_score]
-        es.sort(key=lambda e: (e["score"].get("sort_group", 2 if e["score"]["fails_dealbreaker"] else 0),
-                               -(e["score_total"] if e["score_total"] is not None else -1), e["id"]))
+        es.sort(key=scoring.list_key)
         total = len(es)
         shown = es[:max(1, min(int(limit), 100))]
         head = f"{total} place{'s' if total != 1 else ''} in search {_sname(search, 60)} ({_mode_word(search['mode'])})"
@@ -1474,7 +1474,12 @@ def build_server(store: Store) -> FastMCP:
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
             lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}/mo true cost{each}"
+                         + (", no address yet" if not str(p.get("address") or "").strip() else "")
                          + (f". {p['caution']}" if p.get("caution") else ""))
+        if not fits and data.get("unconfirmed"):
+            lines.append(today_view.UNCONFIRMED_TEXT)
+            for c in data["unconfirmed"]:
+                lines.append(f"  - #{c['place']['id']} {_title(c['place'])} [{c['place']['stage']}], score {c['place']['score_total']}: {_t(c['text'], 'fit reason', 200)}")
         for p in data["needs_price"]:
             lines.append(f"Needs a price: #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, no price yet, so it is not ranked.")
         for c in data["check_first"]:

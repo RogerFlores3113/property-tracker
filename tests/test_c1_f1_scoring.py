@@ -37,6 +37,11 @@ def test_commute_gap_names_minutes_and_limit(store):
     store.add_criterion(s["id"], "commute", dealbreaker=True, target={"anchor_id": a["id"], "mode": "walk", "minutes": 15})
     p, _ = store.add_place(title="Far", address="2 A St", price=900, lat=40.02, lng=-88.0)
     e = _row(store, s, p)
+    # C10: a miss resting only on a map estimate is a near miss to check, not a hard fail
+    assert e["score"]["fit"] == "near_miss"
+    assert e["score"]["fit_reasons"][0].startswith("about ") and "(estimate), limit 15, check the real time" in e["score"]["fit_reasons"][0]
+    store.set_commute(p["id"], a["id"], "walk", 40, "you")
+    e = _row(store, s, p)
     assert e["score"]["fit"] == "doesnt_fit"
     assert e["score"]["fit_reasons"][0].startswith("Commute ") and ", limit 15" in e["score"]["fit_reasons"][0]
 
