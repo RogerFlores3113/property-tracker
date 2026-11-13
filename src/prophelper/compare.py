@@ -272,6 +272,18 @@ def _deposit_unknown(p: dict[str, Any], c: dict[str, Any] | None) -> bool:
     return p.get("deposit") in (None, "")
 
 
+def cash_unknown_names(p: dict[str, Any]) -> list[str]:
+    """What a renter's move-in cash leaves out because nobody filled it in, besides the deposit: 'pet charges', 'parking'."""
+    if p["cost"].get("mode") == "buy" or not p["cost"].get("cash_at_move_in"):
+        return []
+    out = []
+    if _pet_charges_unknown(p):
+        out.append("pet charges")
+    if str(p.get("parking") or "") in ("garage", "covered", "lot") and p.get("parking_cost") in (None, ""):
+        out.append("parking")  # a kind of parking that usually costs something, with no price filled in
+    return out
+
+
 def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     """Cash due up front: for a buyer, down payment + closing costs (a guess when not entered) + a special assessment the
     buyer pays; for a renter, the move-in cash (at least that much when the deposit is not known, so it can't win)."""
@@ -288,11 +300,9 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
         notes.append(f"includes a {helpers.money(sa['amount'])} special assessment you pay")
     if notes:
         cell["text"] += f" ({', '.join(notes)})"
-    if _deposit_unknown(p, c):
-        cell["text"] = f"at least {helpers.money(c['total'])} (deposit not known)"
-        cell["incomplete"] = True
-    elif not buy and _pet_charges_unknown(p):
-        cell["text"] = f"at least {helpers.money(c['total'])} (pet charges not known)"
+    unknown = (["deposit"] if _deposit_unknown(p, c) else []) + cash_unknown_names(p)
+    if unknown:
+        cell["text"] = f"at least {helpers.money(c['total'])} ({_join_and(unknown)} not known)"
         cell["incomplete"] = True
     return cell
 
@@ -642,7 +652,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # ---- the headline numbers
     section("The short version", [
         row("cost", "True monthly cost", [_cost_cell(p) for p in places], "low"),
-        row("per_person", "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
+        row("per_person", "Each adult each month" if all(p.get("split_noun") == "adults" for p in places if p.get("per_person") is not None) else "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
         if any(p.get("per_person") is not None for p in places) else None,
         row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" or p["score"].get("fit_label") == "Fits, but check" or ai_text_only(p) or p["score"].get("notes") for p in places) else None,
         row("score", "Fit score (out of 100)", [_score_cell(p) for p in places], "high"),

@@ -72,9 +72,12 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
         "next": _next_date(place, tours),
         "flags": flags, "possible_scam": serious,
         "hidden_by_dealbreaker": bool(search.get("hide_dealbreakers") and score["fails_dealbreaker"] and not protected),
+        "cash_unknown": None,
         "people": cost["people"], "split_noun": cost.get("split_noun", "people"), "per_person": cost.get("per_person"),  # people = who the cost is split between (adults, when the search says)
         "opinions": store.opinion_stats(place["id"]) if people > 1 else None,  # {"count", "average"} of the people's own ratings
     })
+    from . import compare  # late import: compare reads enriched places
+    out["cash_unknown"] = compare.cash_unknown_names(out)
     return out
 
 

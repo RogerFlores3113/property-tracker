@@ -396,7 +396,9 @@ def _cash_lines(e: dict[str, Any]) -> list[str]:
     cash = cost.get("cash_to_close") if cost.get("mode") == "buy" else cost.get("cash_at_move_in")
     if cash:
         label = "Cash to close" if cost.get("mode") == "buy" else "Cash needed on move-in day"
-        out.append(f"{label}: {_money(cash['total'])} (" + ", ".join(f"{pt['label']} {_money(pt['amount'])}" for pt in cash["parts"]) + ")"
+        unknown = compare_mod.cash_unknown_names(e)
+        head = f"at least {_money(cash['total'])}; {', '.join(unknown)} not known yet" if unknown else _money(cash["total"])
+        out.append(f"{label}: {head} (" + ", ".join(f"{pt['label']} {_money(pt['amount'])}" for pt in cash["parts"]) + ")"
                    + (" (security deposit not filled in, so this is at least that much)" if cost.get("mode") != "buy" and compare_mod._deposit_unknown(e, cash) else "")
                    + ". Not part of the monthly cost.")
     if cost.get("listing_estimate_note"):
@@ -793,8 +795,8 @@ def build_server(store: Store) -> FastMCP:
             if _is_blank(fields.get(key)):
                 fields[key] = value
                 filled.append(key.replace("_", " "))
-            else:
-                already_sent += 1
+            elif key not in ("title", "source", "url"):
+                already_sent += 1  # a real fact the caller had already sent itself
         if filled:
             fields["_text_notes"] = [f"Read from the listing text and filled in: {', '.join(filled)}. Check them against the listing; "
                                      f"anything you sent yourself was kept as you sent it."]
@@ -1378,7 +1380,7 @@ def build_server(store: Store) -> FastMCP:
             ("Fit", [(e["score"].get("fit_label") or "Yes") if e["score"].get("fit", "fits") == "fits" and e["score"].get("concerns")
                     else scoring.FIT_LABELS.get(e["score"].get("fit", "fits"), "Yes") for e in es]),
             ("True monthly cost", [_money(e["cost_total"]) for e in es]),
-            *([(f"Per person ({_split_count(search)} {_split_noun(search)})", [_money(e.get("per_person")) for e in es])]
+            *([(f"Each adult ({_split_count(search)} adults)" if _split_noun(search) == "adults" else f"Per person ({_split_count(search)} {_split_noun(search)})", [_money(e.get("per_person")) for e in es])]
               if _split_count(search) > 1 else []),
             ("Score", ["none" if e["score_total"] is None else str(e["score_total"]) for e in es]),
             ("Deal-breakers", ["near miss: " + _near_line(e) if e["score"].get("fit") == "near_miss" and e["score"].get("near_parts") else
@@ -1680,7 +1682,7 @@ def build_server(store: Store) -> FastMCP:
                       bedrooms: Annotated[int | None, Field(description="Bedrooms the user needs (1 or more). Adds a must-have so a studio does not pass a 1-bed search")] = None,
                       criteria: Annotated[list[dict[str, Any]] | None, Field(description="Weighted criteria. " + CRIT_DOC)] = None,
                       anchors: Annotated[list[dict[str, Any]] | None, Field(description="Places to measure commutes to: [{name, address, lat, lng}]. Reuses one with the same name")] = None) -> CallToolResult:
-        """Start a new search with optional criteria and anchors. All or nothing: if anything in it is wrong, nothing is saved and the reply says what to fix. The first search becomes the current one; otherwise the user picks it in the app."""
+        """Start a new search with optional criteria and anchors. A commute rule names its way and limit: {"kind": "commute", "target": {"anchor": "Campus", "mode": "bike", "minutes": 20}} (mode is walk, bike, transit or drive). All or nothing: if anything in it is wrong, nothing is saved and the reply says what to fix. The first search becomes the current one; otherwise the user picks it in the app."""
         people, people_names = _people_args(people, people_names)
         fields = {k: v for k, v in (("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
                                     ("people", people), ("people_names", people_names), ("adults", adults), ("notes", notes), ("pet_kind", pet_kind),
