@@ -116,7 +116,7 @@ def unknown_list(p: dict[str, Any]) -> list[str]:
 def guessed_list(p: dict[str, Any]) -> list[str]:
     """Costs that are only an estimate, worded "Utilities (a guess)" (their line label already says so)."""
     out = []
-    for line in p["cost"].get("lines", []):
+    for line in (p.get("cost") or {}).get("lines", []):
         if line.get("estimated") and line.get("amount") is not None:
             label = line["label"]
             out.append(label if "guess" in label.lower() else f"{label} (a guess)")
@@ -140,16 +140,56 @@ def _missing_names(p: dict[str, Any]) -> list[str]:
     """Costs nobody has filled in, in plain words, with no brackets: "utilities estimate" becomes "electric and internet"
     when the listing says what the tenant pays."""
     out = []
-    for m in p["cost"]["missing"]:
+    for m in (p.get("cost") or {}).get("missing", []):
         named = next((u for u in p["cost"].get("uncounted") or [] if u.startswith("utilities (")), "")
         if named and m == "utilities estimate":
             m = named[len("utilities ("):].rstrip(")")
         out.append(m)
+    names = partial_utilities(p)
+    if names:
+        out.append(_join_and(names))
     return list(dict.fromkeys(out))
+
+
+def cost_unknowns(p: dict[str, Any]) -> list[str]:
+    """Every unknown cost part the cost math knows about, in plain words: unfilled costs, utilities the tenant pays or the
+    listing does not include, and pet charges (a search with a pet, a place that allows pets, no fee or deposit). The one
+    source for "Not counted yet", "Still unknown" and Claude's unknowns."""
+    return list(dict.fromkeys([*_missing_names(p), *pet_charges_unknown_text(p)]))
 
 
 def _join_and(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+_STANDARD_UTILITIES = (("electric", re.compile(r"electric|power", re.I)), ("gas", re.compile(r"\bgas\b", re.I)),
+                       ("internet", re.compile(r"internet|wi-?fi|cable", re.I)))
+
+
+def partial_utilities(p: dict[str, Any]) -> list[str]:
+    """For a rental whose listing names some included utilities (such as heat and water) but not all of them, and says
+    nothing about what the tenant pays: the usual ones it does not list as included (electric, gas, internet). The cost
+    math counts that as $0 included, so this is the one place that says the rest is still unknown. [] otherwise."""
+    if (p.get("cost") or {}).get("mode") in (None, "buy") or money_mod.num(p.get("utilities_estimate")) is not None:
+        return []
+    listed = str(p.get("utilities_included") or "").strip()
+    if not listed or listed.lower() in money_mod.NOTHING_WORDS or _utilities_fully_included(p) or money_mod.tenant_pays_list(p):
+        return []
+    return [name for name, pat in _STANDARD_UTILITIES if not pat.search(listed)]
+
+
+def _uncounted(p: dict[str, Any]) -> list[str]:
+    """Cost parts left out of the monthly number: the money result's own list plus utilities the listing does not
+    include and nobody priced. The one list behind "not counted yet" everywhere (cost cell, lowest cost, per person)."""
+    out = list((p.get("cost") or {}).get("uncounted") or [])
+    names = partial_utilities(p)
+    if names:
+        out.append(f"utilities ({_join_and(names)})")
+    return out
+
+
+def pet_charges_unknown_text(p: dict[str, Any]) -> list[str]:
+    return ["pet charges"] if (p.get("cost") or {}).get("mode") == "rent" and _pet_charges_unknown(p) else []
 
 
 def unknown_text(unknown: list[str], guessed: list[str]) -> str:
@@ -165,12 +205,27 @@ def unknown_text(unknown: list[str], guessed: list[str]) -> str:
 
 
 def _not_counted_text(p: dict[str, Any]) -> str:
-    return unknown_text(_missing_names(p), _guessed_names(p))
+    return unknown_text(cost_unknowns(p), _guessed_names(p))
 
 
-def still_unknown_text(p: dict[str, Any]) -> str:
-    """Criteria with no value plus unfilled and guessed costs, in the same style as ``_not_counted_text``."""
-    return unknown_text(list(dict.fromkeys([*p["score"]["unknown"], *_missing_names(p)])), _guessed_names(p))
+def still_unknown_text(p: dict[str, Any], label=lambda x: x) -> str:
+    """Criteria with no value plus unfilled and guessed costs, in the same style as ``_not_counted_text``. ``label`` wraps
+    a criterion label (Claude's server fences the user's own words)."""
+    return unknown_text(list(dict.fromkeys([*[label(x) for x in p["score"]["unknown"]], *cost_unknowns(p)])), _guessed_names(p))
+
+
+def unknown_names(p: dict[str, Any]) -> list[str]:
+    """Short names of everything the score and cost rest on a guess or a blank for: 'guessed utilities', 'parking'."""
+    out = [f"guessed {n}" for n in _guessed_names(p)]
+    for item in p["score"].get("items") or []:
+        if not item.get("known"):
+            out.append("commute" if item.get("kind") == "commute" else str(scoring_kind_label(item)).lower())
+    return list(dict.fromkeys(out))
+
+
+def scoring_kind_label(item: dict[str, Any]) -> str:
+    from . import scoring
+    return scoring.KIND_LABELS.get(item.get("kind"), item.get("label") or "something")
 
 
 def _num(v: Any, suffix: str = "") -> dict[str, Any]:
@@ -185,7 +240,7 @@ def _yes_no(v: Any) -> dict[str, Any]:
 
 def _cost_cell(p: dict[str, Any]) -> dict[str, Any]:
     cell = _money(p["cost_total"])
-    unc = p["cost"].get("uncounted") or []
+    unc = _uncounted(p)
     if cell["value"] is not None and unc:
         cell["text"] += f" ({', '.join(unc)} not counted yet)"
         cell["incomplete"] = True
@@ -251,10 +306,26 @@ def _utilities_fully_included(p: dict[str, Any]) -> bool:
     return bool(pays) and all(w in money_mod.NOTHING_WORDS for w in pays)
 
 
-def _ineligible(p: dict[str, Any]) -> bool:
+def _ineligible(p: dict[str, Any], best_of: bool = False) -> bool:
     """A place that does not fit, or is a possible scam: its values show, but it never gets a best marker. A near miss
-    (a small overage, often from a guess) can still win, and its Fit cell says it is a near miss."""
-    return p["score"].get("fit", "fits") not in ("fits", "near_miss") or bool(p.get("possible_scam"))
+    (a small overage, often from a guess) can still win, and its Fit cell says it is a near miss. In a best-of line
+    (``best_of``: lowest cost, highest score) a place with text aimed at AI tools is left out too."""
+    return (p["score"].get("fit", "fits") not in ("fits", "near_miss") or bool(p.get("possible_scam"))
+            or (best_of and ai_text_only(p)))
+
+def ai_text_only(p: dict[str, Any]) -> bool:
+    """True when the only thing to check in the listing is text aimed at AI tools (no scam sign)."""
+    flags = [str(f) for f in p.get("flags") or []]
+    return bool(flags) and not p.get("possible_scam") and all("aimed at AI tools" in f for f in flags)
+
+
+AI_TEXT_FIT = "Check first: text aimed at AI tools in the listing"
+
+
+def unpriced(p: dict[str, Any]) -> bool:
+    """A place with no rent (or, buying, no price): it can't win a best-of line (lowest cost, highest score)."""
+    return p.get("cost_total") is None
+
 
 def _fits(p: dict[str, Any]) -> bool:
     """A place that fits (not a near miss, not a possible scam)."""
@@ -294,11 +365,11 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
     candidate is over, and then the winner says so. A place with unknown cost parts is skipped unless every candidate
     has them."""
     priced = [p for p in places if p["cost_total"] is not None]
-    eligible = [p for p in priced if not _ineligible(p)]
+    eligible = [p for p in priced if not _ineligible(p, True)]
     if any(_fits(p) for p in eligible):
         eligible = [p for p in eligible if _fits(p)]
     base = [p for p in eligible if not over_limit_text(p)] or eligible
-    complete = [p for p in base if not (p["cost"].get("uncounted") or [])]
+    complete = [p for p in base if not _uncounted(p)]
     pool = complete or base
     out: dict[str, Any] = {"winners": [], "amount": None, "same": False, "all_unknown": bool(pool) and not complete and len(eligible) > 1,
                            "of_fit": len(eligible) < len(priced),
@@ -324,6 +395,8 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if p["score"].get("fit") == "check_first" or p.get("possible_scam"):
             out["blocked"].append((p, "check it first: possible scam"))
+        elif ai_text_only(p):
+            out["blocked"].append((p, "check it first: text aimed at AI tools in the listing"))
         elif p["score"].get("fit") == "near_miss":
             out["blocked"].append((p, "it is a near miss"))
         else:
@@ -358,7 +431,7 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
 
 def _per_person_cell(p: dict[str, Any]) -> dict[str, Any]:
     cell = _money(p.get("per_person"))
-    if cell["value"] is not None and p["cost"].get("uncounted"):
+    if cell["value"] is not None and _uncounted(p):
         cell["incomplete"] = True
     if cell["value"] is not None:
         cell["text"] += f" ({p['people']} {p.get('split_noun') or 'people'})"
@@ -374,8 +447,12 @@ def _fit_cell(p: dict[str, Any]) -> dict[str, Any]:
     if fit == "fits" and p["score"].get("fit_label") == "Fits, but check":
         concerns = "; ".join(p["score"].get("concerns") or [])
         return _cell("Fits, but check" + (f" ({concerns})" if concerns else ""))
+    if fit == "fits" and ai_text_only(p):
+        return _cell(AI_TEXT_FIT)
     if fit == "near_miss" and not reasons:
         reasons = "; ".join(p["score"].get("near_texts") or [])
+    if fit == "fits" and p["score"].get("notes"):
+        return _cell("Yes (" + "; ".join(p["score"]["notes"]) + ")")
     return _cell(FIT_TEXT.get(fit, fit) + (f" ({reasons})" if reasons and fit != "fits" else ""))
 
 
@@ -387,9 +464,11 @@ def _score_cell(p: dict[str, Any]) -> dict[str, Any]:
             else ({"near_miss": "near miss", "doesnt_fit": "doesn't fit", "check_first": "check first"}.get(fit) or "")
         if label:
             cell["text"] += f", {label[0].lower() + label[1:]}"
+    names = unknown_names(p)
     n = p["score"].get("unknown_count") or 0
-    if cell["value"] is not None and n:
-        cell["text"] += f" (based on {n} unknown{'s' if n != 1 else ''})"
+    if cell["value"] is not None and (n or names):
+        n = len(names) or n
+        cell["text"] += f" (based on {n} unknown{'s' if n != 1 else ''}" + (f": {', '.join(names)}" if names else "") + ")"
     return cell
 
 
@@ -457,6 +536,9 @@ def _commute_rows(places: list[dict[str, Any]], anchors: list[tuple[Any, str]], 
     return rows
 
 
+BEST_OF_KEYS = ("cost", "per_person", "score")
+
+
 def _row(key: str, label: str, cells: list[dict[str, Any]], better: str | None = None, *, only_if_any: bool = False,
          places: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
     if only_if_any and all(c["unknown"] for c in cells):
@@ -464,8 +546,8 @@ def _row(key: str, label: str, cells: list[dict[str, Any]], better: str | None =
     if places and len(places) == len(cells):
         fitting_value = any(c["value"] is not None and _fits(p) for c, p in zip(cells, places))
         for c, p in zip(cells, places):
-            if _ineligible(p):
-                c["incomplete"] = True  # shown, but a place that doesn't fit or may be a scam never wins a row
+            if _ineligible(p, key in BEST_OF_KEYS) or (key == "score" and unpriced(p)):
+                c["incomplete"] = True  # shown, but a place that doesn't fit, may be a scam or has no price never wins a row
             elif not _fits(p) and fitting_value:
                 c["incomplete"] = True  # a near miss only wins a row when no fitting place has a value in it
             elif key in ("cost", "per_person") and over_limit_text(p):
@@ -491,7 +573,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row("cost", "True monthly cost", [_cost_cell(p) for p in places], "low"),
         row("per_person", "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
         if any(p.get("per_person") is not None for p in places) else None,
-        row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" or p["score"].get("fit_label") == "Fits, but check" for p in places) else None,
+        row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" or p["score"].get("fit_label") == "Fits, but check" or ai_text_only(p) or p["score"].get("notes") for p in places) else None,
         row("score", "Fit score (out of 100)", [_score_cell(p) for p in places], "high"),
         row("stage", "Stage", [_plain(p["stage"]) for p in places]),
         row("rating", "Your rating (1 to 5)", [_num(p.get("rating")) for p in places], "high", only_if_any=True),
@@ -608,24 +690,64 @@ def summary_lines(places: list[dict[str, Any]], sections: list[dict[str, Any]]) 
     return out
 
 
+def lowest_note(r: dict[str, Any]) -> str:
+    """The plain tail of the lowest-cost sentence, never nested brackets: ' of the places that fit', and, when every place
+    leaves a cost part out, ', though every place leaves a cost part out'."""
+    note = " of the places that fit" if r["of_fit"] else ""
+    return note + (", though every place leaves a cost part out" if r["all_unknown"] else "")
+
+
+def _short_parts(p: dict[str, Any]) -> str:
+    """'utilities' or 'parking and utilities': the cost parts of this place that are not counted."""
+    parts = [u.split(" (")[0] for u in _uncounted(p)]
+    return _join_and(list(dict.fromkeys(parts))) if parts else "costs"
+
+
+def _aren_t(text: str) -> str:
+    return "are" if (" and " in text or text.endswith("s") or text == "costs") else "is"
+
+
+def skipped_unknown_sentences(r: dict[str, Any], name, merged: bool = False) -> list[str]:
+    """For places that look cheaper but leave a cost part out: 'Oak Row looks cheaper, but its utilities are not counted.'
+    With ``merged`` the sentences are clauses to join after the winner's own ('...; Oak Row looks cheaper ...')."""
+    out = []
+    for p in r["skipped_unknown"]:
+        parts = _short_parts(p)
+        out.append(f"{name(p)} looks cheaper, but its {parts} {_aren_t(parts)} not counted" + ("" if merged else "."))
+    return out
+
+
+def unpriced_sentences(places: list[dict[str, Any]], name) -> list[str]:
+    """Places with no rent or price: named once, so nobody wonders why they are not in the lowest-cost or highest-score lines."""
+    out = []
+    for p in places:
+        if unpriced(p):
+            out.append(f"{name(p)} has no price yet, so it is not in the lowest-cost or highest-score lines.")
+    return out
+
+
 def lowest_cost_sentences(places: list[dict[str, Any]], name) -> list[str]:
     """The At a glance sentences for the lowest cost. ``name(place)`` is how a place is called (its title on the web)."""
     r = lowest_cost(places)
     out: list[str] = []
     w = r["winners"]
     if w and not r["same"]:
-        note = " (the lowest of what is counted, every place leaves a cost part out)" if r["all_unknown"] else ""
-        note += " (of the places that fit)" if r["of_fit"] else ""
-        if len(w) > 1:
+        note = lowest_note(r)
+        skipped = skipped_unknown_sentences(r, name, merged=True)
+        if skipped:  # the winner is complete; say so and name the cheaper-looking place that is not
+            who = f"{' and '.join(name(p) for p in w)} {'are tied for' if len(w) > 1 else 'is'} the lowest complete cost{note}"
+            out.append("; ".join([who, *skipped]) + ".")
+        elif len(w) > 1:
             out.append(f"{' and '.join(name(p) for p in w)} are tied for the lowest true monthly cost{note}.")
         else:
             out.append(f"{name(w[0])} has the lowest true monthly cost{note}.")
+    elif r["skipped_unknown"]:
+        out.extend(skipped_unknown_sentences(r, name))
     for p, why in r["over_limit"]:
         out.append(f"{name(p)} is cheapest, but {why}.")
-    for p in r["skipped_unknown"]:
-        out.append(f"{name(p)} looks cheaper, but some of its costs are not counted yet.")
     lowest = min((p["cost_total"] for p in places if p["cost_total"] is not None), default=None)
     for p, why in r["blocked"]:
         word = "cheapest" if lowest is not None and abs(p["cost_total"] - lowest) < 0.005 else "cheaper"
         out.append(f"{name(p)} is {word}, but {why}.")
+    out.extend(unpriced_sentences(places, name))
     return out

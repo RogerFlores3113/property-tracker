@@ -427,7 +427,8 @@ def _score_text(e: dict[str, Any]) -> str:
     bad = [_t(i.get("detail") or i.get("gap") or f"{i['value']} (wanted {i['target']})", "criterion detail", 90)
            for i in sorted(items, key=lambda i: -float(i["weight"] or 0)) if i["known"] and i["score"] < 0.5 and (i.get("detail") or i.get("gap") or i.get("value"))][:2]
     why = [f"+ {g}" for g in good] + [f"- {b}" for b in bad]
-    return f"Score {s['total']} ({e['band']})" + (": " + "; ".join(why) if why else "")
+    notes = "".join(f" {_t(n, 'fit reason', 120)}." for n in s.get("notes") or [])
+    return f"Score {s['total']} ({e['band']})" + (": " + "; ".join(why) if why else "") + notes
 
 
 def _near_line(e: dict[str, Any]) -> str:
@@ -467,14 +468,15 @@ def _deal_text(e: dict[str, Any]) -> str:
     return "Deal-breakers: all passed"
 
 
-def _unknown_list(e: dict[str, Any]) -> list[str]:
-    return list(dict.fromkeys([*e["score"]["unknown"], *e["cost"]["missing"]]))
-
-
 def _unknown_text(e: dict[str, Any]) -> str:
-    """Criterion labels (outside text, fenced) and the money items the app itself names."""
-    parts = [_lab(x) for x in e["score"]["unknown"]] + [m for m in e["cost"]["missing"] if m not in e["score"]["unknown"]]
-    return ", ".join(dict.fromkeys(parts))
+    """Everything still unknown or guessed, in the Compare page's words (the same list as its "Still unknown" row):
+    criterion labels (outside text, fenced), unpriced utilities, pet charges and guessed costs. '' when nothing is."""
+    text = compare_mod.still_unknown_text(e, label=_lab)
+    return "" if text == compare_mod.unknown_text([], []) else text
+
+
+def _unknown_list(e: dict[str, Any]) -> list[str]:
+    return [_unknown_text(e)] if _unknown_text(e) else []
 
 
 def _commute_list(e: dict[str, Any]) -> list[str]:
@@ -511,7 +513,9 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
         bits.append("FAILS " + _labs(e["score"]["failed"]))
     elif e["score"].get("fit_label") == "Fits, but check":
         bits.append("Fits, but check: " + "; ".join(_t(c, "fit reason", 120) for c in e["score"]["concerns"]))
-    if e["flags"] and e["score"].get("fit") != "check_first":
+    if compare_mod.ai_text_only(e):
+        bits.append(compare_mod.AI_TEXT_FIT)
+    elif e["flags"] and e["score"].get("fit") != "check_first":
         bits.append(f"{len(e['flags'])} thing{'s' if len(e['flags']) != 1 else ''} to check (possible scam signs)")
     if e.get("is_sample"):
         bits.append("sample")
@@ -1376,24 +1380,27 @@ def build_server(store: Store) -> FastMCP:
         lines.append("Differences: " + (", ".join(differ) if differ else "none"))
         # Best-of lines never name a possible scam or a place that doesn't fit: only places that fit can win. The lowest
         # cost is the one rule in compare.lowest_cost, the same as the Compare page's At a glance.
-        fitting = [e for e in es if e["score"].get("fit", "fits") == "fits"]
-        scored = [e for e in fitting if e["score_total"] is not None]
+        fitting = [e for e in es if e["score"].get("fit", "fits") == "fits" and not compare_mod.ai_text_only(e) and not e.get("possible_scam")]
+        scored = [e for e in fitting if e["score_total"] is not None and not compare_mod.unpriced(e)]
         left_out = [e for e in es if e not in fitting]
         lc = compare_mod.lowest_cost(es)
         w = lc["winners"]
-        note = " (the lowest of what is counted, every place leaves a cost part out)" if lc["all_unknown"] else ""
+        note = compare_mod.lowest_note(lc)
+        ref = lambda e: f"#{e['id']}"  # noqa: E731
+        skipped = compare_mod.skipped_unknown_sentences(lc, ref, merged=True)
+        tail = ", the lowest complete cost; " + "; ".join(skipped) if skipped and w and not lc["same"] else ""
         if w and lc["same"]:
             lines.append(f"No lowest true monthly cost: they are all {_money(lc['amount'])}.")
         elif len(w) > 1:
-            lines.append("Lowest true monthly cost: " + ", ".join(f"#{e['id']}" for e in w) + f" are tied at {_money(lc['amount'])}{note}.")
+            lines.append("Lowest true monthly cost: " + ", ".join(f"#{e['id']}" for e in w) + f" are tied at {_money(lc['amount'])}{note}{tail}.")
         elif w:
-            lines.append(f"Lowest true monthly cost: #{w[0]['id']} at {_money(w[0]['cost_total'])}{note}.")
+            lines.append(f"Lowest true monthly cost: #{w[0]['id']} at {_money(w[0]['cost_total'])}{note}{tail}.")
         elif lc["no_fit"]:
             lines.append("No place here fits, so I am not naming a lowest-cost place.")
         for e, why in lc["over_limit"]:
             lines.append(f"#{e['id']} is cheapest, but {why}.")
-        for e in lc["skipped_unknown"]:
-            lines.append(f"#{e['id']} looks cheaper, but some of its costs are not counted yet.")
+        if not tail:
+            lines.extend(compare_mod.skipped_unknown_sentences(lc, ref))
         if lc["blocked"]:
             lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({why})" for e, why in lc["blocked"]) + ".")
         if scored:
@@ -1402,9 +1409,10 @@ def build_server(store: Store) -> FastMCP:
             if len(scored) > 1 and len(best_all) == len(scored):
                 lines.append(f"No highest score: they all score {top}.")
             elif len(best_all) > 1:
-                lines.append("Highest score: " + ", ".join(f"#{e['id']}" for e in best_all) + f" are tied at {top} (of the places that fit).")
+                lines.append("Highest score: " + ", ".join(f"#{e['id']}" for e in best_all) + f" are tied at {top}, of the places that fit.")
             else:
-                lines.append(f"Highest score: #{best_all[0]['id']} at {top} (of the places that fit).")
+                lines.append(f"Highest score: #{best_all[0]['id']} at {top}, of the places that fit.")
+        lines.extend(compare_mod.unpriced_sentences(es, ref))
         if left_out:
             lines.append("Left out of the best-of lines because they don't fit or need a check first: " + ", ".join(f"#{e['id']}" for e in left_out) + ".")
         return reply("\n".join(lines), place_ids=[e["id"] for e in es], scores=[e["score_total"] for e in es], costs=[e["cost_total"] for e in es])
@@ -1424,6 +1432,10 @@ def build_server(store: Store) -> FastMCP:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
             lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}/mo true cost{each}"
                          + (f". {p['caution']}" if p.get("caution") else ""))
+        for p in today_view.needs_price(rows):
+            lines.append(f"Needs a price: #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, no price yet, so it is not ranked.")
+        for c in today_view.check_first(rows):
+            lines.append(f"Check first: #{c['place']['id']} {_title(c['place'])}: possible scam signs in the listing. Tour it and read the lease before paying anything.")
         tours = store.upcoming_tours(days, search_id=cur["id"])
         lines.append(f"Tours in the next {days} days:" + (" none." if not tours else ""))
         for t in tours:
@@ -1442,7 +1454,7 @@ def build_server(store: Store) -> FastMCP:
         new = today_view.new_places(store, cur)
         lines.append("New places the user has not looked at:" + (" none." if not new else ""))
         for p in new[:8]:
-            lines.append(f"  - #{p['id']} {_title(p)}")
+            lines.append(f"  - #{p['id']} {_title(p)}" + (" (no price yet)" if p.get("cost_total") is None else ""))
         late = today_view.late_availability(rows, cur)
         for item in late:
             lines.append(f"Heads up: {_title(item['place'])} (id {item['place']['id']}): {item['text']}.")

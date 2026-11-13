@@ -52,7 +52,8 @@ def is_best_fit(place: dict[str, Any]) -> bool:
 
 def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
     """The top places by score that fit. ``rows`` are enriched places. Passed, won and hidden places are skipped."""
-    open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and is_best_fit(p)]
+    open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and is_best_fit(p)
+                 and not no_price(p)]
     open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), -p["score_total"], p["title"].lower()))
     top = open_rows[:limit]
     for p in top:
@@ -60,7 +61,27 @@ def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[st
     return top
 
 
-AI_TEXT_CAUTION = "Caution: the listing has text aimed at AI tools. Read it yourself before you rely on this score."
+AI_TEXT_CAUTION = "Check first: text aimed at AI tools in the listing. Read it yourself before you rely on this score."
+
+
+def no_price(place: dict[str, Any]) -> bool:
+    """True when a place has no rent (or, buying, no price), so it can't be ranked as a best fit. Rows made by hand
+    without a ``cost_total`` are treated as priced."""
+    return "cost_total" in place and place["cost_total"] is None
+
+
+def needs_price(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Open places that would be best fits but have no rent or price yet: listed after the priced fits as "no price yet"."""
+    return [p for p in rows if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and is_best_fit(p) and no_price(p)]
+
+
+CHECK_FIRST_TEXT = "Possible scam signs in the listing. Tour it and read the lease before you pay anything."
+
+
+def check_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Open places flagged as a possible scam: [{"place", "text"}]. They are not best fits or new places, but never hidden."""
+    return [{"place": p, "text": CHECK_FIRST_TEXT} for p in rows
+            if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and possible_scam(p)]
 
 
 def caution(place: dict[str, Any]) -> str:
@@ -293,5 +314,5 @@ def late_availability(rows: list[dict[str, Any]], search: dict[str, Any], limit:
 def build(store: Store, search: dict[str, Any]) -> dict[str, Any]:
     """Everything the Today template needs for one search."""
     rows = enrich.enrich_places(store, search)
-    return {"fits": best_fits(rows), "near_miss": near_misses(rows), "coming": coming_up(store, search, rows), "waiting": waiting_rows(store, search),
+    return {"fits": best_fits(rows), "needs_price": needs_price(rows), "check_first": check_first(rows), "near_miss": near_misses(rows), "coming": coming_up(store, search, rows), "waiting": waiting_rows(store, search),
             "new": new_places(store, search), "late": late_availability(rows, search)}

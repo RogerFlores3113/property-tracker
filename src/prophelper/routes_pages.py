@@ -65,12 +65,12 @@ def today_page(request: Request):
     search = store.current_search()
     all_searches = store.list_searches(include_archived=True)
     if search is None:
-        return render(request, "today.html", search=None, first_run=not all_searches, fits=[], near_miss=[], coming=[], waiting=[], new=[],
+        return render(request, "today.html", search=None, first_run=not all_searches, fits=[], needs_price=[], check_first=[], near_miss=[], coming=[], waiting=[], new=[],
                       late=[], no_criteria=False, place_count=0, coming_days=today.COMING_UP_DAYS)
     sid = search["id"]
     data = today.build(store, search)
     criteria = store.list_criteria(sid)
-    return render(request, "today.html", search=search, first_run=False, fits=data["fits"], near_miss=data["near_miss"], coming=data["coming"],
+    return render(request, "today.html", search=search, first_run=False, fits=data["fits"], needs_price=data["needs_price"], check_first=data["check_first"], near_miss=data["near_miss"], coming=data["coming"],
                   waiting=data["waiting"], new=data["new"], late=data["late"], no_criteria=not criteria,
                   place_count=store.count_places(search_id=sid), follow_up_days=store.get_setting_int("follow_up_days", 3),
                   coming_days=today.COMING_UP_DAYS, closing=helpers.closing_info(search))
