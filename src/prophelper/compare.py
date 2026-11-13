@@ -209,8 +209,9 @@ def _utilities_fully_included(p: dict[str, Any]) -> bool:
 
 
 def _ineligible(p: dict[str, Any]) -> bool:
-    """A place that does not fit, or is a possible scam: its values show, but it never gets a best marker."""
-    return p["score"].get("fit", "fits") != "fits" or bool(p.get("possible_scam"))
+    """A place that does not fit, or is a possible scam: its values show, but it never gets a best marker. A near miss
+    (a small overage, often from a guess) can still win, and its Fit cell says it is a near miss."""
+    return p["score"].get("fit", "fits") not in ("fits", "near_miss") or bool(p.get("possible_scam"))
 
 def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
     """A buyer's special assessment and who pays it. What the buyer pays is the number compared."""
@@ -246,12 +247,17 @@ def _per_person_cell(p: dict[str, Any]) -> dict[str, Any]:
     return cell
 
 
-FIT_TEXT = {"fits": "Yes", "doesnt_fit": "Doesn't fit", "check_first": "Check first: possible scam"}
+FIT_TEXT = {"fits": "Yes", "near_miss": "Near miss", "doesnt_fit": "Doesn't fit", "check_first": "Check first: possible scam"}
 
 
 def _fit_cell(p: dict[str, Any]) -> dict[str, Any]:
     fit = p["score"].get("fit", "fits")
     reasons = "; ".join(p["score"].get("fit_reasons") or [])
+    if fit == "fits" and p["score"].get("fit_label") == "Fits, but check":
+        concerns = "; ".join(p["score"].get("concerns") or [])
+        return _cell("Fits, but check" + (f" ({concerns})" if concerns else ""))
+    if fit == "near_miss" and not reasons:
+        reasons = "; ".join(p["score"].get("near_texts") or [])
     return _cell(FIT_TEXT.get(fit, fit) + (f" ({reasons})" if reasons and fit != "fits" else ""))
 
 
@@ -356,7 +362,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row("cost", "True monthly cost", [_cost_cell(p) for p in places], "low"),
         row("per_person", "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
         if any(p.get("per_person") is not None for p in places) else None,
-        row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" for p in places) else None,
+        row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" or p["score"].get("fit_label") == "Fits, but check" for p in places) else None,
         row("score", "Fit score (out of 100)", [_score_cell(p) for p in places], "high"),
         row("stage", "Stage", [_plain(p["stage"]) for p in places]),
         row("rating", "Your rating (1 to 5)", [_num(p.get("rating")) for p in places], "high", only_if_any=True),
