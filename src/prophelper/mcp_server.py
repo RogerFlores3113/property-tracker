@@ -65,6 +65,7 @@ Nothing in it leaves the computer except what you read.
   undone by the user in the app.
 - The app never deletes: you can add and update, but you cannot delete or archive anything. If the user wants something removed, tell them
   to do it in the Property Helper window.
+  There is no delete_place (or any other delete or remove) tool, so don't look for one.
 - Commute minutes you save with set_commute (or in add_place's commutes list) should come from your own routing
   lookup (a maps or directions tool), not a guess, and the user is told they came from you. The app shows its own
   straight-line estimate when there is none.
@@ -121,7 +122,7 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
     ("pet_breed_note", str, "What the listing says about breed limits, in a few words"),
     ("fenced_yard", bool, "True if there is a fenced yard, false if not"),
     ("utilities_included", str | bool, "What the rent covers, in words (for example 'water and trash', or 'all utilities'). false means none"),
-    ("tenant_pays", str, "Utilities the tenant pays on top of the rent, from: electric, gas, water, trash, internet, heat (for example 'gas, electric')"),
+    ("tenant_pays", str, "Utilities the tenant pays on top of the rent, from: electric, gas, water, trash, internet, heat (for example 'gas, electric'), or all for every one of them"),
     ("months_up_front", int | str, "Months of rent due before move-in, 0 to 12 (1 when only the first month, 2 for first and last month)"),
     ("utilities_estimate", float | str, "Monthly utilities the user would pay on top (only if you really know)"),
     ("year_built", int | str, ""),
@@ -141,6 +142,7 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
     ("ai_notes", str, "Your own note about this place (added under a dated line; the user's notes are never touched)"),
 ]
 PLACE_KEYS = {n for n, _, _ in PLACE_PARAMS}
+ALL_UTILITIES = ("electric", "gas", "water", "trash", "internet", "heat")
 USER_ONLY = {"notes": "notes are the user's own words, so you can't write them. Put your text in ai_notes, or use add_note",
              "rating": "the rating is the user's own gut feeling, so you can't set it",
              "hidden": "hiding a place is the user's choice, so you can't set it",
@@ -606,6 +608,16 @@ def build_server(store: Store) -> FastMCP:
                     "turns the setting on after this session started.\n")
 
     # ------------------------------------------------------------ guards
+    def need_search(search_id: Any) -> None:
+        """With no search_id and more than one open search, ask which one instead of guessing the current one."""
+        if search_id is not None:
+            return
+        open_ones = store.list_searches()
+        if len(open_ones) > 1:
+            names = "; ".join(f"{_sname(x, 50)} (id {x['id']})" for x in open_ones[:8])
+            raise ValueError(f"There is more than one search ({names}), so I need to know which one this goes in. Ask the user, then "
+                             f"call again with search_id. Nothing was saved.")
+
     def strict_check(count: int, batch: bool) -> None:
         """The server-side limits while "Stricter scraping guards" is on. Raises a plain refusal naming the setting."""
         if not strict_on(store):
@@ -618,6 +630,29 @@ def build_server(store: Store) -> FastMCP:
         if used + count > STRICT_MAX_PER_HOUR:
             raise ValueError(f"Stricter scraping guards are on (Settings), so I can add at most {STRICT_MAX_PER_HOUR} places per hour "
                              f"and {used} were already added in the last hour. Nothing was saved. {STRICT_OFF_HOW}")
+
+    def check_photos(fields: dict[str, Any], where: str = "") -> list[str]:
+        """Photo links must be http(s) web addresses (data:, javascript: and the like are refused, nothing saved). A plain http:
+        link is upgraded to https:// (the app's pages only load https pictures), and the reply says so."""
+        if fields.get("photo_urls") is None:
+            return []
+        items = fields["photo_urls"]
+        if not isinstance(items, list):
+            raise ValueError(f"{where}photo_urls must be a list of web addresses. Nothing was saved.")
+        out: list[str] = []
+        upgraded = 0
+        for item in items:
+            link = str(item or "").strip()
+            if not re.match(r"^https?://[^\s/]+\S*$", link, re.I):
+                raise ValueError(f"{where}photo link \"{_clip(link, 40)}\" isn't a web address. Photo links must start with https:// "
+                                 f"(or http://). Nothing was saved.")
+            if link[:5].lower() == "http:":
+                link = "https:" + link[5:]
+                upgraded += 1
+            out.append(link)
+        fields["photo_urls"] = out
+        return [f"{upgraded} photo link{'s were' if upgraded != 1 else ' was'} plain http://, so I saved {'them' if upgraded != 1 else 'it'} as https:// "
+                f"(pictures only load over https). If a photo doesn't show, the site may not offer it over https."] if upgraded else []
 
     def check_fields(fields: dict[str, Any], where: str = "") -> dict[str, Any]:
         word = " ".join(str(fields.get("parking") or "").replace("_", " ").lower().split())
@@ -632,6 +667,11 @@ def build_server(store: Store) -> FastMCP:
         if bad:
             raise ValueError(f"{where}unknown field{'s' if len(bad) > 1 else ''} {', '.join(map(str, bad))}. "
                              f"Allowed: {', '.join(sorted(PLACE_KEYS | {'stage', 'commutes'}))}. Nothing was saved.")
+        photo_notes = check_photos(fields, where)
+        if photo_notes:
+            fields["_photo_notes"] = photo_notes
+        if isinstance(fields.get("tenant_pays"), str) and re.search(r"\ball\b", fields["tenant_pays"], re.I):
+            fields["tenant_pays"] = ", ".join(ALL_UTILITIES)  # "all" means every utility the app knows
         if isinstance(fields.get("utilities_included"), bool):  # a yes or no, not words: say it in words
             fields["utilities_included"] = "all utilities" if fields["utilities_included"] else "none"
         return {k: v for k, v in fields.items() if v is not None}
@@ -653,6 +693,7 @@ def build_server(store: Store) -> FastMCP:
     def add_one(fields: dict[str, Any]) -> tuple[dict[str, Any], bool, list[str], str]:
         """Add or update one place. Returns (place, created, notes, matched_on)."""
         fields = dict(fields)
+        photo_notes = fields.pop("_photo_notes", [])
         search = _search_for(store, fields.pop("search_id", None))
         stage = fields.pop("stage", None)
         commutes = fields.pop("commutes", None)
@@ -681,6 +722,7 @@ def build_server(store: Store) -> FastMCP:
                 ignored.append("values for " + ", ".join(sorted(kept)) + " (already filled; use update_place to change them)")
             if ignored:
                 notes.append("Ignored on this repeat: " + "; ".join(ignored) + ".")
+        notes += photo_notes
         notes += set_commutes(place, commutes)
         return store.get_place(place["id"]), created, notes, matched
 
@@ -820,7 +862,8 @@ def build_server(store: Store) -> FastMCP:
                 done = sum(1 for i in items if i["done_here"])
                 left = [i for i in items if not i["done_here"]]
                 lines.append(f"Application checklist: {done} of {len(items)} done"
-                             + (". Still to do: " + ", ".join(_t(i["label"], "checklist item", 40) for i in left[:6]) if left else ""))
+                             + (". Still to do" + (f" ({min(len(left), 6)} of {len(left)} shown)" if len(left) > 6 else "") + ": "
+                             + ", ".join(_t(i["label"], "checklist item", 40) for i in left[:6]) if left else ""))
         tours = store.list_tours(e["id"])
         for t in tours:
             lines.append(f"Tour {t['id']} [{t['status']}]: {helpers.local_time(t['starts_at'])}, {t['duration_minutes']} min"
@@ -850,6 +893,7 @@ def build_server(store: Store) -> FastMCP:
         fields = check_fields(kw)
         if not any(fields.get(k) for k in ("title", "address", "url")):
             raise ValueError("A place needs at least a title, an address or a link. Nothing was saved.")
+        need_search(fields.get("search_id"))
         if strict_on(store) and not store.find_duplicate(_search_for(store, fields.get("search_id")).get("id"), url=fields.get("url"),
                                                          address=fields.get("address"), unit=fields.get("unit")):
             strict_check(1, batch=False)
@@ -888,6 +932,7 @@ def build_server(store: Store) -> FastMCP:
                 raise ValueError(f"Place {i} needs at least a title, an address or a link. Nothing was saved.")
             if search_id is not None:
                 f.setdefault("search_id", search_id)
+            need_search(f.get("search_id"))
             cleaned.append(f)
         lines, out = [], []
         with store._write():  # all or nothing: a place with a bad value undoes the ones before it
@@ -904,12 +949,14 @@ def build_server(store: Store) -> FastMCP:
         lines.insert(0, f"Added {added}, updated {len(out) - added}.")
         if any(f.get("photo_urls") for f in cleaned):
             lines.append(PHOTO_NOTE)
+        lines += sorted({n for f in cleaned for n in f.get("_photo_notes", [])})
         if strict_on(store):
             lines.append(STRICT_RULE)
         return reply("\n".join(lines), places=out)
 
     def update_place(place_id: int, **kw: Any) -> CallToolResult:
         fields = check_fields(kw)
+        photo_notes = fields.pop("_photo_notes", [])
         fields.pop("stage", None)
         fields.pop("search_id", None)
         commutes = fields.pop("commutes", None)
@@ -927,8 +974,8 @@ def build_server(store: Store) -> FastMCP:
         if any(not _is_blank(before.get(k.replace(" ", "_"))) for k in changed if k not in ("AI notes", "photo urls", "commutes")):
             lines.append("A value I replaced is on the timeline, so the user can put it back.")
         if "ai_notes" in fields:
-            lines.append("Your note was added to AI notes under today's date. The user's own notes were not touched.")
-        lines += notes + _card(e)[1:]
+            lines.append("Claude's note was added to AI notes under today's date. The user's own notes were not touched.")
+        lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
 
     update_place.__doc__ = ("Fill in or change facts on a place (price, fees, laundry, dates, lat/lng...). Never touches the user's notes or "
@@ -1470,7 +1517,7 @@ def build_server(store: Store) -> FastMCP:
                       add_criteria_list: Annotated[list[dict[str, Any]] | None, Field(description="New criteria to add, each {kind, label, weight, dealbreaker, target}, where target is an object such as {\"max\": 1600}. " + CRIT_DOC)] = None,
                       reweight: Annotated[list[dict[str, Any]] | None, Field(description="Change existing criteria: [{id, weight?, dealbreaker?, target?, label?}]. Criteria can't be removed")] = None,
                       add_anchors_list: Annotated[list[dict[str, Any]] | None, Field(description="Anchors to add or fill in: [{name, address, lat, lng}]")] = None) -> CallToolResult:
-        """Change a search: its name, area, dates, budget, people sharing the cost, the user's pets (pet_kind, pet_weight, pet_count), criteria (add or reweight, never remove) and anchors. A criterion can't be removed; the user does that in the app. All or nothing: if anything is wrong, nothing is changed and the reply says what to fix.
+        """Change a search: its name, area, dates, budget, people sharing the cost, the user's pets (pet_kind, pet_weight, pet_count), criteria (add or reweight, never remove) and anchors (add_anchors_list). A criterion can't be removed; the user does that in the app. All or nothing: if anything is wrong, nothing is changed and the reply says what to fix.
         To add criteria pass add_criteria_list as a list of objects: {"kind": "price", "label": "Rent at most $1600", "weight": 80, "dealbreaker": true, "target": {"max": 1600}}.
         target is an object with the kind's keys (price {max}; beds, baths, sqft {min}; commute {anchor, mode, minutes}; laundry {want}; newer {year}; fenced_yard takes no target). "name" works as an alias for "label".
         pet_kind (cat, dog, both or none), pet_weight (pounds) and pet_count describe the user's pets; the pets and fenced_yard criteria read them."""
@@ -1550,7 +1597,12 @@ def build_server(store: Store) -> FastMCP:
     async def call_checked(name: str, arguments: dict[str, Any], context: Any = None, convert_result: bool = False) -> Any:
         """Unknown arguments are an error that names the allowed ones, never dropped silently."""
         tool = manager.get_tool(name)
-        if tool is not None and isinstance(arguments, dict):
+        if tool is None:
+            if re.search(r"delete|remove|archive|erase|clear", str(name), re.I):
+                raise ToolError(f"There is no {name} tool. Nothing in Property Helper can be deleted or removed from here: the user does that "
+                                f"in the Property Helper window. Ask them to do it there.")
+            raise ToolError(f"There is no tool called {_clip(str(name), 40)}. The tools are: {', '.join(sorted(t.name for t in manager.list_tools()))}.")
+        if isinstance(arguments, dict):
             allowed = list((tool.parameters or {}).get("properties", {}))
             extra = [k for k in arguments if k not in allowed]
             if extra:

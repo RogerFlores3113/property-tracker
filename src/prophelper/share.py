@@ -226,10 +226,11 @@ def imported_name(name: Any) -> str:
     return base[:200 - len(IMPORT_SUFFIX)].rstrip() + IMPORT_SUFFIX
 
 
-def preview_text(doc: dict[str, Any]) -> str:
-    """'Adds a search named X (imported) with 7 places' (the name is cut to a sane length; the page escapes it)."""
+def preview_text(doc: dict[str, Any], places: int | None = None) -> str:
+    """'Adds a search named X (imported) with 7 places' (the name is cut to a sane length; the page escapes it).
+    ``places`` is how many will really be added (from ``dry_run``); without it every readable place is counted."""
     name = imported_name(doc["search"].get("name"))
-    n = len(doc["places"])
+    n = len(doc["places"]) if places is None else places
     return f"Adds a search named {name} with {n} place{'s' if n != 1 else ''}"
 
 
@@ -242,6 +243,9 @@ def left_out_lines(report: dict[str, Any]) -> list[str]:
         return one if n(k) == 1 else many
 
     out = []
+    bad = [str(x) for x in report.get("fields_skipped") or []]
+    if bad:
+        out.append(f"The {', '.join(bad)} of the search can't be read and will be left out.")
     if n("places_skipped"):
         out.append(f"{n('places_skipped')} place{s('places_skipped', '', 's')} can't be read and will be left out.")
     if n("criteria_skipped"):
@@ -258,12 +262,16 @@ def left_out_lines(report: dict[str, Any]) -> list[str]:
 
 
 def dry_run(doc: dict[str, Any]) -> dict[str, Any]:
-    """What ``apply_import`` would do, counted on a throwaway in-memory database. Writes nothing of yours."""
+    """What ``apply_import`` would do, counted on a throwaway in-memory database. Writes nothing of yours. It runs the very
+    same checks as the real import, so the preview can't promise what the import won't do. When the whole file would be
+    refused the answer is ``{"failed": "<plain reason>"}``."""
     scratch = Store(":memory:")
     try:
         return apply_import(scratch, doc)
-    except Exception:
-        return {}
+    except ValueError as exc:
+        return {"failed": str(exc)}
+    except Exception:  # noqa: BLE001
+        return {"failed": "it has something this version can't read"}
     finally:
         scratch.close()
 
@@ -280,10 +288,17 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
     anchors_skipped = int(not_obj.get("anchors") or 0)
     dropped = unsafe = 0
     created = 0
+    fields_skipped: list[str] = []
     with store._write():
         mode = str(s.get("mode") or "rent")
         fields = {k: s.get(k) for k in ("area", "move_in", "target_close", "budget_max", "people", "people_names") if s.get(k) not in (None, "")}
         fields["hide_dealbreakers"] = bool(s.get("hide_dealbreakers"))
+        for key in [k for k in fields if k != "hide_dealbreakers"]:  # a value that can't be read is left out, the rest is kept
+            try:
+                store._search_values({key: fields[key]}, partial=True)  # noqa: SLF001
+            except (ValueError, TypeError, OverflowError):
+                fields.pop(key)
+                fields_skipped.append({"move_in": "move-in date", "target_close": "closing date", "budget_max": "budget"}.get(key, key.replace("_", " ")))
         search = store.add_search(imported_name(s.get("name")), mode, **fields)
         sid = search["id"]
         existing = store.list_anchors()
@@ -341,7 +356,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
                     pass  # a travel time that can't be read is simply not added
     return {"search": store.get_search(sid), "places": created, "link_dropped": dropped, "link_unsafe": unsafe,
             "places_skipped": places_skipped, "criteria_skipped": criteria_skipped, "anchors_skipped": anchors_skipped,
-            "skipped": places_skipped + criteria_skipped + anchors_skipped}
+            "fields_skipped": fields_skipped, "skipped": places_skipped + criteria_skipped + anchors_skipped}
 
 
 # --------------------------------------------------------------------------- a file waiting for "Add it"
