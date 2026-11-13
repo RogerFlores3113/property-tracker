@@ -6,8 +6,9 @@
   {{ button("Back to Search", href="/search") }}
 {% endcall %}
 <section class="card">
-  <h2>{{ headline }}</h2>
-  <p>From the file <strong>{{ filename }}</strong>. It is a {{ 'buying' if mode == 'buy' else 'renting' }} search with {{ criteria }} thing{{ 's' if criteria != 1 }} that matter and {{ anchors }} important place{{ 's' if anchors != 1 }}.</p>
+  <h2>What this adds</h2>
+  <p id="import-headline"><strong>{{ headline }}</strong></p>
+  <p>From the file <strong>{{ filename }}</strong>.</p>
   <p>It will be saved as <strong>{{ new_name }}</strong>.</p>
   {% if left_out %}<div class="flash warn"><p><strong>Some things in the file will be left out or cleaned:</strong></p><ul>{% for line in left_out %}<li>{{ line }}</li>{% endfor %}</ul></div>{% endif %}
   {% if same_name %}<p class="flash warn">You already have a search with this name. This adds another one next to it and changes nothing you have.</p>{% endif %}

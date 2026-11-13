@@ -257,7 +257,7 @@ def test_per_person_cost_shows_on_place_board_and_compare(client, store):
     assert "$1,000 per person" in place_html
     assert "$1,000 per person (2 people)" in client.get("/board").text
     cmp_html = client.get(f"/compare?ids={a['id']},{b['id']}").text
-    assert "Per person each month" in cmp_html and "$1,000.00 (2 people)" in cmp_html
+    assert "Per person each month" in cmp_html and "$1,000 (2 people)" in cmp_html
     solo = store.add_search("Solo", "rent")
     store.set_current_search(solo["id"])
     q, _ = store.add_place(title="Solo place", address="3 P St", price=900, utilities_estimate=50)

@@ -380,9 +380,9 @@ async def search_import_upload(request: Request):
     if report.get("failed"):
         return redirect("/search", error=f"That search can't be added ({report['failed']}), so nothing was changed.")
     in_use = sum(1 for p in doc["places"] if isinstance(p.get("url"), str) and normalize_url(p["url"]) and shown.find_duplicate(url=p["url"]) is not None)
-    left_out = share.left_out_lines({**report, "link_dropped": in_use})
-    return render(request, "share_import.html", token=token, filename=filename, headline=share.preview_text(doc, report.get("places")),
-                  mode=str(s.get("mode") or "rent"), criteria=len(doc["criteria"]) - report.get("criteria_skipped", 0), anchors=len(doc["anchors"]),
+    # The unreadable places are said in the headline sentence, so the list below doesn't say them twice.
+    left_out = share.left_out_lines({**report, "link_dropped": in_use, "places_skipped": 0})
+    return render(request, "share_import.html", token=token, filename=filename, headline=share.preview_text(doc, report.get("places"), report),
                   new_name=new_name, left_out=left_out,
                   same_name=any(x["name"].lower() == new_name.lower() for x in shown.list_searches(include_archived=True)))
 

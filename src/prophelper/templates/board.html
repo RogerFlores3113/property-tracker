@@ -18,6 +18,7 @@
   </div>
   <label class="check"><input type="checkbox" id="hide-closed"> Hide passed and closed</label>
   <span id="board-status" class="fine" role="status" aria-live="polite"></span>
+  <a class="btn small" id="csv-link" href="/places.csv?search_id={{ search.id }}" download>Download spreadsheet (CSV)</a>
 </div>
 {% if hidden_dealbreaker or hidden_hand %}
 <p class="fine" id="hidden-note">

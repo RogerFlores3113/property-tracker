@@ -891,7 +891,8 @@ def build_server(store: Store) -> FastMCP:
             n = store.count_places(s["id"])
             when = s.get("move_in") or s.get("target_close")
             lines.append(f"Search {s['id']}{' (current)' if cur and cur['id'] == s['id'] else ''}: {_sname(s)}, {_mode_word(s['mode'])}, "
-                         f"{_t(s['area'], 'search area', 80) or 'no area'}, budget {_money(s.get('budget_max'))}"
+                         + (f"{_t(s['area'], 'search area', 80)}, " if _t(s['area'], 'search area', 80) else "")
+                         + f"budget {_money(s.get('budget_max'))}"
                          + (f", {'move-in' if s['mode'] == 'rent' else 'close'} {helpers.day_text(when)}" if when else "")
                          + (f", down payment {s['down_payment_pct']:g}%" if s['mode'] == 'buy' and s.get('down_payment_pct') is not None else "")
                          + (f", {_split_count(s)} {_split_noun(s)} sharing the cost" if _split_count(s) > 1 else "")

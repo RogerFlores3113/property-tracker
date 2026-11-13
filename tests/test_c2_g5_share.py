@@ -128,7 +128,7 @@ def test_import_round_trip_makes_a_new_search_after_a_preview(client, store):
     data = client.get(f"/search/export.json?id={s['id']}").content
     before = len(store.list_searches())
     r = client.post("/searches/import", files={"file": ("s.json", data, "application/json")})
-    assert r.status_code == 200 and "Adds a search named Fall (imported) with 2 places" in r.text
+    assert r.status_code == 200 and "Adds the search &#39;Fall (imported)&#39; (renting) with 2 places" in r.text
     assert len(store.list_searches()) == before  # preview writes nothing
     token = re.search(r'name="token" value="([^"]+)"', r.text).group(1)
     r2 = client.post("/searches/import/apply", data={"token": token}, follow_redirects=False)
@@ -219,7 +219,7 @@ def test_people_names_and_slots(store):
     assert s["people_names"] == ["Sam", "Priya", "Lee"]
     assert people_slots(s) == ["Sam", "Priya", "Lee"]
     s2 = store.update_search(s["id"], people=4)
-    assert people_slots(s2) == ["Sam", "Priya", "Lee", "Person 1"]
+    assert people_slots(s2) == ["Sam", "Priya", "Lee", "Person 4"]
     assert people_slots(store.update_search(s["id"], people=1)) == []
     assert store.get_search(s["id"])["people_names"] == ["Sam", "Priya", "Lee"]
 

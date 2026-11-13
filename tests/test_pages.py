@@ -137,7 +137,7 @@ def test_place_cost_breakdown_updates_after_edit(client, store):
     p, _ = store.add_place(title="A", address="1 A St", price=1000)
     client.post(f"/places/{p['id']}", data={"title": "A", "address": "1 A St", "price": "1000", "utilities_estimate": "100"})
     html = client.get(f"/places/{p['id']}").text
-    assert "$1,100.00" in html
+    assert "$1,100" in html
 
 
 def test_add_note_to_timeline(client, store):

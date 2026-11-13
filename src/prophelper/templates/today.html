@@ -27,6 +27,7 @@
   {{ button("Add a place", href="/add", kind="primary") }}
 {% endcall %}
 {{ sample_notice() }}
+{% include "_today_closing.html" %}
 {% if place_count == 0 %}
 <section class="card">
   <h2>No places in this search yet</h2>

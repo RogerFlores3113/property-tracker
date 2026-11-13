@@ -2423,12 +2423,16 @@ def people_slots(search: dict[str, Any]) -> list[str]:
         return []
     names = list(search.get("people_names") or [])[:n]
     taken = {x.lower() for x in names}
-    i = 1
-    while len(names) < n:
+    # An unnamed seat keeps its own number (the 3rd seat is "Person 3"), so naming the first two people never turns the
+    # third into "Person 1" and a saved "Person 1" rating follows the new name.
+    for i in range(len(names) + 1, n + 1):
         label = f"Person {i}"
-        i += 1
-        if label.lower() not in taken:
-            names.append(label)
+        k = i
+        while label.lower() in taken:
+            k += n
+            label = f"Person {k}"
+        taken.add(label.lower())
+        names.append(label)
     return names
 
 

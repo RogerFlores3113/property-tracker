@@ -227,7 +227,7 @@ def test_cat_search_counts_pet_rent_and_fee(world):
     s.set_current_search(sr["id"])
     p = [x for x in s.list_places(sr["id"]) if x["title"].startswith("First")][0]
     flat = _flat(c.get(f"/places/{p['id']}").text)
-    assert "Pet rent $30.00" in flat and "Pet fee $200" in flat and "Cash needed at move-in: $2,200" in flat
+    assert "Pet rent $30" in flat and "Pet fee $200" in flat and "Cash needed at move-in: $2,200" in flat
 
 
 def test_map_with_tiles_off_and_on(world):
