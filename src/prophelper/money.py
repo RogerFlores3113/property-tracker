@@ -16,6 +16,7 @@ total in short words ("insurance", "utilities") and ``headline`` is the one line
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 DEFAULT_LEASE_MONTHS = 12
@@ -77,6 +78,10 @@ def tenant_pays_list(place: dict[str, Any]) -> list[str]:
 def _estimate_from_listing(place: dict[str, Any], util: float) -> bool:
     """True when the utilities estimate is the monthly bill the saved listing text itself gives (read by the parser), so it
     is not a guess. No stored flag is needed: the listing text is kept, so the same reading is repeated here."""
+    notes = str(place.get("ai_notes") or "")
+    for m in re.finditer(r"Utilities estimate \$([\d,]+(?:\.\d+)?)/month: (?:billed back, )?from the listing\.", notes):
+        if abs(float(m.group(1).replace(",", "")) - util) < 0.5:
+            return True  # the AI said where the amount came from (and the listing text agreed when it was saved)
     text = str(place.get("listing_text") or "")
     if not text:
         return False

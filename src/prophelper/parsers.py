@@ -354,6 +354,10 @@ def _pets(text: str) -> str:
         cats = True
     if re.search(r"\bdogs?\b(?:\s*(?:are|is))?\s*(?:ok|okay|allowed|welcome|accepted|friendly|permitted)|\bdogs? only\b|\bdog[- ]friendly\b|\bwoof|\bsmall dogs?\b|\bdogs? under\b", work):
         dogs = True
+    pm = re.search(r"\bpets?\s*[:\-]\s*((?:up to|max(?:imum)?(?: of)?|limit(?: of)?|up to a max of)?\s*(?:\d|one|two|three|four)?\s*(?:dogs?|cats?)\b[^.\n;]{0,40})", work)
+    if pm and not re.search(r"\b(?:no|not|none)\b", pm.group(1)):
+        cats = cats or bool(re.search(r"\bcats?\b", pm.group(1)))
+        dogs = dogs or bool(re.search(r"\bdogs?\b", pm.group(1)))
     if re.search(r"\bcats?\s+(?:are\s+)?(?:negotiable|considered|case[- ]by[- ]case|by approval|with approval|on approval|upon approval)", work):
         cats = True
     if re.search(r"\bdogs?\s+(?:are\s+)?(?:negotiable|considered|case[- ]by[- ]case|by approval|with approval|on approval|upon approval)", work):
@@ -489,6 +493,8 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
         out["pet_weight_limit"] = float(w.group(1))
     n = re.search(r"\b(?:max(?:imum)?(?: of)?|limit(?: of)?|up to|no more than|at most)\s+(\d|one|two|three|four)\s+(?:pets?|animals?|cats?|dogs?)\b", text, re.I) \
         or re.search(r"\b(\d|one|two|three|four)\s+(?:pets?|animals?|cats?|dogs?)\s+(?:max(?:imum)?|limit|per (?:unit|apartment|home|household))", text, re.I)
+    if not n:  # "Two dogs ok", "2 cats allowed"
+        n = re.search(r"(?<![\w$.])(\d|one|two|three|four)\s+(?:pets?|animals?|cats?|dogs?)\s+(?:are\s+)?(?:ok|okay|allowed|welcome|accepted|permitted)\b", text, re.I)
     if n:
         v = n.group(1).lower()
         count = int(v) if v.isdigit() else _NUM_WORDS[v]
@@ -573,9 +579,12 @@ def _move_in_months(text: str) -> tuple[int, bool]:
 _WORD_NUM = {"one": 1, "a": 1, "1": 1, "two": 2, "2": 2}
 
 
-def _deposit_in_months(text: str) -> int:
+def _deposit_in_months(text: str) -> float:
     """The security deposit written as a number of months of rent ("security deposit one month", "deposit equal to one month's
     rent"), as that number of months. 0 when the text gives none."""
+    m = re.search(r"\b(?:security |damage )?deposits?\b[ \t:\-]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(\d(?:\.\d{1,2})?)[ \t]*(?:x|times|months?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?rent)?)(?:[ \t]+(?:the[ \t]+|of[ \t]+|monthly[ \t]+)*rent)?\b", text, re.I)
+    if m and 0 < float(m.group(1)) <= 6:
+        return float(m.group(1))
     for pat in (r"\b(?:security |damage )?deposits?\b[ \t:\-]{0,4}(?:is |of |equal to |equals |equivalent to |=)?[ \t]*(one|two|a|1|2)[- ]months?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?rent)?\b",
                 r"\b(one|two|1|2)[- ]months?(?:'s?)?[ \t]+(?:security |damage )deposit\b"):
         m = re.search(pat, text, re.I)
@@ -606,7 +615,9 @@ def _seller_credit(text: str) -> float | None:
     pats = (r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:contribut\w*|credit|concessions?|assist\w*|offer\w*|give[sn]?)\b[^$\n.]{0,40}?" + amt,
             r"\bseller(?:'s)?[ \t]+(?:will[ \t]+|to[ \t]+)?(?:pay|pays|cover|covers)\b[^$\n.]{0,30}?" + amt + r"[^\n.]{0,30}\bclosing",
             r"\bseller[ \t]+(?:concessions?|credits?|contributions?)\b[^$\n.]{0,20}?" + amt,
-            amt + r"[ \t]+(?:in[ \t]+|of[ \t]+)?seller[ \t]+(?:concessions?|credits?|contributions?|paid closing)")
+            amt + r"[ \t]+(?:in[ \t]+|of[ \t]+)?seller[ \t]+(?:concessions?|credits?|contributions?|paid closing)",
+            r"\bclosing[ \t]+costs?\b[^$\n.]{0,30}?\b(?:paid|covered|contributed)[ \t]+by[ \t]+(?:the[ \t]+)?seller\b[^$\n.]{0,25}?" + amt,
+            r"\bseller[ \t]+(?:paid|covered)[ \t]+closing[ \t]+costs?\b[^$\n.]{0,25}?" + amt)
     for pat in pats:
         for m in re.finditer(pat, text, re.I):
             if re.search(r"assessment", m.group(0), re.I):
@@ -700,7 +711,8 @@ def _listing_agent(text: str) -> str:
     m = re.search(r"\b(?:listed by|listing agent|listing provided by|listing courtesy of|presented by)\s*[:\-]?[ \t]*([^\n]{3,140})", text, re.I)
     if not m:
         return ""
-    raw = re.split(r"(?<!\b[A-Z])(?<!\bInc)(?<!\bCo)(?<!\bJr)(?<!\bSr)(?<!\bLtd)(?<!\bCorp)(?<!\bLLC)[.!?]\s+(?=[A-Z])", m.group(1))[0]
+    raw = re.split(r"(?<!\b[A-Z])(?<!\bInc)(?<!\bCo)(?<!\bJr)(?<!\bSr)(?<!\bLtd)(?<!\bCorp)(?<!\bLLC)[.!?]\s+(?=[A-Z0-9$#])", m.group(1))[0]
+    raw = re.split(r"[ \t,;]+(?:unit|apt\.?|apartment|suite|ste\.?|#)[ \t]*#?[ \t]*[A-Za-z]?\d{0,5}[A-Za-z]?\b(?=[ \t]*(?:[.,;]|$|\d|\$))", raw, maxsplit=1, flags=re.I)[0]
     line = re.sub(r"\(?\+?\d[\d\s().-]{6,}\d\)?", " ", raw)
     line = re.sub(r"\b(?:DRE|license|lic|BRE|MLS)\b[ \t#:.]*[\w-]*", " ", line, flags=re.I)
     line = re.sub(r"\s*[\u2022\u00b7|]\s*", ", ", line)
@@ -787,6 +799,21 @@ def _utilities(text: str) -> str:
     return _ordered_utilities(found) if found else ""
 
 
+_ALL_EXCEPT = re.compile(r"\ball\s+(?:the\s+)?utilities\b([^.\n;]{0,40}?)\b(?:except(?:\s+for)?|other than|besides)\s+([^.\n;]{0,60})", re.I)
+
+
+def _all_except(text: str) -> list[str]:
+    """Utilities left out of "Tenant pays all utilities except trash" / "All utilities except garbage" (so the landlord keeps
+    those). Empty when the text says the opposite ("all utilities included except trash") or has no such phrase."""
+    out: list[str] = []
+    for clause in re.split(r"\n|;|\.(?=\s|$)", text):
+        m = _ALL_EXCEPT.search(clause)
+        if not m or re.search(r"\b(?:included|paid|covered|provided|landlord|owner)\b", clause[:m.end(1)], re.I):
+            continue
+        out += [w for w in re.findall(_ROLE_WORD, m.group(2).lower())]
+    return out
+
+
 def _tenant_pays(text: str) -> str:
     """"Tenant pays gas, electric" from "Tenant pays gas and electric" (utilities the listing says the renter pays), or ''."""
     low = text.lower()
@@ -800,6 +827,9 @@ def _tenant_pays(text: str) -> str:
         found += re.findall(r"\b(?:" + words + r")\b", rest)
         if re.match(r"\s*utilities\b", rest) and not re.match(r"\s*utilities[^.\n]{0,20}\b(?:except|other than|besides)\b", rest):
             found += list(_ALL_UTILITIES)  # "Tenant responsible for all utilities"
+    left_out = {"trash" if w in ("garbage", "trash removal") else "electric" if w == "electricity" else "sewer" if w == "sewage" else w for w in _all_except(low)}
+    if left_out:
+        found = [w for w in found if w not in left_out] + [w for w in _ALL_UTILITIES if w not in left_out]
     return _ordered_utilities(found) if found else ""
 
 
@@ -814,7 +844,13 @@ def _billed_back(text: str) -> tuple[str, float] | None:
     m = re.search(r"((?:(?:" + words + r")\s*(?:,|/|&|and|\+)?\s*(?:and\s+)?){1,6})\s*(?:(?:is|are)\s+)?(?:billed|charged|passed)\b[^$\n.]{0,30}?"
                   r"\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)", low)
     if not m:
-        return None
+        # "$25/mo billed back for trash" (the amount first)
+        m2 = re.search(r"\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*(?:is\s+|are\s+)?(?:billed|charged|passed)\s*(?:back|through)?\s*(?:for|on|to cover)\s+"
+                       r"((?:(?:" + words + r")\s*(?:,|/|&|and|\+)?\s*(?:and\s+)?){1,6})", low)
+        if not m2:
+            return None
+        found = re.findall(words, m2.group(2))
+        return (_ordered_utilities(found), float(m2.group(1))) if found else None
     found = re.findall(words, m.group(1))
     return (_ordered_utilities(found), float(m.group(2))) if found else None
 
@@ -1067,6 +1103,14 @@ def _address(text: str) -> dict[str, str]:
         um = re.search(r"(?<![\w-])" + _UNIT, text[max(0, text.find(out["address"])):][:300], re.I)
         if um and not re.match(r"[A-Z]$", um.group(1)):
             out["unit"] = um.group(1)
+    if "unit" not in out:
+        # "2 bed in unit 2C at 123 Main St", "Unit B." before or after the address: a word like unit or apt names it
+        for um in re.finditer(r"(?<![\w-])(?:unit|apt\.?|apartment|suite|ste\.?)\s*#?\s*([A-Za-z]?\d{1,5}[A-Za-z]?(?:-\d{1,3})?|[A-Z])\b", text, re.I):
+            val = um.group(1)
+            if val.isalpha() and not val.isupper():
+                continue  # "unit a few" is not a unit
+            out["unit"] = val
+            break
     return out
 
 
@@ -1137,9 +1181,17 @@ def _title(text: str, found: dict[str, Any]) -> str:
 def _title_raw(text: str, found: dict[str, Any]) -> str:
     """A short title: the building name, else the first line of the paste that reads like a name or heading, else the street
     address. A site name (Zillow, Realtor.com) is never the title."""
+    named = re.search(r"^[ \t*#|]*(?:property|community|building|listing|apartment)(?: name)?[ \t]*[:\-][ \t]*([A-Z][^\n]{2,60})$", text, re.M | re.I)
+    if named and not re.search(r"\d", named.group(1)[:3]):
+        return named.group(1).strip()
     building = _building_name(text)
     if building:
         return building
+    lines = [" ".join(x.strip(" \t|\u2022\u00b7*#").split()) for x in text.splitlines()[:25]]
+    lines = [x for x in lines if x]
+    if len(lines) >= 2 and re.fullmatch(r"[A-Z][A-Za-z'&-]{3,25}", lines[0]) and lines[0].lower() not in _UI_WORDS and not _SITE_LINE.match(lines[0]) \
+            and _ADDRESS.match(lines[1]):
+        return lines[0]  # a one-word name on its own line above the address
     for line in text.splitlines()[:25]:
         line = " ".join(line.strip(" \t|\u2022\u00b7*#").split())
         if not line:
@@ -1219,11 +1271,19 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
             put(key, value)
     if out.get("pet_rent") and re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*)?(?:per|each|/)\s*(?:pet|dog|cat|animal)\b", text, re.I):
         facts.append(f"Pet rent is ${out['pet_rent']:,.0f} for each pet, so with more than one pet it adds up.")
+    nr = re.search(r"\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?[ \t]*(?:non[- ]?refundable[ \t]+)?pet[ \t]+deposit\b[^.\n;]{0,25}?non[- ]?refundable|\bnon[- ]?refundable[ \t]+\$\s?(\d{1,4}(?:,\d{3})?)[ \t]*pet[ \t]+deposit", text, re.I)
+    if nr and out.get("pet_fee") and not out.get("pet_deposit"):
+        facts.append(f"The ${float((nr.group(1) or nr.group(2)).replace(",", "")):,.0f} pet deposit is non-refundable, so it is counted as a pet fee, not as money you get back.")
     for key, value in (_try(lambda: _pet_limit_fields(text)) or {}).items():
         put(key, value)
     included = _try(lambda: _utilities(text)) or ""
     pays = _try(lambda: _tenant_pays(text)) or ""
     roles = _try(lambda: _utility_roles(text)) or {"tenant": [], "landlord": [], "billed": [], "amount": None}
+    roles["landlord"] = [w.strip() for w in _ordered_utilities(list(roles["landlord"])).split(",") if w.strip()]
+    left_out = _try(lambda: _ordered_utilities(_all_except(text.lower()))) or ""
+    if left_out:
+        roles["landlord"] = roles["landlord"] + [w.strip() for w in left_out.split(",") if w.strip() and w.strip() not in roles["landlord"]]
+        pays = _ordered_utilities([w for w in list(_ALL_UTILITIES) if w not in left_out.split(", ")] + [w.strip() for w in pays.split(",") if w.strip() and w.strip() not in left_out.split(", ")])
     if roles["tenant"] or roles["landlord"]:
         # The clause reading wins where the older sentence-wide reading put a tenant's utility in the included list.
         mine = _ordered_utilities(list(roles["tenant"]))
@@ -1285,6 +1345,12 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
         monthly = 0.0
         for v in dict.fromkeys(_money_monthly_fees(text)):
             monthly += v
+        counted, listed = _try(lambda: _extra_monthly(text)) or ([], [])
+        for label, v in counted:
+            monthly += v
+            facts.append(f"${v:,.0f}/month extra for {label} is counted in other monthly fees. If it is optional, take it out.")
+        for label, v in listed:
+            facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month extra. It looks optional, so it is not counted in the cost. Add it to other monthly fees if you need it.")
         if monthly:
             put("other_monthly_fees", monthly)
         months, with_deposit = _try(lambda: _move_in_months(text)) or (0, False)
@@ -1363,3 +1429,28 @@ def _money_monthly_fees(text: str) -> list[float]:
     for m in re.finditer(r"\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*(?:for\s+)?" + label + r"\b", text, re.I):
         found.append(float(m.group(1)))
     return found
+
+
+_MONTHLY_RE = r"(?:/\s*mo(?:nth)?\b|per\s+month|monthly|a\s+month|each\s+month)"
+
+
+def _extra_monthly(text: str) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+    """Extra monthly charges written plainly: "$150 extra monthly for lawn and trash", "Storage locker extra $40 per month".
+    Returns (counted, listed). Lawn, trash and similar services come with the unit, so they are counted as a monthly fee;
+    storage, a locker or a pool pass can be turned down, so they are only listed (the person decides)."""
+    counted: list[tuple[str, float]] = []
+    listed: list[tuple[str, float]] = []
+    optional = re.compile(r"storage|locker|pool|gym|club|garage|carport|parking|bike|wine|pet|dog|cat", re.I)
+    pats = (r"\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:extra\s+)?" + _MONTHLY_RE + r"?\s*extra\s*(?:" + _MONTHLY_RE + r")?\s*(?:for|to cover)\s+([A-Za-z][A-Za-z ,&/-]{2,40})",
+            r"\b([A-Za-z][A-Za-z -]{2,30}?)\s+(?:is\s+)?extra\s*[:\-]?\s*\$\s?(\d{1,4})(?:\.\d\d)?\s*" + _MONTHLY_RE)
+    seen: set[tuple[str, float]] = set()
+    for i, pat in enumerate(pats):
+        for m in re.finditer(pat, text, re.I):
+            amount, label = (float(m.group(1)), m.group(2)) if i == 0 else (float(m.group(2)), m.group(1))
+            label = re.split(r"[.;\n]", label)[0].strip(" ,-").lower()
+            label = re.sub(r"^(?:the|a|an|our|each)\s+", "", label)
+            if not label or amount <= 0 or (label, amount) in seen or re.search(r"\b(?:deposit|rent)\b", label):
+                continue
+            seen.add((label, amount))
+            (listed if optional.search(label) else counted).append((label, amount))
+    return counted, listed
