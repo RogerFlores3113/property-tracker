@@ -321,6 +321,10 @@ def left_out_lines(report: dict[str, Any], *, done: bool = False) -> list[str]:
     if n("link_unsafe"):
         out.append(f"{n('link_unsafe')} place{s('link_unsafe', ' has a link that isn' + chr(39) + 't', 's have links that aren' + chr(39) + 't')} a normal web address. "
                    f"{s('link_unsafe', 'The place ' + ('was' if done else 'is'), 'The places ' + ('were' if done else 'are'))} kept without {s('link_unsafe', 'its link', 'their links')}.")
+    if n("link_userinfo"):
+        out.append(f"{n('link_userinfo')} place{s('link_userinfo', ' has a link that has', 's have links that have')} a user name or password in {s('link_userinfo', 'it', 'them')}, "
+                   f"so {s('link_userinfo', 'the link', 'the links')} {'was' if done and n('link_userinfo') == 1 else 'were' if done else 'will be'} left blank. "
+                   f"{s('link_userinfo', 'The place ' + ('was' if done else 'is'), 'The places ' + ('were' if done else 'are'))} kept.")
     if n("link_dropped"):
         k = n("link_dropped")
         who = "that place" if k == 1 else "those places"
@@ -364,7 +368,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
     places_skipped = int(not_obj.get("places") or 0)
     criteria_skipped = int(not_obj.get("criteria") or 0)
     anchors_skipped = int(not_obj.get("anchors") or 0)
-    dropped = unsafe = 0
+    dropped = unsafe = userinfo = 0
     photos_dropped = photos_upgraded = 0
     created = 0
     fields_skipped: list[str] = []
@@ -412,8 +416,10 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
                 criteria_skipped += 1
         for item in doc["places"]:
             fields = {k: item[k] for k in (*SHARED_TEXT, *SHARED_REAL, *SHARED_INT, "photo_urls", "dishwasher", "application_fee_per_adult") if k in item}
-            if "url" in fields and not (isinstance(fields["url"], str) and normalize_url(fields["url"])):
-                if fields["url"] not in (None, ""):
+            if "url" in fields and not (isinstance(fields["url"], str) and normalize_url(fields["url"]) and not has_userinfo(fields["url"])):
+                if isinstance(fields["url"], str) and has_userinfo(fields["url"]):
+                    userinfo += 1  # the place is kept, the link is not
+                elif fields["url"] not in (None, ""):
                     unsafe += 1  # the place is kept, the link is not
                 fields.pop("url")
             if fields.get("url") and store.find_duplicate(url=str(fields["url"])) is not None:
@@ -439,7 +445,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
                         store.set_commute(place["id"], anchor_ids[idx], str(cm["mode"]), cm.get("minutes"), "you")
                 except (ValueError, TypeError, AttributeError):
                     pass  # a travel time that can't be read is simply not added
-    return {"search": store.get_search(sid), "places": created, "link_dropped": dropped, "link_unsafe": unsafe,
+    return {"search": store.get_search(sid), "places": created, "link_dropped": dropped, "link_unsafe": unsafe, "link_userinfo": userinfo,
             "places_skipped": places_skipped, "criteria_skipped": criteria_skipped, "anchors_skipped": anchors_skipped,
             "fields_skipped": fields_skipped, "anchors_dropped": anchors_dropped, "photos_dropped": photos_dropped, "photos_upgraded": photos_upgraded, "skipped": places_skipped + criteria_skipped + anchors_skipped}
 

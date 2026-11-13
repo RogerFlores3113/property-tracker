@@ -507,6 +507,18 @@ def _plain(text: Any) -> dict[str, Any]:
     return _cell(text or None)
 
 
+def _utilities_cell(p: dict[str, Any]) -> dict[str, Any]:
+    """What the listing says the rent includes: 'Heat, water', 'All' or 'None listed'."""
+    text = str(p.get("utilities_included") or "").strip()
+    if not text:
+        return _cell(None, unknown_text="None listed")
+    if money_mod.utilities_covered(p):
+        return _cell("All")
+    if text.lower() in money_mod.NOTHING_WORDS:
+        return _cell("None listed")
+    return _cell(text)
+
+
 def _line_unset(p: dict[str, Any], key: str) -> bool:
     """True when a $0 cost line is really "never filled in" (pet rent with pets unknown, parking never set)."""
     if key == "pet_rent":
@@ -632,7 +644,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row("dishwasher", "Dishwasher", [_yes_no(p.get("dishwasher")) for p in places], "high"),
         row("parking", "Parking", [_cell(PARKING_TEXT.get(p.get("parking") or ""), PARKING_RANK.get(p.get("parking") or "")) for p in places], None),
         row("pets", "Pets", [_cell(PETS_TEXT.get(p.get("pets") or "")) for p in places]),
-        row("utilities", "Utilities included", [_plain(p.get("utilities_included")) for p in places], only_if_any=True),
+        row("utilities", "Utilities included", [_utilities_cell(p) for p in places], only_if_any=True),
     ])
     section("Dates and money up front", [
         row("available", "Available from", [_plain(helpers.day_text(p["available_from"]) if p.get("available_from") else "") for p in places], only_if_any=True),

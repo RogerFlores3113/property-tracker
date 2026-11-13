@@ -279,7 +279,7 @@ def test_add_from_paste_fills_the_form_then_saves(client, store):
     r = client.post("/add/save", data=form, follow_redirects=False)
     assert r.status_code == 303
     p = store.list_places()[0]
-    assert r.headers["location"] == f"/places/{p['id']}" and p["price"] == 1850 and p["listing_text"].startswith("Sunny")
+    assert r.headers["location"] == f"/places/{p['id']}?fresh=1" and p["price"] == 1850 and p["listing_text"].startswith("Sunny")
     # saving it again does not make a second one
     again = client.post("/add/save", data=form, follow_redirects=False)
     assert again.headers["location"] == f"/places/{p['id']}" and store.count_places() == 1

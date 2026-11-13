@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from . import backups, commute, enrich, helpers, movein, parsers, paths, redflags, scoring, stages, today
 from .routes_geocode import lookup_for_anchor
 from .deps import get_store, is_htmx, redirect, render
-from .store import COMMUTE_MODES, CRITERION_KINDS, NotFound, StageRuleError, Store, has_userinfo
+from .store import COMMUTE_MODES, CRITERION_KINDS, NotFound, StageRuleError, Store, clean_bool, has_userinfo
 
 router = APIRouter()
 
@@ -41,6 +41,14 @@ FORM_FIELDS = (
     "pet_weight_limit", "pet_count_limit", "pet_breed_note", "pet_deposit", "fenced_yard",
     "days_on_market", "special_assessment", "special_assessment_payer", "closing_costs", "listing_agent",
     "months_up_front", "tenant_pays", "seller_credit", "application_fee_per_adult")
+
+
+def _yes(value: Any) -> bool:
+    """A yes/no form value as a bool: 1, yes, y, true and on all mean yes; anything else (or blank) is no."""
+    try:
+        return bool(clean_bool(value))
+    except ValueError:
+        return False
 
 
 def _form_fields(form: Any, names: tuple[str, ...] = FORM_FIELDS) -> dict[str, str]:
@@ -103,7 +111,12 @@ def board_page(request: Request, show_hidden: int = 0):
     for cards in columns.values():
         cards.sort(key=scoring.sort_key)  # places that fit first, then the ones that miss a deal-breaker or need a check
     totals = {s: len(c) for s, c in columns.items()}
-    return render(request, "board.html", search=search, columns=columns, totals=totals, stages=mode_stages,
+    closing_line, closing_stages = "", ()
+    info = helpers.closing_info(search)
+    if info is not None and "Offer drafted" in mode_stages:  # a buyer's countdown on the cards that are well into an offer
+        closing_line = info["place_line"]
+        closing_stages = tuple(s for s in mode_stages[mode_stages.index("Offer drafted"):] if s not in stages.CLOSED_STAGES)
+    return render(request, "board.html", search=search, closing_line=closing_line, closing_stages=closing_stages, columns=columns, totals=totals, stages=mode_stages,
                   hidden_dealbreaker=hidden_deal, hidden_hand=hidden_hand, show_hidden=bool(show_hidden), total=len(rows),
                   some_added_earlier=any((helpers.days_since(r.get("created_at")) or 0) > 0 for r in rows))
 
@@ -201,10 +214,11 @@ def _closing_for_place(place: dict[str, Any], search: dict[str, Any]) -> dict[st
 
 
 @router.get("/places/{place_id}", include_in_schema=False)
-def place_page(request: Request, place_id: int):
+def place_page(request: Request, place_id: int, fresh: int = 0):
     store = get_store(request)
     _place_or_404(store, place_id)
-    store.mark_seen(place_id)
+    if not fresh:  # right after saving from the Add page the place stays under New places on Today, like one Claude added
+        store.mark_seen(place_id)
     return _place_page(request, place_id)
 
 
@@ -292,7 +306,7 @@ async def hide_place(request: Request, place_id: int):
     store = get_store(request)
     place = _place_or_404(store, place_id)
     form = await request.form()
-    on = str(form.get("on", "1")) == "1"
+    on = _yes(form.get("on", "1"))
     store.update_place(place_id, by="you", hidden=on)
     return redirect(f"/places/{place_id}", notice=(f"{place['title']} is hidden from the board." if on else f"{place['title']} shows on the board again."))
 
@@ -414,7 +428,7 @@ async def update_search(request: Request, search_id: int):
     store = get_store(request)
     form = await request.form()
     values: dict[str, Any] = {k: form.get(k) for k in ("name", "mode", "area", "move_in", "target_close", "budget_max", "notes", "people", "adults", "pet_kind", "pet_weight", "pet_count", "people_names", "down_payment_pct") if k in form}
-    values["hide_dealbreakers"] = "1" if form.get("hide_dealbreakers") == "1" else "0"
+    values["hide_dealbreakers"] = "1" if _yes(form.get("hide_dealbreakers")) else "0"
     added = ""
     try:
         before = store.get_search(search_id)
@@ -508,7 +522,7 @@ async def add_criterion(request: Request, search_id: int):
         existing = [c for c in existing if not (c["kind"] == kind and kind in ("price", "beds") and c["target"].get("auto"))]
         dupe = any(c["kind"] == kind and _same_target(c["target"], target) for c in existing) if kind != "custom" else False
         store.add_criterion(search_id, kind, label=label, weight=form.get("weight") or 10,
-                            dealbreaker=form.get("dealbreaker") == "1", target=target)
+                            dealbreaker=_yes(form.get("dealbreaker")), target=target)
     except NotFound:
         raise HTTPException(404, "That search doesn't exist.") from None
     except ValueError as exc:
@@ -533,7 +547,7 @@ async def update_criterion(request: Request, criterion_id: int):
             if not label or label == auto_before:  # a name they never changed follows the new place, way and minutes
                 label = _commute_label(store, target)
         store.update_criterion(criterion_id, label=label, weight=form.get("weight") or 0,
-                               dealbreaker=form.get("dealbreaker") == "1", target=target)
+                               dealbreaker=_yes(form.get("dealbreaker")), target=target)
     except NotFound:
         raise HTTPException(404, "That item doesn't exist.") from None
     except ValueError as exc:
@@ -703,5 +717,5 @@ async def add_save(request: Request):
         return _add_page(request, values=values, parsed=True, text=values.get("listing_text", ""), url=values.get("url", ""),
                          status=400, error=str(exc), search_id=int(sid) if str(sid or "").isdigit() else None)
     if created:
-        return redirect(f"/places/{place['id']}", notice=f"Saved {place['title']}.")
+        return redirect(f"/places/{place['id']}?fresh=1", notice=f"Saved {place['title']}.")
     return redirect(f"/places/{place['id']}", notice=f"You already had {place['title']}, so I filled in anything that was empty and changed nothing else.")
