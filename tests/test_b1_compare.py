@@ -87,10 +87,10 @@ def test_build_rows_marks_the_cheapest_and_highest_score(sample_store):
     # a cost with something left out ("insurance not counted yet") is never marked lowest
     assert not any(c["best"] for c, p in zip(cost["cells"], places) if p["cost"]["uncounted"])
     assert not any(p["cost"]["uncounted"] for p in places)
-    assert [c["best"] for c in cost["cells"]] == [v == min(costs) for v in costs]
-    scores = [p["score_total"] for p in places]
-    assert [c["best"] for c in rows["score"]["cells"]] == [v == max(scores) for v in scores]
-    assert any("lowest true monthly cost" in line for line in compare.summary_lines(places, sections))
+    # C5: a place that doesn't fit (Prairie, Quad View) keeps its numbers but never wins a row
+    # only Maple fits, so no cost can win a row against another fitting place
+    assert not any(c["best"] for c in cost["cells"]) and not any(c["best"] for c in rows["score"]["cells"])
+    assert not any("has the lowest true monthly cost" in line for line in compare.summary_lines(places, sections))
 
 
 def test_build_rows_has_cost_lines_commutes_and_criteria(sample_store):
@@ -116,7 +116,7 @@ def test_compare_picker_lists_places(client, sample_store):
 
 def test_compare_page_shows_rows_and_marks(client, sample_store):
     ids = {p["title"]: p["id"] for p in sample_store.list_places()}
-    r = client.get(f"/compare?ids={ids['Maple Row Flats']},{ids['Quad View Lofts']}")
+    r = client.get(f"/compare?ids={ids['Maple Row Flats']},{ids['Silo Yard Apartments']}")
     assert r.status_code == 200
     assert "True monthly cost" in r.text and "Fit score" in r.text
     assert 'class="differs"' in r.text and "class=\"best\"" in r.text

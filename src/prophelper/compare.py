@@ -127,7 +127,7 @@ def _not_counted_text(p: dict[str, Any]) -> str:
         named = next((u for u in p["cost"].get("uncounted") or [] if u.startswith("utilities (")), "")  # names what the tenant pays
         return ", ".join(named if (named and m == "utilities estimate") else m for m in p["cost"]["missing"])
     guessed = guessed_list(p)
-    return "nothing left out, but " + ", ".join(guessed) if guessed else "nothing, all costs are in"
+    return "nothing left out, but " + ", ".join(guessed) if guessed else "Everything is counted"
 
 
 def _num(v: Any, suffix: str = "") -> dict[str, Any]:
@@ -187,8 +187,30 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     if _deposit_unknown(p, c):
         cell["text"] = f"at least {helpers.money(c['total'])} (deposit not known)"
         cell["incomplete"] = True
+    elif not buy and _pet_charges_unknown(p):
+        cell["text"] = f"at least {helpers.money(c['total'])} (pet charges not known)"
+        cell["incomplete"] = True
     return cell
 
+
+def _pet_charges_unknown(p: dict[str, Any]) -> bool:
+    """True when the search has pets, the place allows them, and neither a pet fee nor a pet deposit is filled in."""
+    if not p["cost"].get("pets_counted", True) or str(p.get("pets") or "") == "none":
+        return False
+    return p.get("pet_fee") in (None, "") and p.get("pet_deposit") in (None, "")
+
+
+def _utilities_fully_included(p: dict[str, Any]) -> bool:
+    """True when the listing says every utility is in the rent (or the tenant pays none), so $0 is a fact, not a guess."""
+    if money_mod.utilities_covered(p):
+        return True
+    pays = money_mod.tenant_pays_list(p)
+    return bool(pays) and all(w in money_mod.NOTHING_WORDS for w in pays)
+
+
+def _ineligible(p: dict[str, Any]) -> bool:
+    """A place that does not fit, or is a possible scam: its values show, but it never gets a best marker."""
+    return p["score"].get("fit", "fits") != "fits" or bool(p.get("possible_scam"))
 
 def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
     """A buyer's special assessment and who pays it. What the buyer pays is the number compared."""
@@ -197,7 +219,12 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
     from .money import num
     sa = num(p.get("special_assessment"))
     if sa is None:
-        return _cell(None, unknown_text=NONE_LISTED)  # nothing entered; the page explains it
+        if "assessment" in str(p.get("listing_text") or "").lower():
+            cell = _cell("Mentioned in the listing, amount not entered")
+            cell["incomplete"] = True
+            return cell
+        cell = _cell(None, 0.0, unknown_text=NONE_LISTED)  # nothing entered and the listing is silent: counts as none, for ranking only
+        return cell
     if sa == 0:
         return _cell("None", 0.0)
     amount, payer = helpers.money(sa), str(p.get("special_assessment_payer") or "")
@@ -257,7 +284,7 @@ def _person_rows(places: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
         for p in places:
             o = next((x for x in p.get("opinion_rows") or [] if x["person"] == name), None)
             cells.append(_num(o["rating"]) if o and o.get("rating") is not None else _cell(None))
-        rows.append(_row("person-" + name, f"{name}'s rating (1 to 5)", cells, "high", only_if_any=True))
+        rows.append(_row("person-" + name, f"{name}'s rating (1 to 5)", cells, "high", only_if_any=True, places=places))
     return rows
 
 
@@ -280,9 +307,14 @@ def _one_time_unset(p: dict[str, Any]) -> bool:
     return any(l["key"] == "one_time" and l.get("unset") for l in p["cost"].get("lines", []))
 
 
-def _row(key: str, label: str, cells: list[dict[str, Any]], better: str | None = None, *, only_if_any: bool = False) -> dict[str, Any] | None:
+def _row(key: str, label: str, cells: list[dict[str, Any]], better: str | None = None, *, only_if_any: bool = False,
+         places: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
     if only_if_any and all(c["unknown"] for c in cells):
         return None
+    if places and len(places) == len(cells):
+        for c, p in zip(cells, places):
+            if _ineligible(p):
+                c["incomplete"] = True  # shown, but a place that doesn't fit or may be a scam never wins a row
     differs, note = mark(cells, better)
     return {"key": key, "label": label, "cells": cells, "differs": differs, "best_note": note, "tied": note == "tied"}
 
@@ -290,6 +322,9 @@ def _row(key: str, label: str, cells: list[dict[str, Any]], better: str | None =
 def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Sections of rows for these enriched places (same order as ``places``)."""
     sections: list[dict[str, Any]] = []
+    def row(key, label, cells, better=None, *, only_if_any=False):
+        return _row(key, label, cells, better, only_if_any=only_if_any, places=places)
+
 
     def section(title: str, rows: list[dict[str, Any] | None]) -> None:
         rows = [r for r in rows if r]
@@ -298,14 +333,14 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     # ---- the headline numbers
     section("The short version", [
-        _row("cost", "True monthly cost", [_cost_cell(p) for p in places], "low"),
-        _row("per_person", "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
+        row("cost", "True monthly cost", [_cost_cell(p) for p in places], "low"),
+        row("per_person", "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
         if any(p.get("per_person") is not None for p in places) else None,
-        _row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" for p in places) else None,
-        _row("score", "Fit score (out of 100)", [_score_cell(p) for p in places], "high"),
-        _row("stage", "Stage", [_plain(p["stage"]) for p in places]),
-        _row("rating", "Your rating (1 to 5)", [_num(p.get("rating")) for p in places], "high", only_if_any=True),
-        _row("opinions", "Average of the people's ratings (1 to 5)", [_opinion_cell(p) for p in places], "high", only_if_any=True)
+        row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" for p in places) else None,
+        row("score", "Fit score (out of 100)", [_score_cell(p) for p in places], "high"),
+        row("stage", "Stage", [_plain(p["stage"]) for p in places]),
+        row("rating", "Your rating (1 to 5)", [_num(p.get("rating")) for p in places], "high", only_if_any=True),
+        row("opinions", "Average of the people's ratings (1 to 5)", [_opinion_cell(p) for p in places], "high", only_if_any=True)
         if any(p.get("opinions") for p in places) else None,
         *_person_rows(places),
     ])
@@ -328,42 +363,46 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 cells.append(_cell(NOT_COUNTED_NO_PETS))  # the search has no pets: not a $0, not comparable
                 continue
             cell = _money(amount, True)
+            if key == "utilities" and amount == 0 and not _utilities_fully_included(p):
+                cell["incomplete"] = True  # a $0 guess for a place that only includes some utilities can't tie a fully included one
             if key == "pet_rent" and amount == 0:
                 cell["text"] = "$0 (none)"
             cells.append(cell)
-        cost_rows.append(_row("cost-" + key, label, cells, "low", only_if_any=True))
-    cost_rows.append(_row("missing", "Not counted yet", [_plain(_not_counted_text(p)) for p in places]))
+        cost_rows.append(row("cost-" + key, label, cells, "low", only_if_any=True))
+    cost_rows.append(row("missing", "Not counted yet", [_plain(_not_counted_text(p)) for p in places]))
     section("What it really costs, line by line", cost_rows)
 
     # ---- the facts
     section("The place", [
-        _row("price", "Price" if all(p["cost"].get("mode") == "buy" for p in places) else "Listed price", [_money(p.get("price")) for p in places], "low"),
-        _row("down", "Down payment", [_money(p["cost"].get("down_payment")) if p["cost"].get("mode") == "buy" else _cell(None) for p in places], only_if_any=True),
-        _row("assessment", "Special assessment (who pays it)", [_assessment_cell(p) for p in places], "low", only_if_any=True)
+        row("price", "Price" if all(p["cost"].get("mode") == "buy" for p in places) else "Listed price", [_money(p.get("price")) for p in places], "low"),
+        row("down", "Down payment", [_money(p["cost"].get("down_payment")) if p["cost"].get("mode") == "buy" else _cell(None) for p in places], only_if_any=True),
+        row("assessment", "Special assessment (who pays it)", [_assessment_cell(p) for p in places], "low", only_if_any=True)
         if any(p["cost"].get("mode") == "buy" for p in places) else None,
-        _row("loan", "Loan amount", [_money(p["cost"].get("loan_amount")) if p["cost"].get("mode") == "buy" else _cell(None) for p in places], "low", only_if_any=True),
-        _row("beds", "Bedrooms", [_num(p.get("beds")) for p in places]),
-        _row("baths", "Bathrooms", [_num(p.get("baths")) for p in places]),
-        _row("sqft", "Size (sq ft, bigger is better)", [_num(p.get("sqft")) for p in places], "high"),
-        _row("year_built", "Year built (newer is better)", [_year(p.get("year_built")) for p in places], "high"),
-        _row("laundry", "Laundry", [_cell(LAUNDRY_TEXT.get(p.get("laundry") or ""), LAUNDRY_RANK.get(p.get("laundry") or "")) for p in places], "high"),
-        _row("dishwasher", "Dishwasher", [_yes_no(p.get("dishwasher")) for p in places], "high"),
-        _row("parking", "Parking", [_cell(PARKING_TEXT.get(p.get("parking") or ""), PARKING_RANK.get(p.get("parking") or "")) for p in places], None),
-        _row("pets", "Pets", [_cell(PETS_TEXT.get(p.get("pets") or "")) for p in places]),
-        _row("utilities", "Utilities included", [_plain(p.get("utilities_included")) for p in places], only_if_any=True),
+        row("seller_credit", "Seller credit toward closing (more is better)", [_money(p.get("seller_credit")) if p["cost"].get("mode") == "buy" else _cell(None) for p in places], "high", only_if_any=True)
+        if any(p["cost"].get("mode") == "buy" for p in places) else None,
+        row("loan", "Loan amount", [_money(p["cost"].get("loan_amount")) if p["cost"].get("mode") == "buy" else _cell(None) for p in places], "low", only_if_any=True),
+        row("beds", "Bedrooms", [_num(p.get("beds")) for p in places]),
+        row("baths", "Bathrooms", [_num(p.get("baths")) for p in places]),
+        row("sqft", "Size (sq ft, bigger is better)", [_num(p.get("sqft")) for p in places], "high"),
+        row("year_built", "Year built (newer is better)", [_year(p.get("year_built")) for p in places], "high"),
+        row("laundry", "Laundry", [_cell(LAUNDRY_TEXT.get(p.get("laundry") or ""), LAUNDRY_RANK.get(p.get("laundry") or "")) for p in places], "high"),
+        row("dishwasher", "Dishwasher", [_yes_no(p.get("dishwasher")) for p in places], "high"),
+        row("parking", "Parking", [_cell(PARKING_TEXT.get(p.get("parking") or ""), PARKING_RANK.get(p.get("parking") or "")) for p in places], None),
+        row("pets", "Pets", [_cell(PETS_TEXT.get(p.get("pets") or "")) for p in places]),
+        row("utilities", "Utilities included", [_plain(p.get("utilities_included")) for p in places], only_if_any=True),
     ])
     section("Dates and money up front", [
-        _row("available", "Available from", [_plain(helpers.day_text(p["available_from"]) if p.get("available_from") else "") for p in places], only_if_any=True),
-        _row("lease_months", "Lease length (months)", [_num(p.get("lease_months")) for p in places], only_if_any=True),
-        _row("months_up_front", "Months of rent due before move-in",
+        row("available", "Available from", [_plain(helpers.day_text(p["available_from"]) if p.get("available_from") else "") for p in places], only_if_any=True),
+        row("lease_months", "Lease length (months)", [_num(p.get("lease_months")) for p in places], only_if_any=True),
+        row("months_up_front", "Months of rent due before move-in",
              [_num(money_mod.months_up_front(p)) if p["cost"].get("mode") == "rent" else _cell(None) for p in places], "low", only_if_any=True)
         if any(p["cost"].get("mode") == "rent" and money_mod.months_up_front(p) > 1 for p in places) else None,
-        _row("cash_up_front", _cash_label(places), [_cash_cell(p) for p in places],
+        row("cash_up_front", _cash_label(places), [_cash_cell(p) for p in places],
              "low" if len({p["cost"].get("mode") for p in places}) == 1 else None, only_if_any=True),
-        _row("days_on_market", "Days on the market", [_num(p.get("days_on_market")) for p in places], only_if_any=True)
+        row("days_on_market", "Days on the market", [_num(p.get("days_on_market")) for p in places], only_if_any=True)
         if any(p["cost"].get("mode") == "buy" for p in places) else None,
-        _row("deposit", "Deposit (comes back)", [_money(p.get("deposit")) for p in places], "low", only_if_any=True),
-        _row("upfront", "Fees paid once (application, move-in, broker, pet)", [_money(None if _one_time_unset(p) else p["cost"].get("one_time_total")) if p["cost"].get("mode") == "rent" else _cell(None) for p in places], "low", only_if_any=True),
+        row("deposit", "Deposit (comes back)", [_money(p.get("deposit")) for p in places], "low", only_if_any=True),
+        row("upfront", "Fees paid once (application, move-in, broker, pet)", [_money(None if _one_time_unset(p) else p["cost"].get("one_time_total")) if p["cost"].get("mode") == "rent" else _cell(None) for p in places], "low", only_if_any=True),
     ])
 
     # ---- commutes: one row per anchor, using the mode of that anchor's commute criterion
@@ -379,7 +418,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
             c = next((x for x in p.get("commute_all", []) if x["anchor"] == name), None)
             mode = mode or (c["mode"] if c else "")
             cells.append(_cell(c["label"], float(c["minutes"])) if c else _cell(None))
-        commute_rows.append(_row(f"commute-{aid}", f"To {name}" + (f" ({mode})" if mode else ""), cells, "low"))
+        commute_rows.append(row(f"commute-{aid}", f"To {name}" + (f" ({mode})" if mode else ""), cells, "low"))
     section("Commutes", commute_rows)
 
     # ---- the score, criterion by criterion
@@ -400,14 +439,15 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
             else:
                 pct = round(item["score"] * 100)
                 cells.append(_cell(f"{pct}%" + (" (fails)" if item.get("dealbreaker_status") == "fail" else ""), float(pct)))
-        score_rows.append(_row("score-" + label, label, cells, "high"))
-    score_rows.append(_row("unknown", "Still unknown", [_plain(", ".join(unknown_list(p)) or "nothing, everything is filled in") for p in places]))
+        score_rows.append(row("score-" + label, label, cells, "high"))
+    score_rows.append(row("unknown", "Still unknown", [_plain(", ".join(unknown_list(p)) or "nothing, everything is filled in") for p in places]))
     section("Score, one thing at a time", score_rows)
     return sections
 
 
 def summary_lines(places: list[dict[str, Any]], sections: list[dict[str, Any]]) -> list[str]:
-    """A few plain sentences: who is cheapest and who scores highest (several places can be tied)."""
+    """A few plain sentences: who is cheapest and who scores highest (several places can be tied). Only places that fit
+    (or are near misses) can win; a cheaper place that may be a scam or doesn't fit is named with that warning."""
     out: list[str] = []
     for key, what in (("cost", "lowest true monthly cost"), ("score", "highest fit score")):
         for sec in sections:
@@ -418,4 +458,21 @@ def summary_lines(places: list[dict[str, Any]], sections: list[dict[str, Any]]) 
                         out.append(f"{' and '.join(winners)} are tied for the {what}.")
                     elif winners:
                         out.append(f"{winners[0]} has the {what}.")
+                    if key == "cost":
+                        out.extend(_cheaper_but_blocked(places, row))
+    return out
+
+
+def _cheaper_but_blocked(places: list[dict[str, Any]], row: dict[str, Any]) -> list[str]:
+    priced = [(c["value"], p) for p, c in zip(places, row["cells"]) if c["value"] is not None]
+    if not priced:
+        return []
+    low, _ = min(priced, key=lambda t: t[0])
+    out = []
+    for v, p in priced:
+        if abs(v - low) < 1e-9 and _ineligible(p):
+            if p["score"].get("fit") == "check_first" or p.get("possible_scam"):
+                out.append(f"{p['title']} is cheapest, but check it first: possible scam.")
+            else:
+                out.append(f"{p['title']} is cheapest, but it doesn't fit what you asked for.")
     return out

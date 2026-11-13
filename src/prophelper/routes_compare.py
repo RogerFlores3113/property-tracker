@@ -53,6 +53,7 @@ def compare_page(request: Request, ids: list[str] | None = Query(default=None)):
 
 
 # --------------------------------------------------------------------------- share a copy
+@router.get("/compare/share", include_in_schema=False)
 @router.get("/compare/share.html", include_in_schema=False)
 def compare_share(request: Request, ids: list[str] | None = Query(default=None), notes: int = 0):
     """Download the comparison as one self-contained page to send to someone (see ``share.py``). ``notes=1`` adds the
