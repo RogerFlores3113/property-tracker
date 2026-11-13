@@ -236,7 +236,7 @@ def preview_text(doc: dict[str, Any], places: int | None = None) -> str:
     return f"Adds a search named {name} with {n} place{'s' if n != 1 else ''}"
 
 
-def left_out_lines(report: dict[str, Any]) -> list[str]:
+def left_out_lines(report: dict[str, Any], *, done: bool = False) -> list[str]:
     """Plain words for what an import leaves out or cleans, from ``dry_run`` or ``apply_import`` numbers."""
     def n(k: str) -> int:
         return int(report.get(k) or 0)
@@ -245,15 +245,18 @@ def left_out_lines(report: dict[str, Any]) -> list[str]:
         return one if n(k) == 1 else many
 
     out = []
+    # "will be left out" in a preview; "was/were left out" once it is done, agreeing with what is counted.
+    def gone(k: str) -> str:
+        return ("was" if n(k) == 1 else "were") if done else "will be"
     bad = [str(x) for x in report.get("fields_skipped") or []]
     if bad:
-        out.append(f"The {', '.join(bad)} of the search can't be read and will be left out.")
+        out.append(f"The {', '.join(bad)} of the search can't be read and {('was' if len(bad) == 1 else 'were') if done else 'will be'} left out.")
     if n("places_skipped"):
-        out.append(f"{n('places_skipped')} place{s('places_skipped', '', 's')} can't be read and will be left out.")
+        out.append(f"{n('places_skipped')} place{s('places_skipped', '', 's')} can't be read and {gone('places_skipped')} left out.")
     if n("criteria_skipped"):
-        out.append(f"{n('criteria_skipped')} thing{s('criteria_skipped', '', 's')} that matter{s('criteria_skipped', 's', '')} can't be read and will be left out.")
+        out.append(f"{n('criteria_skipped')} thing{s('criteria_skipped', '', 's')} that matter{s('criteria_skipped', 's', '')} can't be read and {gone('criteria_skipped')} left out.")
     if n("anchors_skipped"):
-        out.append(f"{n('anchors_skipped')} important place{s('anchors_skipped', '', 's')} can't be read and will be left out.")
+        out.append(f"{n('anchors_skipped')} important place{s('anchors_skipped', '', 's')} can't be read and {gone('anchors_skipped')} left out.")
     if n("link_unsafe"):
         out.append(f"{n('link_unsafe')} place{s('link_unsafe', ' has a link that isn' + chr(39) + 't', 's have links that aren' + chr(39) + 't')} a normal web address. "
                    f"{s('link_unsafe', 'The place is', 'The places are')} kept without {s('link_unsafe', 'its link', 'their links')}.")

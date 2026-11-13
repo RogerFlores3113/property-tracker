@@ -21,7 +21,9 @@
   {% endif %}
   {{ select("Laundry", "laundry", [("in_unit", "In the unit"), ("in_building", "In the building"), ("hookups", "Hookups only (bring your own)"), ("none", "None")], v.get('laundry', ''), blank="Not sure") }}
   {{ select("Parking", "parking", [("garage", "Garage"), ("covered", "Covered"), ("lot", "Lot"), ("street", "Street"), ("none", "None")], v.get('parking', ''), blank="Not sure") }}
+  {% if not buy %}
   {{ select("Pets", "pets", [("both", "Cats and dogs"), ("cats", "Cats only"), ("dogs", "Dogs only"), ("none", "No pets")], v.get('pets', ''), blank="Not sure") }}
+  {% endif %}
   {% if not buy %}
   {{ field("Security deposit", "deposit", v.get('deposit', ''), kind="number", step="any") }}
   {{ field("Months of rent due before move-in", "months_up_front", v.get('months_up_front', ''), kind="number", step="1", hint="Usually 1. Say 2 for first and last month's rent.") }}
@@ -48,11 +50,13 @@
   {% if not buy %}
   {{ field("Pet rent per month", "pet_rent", v.get('pet_rent', ''), kind="number", step="any") }}
   {% endif %}
+  {% if not buy %}
   {{ field("One-time pet fee", "pet_fee", v.get('pet_fee', ''), kind="number", step="any") }}
   {{ field("Heaviest pet allowed (lb)", "pet_weight_limit", v.get('pet_weight_limit', ''), kind="number", step="any", hint="For example 50 when pets must be under 50 lb.") }}
   {{ field("Most pets allowed", "pet_count_limit", v.get('pet_count_limit', ''), kind="number", step="1") }}
   {{ field("Refundable pet deposit", "pet_deposit", v.get('pet_deposit', ''), kind="number", step="any", hint="Comes back when you move out, so it is counted in the cash you need at move-in, not in the monthly cost.") }}
   {{ field("Breed rules", "pet_breed_note", v.get('pet_breed_note', ''), hint="For example: no aggressive breeds.") }}
+  {% endif %}
   {{ select("Fenced yard", "fenced_yard", [("1", "Yes"), ("0", "No")], v.get('fenced_yard', '')|string if v.get('fenced_yard', '') is not none else '', blank="Not sure") }}
   {% if not buy %}
   {{ field("Utilities estimate per month", "utilities_estimate", v.get('utilities_estimate', ''), kind="number", step="any", hint="What you would pay on top of the rent.") }}
@@ -90,7 +94,7 @@
   {{ field("Longitude", "lng", v.get('lng', ''), kind="number", step="any") }}
   {{ select("Your rating", "rating", [("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5")], v.get('rating', '')|string if v.get('rating', '') is not none else '', blank="Not rated") }}
   <div class="wide">{{ field("Your notes", "notes", v.get('notes', ''), kind="textarea", rows=5, hint="Only you write here. An AI app never changes your notes.") }}</div>
-  {% if buy %}{% for n in ("lease_months", "utilities_included", "tenant_pays", "months_up_front", "deposit", "pet_rent", "utilities_estimate", "lease_start", "lease_end", "application_fee", "application_fee_per_adult") %}{{ keep(n) }}{% endfor %}
+  {% if buy %}{% for n in ("lease_months", "utilities_included", "tenant_pays", "months_up_front", "deposit", "pets", "pet_rent", "pet_fee", "pet_weight_limit", "pet_count_limit", "pet_deposit", "pet_breed_note", "utilities_estimate", "lease_start", "lease_end", "application_fee", "application_fee_per_adult") %}{{ keep(n) }}{% endfor %}
   {% else %}{% for n in ("hoa", "property_tax", "insurance", "special_assessment", "special_assessment_payer", "days_on_market", "closing_costs", "seller_credit", "listing_agent") %}{{ keep(n) }}{% endfor %}{% endif %}
   <input type="hidden" name="listing_text" value="{{ v.get('listing_text', '') }}">
 </div>

@@ -28,10 +28,12 @@
       <tr>
         <td>{{ h or '(no heading)' }}</td>
         <td class="fine">{{ examples[i] }}</td>
-        <td>{% if i in computed and i not in mapping %}<span class="fine">Worked out by the app, so it is not imported.</span>{% endif %}<select name="col_{{ i }}" aria-label="Where the column {{ h or (i + 1) }} goes">
-          <option value="">Don't use</option>
-          {% for key, label in field_options %}<option value="{{ key }}"{% if mapping.get(i) == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
-        </select></td>
+        <td>{% set chosen = mapping.get(i) %}{% if i in computed and not chosen %}<span class="fine">Worked out by the app, so it is not imported.</span>{% elif chosen %}<strong>{{ field_labels.get(chosen, chosen) }}</strong>{% else %}<span class="fine">Not used</span>{% endif %}
+          <details class="inline-change"><summary>change</summary>
+          <select name="col_{{ i }}" aria-label="Where the column {{ h or (i + 1) }} goes">
+            <option value="">Don't use</option>
+            {% for key, label in field_options %}<option value="{{ key }}"{% if chosen == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select></details></td>
       </tr>
       {% endfor %}
       </tbody>
@@ -40,6 +42,7 @@
   </section>
 
   {% if new_sample %}
+  {% if counts.unreadable %}<p class="flash warn" role="status">{{ counts.unreadable|num }} row{{ 's have' if counts.unreadable != 1 else ' has' }} values I can't read (see the notes below). Those values are left empty; the rest of the row is still used.</p>{% endif %}
   <section class="card">
     <h2>New places (first {{ new_sample|length }})</h2>
     <ul>

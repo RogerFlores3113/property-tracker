@@ -25,7 +25,8 @@
 <div class="map-layout">
   <div>
     <div id="map" class="map-box" role="region" aria-label="Map of your places" data-tiles="{{ 1 if tiles else 0 }}"></div>
-    <noscript><p class="fine">The map needs JavaScript. The list below has the same places.</p></noscript>
+    {% if located %}<noscript><p class="fine">The map needs JavaScript. The list below has the same places.</p></noscript>
+    {% else %}<p class="fine">None of your places has a map location yet. Use Find on map on a place page to give it one.</p>{% endif %}
     {% if tiles %}
     <p class="fine">The map pictures load from OpenStreetMap, which sees the area you look at. You can turn that off in <a href="/settings#map">Settings</a>.</p>
     {% else %}

@@ -337,6 +337,10 @@ def _extra_facts(p: dict[str, Any]) -> list[str]:
         pet.append(f"dogs up to {p['pet_weight_limit']:g} lb")
     if p.get("pet_count_limit") is not None:
         pet.append(f"up to {p['pet_count_limit']} pets")
+    if p.get("pet_rent") is not None:
+        pet.append(f"pet rent {_money(p['pet_rent'])} a month")
+    if p.get("pet_fee") is not None:
+        pet.append(f"one-time pet fee {_money(p['pet_fee'])}")
     if p.get("pet_deposit") is not None:
         pet.append(f"pet deposit {_money(p['pet_deposit'])}")
     if p.get("fenced_yard") is not None:
@@ -682,11 +686,18 @@ def build_server(store: Store) -> FastMCP:
         if bad:
             raise ValueError(f"{where}unknown field{'s' if len(bad) > 1 else ''} {', '.join(map(str, bad))}. "
                              f"Allowed: {', '.join(sorted(PLACE_KEYS | {'stage', 'commutes'}))}. Nothing was saved.")
+        link = str(fields.get("url") or "").strip()
+        if link and re.match(r"^(https?://)?[^/?#\s]*@", link, re.I):
+            raise ValueError(f"{where}the listing link has a user name or password in it, so I won't save it. Send the plain listing address without it. Nothing was saved.")
         photo_notes = check_photos(fields, where)
         if photo_notes:
             fields["_photo_notes"] = photo_notes
         if isinstance(fields.get("tenant_pays"), str) and re.search(r"\ball\b", fields["tenant_pays"], re.I):
             fields["tenant_pays"] = ", ".join(ALL_UTILITIES)  # "all" means every utility the app knows
+        if isinstance(fields.get("tenant_pays"), str) and re.fullmatch(r"\s*(none|nothing|no utilities|n/a)\s*", fields["tenant_pays"], re.I):
+            fields.pop("tenant_pays")  # the tenant pays no utilities: that is "all included", not "unknown"
+            if fields.get("utilities_included") in (None, "") and fields.get("utilities_estimate") is None:
+                fields["utilities_included"] = "all utilities"
         if isinstance(fields.get("utilities_included"), bool):  # a yes or no, not words: say it in words
             fields["utilities_included"] = "all utilities" if fields["utilities_included"] else "none"
         return {k: v for k, v in fields.items() if v is not None}

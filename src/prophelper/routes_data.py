@@ -403,7 +403,7 @@ async def search_import_apply(request: Request):
     share.release(token)
     s = out["search"]
     extra = ""
-    extra += "".join(" " + line.replace("will be left out", "were left out").replace("will have", "have").replace("is kept", "was kept").replace("are kept", "were kept")
-                     for line in share.left_out_lines(out))
+    extra += "".join(" " + line.replace("will have", "have").replace("is kept", "was kept").replace("are kept", "were kept")
+                     for line in share.left_out_lines(out, done=True))
     return redirect(f"/search?id={s['id']}", notice=f"Added the search '{s['name']}' with {out['places']} place{'s' if out['places'] != 1 else ''}. "
                                                     f"It isn't your current search yet; use Switch to this when you are ready.{extra}")
