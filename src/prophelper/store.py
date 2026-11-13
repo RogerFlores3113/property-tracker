@@ -625,6 +625,21 @@ def has_userinfo(link: str) -> bool:
     return "@" in re.split(r"[/?#]", rest, 1)[0]
 
 
+def safe_link(value: Any) -> str:
+    """A listing link that is safe to show as a clickable link, or '' when it isn't: only http or https, a real host,
+    no spaces, no user name or password (the same rules the save paths use). A link typed without a scheme gets https://."""
+    text = str(value or "").strip()[:2000]
+    if not text or re.search(r"\s", text):
+        return ""
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I):
+        if re.match(r"^[a-z][a-z0-9+.-]*:", text, re.I) and not re.match(r"^[^/]*\.[^/]*[/]|^[^/:]*\.[^/:]*$", text):
+            return ""
+        text = "https://" + text
+    if not re.match(r"^https?://[^\s/]+", text, re.I) or has_userinfo(text) or not normalize_url(text):
+        return ""
+    return text
+
+
 def photo_list(value: Any) -> list[str]:
     """A list of http(s) photo links from a list, a JSON list or lines of text. At most PHOTOS_MAX. Never fetched."""
     if value is None or value == "":
@@ -654,6 +669,12 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     row = {k: (_tidy_num(v) if isinstance(v, float) else v) for k, v in row.items()}
+    if row.get("url"):
+        ok = safe_link(row["url"])
+        if not ok:
+            # A restored or imported link that isn't a plain web address is never shown as a link.
+            row["url_unsafe"] = str(row["url"])
+        row["url"] = ok
     try:
         row["photo_urls"] = photo_list(row.get("photo_urls") or "[]")
     except Exception:
@@ -1353,6 +1374,10 @@ class Store:
                     raise ValueError("A longitude is between -180 and 180.")
                 if key not in ("lat", "lng") and n is not None and n < 0:
                     raise ValueError(f"The {key.replace('_', ' ')} can't be negative.")
+                if key in ("beds", "baths") and n is not None and n > 20:
+                    raise ValueError(f"The number of {key} can't be more than 20. Check for a typo")
+                if key == "price" and n is not None and n > 100_000_000:
+                    raise ValueError("The price can't be more than $100,000,000. Check for a typo")
                 out[key] = n
         for key in PLACE_INT:
             if key in fields:

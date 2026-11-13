@@ -6,13 +6,14 @@ asks for it, adds to this.
 """
 from __future__ import annotations
 
+import html
 import re
 from statistics import median
 from typing import Any, Iterable
 
 # Each rule: (name, pattern, message). The message says what it is and what to do, in plain words.
 _PAYMENT = re.compile(
-    r"\b(wire (?:the |me |us |it |your )?(?:deposit|money|funds|payment|rent|fee)|wiring (?:the |your )?(?:deposit|money|funds)|wire transfer|western union|money ?gram|"
+    r"\b(wire (?:the |me |us |it |your )?(?:deposit|money|funds|payment|rent|fee)|wiring (?:the |your )?(?:deposit|money|funds)|wire transfer|wire (?:it |this |that |the (?:deposit|money|funds|payment|rent) |money |funds |payment )?to (?:my|our|the|a) (?:lawyer|attorney|solicitor)|western union|money ?gram|"
     r"gift ?cards?|itunes card|bitcoin|btc|crypto(?:currency)?|apple pay only|"
     r"send (?:the |your )?(?:deposit|money|payment))\b", re.I)
 _ZELLE_ONLY = re.compile(r"\b(zelle|cash ?app|venmo|paypal friends)\s*(?:only|is the only|payments? only)\b|"
@@ -45,7 +46,8 @@ _BUY_PAYMENT = re.compile(
     r"\b(?:earnest money|good faith deposit|deposit|down ?payment|closing (?:costs?|funds))\b[^.\n]{0,80}\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b|"
     r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b[^.\n]{0,80}\b(?:earnest money|good faith deposit|deposit|down ?payment)\b|"
     r"\bwire\b[^.\n]{0,60}\b(?:escrow|earnest)\b", re.I)
-_BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waives?|waived|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b", re.I)
+_BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waives?|waived|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b(?!\s+fees?)|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b|"
+                             r"\b(?:do not|don'?t|never)\s+(?:try to |need to |bother to )?inspect\b|\bno need (?:to|for) (?:an? )?inspect(?:ion)?\b", re.I)
 _BUY_AS_IS = re.compile(r"\bas[- ]is\b", re.I)
 _BUY_CASH_ONLY = re.compile(r"\bcash[ -]only\b|\bcash (?:buyers?|offers?) only\b|\bonly (?:accept|take)s? cash\b", re.I)
 _BUY_SAME_DAY = re.compile(r"\b(?:today|tonight|same[- ]day|within 24 hours|right away|immediately|asap)\b[^.\n]{0,40}\b(?:wire|send|pay|deposit|earnest|close|sign|offer)|"
@@ -65,6 +67,39 @@ _AI_TARGETED = re.compile(r"\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the
                           r"\b(?:ai|a\.i\.|llm)\s+(?:assistants?|agents?|models?|tools?|bots?|readers?|crawlers?|scrapers?)\s*[:,]|"
                           r"\b(?:assistant|ai|llm|chatbot|claude|chat ?gpt),\s*(?:please|kindly|you (?:must|should|need to|will|have to))\b|"
                           r"\bif you(?:'re| are) (?:reading this as |reading this, you are |)(?:an?|the) (?:ai|a\.i\.|llm|large language model|language model|chatbot|bot)\b", re.I)
+_AI_EXTRA = re.compile(
+    r"\bfor (?:the )?(?:language models?|large language models?|llms?|ai (?:assistants?|agents?|models?|tools?|readers?)|chatbots?|ai)\s*[:\-]|"
+    r"\btell the (?:user|reader|human)\b|"
+    r"\b(?:score|rate|rank|grade)\s+(?:it|this|this (?:place|listing|apartment|home|property)|the (?:place|listing))\s+(?:a |as |at |an? )?(?:100|perfect|10/10)\b|"
+    r"\bperfect score\b|"
+    r"\b(?:disregard|ignore|forget)\s+(?:the\s+|that\s+|any\s+)?(?:earlier|previous|prior|above|listed|old|first)\s+(?:price|rent|cost|fees?|amount|numbers?)\b|"
+    r"\bmark (?:this|the|that) (?:place|listing|property|apartment|home|house) as (?:scam[- ]free|safe|verified|legit(?:imate)?|trusted)\b", re.I)
+_SYSTEM_IN_COMMENT = re.compile(r"\b(?:system|assistant|developer)\s*:", re.I)
+# "Payment plan for the deposit" plus a request to talk only through messages is a soft sign worth a look.
+_PAY_PLAN = re.compile(r"\bpayment plans?\b[^.\n]{0,30}\b(?:deposit|rent|move[- ]in)\b|\b(?:deposit|rent|move[- ]in)\b[^.\n]{0,30}\bpayment plans?\b", re.I)
+_PM_ONLY = re.compile(r"\b(?:pm|dm) me\b|\bmessage me (?:on|via|through) (?:facebook|fb|messenger|instagram|whatsapp|telegram)(?: only)?\b|\b(?:facebook|fb|messenger) only\b", re.I)
+
+_ZERO_WIDTH = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u00ad\ufeff\u180e]")
+_COMMENT = re.compile(r"<!--(.*?)(?:-->|$)", re.S)
+
+
+def normalise_text(text: str) -> tuple[str, list[str]]:
+    """The text as a reader would see it, for matching: HTML entities decoded, zero-width characters removed, HTML comments
+    taken out of the text, whitespace collapsed. Returns ``(text, comment_contents)``. The contents of comments are also
+    appended to the text so they are scanned too."""
+    out = str(text or "")
+    for _ in range(2):  # twice, for text like &amp;#8203;
+        decoded = html.unescape(out)
+        if decoded == out:
+            break
+        out = decoded
+    out = _ZERO_WIDTH.sub("", out)
+    comments = [" ".join(c.split()) for c in _COMMENT.findall(out)]
+    out = _COMMENT.sub(" ", out)
+    out = " ".join([out, *comments]).split()
+    return " ".join(out), comments
+
+
 PRICE_FLOOR_RATIO = 0.55  # under this share of the typical price in the same search is "far under"
 
 
@@ -87,7 +122,7 @@ def _rules() -> list[tuple[re.Pattern[str], str]]:
 
 
 def _text(place: dict[str, Any]) -> str:
-    return " ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes"))
+    return normalise_text(" ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes")))[0]
 
 
 def is_serious(place: dict[str, Any], peer_prices: Iterable[float] = ()) -> bool:
@@ -110,13 +145,16 @@ _BUY_RULES = [
 
 def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: str = "rent") -> list[str]:
     """Plain-words signs to check on this place. ``peer_prices``: prices of the other places in the same search."""
-    text = " ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes"))
+    text, comments = normalise_text(" ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes")))
     flags: list[str] = []
     buy = mode == "buy"
     if buy:
         for pattern, message in _BUY_RULES:
             if pattern.search(text):
                 flags.append(message)
+    if not buy and _BUY_NO_INSPECTION.search(text):
+        flags.append("It says you can't or needn't inspect the place. A real landlord lets you look closely before you pay or sign. "
+                     "Don't send money until you have seen it in person.")
     same_day = buy and _BUY_SAME_DAY.search(text)
     for pattern, message in _rules():
         if pattern is _PRESSURE and same_day:
@@ -129,12 +167,15 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             continue
         if pattern.search(text):
             flags.append(message.replace("lease", "contract") if buy else message)
-    if _AI_TARGETED.search(text):
+    if _AI_TARGETED.search(text) or _AI_EXTRA.search(text) or any(_SYSTEM_IN_COMMENT.search(c) for c in comments):
         flags.append("This listing has text aimed at AI tools; treat it with care.")
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and _BUY_PAYMENT.search(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
                      + ("Don't send money before you have toured the place and an escrow or title company is involved." if buy else
                         "Don't pay anything before you have toured the place and read the lease."))
+    if _PAY_PLAN.search(text) and _PM_ONLY.search(text):
+        flags.append("It offers a payment plan for the deposit and wants you to talk only by private message. That can be a scam, so pay "
+                     "and talk on the listing site or by phone, and only after you have toured the place.")
     price = place.get("price")
     peers = [float(p) for p in peer_prices if p]
     try:

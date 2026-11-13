@@ -102,6 +102,18 @@ def backup_file(name: str) -> Path | None:
     return path if path.is_file() and path.resolve().parent == folder.resolve() else None
 
 
+# Settings that make the app contact another site. A restored file must never switch these on by itself.
+NETWORK_SETTINGS = ("map_tiles", "geocode", "show_photos")
+RESTORE_NETWORK_NOTE = ("Map pictures, address lookup and listing photos are off after a restore. "
+                        "Turn them back on in Settings if you want them.")
+
+
+def reset_network_settings(store: Store) -> None:
+    """After a restore, turn off every setting that contacts another site."""
+    for key in NETWORK_SETTINGS:
+        store.set_setting(key, "0")
+
+
 def restore(store: Store, name: str) -> dict[str, Any]:
     """Back up the data as it is now, then put the named backup in its place.
 
@@ -118,6 +130,7 @@ def restore(store: Store, name: str) -> dict[str, Any]:
         store.restore_from(path)
     except sqlite3.Error as exc:
         raise ValueError(f"Couldn't restore that backup, so your data wasn't changed ({exc}).") from exc
+    reset_network_settings(store)
     return {"restored": info, "saved": saved}
 
 
@@ -338,6 +351,7 @@ def restore_from_upload(store: Store, data: bytes) -> dict[str, Any]:
             store.restore_from(tmp)
         except sqlite3.Error as exc:
             raise ValueError(f"Couldn't restore that file, so your data wasn't changed ({exc}).") from exc
+        reset_network_settings(store)
         return {"counts": counts, "saved": saved}
     finally:
         tmp.unlink(missing_ok=True)
