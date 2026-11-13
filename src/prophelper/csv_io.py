@@ -145,8 +145,7 @@ def _commute_for(place: dict[str, Any], anchor_id: Any) -> dict[str, Any] | None
     for c in place.get("commute_all") or []:
         if c.get("anchor_id") == anchor_id and c.get("minutes") is not None:
             return c
-    times = [c for c in place.get("commutes") or [] if c.get("anchor_id") == anchor_id and c.get("minutes") is not None]
-    return min(times, key=lambda c: c["minutes"]) if times else None
+    return None
 
 
 def _red_flags_text(place: dict[str, Any]) -> str:
@@ -217,7 +216,8 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
 
 def _way_text(c: dict[str, Any]) -> str:
     mode = str(c.get("mode") or "")
-    return mode + (" (your time)" if c.get("source") == "you" else " (estimate)" if c.get("source") == "estimate" else "")
+    return mode + (" (your time)" if c.get("source") == "you" else " (added by Claude)" if c.get("source") == "ai"
+                   else " (estimate)" if c.get("source") == "estimate" else "")
 
 
 # ----------------------------------------------------------------------------- reading a file

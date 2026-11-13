@@ -24,6 +24,11 @@
 </div>
 <p class="fine">Part of <a href="/search?id={{ search.id }}">{{ search.name }}</a>. Last moved {{ place.stage_changed_at|ago if place.stage_changed_at else 'never' }}.</p>
 
+{% if place.commute_all %}<p class="fine place-commutes">Commute: {% for c in place.commute_all %}{{ c.anchor }} {% if c.source == 'estimate' %}about {% endif %}{{ c.minutes|round|int }} min {{ c.mode }}{% if c.source == 'estimate' %} (estimate){% endif %}{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>{% endif %}
+{% if place.address and (place.lat is none or place.lng is none) and anchors %}
+<p class="flash warn place-find-nudge" role="status">This place has no spot on the map yet, so there are no commute estimates. {% if setting('geocode') != '1' %}Pressing the button asks you first before anything is sent. {% endif %}
+  <form method="post" action="/places/{{ place.id }}/geocode" class="inline">{{ button("Find on map", small=True) }}</form></p>
+{% endif %}
 {% if avail_warning %}<p class="flash warn" role="status">{{ avail_warning }}.</p>{% endif %}
 {% if form_error %}<p class="flash warn" role="alert" tabindex="-1">{{ form_error }}</p>{% endif %}
 

@@ -54,28 +54,20 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     if protected is None:
         protected = place["id"] in store.protected_place_ids(search["id"])
     prefer = next((c["target"].get("mode") for c in criteria if c["kind"] == "commute"), None)
-    by_id = {a["id"]: a for a in anchors}
-    first_anchor = anchors[0]["id"] if anchors else None
-    commute_tops = []
-    for c in criteria:
-        if c["kind"] != "commute":
-            continue
-        anchor = by_id.get(c["target"].get("anchor_id") or first_anchor)
-        mode = c["target"].get("mode") or "bike"
-        found = commute_mod.pick_for_anchor(place, anchor, commutes, mode)[1] if anchor else None
-        if found and not any(t["anchor_id"] == anchor["id"] for t in commute_tops):
-            commute_tops.append({"anchor": anchor["name"], "anchor_id": anchor["id"], **found,
-                                 "short": f"{anchor['name']} {found['minutes']:.0f} min {found['mode']}"})
-    # One commute per anchor for Compare and the place page: the mode of that anchor's commute criterion, else the fastest way.
-    crit_rows = commute_mod.place_rows(place, anchors, commutes, criteria)
+    # One commute per important place, by the shared rule in commute.show_commute: the way of that place's commute rule,
+    # a saved time before an estimate, never an estimate of another way.
+    crit_rows = commute_mod.place_rows(place, anchors, commutes, criteria, people)
     commute_all = [{"anchor": r["anchor"]["name"], "anchor_id": r["anchor"]["id"], **r["found"]} for r in crit_rows if r["found"]]
+    ruled = commute_mod.criterion_modes(criteria, anchors, people)
+    # The board card shows each person's commute (every place a commute rule covers), compactly.
+    commute_tops = [{**c, "short": f"{c['anchor']} {c['minutes']:.0f} min {c['mode']}"} for c in commute_all if c["anchor_id"] in ruled]
     out = dict(place)
     out.update({
         "commute_all": commute_all, "commute_rows": crit_rows,
         "cost": cost, "cost_total": cost["total"], "score": score, "score_total": score["total"],
         "band": scoring.score_band(score["total"]),
         "commutes": commute_mod.resolve_all(place, anchors, commutes),
-        "top_commute": commute_mod.top_commute(place, anchors, commutes, prefer),
+        "top_commute": commute_mod.top_commute(place, anchors, commutes, prefer, criteria, people),
         "commute_tops": commute_tops,
         "next": _next_date(place, tours),
         "flags": flags, "possible_scam": serious,

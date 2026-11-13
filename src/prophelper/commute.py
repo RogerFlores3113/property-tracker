@@ -108,67 +108,97 @@ def resolve_all(place: dict[str, Any], anchors: Iterable[dict[str, Any]], stored
     return out
 
 
-def _fastest(place: dict[str, Any], anchor: dict[str, Any], stored: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The fastest known way to one important place: walk, bike or drive (typed or estimated), plus any way someone
-    typed (transit too), so a typed commute shows even when the important place has no map point."""
-    options = [r for m in ("walk", "bike", "drive") if (r := resolve(place, anchor, m, stored))]
-    options += [r for m in MODES if m not in ("walk", "bike", "drive") and (r := resolve(place, anchor, m, stored))
-                and r["source"] in ("you", "ai")]
-    return min(options, key=lambda r: r["minutes"]) if options else None
-
-
-def top_commute(place: dict[str, Any], anchors: Iterable[dict[str, Any]], stored: Iterable[dict[str, Any]] = (),
-                prefer_mode: str | None = None) -> dict[str, Any] | None:
-    """The one commute a card shows: the first anchor's best answer. ``prefer_mode`` (a criterion's mode) first,
-    else the fastest of walk, bike and drive."""
-    anchors = list(anchors)
-    stored = list(stored)
-    for a in anchors:
-        if prefer_mode:
-            r = resolve(place, a, prefer_mode, stored)
-            if r:
-                return {"anchor": a.get("name", ""), "anchor_id": a.get("id"), **r}
-        best = _fastest(place, a, stored)
-        if best:
-            return {"anchor": a.get("name", ""), "anchor_id": a.get("id"), **best}
-    return None
-
-
-def criterion_modes(criteria: Iterable[dict[str, Any]], anchors: Iterable[dict[str, Any]]) -> dict[Any, str]:
-    """{anchor id: mode} from the commute criteria (a criterion with no place means the first important place)."""
+def criterion_modes(criteria: Iterable[dict[str, Any]], anchors: Iterable[dict[str, Any]], people: int = 1) -> dict[Any, str]:
+    """{anchor id: mode} from the commute criteria. A criterion with no place means the first important place, and an
+    "everyone's places" criterion (or any commute rule when several people share the search) covers every place that
+    has no rule of its own."""
     anchors = list(anchors)
     first = anchors[0]["id"] if anchors else None
     out: dict[Any, str] = {}
+    spread: str | None = None
     for c in criteria:
-        if c.get("kind") == "commute":
-            out.setdefault(c["target"].get("anchor_id") or first, c["target"].get("mode") or "bike")
+        if c.get("kind") != "commute":
+            continue
+        t = c.get("target") or {}
+        mode = t.get("mode") or "bike"
+        if t.get("anchor_id") is not None:
+            out.setdefault(t["anchor_id"], mode)
+        elif t.get("all_anchors") or (people > 1 and anchors):
+            spread = spread or mode
+            out.setdefault(first, mode)
+        else:
+            out.setdefault(first, mode)
+    if spread:
+        for a in anchors:
+            out.setdefault(a["id"], spread)
     return out
 
 
-def pick_for_anchor(place: dict[str, Any], anchor: dict[str, Any], stored: Iterable[dict[str, Any]] = (),
-                    mode: str | None = None) -> tuple[str | None, dict[str, Any] | None]:
-    """(mode, answer) shown for one important place: the criterion's ``mode`` when it has an answer, else the fastest
-    known way (walk, bike or drive). ``(mode, None)`` when nothing is known."""
+def show_commute(place: dict[str, Any], anchor: dict[str, Any], stored: Iterable[dict[str, Any]] = (),
+                 mode: str | None = None) -> dict[str, Any] | None:
+    """The ONE commute to show for a place and an important place (Compare, share, CSV, cards, the place page, Claude).
+
+    ``mode`` is the way of the commute rule for that place (None when no rule). With a rule the answer is always that
+    way: the saved time (typed by the user or set by Claude) if there is one, else an estimate of the same way,
+    labelled as an estimate. It never shows an estimate of another way. Only when that way has no answer at all is a
+    time someone saved in another way shown, named by its way (Compare never ranks it). With no rule, a saved time wins
+    (the fastest one), else the fastest estimate of walk, bike or drive. Returns ``resolve()``'s shape or None."""
     stored = list(stored)
     if mode:
         found = resolve(place, anchor, mode, stored)
         if found:
-            return mode, found
-    options = [(m, r) for m in MODES if (r := resolve(place, anchor, m, stored))
-               and (m != "transit" or r["source"] in ("you", "ai"))]
-    if options:
-        return min(options, key=lambda o: o[1]["minutes"])
-    return mode, None
+            return found
+    saved = [r for m in MODES if (r := resolve(place, anchor, m, stored)) and r["source"] in ("you", "ai")]
+    if saved:
+        return min(saved, key=lambda r: r["minutes"])
+    est = [r for m in ("walk", "bike", "drive") if (r := estimate(place, anchor, m))]
+    return min(est, key=lambda r: r["minutes"]) if est else None
+
+
+def pick_for_anchor(place: dict[str, Any], anchor: dict[str, Any], stored: Iterable[dict[str, Any]] = (),
+                    mode: str | None = None) -> tuple[str | None, dict[str, Any] | None]:
+    """(mode, answer) shown for one important place, by ``show_commute``. ``(mode, None)`` when nothing is known."""
+    found = show_commute(place, anchor, stored, mode)
+    return (found["mode"] if found else mode), found
+
+
+def top_commute(place: dict[str, Any], anchors: Iterable[dict[str, Any]], stored: Iterable[dict[str, Any]] = (),
+                prefer_mode: str | None = None, criteria: Iterable[dict[str, Any]] = (), people: int = 1) -> dict[str, Any] | None:
+    """One commute to show when a single one is needed: the first important place that has an answer, in the way of its
+    commute rule (``criteria``; else ``prefer_mode`` for the first place), by ``show_commute``."""
+    anchors = list(anchors)
+    stored = list(stored)
+    modes = criterion_modes(criteria, anchors, people)
+    for i, a in enumerate(anchors):
+        mode = modes.get(a["id"]) or (prefer_mode if i == 0 else None)
+        r = show_commute(place, a, stored, mode)
+        if r:
+            return {"anchor": a.get("name", ""), "anchor_id": a.get("id"), **r}
+    return None
+
+
+def all_commutes(place: dict[str, Any], anchors: Iterable[dict[str, Any]], stored: Iterable[dict[str, Any]] = (),
+                 criteria: Iterable[dict[str, Any]] = (), people: int = 1) -> list[dict[str, Any]]:
+    """Every important place's shown commute, ``[{"anchor", "anchor_id", ...}]`` (places with no answer are left out)."""
+    anchors = list(anchors)
+    stored = list(stored)
+    modes = criterion_modes(criteria, anchors, people)
+    out = []
+    for a in anchors:
+        r = show_commute(place, a, stored, modes.get(a["id"]))
+        if r:
+            out.append({"anchor": a.get("name", ""), "anchor_id": a.get("id"), **r})
+    return out
 
 
 def place_rows(place: dict[str, Any], anchors: Iterable[dict[str, Any]], stored: Iterable[dict[str, Any]] = (),
-               criteria: Iterable[dict[str, Any]] = ()) -> list[dict[str, Any]]:
+               criteria: Iterable[dict[str, Any]] = (), people: int = 1) -> list[dict[str, Any]]:
     """One row per important place for the place page: ``{"anchor", "mode", "found", "others", "anchor_has_point",
-    "place_has_point"}``. ``mode`` is the way of that place's commute criterion (fastest known when there is none) and
+    "place_has_point"}``. ``mode`` is the way of that place's commute rule (the shown time's way when there is none) and
     ``others`` are the remaining ways, each ``{"mode", "found"}``, to fold under "Other ways"."""
     stored = list(stored)
     anchors = list(anchors)
-    crit = criterion_modes(criteria, anchors)
+    crit = criterion_modes(criteria, anchors, people)
     rows = []
     for a in anchors:
         mode, found = pick_for_anchor(place, a, stored, crit.get(a["id"]))

@@ -280,6 +280,25 @@ def _one_time_unset(p: dict[str, Any]) -> bool:
     return any(l["key"] == "one_time" and l.get("unset") for l in p["cost"].get("lines", []))
 
 
+def _commute_rows(places: list[dict[str, Any]], anchors: list[tuple[Any, str]]) -> list[dict[str, Any] | None]:
+    """One row per important place. Each cell is the commute the app shows everywhere (``commute.show_commute``: the way
+    of that place's commute rule, a saved time before an estimate). Cells in another way than the row's are shown but
+    never ranked, so an estimate is never ranked against a saved time of another way."""
+    rows = []
+    for aid, name in anchors:
+        found = [next((x for x in p.get("commute_all", []) if x["anchor"] == name), None) for p in places]
+        modes = {c["mode"] for c in found if c}
+        mode = next(iter(modes)) if len(modes) == 1 else ""
+        cells = []
+        for c in found:
+            cell = _cell(c["label"], float(c["minutes"])) if c else _cell(None)
+            if c and not mode:
+                cell["incomplete"] = True
+            cells.append(cell)
+        rows.append(_row(f"commute-{aid}", f"To {name}" + (f" ({mode})" if mode else ""), cells, "low"))
+    return rows
+
+
 def _row(key: str, label: str, cells: list[dict[str, Any]], better: str | None = None, *, only_if_any: bool = False) -> dict[str, Any] | None:
     if only_if_any and all(c["unknown"] for c in cells):
         return None
@@ -372,14 +391,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for c in p.get("commute_all", []):
             if not any(c["anchor"] == name for _, name in anchors):
                 anchors.append((c["anchor_id"], c["anchor"]))
-    commute_rows = []
-    for aid, name in anchors:
-        cells, mode = [], ""
-        for p in places:
-            c = next((x for x in p.get("commute_all", []) if x["anchor"] == name), None)
-            mode = mode or (c["mode"] if c else "")
-            cells.append(_cell(c["label"], float(c["minutes"])) if c else _cell(None))
-        commute_rows.append(_row(f"commute-{aid}", f"To {name}" + (f" ({mode})" if mode else ""), cells, "low"))
+    commute_rows = _commute_rows(places, anchors)
     section("Commutes", commute_rows)
 
     # ---- the score, criterion by criterion
