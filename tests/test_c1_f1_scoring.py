@@ -198,7 +198,7 @@ def test_still_unknown_lists_what_is_unknown(store):
     places = [_row(store, s, p) for p in (a, b)]
     rows = {r["key"]: r for sec in compare.build_rows(places) for r in sec["rows"]}
     assert "500" in rows["unknown"]["cells"][0]["text"] or "Size" in rows["unknown"]["cells"][0]["text"]
-    assert rows["unknown"]["cells"][1]["text"] == "Utilities (a guess)"
+    assert rows["unknown"]["cells"][1]["text"] == "Utilities guessed"
     assert compare.unknown_list(places[0]) and compare.unknown_list(places[1]) == ["Utilities (a guess)"]
 
 

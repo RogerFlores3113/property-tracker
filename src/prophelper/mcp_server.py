@@ -1298,7 +1298,7 @@ def build_server(store: Store) -> FastMCP:
             rows.append((f"{_t(person, 'person name', 40)}'s rating (1 to 5)",
                          [next((str(o["rating"]) for o in e["opinion_rows"] if o["person"] == person and o["rating"] is not None), "unknown")
                           for e in es]))
-        rows.append(("Still unknown", [_unknown_text(e) or "nothing" for e in es]))
+        rows.append(("Still unknown", [_unknown_text(e) or "Nothing unknown" for e in es]))
         lines = ["Comparing: " + "; ".join(f"#{e['id']} {_title(e)}" for e in es)]
         differ = []
         for label, vals in rows:
@@ -1306,27 +1306,28 @@ def build_server(store: Store) -> FastMCP:
             if len(set(vals)) > 1:
                 differ.append(label)
         lines.append("Differences: " + (", ".join(differ) if differ else "none"))
-        # Best-of lines never name a possible scam or a place that doesn't fit: only places that fit can win.
+        # Best-of lines never name a possible scam or a place that doesn't fit: only places that fit can win. The lowest
+        # cost is the one rule in compare.lowest_cost, the same as the Compare page's At a glance.
         fitting = [e for e in es if e["score"].get("fit", "fits") == "fits"]
-        priced_all = [e for e in es if e["cost_total"] is not None]
-        priced = [e for e in fitting if e["cost_total"] is not None]
         scored = [e for e in fitting if e["score_total"] is not None]
         left_out = [e for e in es if e not in fitting]
-        if priced:
-            low = min(e["cost_total"] for e in priced)
-            cheap_all = [e for e in priced if abs(e["cost_total"] - low) < 0.005]
-            cheap = cheap_all[0]
-            if len(priced) > 1 and len(cheap_all) == len(priced):
-                lines.append(f"No lowest true monthly cost: they are all {_money(low)}.")
-            elif len(cheap_all) > 1:
-                lines.append(f"Lowest true monthly cost: " + ", ".join(f"#{e['id']}" for e in cheap_all) + f" are tied at {_money(low)} (of the places that fit).")
-            else:
-                lines.append(f"Lowest true monthly cost: #{cheap['id']} at {_money(cheap['cost_total'])} (of the places that fit).")
-            cheaper = [e for e in priced_all if e not in fitting and e["cost_total"] < cheap["cost_total"]]
-            if cheaper:
-                lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({scoring.FIT_LABELS.get(e['score'].get('fit'), 'does not fit').lower()})" for e in cheaper) + ".")
-        elif priced_all:
+        lc = compare_mod.lowest_cost(es)
+        w = lc["winners"]
+        note = " (the lowest of what is counted, every place leaves a cost part out)" if lc["all_unknown"] else ""
+        if w and lc["same"]:
+            lines.append(f"No lowest true monthly cost: they are all {_money(lc['amount'])}.")
+        elif len(w) > 1:
+            lines.append("Lowest true monthly cost: " + ", ".join(f"#{e['id']}" for e in w) + f" are tied at {_money(lc['amount'])}{note}.")
+        elif w:
+            lines.append(f"Lowest true monthly cost: #{w[0]['id']} at {_money(w[0]['cost_total'])}{note}.")
+        elif lc["no_fit"]:
             lines.append("No place here fits, so I am not naming a lowest-cost place.")
+        for e, why in lc["over_limit"]:
+            lines.append(f"#{e['id']} is cheapest, but {why}.")
+        for e in lc["skipped_unknown"]:
+            lines.append(f"#{e['id']} looks cheaper, but some of its costs are not counted yet.")
+        if lc["blocked"]:
+            lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({why})" for e, why in lc["blocked"]) + ".")
         if scored:
             top = max(e["score_total"] for e in scored)
             best_all = [e for e in scored if e["score_total"] == top]
