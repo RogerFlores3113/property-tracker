@@ -116,16 +116,16 @@ def test_assessment_amount_next_to_words():
     assert r["special_assessment"] == 6500
 
 
-def test_seller_credit_percent_from_price():
+def test_seller_credit_percent_is_never_filled():  # changed in cycle 10: a percent is a maximum, not a promise
     r = parse_listing("Home for sale $349,900. Seller concessions up to 3% toward closing costs")
-    assert r["seller_credit"] == 10497
-    assert "worked out from 3% of the $349,900 price" in notes(r)
+    assert "seller_credit" not in r
+    assert "The listing offers seller concessions of up to 3%. Ask what the seller will really give." in notes(r)
 
 
 def test_seller_credit_percent_without_price_is_empty():
     r = parse_listing("Seller concessions up to 3% toward closing costs")
     assert "seller_credit" not in r
-    assert "no price to work it out from" in notes(r)
+    assert "Ask what the seller will really give" in notes(r)
 
 
 def test_seller_pays_closing_costs_no_amount_is_empty_with_note():
