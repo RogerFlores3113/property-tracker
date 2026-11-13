@@ -7,6 +7,8 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 from conftest import local_client
 from prophelper import helpers
 from prophelper.store import people_slots
@@ -170,6 +172,7 @@ def _mode(p):
     return stat.S_IMODE(p.stat().st_mode)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX file modes or umask")
 def test_first_run_makes_the_data_folder_700_in_process(tmp_path, monkeypatch):
     from prophelper import paths
     target = tmp_path / "fresh" / "PropertyHelper"
@@ -183,6 +186,7 @@ def test_first_run_makes_the_data_folder_700_in_process(tmp_path, monkeypatch):
     assert _mode(d) == 0o700 and _mode(db.parent) == 0o700
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX file modes or umask")
 def test_real_first_run_command_creates_folder_700_and_database_600(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
