@@ -350,9 +350,9 @@ def _pets(text: str) -> str:
     no_dogs = re.search(r"\bno dogs?\b|\bdogs? (?:are )?not (?:allowed|permitted|accepted)|\bno dogs? allowed|\bno (?:large|big|aggressive) dogs?|\bno breed", work)
     if re.search(r"\bcats? and dogs?\b|\bdogs? and cats?\b|\bcats?\s*(?:&|/|,)\s*dogs?\b|\bdogs?\s*(?:&|/|,)\s*cats?\b|\bpet[- ]friendly\b|\bpets (?:ok|okay|allowed|welcome|considered|accepted)\b|\bpets\s*[:\-]\s*(?:yes|ok|okay|allowed|welcome)\b|\ball pets\b|\bdogs? (?:are )?ok.{0,40}cats? (?:are )?ok|\bcats? (?:are )?ok.{0,40}dogs? (?:are )?ok", work):
         cats = dogs = True
-    if re.search(r"\bcats?\b(?:\s*(?:are|is))?\s*(?:ok|okay|allowed|welcome|accepted|friendly|permitted)|\bcats? only\b|\bcat[- ]friendly\b|\bpurrr", work):
-        cats = True
-    if re.search(r"\bdogs?\b(?:\s*(?:are|is))?\s*(?:ok|okay|allowed|welcome|accepted|friendly|permitted)|\bdogs? only\b|\bdog[- ]friendly\b|\bwoof|\bsmall dogs?\b|\bdogs? under\b", work):
+    if re.search(r"\bcats?\b(?:\s*(?:are|is))?\s*(?:ok|okay|allowed|welcome|accepted|friendly|permitted)|\bcats? only\b|\bcat[- ]friendly\b|\bpurrr|\bcats?\s*[:\-]?\s*\$\s?\d", work):
+        cats = True  # "Cats $200 deposit": a fee for cats means cats are taken
+    if re.search(r"\bdogs?\b(?:\s*(?:are|is))?\s*(?:ok|okay|allowed|welcome|accepted|friendly|permitted)|\bdogs? only\b|\bdog[- ]friendly\b|\bwoof|\bsmall dogs?\b|\bdogs? under\b|\bdogs?\s*[:\-]?\s*\$\s?\d", work):
         dogs = True
     pm = re.search(r"\bpets?\s*[:\-]\s*((?:up to|max(?:imum)?(?: of)?|limit(?: of)?|up to a max of)?\s*(?:\d|one|two|three|four)?\s*(?:dogs?|cats?)\b[^.\n;]{0,40})", work)
     if pm and not re.search(r"\b(?:no|not|none)\b", pm.group(1)):
@@ -377,6 +377,27 @@ def _pets(text: str) -> str:
     if dogs:
         return "dogs"
     return ""
+
+
+_NO_PETS_CLAUSE = re.compile(r"\bno pets\b(?!\s+(?:restrictions?|limits?|problem|fee))[^.\n;]*|\bpets (?:are )?not (?:allowed|permitted|accepted)[^.\n;]*|"
+                             r"\bnot pet[- ]friendly\b|\bpets\s*[:\-]\s*(?:no\b|none|not allowed)[^.\n;]*|\bpet policy\s*[:\-]\s*no\b[^.\n;]*|\bno animals\b[^.\n;]*", re.I)
+
+
+def _pets_conflict(text: str) -> bool:
+    """True when the listing says no pets in one place and that some pets are fine in another ("No pets allowed. Pets: up to 2 dogs")."""
+    if _pets(text) != "none":
+        return False
+    return bool(_pets(_NO_PETS_CLAUSE.sub(" . ", text)))
+
+
+_WIRE_SENTENCE = re.compile(r"(?<!never )(?<!not )(?<!n't )(?<!no )\bwir(?:e|ed|ing)\b[^.\n;]{0,40}\bdeposit\b|\bdeposit\b[^.\n;]{0,40}\b(?:by|via|through|to be)\s+wir(?:e|ed|ing)\b", re.I)
+
+
+def _split_wired_deposit(text: str) -> tuple[str, bool]:
+    """The text with "Wire $500 deposit to hold unit" sentences blanked (so no deposit is read from them), and whether there was one."""
+    parts = re.split(r"(?<=[.;\n])", text)
+    kept = [x for x in parts if not _WIRE_SENTENCE.search(x)]
+    return "".join(kept), len(kept) != len(parts)
 
 
 def _pet_fees(text: str) -> dict[str, float]:
@@ -1116,7 +1137,11 @@ def _hoa(text: str) -> float | None:
 
 
 def _tax(text: str) -> float | None:
-    m = re.search(r"\b(?:property )?tax(?:es)?(?:\s+annual amount|\s+paid|\s+\(annual\))?[ \t:\-=]{0,6}\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?", text, re.I)
+    """Property tax as a yearly figure. "Taxes: $4,100 per year", "property taxes approx $4,100/yr", "$342/mo taxes"."""
+    amt = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?"
+    m = re.search(r"\b(?:property )?tax(?:es)?(?:\s+annual amount|\s+paid|\s+\(annual\))?(?:[ \t:\-=]|approx(?:imately|\.)?|about|around|est(?:imated|\.)?|~){0,10}" + amt, text, re.I)
+    if not m:
+        m = re.search(amt + r"\s*(?:in\s+)?(?:property\s+)?tax(?:es)?\b", text, re.I)
     if not m:
         return None
     value, per = _num(m.group(1)), (m.group(2) or "").lower()
@@ -1125,18 +1150,48 @@ def _tax(text: str) -> float | None:
     return round(value, 2) if 100 <= value <= 200000 else None
 
 
+_NOSUFFIX = re.compile(r"(?<![\w$.,/#-])(\d{1,6})[ \t]+((?:(?:[NSEW]{1,2}|North|South|East|West)\.?[ \t]+)?[A-Z][A-Za-z.'-]*(?:[ \t]+[A-Z][A-Za-z.'-]*){0,2})\b")
+_NOSUFFIX_AFTER = re.compile(r"[ \t]*(?:,[ \t]*[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3},?[ \t]+[A-Z]{2}\b|,[ \t]*\d{5}\b|,?[ \t]+(?:#|apt\b|apartment\b|unit\b|suite\b|ste\b))", re.I)
+_NOSUFFIX_BEFORE = re.compile(r"(?:#|\bapt\.?|\bapartment|\bunit|\bsuite)[ \t]*#?[ \t]*[A-Za-z]?\d{1,5}[A-Za-z]?[ \t]*,[ \t]*$", re.I)
+_NOSUFFIX_BAD = _NOT_STREET_WORDS | {"day", "days", "week", "weeks", "per", "plus", "and", "of", "at", "in", "for", "to", "off", "total", "rent", "pm", "am",
+                                     "bedroom", "bathroom", "studio", "available", "monthly"}
+
+
+def _address_no_suffix(text: str) -> tuple[str, int] | None:
+    """A street with no suffix ("3329 N Broadway, Chicago, IL 60657" or "Unit 4C, 3329 N Broadway"). It must be a house number, an
+    optional direction and a capitalised street name, followed by a city and state, a ZIP or a unit word, or follow a unit and a comma."""
+    for m in _NOSUFFIX.finditer(text):
+        words = [w.strip(".,").lower() for w in m.group(2).split()]
+        if set(words) & _NOSUFFIX_BAD:
+            continue
+        if len(words) == 1 and len(words[0]) <= 1:
+            continue
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        if _NOSUFFIX_AFTER.match(text, m.end()) or _NOSUFFIX_BEFORE.search(text[line_start:m.start()]):
+            return " ".join((m.group(1) + " " + m.group(2)).split()), m.end()
+    return None
+
+
 # --------------------------------------------------------------------------- address
 def _address(text: str) -> dict[str, str]:
     out: dict[str, str] = {}
+    candidates: list[tuple[str, str | None, int]] = []
     for m in _ADDRESS.finditer(text):
         street = " ".join(m.group(1).split()).rstrip(",.")
         words = {w.lower().strip(".,") for w in street.split()[1:-1]}
         if words & _NOT_STREET_WORDS:
             continue
+        candidates.append((street, m.group(2), m.end()))
+        break
+    if not candidates:
+        bare = _address_no_suffix(text)
+        if bare:
+            candidates.append((bare[0], None, bare[1]))
+    for street, unit_in, end in candidates:
         out["address"] = street
-        if m.group(2):
-            out["unit"] = m.group(2)
-        tail = text[m.end():m.end() + 120]
+        if unit_in:
+            out["unit"] = unit_in
+        tail = text[end:end + 120]
         cm = re.match(r"[ \t]*(?:,|\n)?[ \t]*(?:" + _UNIT + r"[ \t]*(?:,|\n)?[ \t]*)?([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),?[ \t]+([A-Z]{2})(?:[ \t]+(\d{5})(?:-\d{4})?)?\b", tail)
         if cm and cm.group(3) in _STATES:
             if cm.group(1) and not out.get("unit"):
@@ -1205,9 +1260,16 @@ _BUILDING_WORD = (r"(?:Apartments?|Apts?|Lofts?|Court|Flats|Residences?|Towers?|
 _AT_BUILDING = re.compile(r"\b(?:at|in)\s+((?:The\s+)?(?:[A-Z][\w'&.-]*\s+){0,3}" + _BUILDING_WORD + r"\b(?:\s+(?:Apartments?|Homes|Flats|Residences|Townhomes?|Condos?)\b)?)")
 
 
+def _name_segment(line: str) -> str:
+    """The name part of a long first line: "Riverside Lofts Unit 4B - 2 bed 2 bath ..., 123 Main St" gives "Riverside Lofts Unit 4B"."""
+    if len(line) <= 90:
+        return line
+    return re.split(r"\s+[-|\u2013\u2014]\s+|,\s+(?=\d)|\.\s+(?=[A-Z$\d])", line, maxsplit=1)[0][:90].strip()
+
+
 def _building_name(text: str) -> str:
     for line in text.splitlines()[:30]:
-        line = " ".join(line.strip(" \t|\u2022\u00b7*#").split())
+        line = _name_segment(" ".join(line.strip(" \t|\u2022\u00b7*#").split()))
         if not line or len(line) > 90 or _SITE_LINE.match(line):
             continue
         m = _BUILDING.match(line) or _AT_BUILDING.search(line)
@@ -1233,7 +1295,12 @@ def _clean_title(title: str) -> str:
 
 
 def _title(text: str, found: dict[str, Any]) -> str:
-    return _clean_title(_title_raw(text, found))
+    title = _clean_title(_title_raw(text, found))
+    letters = [c for c in title if c.isalpha()]
+    if len(letters) >= 4 and title.upper() == title:
+        title = re.sub(r"[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in ("LLC", "II", "III", "IV", "NE", "NW", "SE", "SW", "UIUC") else m.group(0).capitalize(), title)
+        title = re.sub(r"^The\b", "The", title)
+    return title
 
 
 def _title_raw(text: str, found: dict[str, Any]) -> str:
@@ -1251,7 +1318,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
             and _ADDRESS.match(lines[1]):
         return lines[0]  # a one-word name on its own line above the address
     for line in text.splitlines()[:25]:
-        line = " ".join(line.strip(" \t|\u2022\u00b7*#").split())
+        line = _name_segment(" ".join(line.strip(" \t|\u2022\u00b7*#").split()))
         if not line:
             continue
         low = line.lower().rstrip(":")
@@ -1260,6 +1327,9 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         am = _ADDRESS.match(line)
         if am and found.get("address"):
             return found["address"]
+        head = re.split(r"\s+[-|\u2013\u2014]\s+", line, maxsplit=1)
+        if len(head) == 2 and found.get("address") and found["address"] in head[1] and re.fullmatch(r"[A-Za-z][A-Za-z '&.]{1,40}", head[0]):
+            return head[0].strip()  # "Name - Unit 4C, 3329 N Broadway": the name is the title, the street is the address
         if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or _is_fact_line(line):
             continue
         if re.search(r"\b(?:call|text|email|contact|apply|posted|updated|listed|published)\b.*(?:\d{3}|ago|on\b)", low):
@@ -1319,6 +1389,8 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     put("parking", kind_cost[0])
     put("parking_cost", kind_cost[1])
     put("pets", _try(lambda: _pets(text)))
+    if out.get("pets") == "none" and _try(lambda: _pets_conflict(text)):
+        facts.append("The listing says no pets and also says some pets are allowed. Pets is set to no pets until you check with the landlord.")
     deposit_amount, fee_text = _try(lambda: _pet_deposit(text)) or (None, text)
     put("pet_deposit", deposit_amount)
     for key, value in (_try(lambda: _pet_fees(fee_text)) or {}).items():
@@ -1400,7 +1472,10 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     facts += [f"{line.rstrip('.')}." for line in (_try(lambda: _pet_limits(text)) or [])]
 
     def fees() -> None:
-        dep = _money_after(dep_text, r"(?:security |refundable |damage |rental )?deposits?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage)\s*$")
+        dep_src, wired = _split_wired_deposit(dep_text)
+        if wired:
+            facts.append("The listing asks for a deposit by wire. A wire can't be taken back, so the deposit is left blank. Don't send money before you have toured the place.")
+        dep = _money_after(dep_src, r"(?:security |refundable |damage |rental )?deposits?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage)\s*$")
         dep = [v for v in dep if v is not None]
         rent_now = out.get("price")
         by_months = _deposit_in_months(text)

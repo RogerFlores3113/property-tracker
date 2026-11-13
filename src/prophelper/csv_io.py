@@ -120,7 +120,27 @@ _FROM_PLAIN: dict[str, dict[str, str]] = {f: {_norm_header(w): code for code, w 
 
 def _code_for(field: str, text: str) -> str:
     """The stored code for a plain word from our own export ("Hookups only" becomes hookups); anything else is passed on."""
-    return _FROM_PLAIN.get(field, {}).get(_norm_header(text), text)
+    code = _FROM_PLAIN.get(field, {}).get(_norm_header(text))
+    if code:
+        return code
+    if field == "pets" and text.strip().lower() not in PLAIN_WORDS["pets"]:
+        return _read_pets_cell(text)
+    return text
+
+
+def _read_pets_cell(text: str) -> str:
+    """A free-text Pets cell ("dogs ok", "Two dogs ok", "cats only", "no pets", "yes") read with the same reader as the paste form.
+    A cell it can't read is passed on unchanged, so the usual clear note still shows."""
+    from .parsers import _pets
+    plain = " ".join(text.lower().replace(".", " ").split())
+    if plain in ("yes", "y", "true", "ok", "okay", "allowed", "pets ok", "pets allowed"):
+        return "both"
+    if plain in ("no", "n", "false", "not allowed"):
+        return "none"
+    try:
+        return _pets(text) or text
+    except Exception:
+        return text
 
 
 # ----------------------------------------------------------------------------- export
