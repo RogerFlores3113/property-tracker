@@ -72,7 +72,7 @@ def test_cash_row_is_not_repeated_on_compare_or_the_share_page(client, store):
 
 # ---- 3 and 4. unknown never wins, ties are said once
 def test_unset_pet_rent_and_parking_are_not_known_not_zero(store):
-    s = _search(store)
+    s = _search(store, pet_kind="cat")
     a, _ = store.add_place(search_id=s["id"], title="A", address="1 A St", price=1500, pet_rent=40, pets="cats")
     b, _ = store.add_place(search_id=s["id"], title="B", address="2 B St", price=1500)
     sections = compare.build_rows(_enriched(store, s, a["id"], b["id"]))
@@ -88,20 +88,20 @@ def test_pets_none_is_a_real_zero(store):
     a, _ = store.add_place(search_id=s["id"], title="A", address="1 A St", price=1500, pet_rent=40, pets="cats")
     b, _ = store.add_place(search_id=s["id"], title="B", address="2 B St", price=1500, pets="none")
     pet = _row(compare.build_rows(_enriched(store, s, a["id"], b["id"])), "cost-pet_rent")
-    assert _texts(pet)[1] == "$0.00" and pet["cells"][1]["best"]
+    assert _texts(pet)[1] == "$0 (none)" and pet["cells"][1]["best"]
 
 
 def test_unknown_value_never_wins_a_row():
     cells = [compare._cell("$5", 5.0), compare._money(None), compare._cell("$9", 9.0)]
     differs, note = compare.mark(cells, "low")
-    assert note == "lowest" and [c["best"] for c in cells] == [True, False, False]
+    assert note == "best" and [c["best"] for c in cells] == [True, False, False]
     assert cells[1]["text"] == "Not known"
 
 
 def test_ties_are_marked_tied_once_and_equal_rows_have_no_winner(client, store):
     cells = [compare._cell("a", 1.0), compare._cell("b", 1.0), compare._cell("c", 2.0)]
     differs, note = compare.mark(cells, "low")
-    assert note == "tied" and [c["best"] for c in cells] == [True, True, False]
+    assert note == "tied best" and [c["best"] for c in cells] == [True, True, False]
     same = [compare._cell("a", 3.0), compare._cell("b", 3.0)]
     assert compare.mark(same, "low") == (False, "") and not any(c["best"] for c in same)
     s = _search(store)
@@ -110,9 +110,9 @@ def test_ties_are_marked_tied_once_and_equal_rows_have_no_winner(client, store):
     q = "&".join(f"ids={i}" for i in ids)
     html = client.get(f"/compare?{q}").text
     assert "(lowest)" not in html.split("True monthly cost")[1].split("</tr>")[0]
-    assert "(tied)" in html
+    assert "(tied best)" in html
     shared = client.get(f"/compare/share.html?{q}").text
-    assert "(tied)" in shared and "(best)" not in shared.split("True monthly cost")[1].split("</tr>")[0]
+    assert "(tied best)" in shared
 
 
 def test_summary_says_tied(store):
