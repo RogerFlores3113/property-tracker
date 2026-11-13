@@ -629,6 +629,23 @@ async def delete_anchor(request: Request, anchor_id: int):
 
 
 # --------------------------------------------------------------------------- Add
+# What the preview checks for after "Read the listing": (label, the saved fields that count as found).
+_PREVIEW_RENT = (("rent", ("price",)), ("bedrooms", ("beds",)), ("bathrooms", ("baths",)), ("address", ("address",)), ("laundry", ("laundry",)),
+                 ("parking", ("parking", "parking_cost")), ("pets", ("pets",)), ("available date", ("available_from",)), ("deposit", ("deposit",)),
+                 ("utilities included", ("utilities_included", "tenant_pays", "utilities_estimate")))
+_PREVIEW_BUY = (("price", ("price",)), ("bedrooms", ("beds",)), ("bathrooms", ("baths",)), ("address", ("address",)), ("HOA", ("hoa",)),
+                ("property tax", ("property_tax",)), ("insurance", ("insurance",)))
+
+
+def _not_found_names(values: dict[str, Any], mode: str) -> list[str]:
+    """The things a preview names as "not found", by plain name. A field counts as found if any of its saved values was read
+    (a parking cost with no parking type still means parking was found). A zero or a "none" is an answer, so it counts too."""
+    def has(key: str) -> bool:
+        v = values.get(key)
+        return v is not None and v != ""
+    return [label for label, keys in (_PREVIEW_BUY if mode == "buy" else _PREVIEW_RENT) if not any(has(k) for k in keys)]
+
+
 def _add_page(request: Request, *, values: dict[str, Any] | None = None, parsed: bool = False, text: str = "", url: str = "",
               status: int = 200, error: str = "", search_id: int | None = None):
     store = get_store(request)
@@ -638,7 +655,8 @@ def _add_page(request: Request, *, values: dict[str, Any] | None = None, parsed:
     flags = redflags.local_flags(values, mode=chosen_search.get("mode") or "rent") if parsed and values else []  # the same hints the place page shows, before you save
     return render(request, "add.html", status_code=status, values=values or {}, parsed=parsed, text=text, url=url, flags=flags,
                   searches=searches, search_options=[(s["id"], s["name"]) for s in searches], chosen=search_id or (current["id"] if current else None), form_error=error,
-                  found=sorted((values or {}).keys()) if parsed else [])
+                  found=sorted((values or {}).keys()) if parsed else [],
+                  not_found=_not_found_names(values or {}, chosen_search.get("mode") or "rent") if parsed else [])
 
 
 @router.get("/add", include_in_schema=False)
