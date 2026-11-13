@@ -311,6 +311,9 @@ def _pet_charges_unknown(p: dict[str, Any]) -> bool:
     """True when the search has pets, the place allows them, and neither a pet fee nor a pet deposit is filled in."""
     if not p["cost"].get("pets_counted", True) or str(p.get("pets") or "") == "none":
         return False
+    known_pets = str(p.get("pets") or "") in ("cats", "dogs", "both")
+    if known_pets and any(p.get(k) not in (None, "") for k in ("pet_rent", "pet_fee", "pet_deposit")):
+        return False  # a pet charge was read and the pets allowed are known: the pet side of the cost is not a gap
     return p.get("pet_fee") in (None, "") and p.get("pet_deposit") in (None, "")
 
 
@@ -376,18 +379,16 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
     a commute limit), ``skipped_unknown`` (places that look cheaper but leave a cost part out) and ``blocked``
     ([(place, why)]: cheaper places that don't fit, are near misses beside a fitting place, or may be a scam).
 
-    Only places that fit or are near misses can win, and a near miss only when no fitting place has a cost. A place
+    Only places that fully fit can win; a near miss never does (it is named as cheaper but not a place to pick). A place
     whose commute is over a limit is named, never silently the winner: it is skipped for "lowest" unless every
     candidate is over, and then the winner says so. A place with unknown cost parts is skipped unless every candidate
     has them."""
     priced = [p for p in places if p["cost_total"] is not None]
-    eligible = [p for p in priced if not _ineligible(p, True)]
-    if any(_fits(p) for p in eligible):
-        eligible = [p for p in eligible if _fits(p)]
+    eligible = [p for p in priced if not _ineligible(p, True) and _fits(p)]  # only places that fully fit; a near miss never wins
     base = [p for p in eligible if not over_limit_text(p)] or eligible
     complete = [p for p in base if not _uncounted(p)]
     pool = complete or base
-    out: dict[str, Any] = {"winners": [], "amount": None, "same": False, "all_unknown": bool(pool) and not complete and len(eligible) > 1,
+    out: dict[str, Any] = {"winners": [], "amount": None, "same": False, "all_unknown": bool(pool) and not complete and len(priced) > 1,
                            "of_fit": len(eligible) < len(priced),
                            "over_limit": [], "skipped_unknown": [], "blocked": [], "no_fit": bool(priced) and not eligible}
     ref = min((p["cost_total"] for p in pool), default=None)

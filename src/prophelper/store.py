@@ -1221,6 +1221,11 @@ class Store:
             raise ValueError(f"The kinds of thing that can matter are: {', '.join(CRITERION_KINDS)}.")
         w = self._weight(weight)
         tgt = _clean_target(kind, target)
+        if kind == "pets":
+            if any(c["kind"] == "pets" for c in self.list_criteria(search_id)):
+                raise ValueError("This search already has a pets rule. Change that one instead of adding a second.")
+            if str(self.get_search(search_id).get("pet_kind") or "") in ("cat", "dog", "both"):
+                tgt.pop("want", None)  # a hand-added pets rule follows the search's own pets setting
         with self._write():
             order = self._row("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM criteria WHERE search_id = ?", (search_id,))["n"]
             cur = self._exec("INSERT INTO criteria(search_id, kind, label, weight, dealbreaker, target, sort_order) "
@@ -1256,7 +1261,10 @@ class Store:
         if "dealbreaker" in fields:
             values["dealbreaker"] = 1 if clean_bool(fields["dealbreaker"]) else 0
         if "target" in fields:
-            values["target"] = json.dumps(_clean_target(cur["kind"], fields["target"]))
+            new_target = _clean_target(cur["kind"], fields["target"])
+            if cur["kind"] == "pets" and str(self.get_search(cur["search_id"]).get("pet_kind") or "") in ("cat", "dog", "both"):
+                new_target.pop("want", None)  # follows the search's pets setting
+            values["target"] = json.dumps(new_target)
         if "sort_order" in fields:
             values["sort_order"] = int(fields["sort_order"])
         if values:

@@ -248,7 +248,7 @@ def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[
         else:
             text = item.get("gap") or f"{item.get('label', 'A must-have')} is just short"
             pts = item.get("points_lost") or 0
-            if item["kind"] == "commute" and pts:
+            if item["kind"] == "commute" and pts and not item.get("near"):
                 text += f", cost {pts} point{'' if pts == 1 else 's'}"
         shown = ("Price" if (cost or {}).get("mode") == "buy" else KIND_LABELS["price"]) if item["kind"] == "price" else item.get("label") or ""
         out.append({"label": shown, "kind": item["kind"], "text": text})
@@ -345,9 +345,19 @@ def _score_commute(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]
     if missing:
         detail += " No time yet for " + ", ".join(a["name"] for a in missing) + "."
     gap = "; ".join(who) if over else ""
+    # A miss that rests only on a time the app worked out (a straight-line estimate) is a near miss to check, never a hard fail.
+    est_only = bool(over) and all(f["source"] == "estimate" for _, f in over)
+    if est_only:
+        bits = [(f"{a['name']}: " if many else "") + f"about {f['minutes']:.0f} min by {f.get('mode') or mode} (estimate), limit {mins:.0f}, check the real time"
+                for a, f in over]
+        gap = "; ".join(bits)
     r = _result(score, value, target, detail, known=True, passes=not over, gap=gap)
+    if est_only:
+        r["near"] = True
     if over:
         r["over_amount"], r["over_pct"] = worst - mins, (worst - mins) / mins
+        if est_only and c.get("dealbreaker"):
+            return r
         r["concern"] = gap if many else f"Commute to {over[0][0]['name']} {over[0][1]['minutes']:.0f} min {mode}, over your {mins:.0f} min"
     return r
 
@@ -376,6 +386,31 @@ def _score_yes(value_known: bool, yes: bool, target: str, value: str, what: str)
 def _score_dishwasher(c: dict[str, Any], place: dict[str, Any]) -> dict[str, Any]:
     d = place.get("dishwasher")
     return _score_yes(d is not None, bool(d), "has one", "yes" if d else "no", "Dishwasher")
+
+
+PARKING_ANY_WARNING = ("This parking rule accepts any off-street parking. Say garage or covered if that's what you need.")
+
+
+def infer_parking_want(label: Any) -> str:
+    """'garage' or 'covered' when a parking rule's label names it, else ''."""
+    text = str(label or "").lower()
+    if "garage" in text:
+        return "garage"
+    if "covered" in text or "carport" in text:
+        return "covered"
+    return ""
+
+
+def settle_parking_target(label: Any, target: Any) -> tuple[Any, str]:
+    """(target, warning) for a parking rule. With no ``want`` the rule would pass any off-street lot, so take garage or
+    covered from the label; if the label says neither, keep it and return the warning to show the person."""
+    t = dict(target) if isinstance(target, dict) else {}
+    if str(t.get("want") or "").strip():
+        return t, ""
+    want = infer_parking_want(label)
+    if want:
+        return {**t, "want": want}, ""
+    return t, PARKING_ANY_WARNING
 
 
 def _score_parking(c: dict[str, Any], place: dict[str, Any]) -> dict[str, Any]:
@@ -469,10 +504,10 @@ def _score_fenced_yard(c: dict[str, Any], place: dict[str, Any]) -> dict[str, An
 def _score_newer(c: dict[str, Any], place: dict[str, Any]) -> dict[str, Any]:
     year = _num(c["target"].get("year")) or 2000
     have = _num(place.get("year_built"))
-    target = f"built {_fmt(year)} or later"
+    target = f"{int(year)} or later"  # a year has no comma
     if have is None:
         return _unknown(target, "The year built")
-    return _score_yes(True, have >= year, target, f"built {_fmt(have)}", "The year built")
+    return _score_yes(True, have >= year, target, f"built {int(have)}", "The year built")
 
 
 def _score_custom(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
@@ -681,11 +716,25 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
             "scam": scam, "sort_group": SORT_GROUPS[fit], "cost": ctx["cost"]}
 
 
-def sort_key(p: dict[str, Any]) -> tuple[int, int, str]:
-    """Order for a list of enriched places: places that fit first, best score first, then by name."""
+def _flagged(p: dict[str, Any]) -> int:
+    """1 for a place marked check first (a scam sign, or text aimed at AI tools): it sorts below every unflagged place."""
+    return 1 if p.get("check_first") or p.get("possible_scam") or (p.get("score") or {}).get("scam") else 0
+
+
+def sort_key(p: dict[str, Any]) -> tuple[int, int, int, int, str]:
+    """Order for a list of enriched places: unflagged places before places marked check first, priced before unpriced,
+    then places that fit first, best score first, then by name."""
     score = p.get("score") or {}
     total = p.get("score_total")
-    return (score.get("sort_group", 0), -(total if total is not None else -1), str(p.get("title", "")).lower())
+    unpriced = 1 if "cost_total" in p and p["cost_total"] is None else 0
+    return (_flagged(p), unpriced, score.get("sort_group", 0), -(total if total is not None else -1), str(p.get("title", "")).lower())
+
+
+def list_key(e: dict[str, Any]) -> tuple[int, int, int, int]:
+    """Order for tool lists (best score first, ties by id by the caller): check-first places last, then the fit group."""
+    score = e["score"]
+    return (_flagged(e), score.get("sort_group", 2 if score["fails_dealbreaker"] else 0),
+            -(e["score_total"] if e["score_total"] is not None else -1), e["id"])
 
 
 def score_band(total: int | None) -> str:
