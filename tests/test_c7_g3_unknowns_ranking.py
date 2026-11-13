@@ -97,7 +97,7 @@ def test_partial_utilities_listed_are_unknown(store):
     out = text(call(server(store), "compare_places", place_ids=[a["id"], b["id"]]))
     still = [l for l in out.split("\n") if l.startswith("Still unknown:")][0]
     assert f"#{a['id']} Unknown: electric, gas and internet" in still and f"#{b['id']} Nothing unknown" in still
-    assert "Unknowns to fill: Unknown: electric, gas and internet" in text(call(server(store), "get_place", place_id=a["id"]))
+    assert "Unknowns to fill: electric, gas and internet" in text(call(server(store), "get_place", place_id=a["id"]))
 
 
 def test_guessed_utilities_and_unknown_pet_charges_are_not_nothing_unknown(store):
@@ -234,3 +234,14 @@ def test_today_lists_a_possible_scam_under_check_first(store):
     assert "Check first" in page and "Scammy" in page
     out = text(call(server(store), "todays_list"))
     assert "Check first: #" in out and "Scammy" in out
+
+
+def test_cycle7_integration_billed_back_amount_is_not_a_guess_and_reason_has_no_nested_brackets():
+    from prophelper import money, parsers
+    text = ("The Arboretum Residences\n3329 N Broadway, Champaign, IL 61820\n1 bed 1 bath. $1,525/month. "
+            "Water and trash included; tenant pays electric, gas and internet. $25/mo billed back for trash.")
+    place = {**parsers.parse_listing(text), "listing_text": text}
+    cost = money.rent_cost(place)
+    util = next(l for l in cost["lines"] if l["key"] == "utilities")
+    assert not util.get("estimated")
+    assert "Billed back" in util["note"]

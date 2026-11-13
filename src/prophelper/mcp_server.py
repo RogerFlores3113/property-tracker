@@ -537,7 +537,8 @@ def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
         lines.append(f"Late opening: {e['score']['late_note']}; the score is {e['score']['late_penalty']} points lower for it.")
     unknown = _unknown_list(e)
     if unknown:
-        lines.append("Unknowns to fill: " + _unknown_text(e))
+        text = _unknown_text(e)
+        lines.append("Unknowns to fill: " + (text[len("Unknown: "):] if text.startswith("Unknown: ") else text))
     commutes = _commute_list(e)
     if commutes:
         lines.append("Commutes: " + "; ".join(commutes[:12]))

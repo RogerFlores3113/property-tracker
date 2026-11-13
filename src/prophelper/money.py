@@ -157,7 +157,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
         if place.get("utilities_included"):
             note += f". The listing includes: {place['utilities_included']}"
         line = _line("utilities", "Utilities" if from_listing else "Utilities (a guess)", util, note)
-        line["estimated"] = True
+        line["estimated"] = not from_listing  # an amount the listing states (or bills back) is not a guess
         unpriced = _unpriced_tenant_utilities(place) if from_listing else []
         if unpriced:
             # The listing prices only part of what the tenant pays (for example trash billed back), so the rest is not counted yet.

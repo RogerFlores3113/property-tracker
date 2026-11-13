@@ -194,7 +194,8 @@ def _score_price(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) 
                     known=True, passes=True)
         unknown_costs = list((ctx.get("cost") or {}).get("uncounted") or []) if not buying and not rent_only else []
         if unknown_costs:
-            names = ", ".join(unknown_costs)
+            names = ", ".join(u[len("utilities ("):-1] if u.startswith("utilities (") and u.endswith(")") else u
+                              for u in unknown_costs)  # "utilities (electric and gas)" -> "electric and gas": no nested brackets
             r["detail"] += f" This passes only if the unknown costs are small: {names} not counted yet."
             r["conditional"] = names
         return r
