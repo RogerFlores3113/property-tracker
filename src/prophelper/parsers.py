@@ -46,7 +46,8 @@ _NOT_STREET_WORDS = {"bed", "beds", "bedroom", "bedrooms", "bath", "baths", "bat
 _UNIT = r"(?:#|apt\.?|apartment|unit|suite|ste\.?)\s*#?\s*([A-Za-z]?\d{1,5}[A-Za-z]?(?:-\d{1,3})?|[NS][EW]\b|[A-Z])\b"
 _ADDRESS = re.compile(
     r"(?<![\w$.,/-])(\d{1,6}(?:-\d{1,6})?\s+(?:[NSEW]\.?\s+|(?:North|South|East|West)\s+)?"
-    r"(?:(?:\d{1,3}(?:st|nd|rd|th)|[A-Za-z][A-Za-z.'-]*)\s+){0,4}?" + _STREET + r"\b\.?)"
+    r"(?:(?:\d{1,3}(?:st|nd|rd|th)|[A-Za-z][A-Za-z.'-]*)\s+){0,4}?" + _STREET + r"\b\.?"
+    r"(?:[ \t]+(?:NE|NW|SE|SW|N|S|E|W)\b\.?(?=[ \t]*(?:,|\n|$)))?)"
     r"(?:,?\s+" + _UNIT + r")?", re.I)
 _CITY_LINE = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),?\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b")
 _CITY_STATE = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),\s+([A-Z]{2})\b(?!\w)")
@@ -315,7 +316,85 @@ def _parking_kind_words(low: str) -> str:
     return ""
 
 
+_PARKING_PRICE_RES = (
+    re.compile(r"(?:garage|carport|covered parking|reserved parking|parking(?: fee| rate| cost)?|parking space|parking spot)s?\s*(?:space|spot|stall|fee|rental|rent)?s?[ \t:\-=(]{0,6}(?:(?:is|are|from|starting at|for|at|only|available|offered)[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
+    # "Parking: assigned covered spot $60/mo", "garage parking available for $110 a month": a few describing words in between
+    re.compile(r"\b(?:garage|carport|parking)s?\b[ \t:\-=(]{0,4}(?:(?:assigned|reserved|covered|private|underground|heated|attached|detached|surface|lot|street|"
+               r"spots?|spaces?|stalls?|available|offered|for|at|is|are|from|only|each|per|one|a|an|the|rental|rate|fee|cost|\d-car|garage|carport|parking|-)[ \t:]+){1,6}"
+               r"\$\s?(\d{2,4})(?:\.\d\d)?(?=[ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month))(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
+    re.compile(r"\$\s?(\d{2,4})\s*(?:/\s*mo(?:nth)?|per month|a month|monthly)?\s*(?:for |per )?(?:a |the )?(?:reserved |covered |garage |private )?(?:parking|garage|carport)\b(?!\s*deposit)"),
+    # "1 spot $50/mo", "Parking: 1 spot, $50/month", "2 spaces at $40 a month"
+    re.compile(r"\b\d\s*(?:parking\s+)?(?:spots?|spaces?|stalls?)\s*[,:\-]?\s*(?:for |at |is |are |only )?\$\s?(\d{2,4})(?:\.\d\d)?(?=[ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month|\b))(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
+)
+_PARKING_OPTIONAL = re.compile(r"\boptional\b|\bavailable\b|\badditional\b|\bextra (?:parking|spaces?|spots?|cars?|vehicles?|garage)\b|\bupgrade\b|\bif (?:you )?(?:need|want)\b|\bwaitlist\b|\bon request\b|\bfor an? fee\b", re.I)
+_PARKING_REQUIRED = re.compile(r"\brequired\b|\bmandatory\b|\bmust\b", re.I)
+_PARKING_FREE = re.compile(r"\bfree (?:off[- ]?street |on[- ]?site |surface |assigned |resident |tenant )?(?:parking|lot|spots?|spaces?)\b|\bparking\s*(?:is\s*)?(?:included|free|at no (?:extra )?charge)\b|"
+                           r"\bparking\s*[:\-]\s*(?:free|included)\b|\b(?:lot|surface|street|off[- ]?street)[^.\n;$]{0,20}\bfree\b|\bfree\b[^.\n;$]{0,12}\b(?:lot|surface)\b|"
+                           r"\b\d+\s+(?:parking\s+)?(?:spaces?|spots?|stalls?)\s+(?:is\s+|are\s+)?(?:included|free)\b|\b(?:includes?|including)\s+(?:\w+[- ]?){0,2}parking\b", re.I)
+
+
+def _parking_prices(low: str) -> list[tuple[float, bool, str]]:
+    """Every parking price in the text as (amount, optional, clause). A price that is only offered ("available", "additional",
+    "optional", or a different spot than the free one) is optional and never counts toward the monthly cost."""
+    seen: set[int] = set()
+    out: list[tuple[float, bool, str]] = []
+    free_anywhere = bool(_PARKING_FREE.search(low))
+    for rx in _PARKING_PRICE_RES:
+        for m in rx.finditer(low):
+            at = m.start(1)
+            if any(abs(at - x) < 2 for x in seen):
+                continue
+            seen.add(at)
+            a = max(low.rfind(x, 0, at) for x in (".", "\n", ";", ",")) + 1
+            b = min([x for x in (low.find(". ", at), low.find("\n", at), low.find(";", at), low.find(",", at), m.end() + 14) if x != -1])
+            clause = low[a:b + 1]
+            required = bool(_PARKING_REQUIRED.search(clause))
+            optional = bool(_PARKING_OPTIONAL.search(clause)) and not required
+            if not optional and not required and free_anywhere and not _PARKING_FREE.search(clause):
+                optional = True  # free parking is listed elsewhere, so this priced one is a different, extra choice
+            out.append((float(m.group(1)), optional, clause))
+    return out
+
+
+def _a(w: str) -> str:
+    return ("An " if w[0] in "aeiou" else "A ") + w
+
+
+def _parking_what(clause: str) -> str:
+    if re.search(r"\bgarage\b", clause):
+        return "garage"
+    if re.search(r"\bcarports?\b", clause):
+        return "carport"
+    if re.search(r"\b(?:additional|extra)\b", clause):
+        return "extra parking space"
+    return "parking space"
+
+
+def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
+    low = text.lower()
+    prices = _parking_prices(low)
+    notes: list[str] = []
+    rest = low
+    for value, optional, clause in prices:
+        if optional:
+            what = _parking_what(clause)
+            notes.append(f"{_a(what)} is available for ${value:,.0f} a month. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
+            rest = rest.replace(clause, " ")
+    required = [v for v, o, _c in prices if not o]
+    kind, cost = _parking_kind_cost(rest, required[0] if required else None)
+    if cost is None and required:
+        cost = required[0]
+    if cost is None and any(o for _v, o, _c in prices) and _PARKING_FREE.search(low):
+        cost = 0.0
+    return kind, cost, notes
+
+
 def _parking(text: str) -> tuple[str, float | None]:
+    kind, cost, _notes = _parking_detail(text)
+    return kind, cost
+
+
+def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | None]:
     low = text.lower()
     kind = ""
     label = re.search(r"\bparking(?: features?| type)?\s*[:\-]\s*([^\n.;]{0,40})", low)
@@ -336,30 +415,18 @@ def _parking(text: str) -> tuple[str, float | None]:
         kind = "garage"
     elif re.search(r"\bcarports?\b|\bcovered\s+(?:parking|spaces?|spots?)\b", low):
         kind = "covered"
-    elif re.search(r"\b(?:off[- ]?street|surface|free|assigned|reserved|on[- ]?site|private|ample|plenty of|paved|resident)\s+parking\b|\b(?:surface|gravel|paved|resident|tenant)?\s*lot\s+parking\b|\bparking\s+(?:lot|included|available|space|spot|provided|on[- ]?site)|\bdriveway\b|\bparking\s*[:\-]\s*(?:lot|yes|included|free|assigned|surface)|\b\d\s*parking (?:spaces?|spots?)\b", low):
+    elif re.search(r"\b(?:off[- ]?street|surface|free|assigned|reserved|on[- ]?site|private|ample|plenty of|paved|resident)\s+parking\b|\b(?:surface|gravel|paved|resident|tenant)?\s*lot\s+parking\b|\bparking\s+(?:lot|included|available|space|spot|provided|on[- ]?site)|\bdriveway\b|\bparking\s*[:\-]\s*(?:lot|yes|included|free|assigned|surface)|\b\d\s*parking (?:spaces?|spots?)\b|\b(?:surface|gravel|paved)\s+lot\b", low):
         kind = "lot"
     elif re.search(r"\b(?:street|on[- ]street)\s+parking\b|\bparking\s*[:\-]\s*street\b", low):
         kind = "street"
     elif re.search(r"\bno\s+(?:off[- ]?street\s+|on[- ]?site\s+)?parking\b|\bparking\s*[:\-]\s*none\b", low):
         kind = "none"
-    cost: float | None = None
-    m = re.search(r"(?:garage|carport|covered parking|reserved parking|parking(?: fee| rate| cost)?|parking space|parking spot)s?\s*(?:space|spot|stall|fee|rental|rent)?s?[ \t:\-=(]{0,6}(?:is |are |from |starting at |for |at |only )?\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))", low)
-    if not m:
-        # "Parking: assigned covered spot $60/mo", "garage parking available for $110 a month": a few describing words in between
-        m = re.search(r"\b(?:garage|carport|parking)s?\b[ \t:\-=(]{0,4}(?:(?:assigned|reserved|covered|private|underground|heated|attached|detached|surface|lot|street|"
-                      r"spots?|spaces?|stalls?|available|offered|for|at|is|are|from|only|each|per|one|a|an|the|rental|rate|fee|cost|\d-car|garage|carport|parking|-)[ \t:]+){1,6}"
-                      r"\$\s?(\d{2,4})(?:\.\d\d)?(?=[ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month))(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))", low)
-    if m:
-        cost = float(m.group(1))
-    else:
-        m = re.search(r"\$\s?(\d{2,4})\s*(?:/\s*mo(?:nth)?|per month|a month|monthly)?\s*(?:for |per )?(?:a |the )?(?:reserved |covered |garage |private )?(?:parking|garage|carport)\b(?!\s*deposit)", low)
-        if m:
-            cost = float(m.group(1))
+    cost: float | None = priced
     if cost is not None and not kind:
         kind = _parking_kind_words(low)
     if cost is None and re.search(r"\b(?:includes?|including)\s+(?:\w+[- ]?){0,2}parking\b|\bparking\s*[:\-][^.\n;]{0,30}\b(?:included|free)\b", low) and kind and kind != "none":
         cost = 0.0
-    if cost is None and re.search(r"\bfree (?:off[- ]?street |on[- ]?site |surface |assigned |resident |tenant )?parking\b|\bparking\s*(?:is\s*)?(?:included|free|at no (?:extra )?charge)\b|\bparking\s*[:\-]\s*(?:free|included)\b", low):
+    if cost is None and re.search(r"\bfree (?:off[- ]?street |on[- ]?site |surface |assigned |resident |tenant )?parking\b|\bparking\s*(?:is\s*)?(?:included|free|at no (?:extra )?charge)\b|\bparking\s*[:\-]\s*(?:free|included)\b|\b\d+\s+(?:parking\s+)?(?:spaces?|spots?|stalls?)\s+(?:is\s+|are\s+)?(?:included|free)\b", low):
         cost = 0.0
     return kind, cost
 
@@ -835,6 +902,35 @@ def _seller_credit(text: str) -> float | None:
     return None
 
 
+def _seller_credit_percent(text: str) -> tuple[float | None, bool]:
+    """(percent of the price the seller gives toward closing, "up to" flag) from "Seller concessions up to 3% toward closing costs"."""
+    pats = (r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:contribut\w*|credits?|concessions?|assist\w*|offer\w*|give[sn]?|pays?|paid|cover\w*)\b[^$\n.%]{0,40}?(\d{1,2}(?:\.\d+)?)[ \t]*%",
+            r"(\d{1,2}(?:\.\d+)?)[ \t]*%[ \t]*(?:in[ \t]+|of[ \t]+)?seller[ \t]+(?:concessions?|credits?|contributions?|paid)")
+    for pat in pats:
+        m = re.search(pat, text, re.I)
+        if m and 0 < float(m.group(1)) <= 20:
+            return float(m.group(1)), bool(re.search(r"\bup[ \t]+to\b|\bmax", m.group(0), re.I))
+    return None, False
+
+
+def _seller_credit_detail(text: str, price: float | None) -> tuple[float | None, list[str]]:
+    """(the seller credit in dollars or None, plain notes). A dollar amount is used as written. A percent is worked out from the price
+    when the price is known and says so in a note. With no way to get a number it stays empty and the note says to ask."""
+    dollars = _seller_credit(text)
+    if dollars:
+        return dollars, []
+    pct, up_to = _seller_credit_percent(text)
+    if pct is not None:
+        words = f"{'up to ' if up_to else ''}{pct:g}%"
+        if isinstance(price, (int, float)) and price >= 20000:
+            value = round(price * pct / 100)
+            return float(value), [f"The listing offers seller concessions of {words} and gives no dollar amount, so ${value:,.0f} was worked out from {pct:g}% of the ${price:,.0f} price. Ask what the seller will really give."]
+        return None, [f"The listing offers seller concessions of {words} and gives no dollar amount. There is no price to work it out from, so the seller credit is blank. Ask what the seller will really give."]
+    if re.search(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:pays?|paid|covers?|contribut\w*|concessions?|credits?)\b[^.\n]{0,40}\bclosing[ \t]+costs?\b|\bclosing[ \t]+costs?\b[^.\n]{0,30}\b(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?seller\b", text, re.I):
+        return None, ["The listing says the seller helps with closing costs but gives no amount, so the seller credit is blank. Ask how much."]
+    return None, []
+
+
 def _price_cut(text: str) -> float | None:
     """The size of a price cut ("Price reduced $10,000", "reduced by $10,000"), never the new price ("reduced to $...")."""
     m = re.search(r"\b(?:price[ \t]+(?:reduced|cut|drop(?:ped)?|reduction)|reduced|price[ \t]+change)[ \t:\-]*(?:by[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", text, re.I)
@@ -855,6 +951,16 @@ def _insurance(text: str) -> float | None:
     return round(value, 2) if 100 <= value <= 100000 else None
 
 
+def _assessment_amount(sentence: str, *, skip_monthly: bool = False) -> float | None:
+    """The dollar amount written next to the assessment words ("special assessment of $4,000", "$4,000 special assessment"). A price
+    or any other number in the same sentence is never taken as the assessment."""
+    num = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)(?!,\d)"
+    tail = r"(?!\s*(?:/\s*mo|per month|monthly|a month))" if skip_monthly else ""
+    m = re.search(r"\bassessments?(?:\s*\([^)\n]{0,20}\))?[ \t]*(?:of|is|was|are|totaling|totals?|estimated at|approx\.?|about|around|for|at|[:=\-])?[ \t]*(?:of |approx\.? |about |around )?" + num + tail, sentence, re.I) \
+        or re.search(num + r"(?:[ \t]*(?:one[- ]time|new|pending|upcoming|current))?[ \t]*(?:special[ \t]+)?assessments?\b", sentence, re.I)
+    return _num(m.group(1)) if m else None
+
+
 def _special_assessment_facts(text: str) -> tuple[float | None, str, str]:
     """(one-time amount or None, payer "seller" / "buyer" / "", the matching sentence) for a special assessment.
     An amount quoted per month is left out of the amount (it is not one-time), but the sentence still comes back."""
@@ -867,13 +973,13 @@ def _special_assessment_facts(text: str) -> tuple[float | None, str, str]:
             break
     if sentence is None:
         return None, "", ""
-    am = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)(?!,\d)(?!\s*(?:/\s*mo|per month|monthly|a month))", sentence)
+    amount = _assessment_amount(sentence, skip_monthly=True)
     payer = ""
     if re.search(r"\bseller\b[^.\n]{0,25}\b(?:pays?|paid|to pay|responsible|covers?|credit)\b|\bpaid (?:in full )?by (?:the )?seller|\bseller[- ]paid", sentence, re.I):
         payer = "seller"
     elif re.search(r"\bbuyer\b[^.\n]{0,25}\b(?:pays?|assumes?|to pay|responsible|takes?|inherits?|covers?)\b|\bpaid by (?:the )?buyer|\bassumed by (?:the )?buyer|\bbuyer[- ]paid", sentence, re.I):
         payer = "buyer"
-    return (_num(am.group(1)) if am else None), payer, sentence
+    return amount, payer, sentence
 
 
 def _special_assessment(text: str) -> str:
@@ -887,7 +993,7 @@ def _special_assessment(text: str) -> str:
             break
     if sentence is None:
         return ""
-    am = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)", sentence)
+    am = _assessment_amount(sentence)
     if re.search(r"\bseller\b[^.\n]{0,25}\b(?:pays?|paid|to pay|responsible|covers?|credit)\b|\bpaid (?:in full )?by (?:the )?seller|\bseller[- ]paid", sentence, re.I):
         who = "the seller pays it"
     elif re.search(r"\bbuyer\b[^.\n]{0,25}\b(?:pays?|assumes?|to pay|responsible|takes?|inherits?|covers?)\b|\bpaid by (?:the )?buyer|\bassumed by (?:the )?buyer|\bbuyer[- ]paid", sentence, re.I):
@@ -895,8 +1001,8 @@ def _special_assessment(text: str) -> str:
     else:
         who = "the listing doesn't say who pays it, so ask"
     if am:
-        return f"Special assessment ${_num(am.group(1)):,.0f}: {who}."
-    return f"A special assessment is mentioned but no amount is given: {who}."
+        return f"Special assessment ${am:,.0f}: {who}."
+    return f"A special assessment is mentioned but no amount is given: {who}. Ask what it is."
 
 
 def _days_on_market(text: str) -> int | None:
@@ -1486,6 +1592,9 @@ def _periodic(text: str, label: str, yearly_default: bool) -> float | None:
 
 
 def _hoa(text: str) -> float | None:
+    if re.search(r"\bno[ \t]+(?:hoa|h\.o\.a\.|homeowners'?[ \t]+association)(?:[ \t]+(?:fees?|dues))?\b|\bhoa(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=][ \t]*(?:none|no|n/a|\$0)\b|\bwithout[ \t]+(?:an?[ \t]+)?hoa\b|\b(?:hoa|association)[ \t]+(?:fees?|dues)?[ \t]*(?:\(none\)|not required)", text, re.I) \
+            and not re.search(r"\$\s?[1-9]\d*(?:,\d{3})*(?:\.\d\d)?\s*(?:/\s*\w+|per\s+\w+|\w+ly)\s*(?:hoa|association)|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t:\-=(]{0,6}\$\s?[1-9]", text, re.I):
+        return 0.0
     m = re.search(r"(?:\bhoa|association|homeowners'? association|\bcondo(?=\s*(?:fee|fees|dues|payment|assessment))|\bcommon (?:area )?(?:charges?|fees?))(?:\s*(?:fee|fees|dues|payment|assessment))*[ \t:\-=(]{0,6}\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?", text, re.I)
     if not m:
         m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?\s*(?:hoa|association) (?:fee|dues)?", text, re.I)
@@ -1541,7 +1650,36 @@ def _unit_ok(value: str | None) -> bool:
     return bool(value) and not re.fullmatch(r"[NS][EW]?|[EW]", value.strip(". "), re.I)
 
 
+_DIRECTIONS = {"N", "S", "E", "W", "NE", "NW", "SE", "SW"}
+
+
+def _normal_case(value: str) -> str:
+    """"720 S DEARBORN ST" -> "720 S Dearborn St", "CHICAGO" -> "Chicago". Only an all-caps value is changed; N, S, E, W, NE and
+    so on stay upper case."""
+    letters = [c for c in value if c.isalpha()]
+    if len(letters) < 2 or value.upper() != value:
+        return value
+
+    def fix(m: re.Match[str]) -> str:
+        w = m.group(0)
+        if w in _DIRECTIONS:
+            return w
+        if re.fullmatch(r"\d+(?:ST|ND|RD|TH)", w):
+            return w.lower()
+        return w[:1] + w[1:].lower()
+
+    return re.sub(r"[A-Za-z0-9][A-Za-z0-9']*", fix, value)
+
+
 def _address(text: str) -> dict[str, str]:
+    out = _address_raw(text)
+    for key in ("address", "city"):
+        if out.get(key):
+            out[key] = _normal_case(out[key])
+    return out
+
+
+def _address_raw(text: str) -> dict[str, str]:
     out: dict[str, str] = {}
     candidates: list[tuple[str, str | None, int]] = []
     for m in _ADDRESS.finditer(text):
@@ -1628,17 +1766,78 @@ _BUILDING_WORD = (r"(?:Apartments?|Apts?|Lofts?|Court|Flats|Residences?|Towers?|
 _AT_BUILDING = re.compile(r"\b(?:at|in)\s+((?:The\s+)?(?:[A-Z][\w'&.-]*\s+){0,3}" + _BUILDING_WORD + r"\b(?:\s+(?:Apartments?|Homes|Flats|Residences|Townhomes?|Condos?)\b)?)")
 
 
+def _word_cut(text: str, limit: int) -> str:
+    """Cut at a word boundary, never in the middle of a word."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if text[limit] != " " and " " in cut:
+        cut = cut[:cut.rfind(" ")]
+    return cut.strip(" ,;:-|")
+
+
+_STATUS_LINE = re.compile(r"^(?:listed|posted|updated|last updated|published|price (?:reduced|cut|drop)|days on|\d+\s+days?\b|new listing|just listed)\b", re.I)
+_SENTENCE_LINE = re.compile(
+    r"\b(?:rent|utilities|water|heat|gas|electric\w*|trash|sewer|internet|parking|pets?|deposit|lease|taxes)\b[^.\n]{0,25}\b(?:includes?|included|is|are|pays?|due|required|allowed|extra)\b|"
+    r"\b(?:includes?|including)\s+(?:water|sewer|trash|heat|gas|electric\w*|utilities|internet)\b|\bbuilt\s+(?:in\s+)?(?:19|20)\d\d\b|\b(?:19|20)\d\d\s+(?:build|built)\b", re.I)
+_FACT_LABEL_LINE = re.compile(r"^(?:facts?\s*(?:&|and)\s*features|key features|property details|home facts|interior details|what's special)\b|"
+                              r"\b(?:bedrooms?|bathrooms?|beds|baths|sqft|square feet|year built|lot size|heating|cooling|appliances|flooring)\s*:", re.I)
+_PRICE_IN_TITLE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?[kK]?(?:\s*(?:/\s*mo\w*|per\s+month|a\s+month|monthly))?", re.I)
+
+
+_PROMO_BANNER = re.compile(r"\*{2,}[^*\n]{0,40}\b(?:FREE|SPECIAL|OFF|DEALS?|MONTHS?|MOVE|NO FEE|LOOK|CONCESSIONS?|PRICE|WOW|NEW|HOT)\b[^*\n]{0,30}\*{2,}")
+
+
+def _headline_clean(line: str) -> str:
+    """A listing headline as a short name: no *** banners, no price (and nothing after it), no "!!!", no dangling word."""
+    line = _PROMO_BANNER.sub(" ", line)
+    line = line.replace("*", " ")
+    line = re.sub(r"!+", " ", line)
+    m = _PRICE_IN_TITLE.search(line)
+    if m:
+        before = line[:m.start()]
+        if len(re.findall(r"[A-Za-z]", before)) >= 3:
+            line = before
+        else:
+            line = line[:m.start()] + " " + line[m.end():]
+    line = " ".join(line.split()).strip(" ,;:-|/\u2013\u2014")
+    line = re.sub(r"\s+for\s+(?:rent|lease)$", "", line, flags=re.I)
+    line = re.sub(r"(?:\s+(?:a|an|the|and|with|of|in|at|for|to|incl|inc))+\.?$", "", line, flags=re.I)
+    return _word_cut(line.strip(" ,;:-|/\u2013\u2014"), 70)
+
+
+def _craigslist_headline(text: str) -> tuple[str, str]:
+    """"$1,375 / 1br - 640ft2 - Newer 1BR near campus (Urbana)" -> ("Newer 1BR near campus", "Urbana")."""
+    for raw in text.splitlines()[:6]:
+        line = " ".join(raw.strip(" \t|*#").split())
+        if not re.match(r"^\$\s?[\d,]+\s*/\s*(?:\d+\s*br\b|studio\b)", line, re.I):
+            continue
+        parts = [x.strip() for x in re.split(r"\s+[-\u2013\u2014]\s+", line)]
+        keep = [x for x in parts if x and not _is_fact_line(x) and not re.match(r"^\$", x)]
+        if not keep:
+            return "", ""
+        name = keep[0]
+        city = ""
+        cm = re.search(r"\(([A-Z][A-Za-z .'-]{2,30})\)\s*$", name)
+        if cm:
+            city = cm.group(1).strip()
+            name = name[:cm.start()]
+        return _headline_clean(name), city
+    return "", ""
+
+
 def _name_segment(line: str) -> str:
     """The name part of a long first line: "Riverside Lofts Unit 4B - 2 bed 2 bath ..., 123 Main St" gives "Riverside Lofts Unit 4B"."""
     if len(line) <= 90:
         return line
-    return re.split(r"\s+[-|\u2013\u2014]\s+|,\s+(?=\d)|\.\s+(?=[A-Z$\d])", line, maxsplit=1)[0][:90].strip()
+    return _word_cut(re.split(r"\s+[-|\u2013\u2014]\s+|,\s+(?=\d)|\.\s+(?=[A-Z$\d])", line, maxsplit=1)[0], 90)
 
 
 def _building_name(text: str) -> str:
     for line in text.splitlines()[:30]:
         line = _name_segment(" ".join(line.strip(" \t|\u2022\u00b7*#").split()))
-        if not line or len(line) > 90 or _SITE_LINE.match(line):
+        if not line or len(line) > 90 or _SITE_LINE.match(line) or _STATUS_LINE.match(line):
             continue
         m = _BUILDING.match(line) or _AT_BUILDING.search(line)
         if m:
@@ -1677,14 +1876,15 @@ def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
     letters = [c for c in title if c.isalpha()]
     if len(letters) >= 4 and title.upper() == title:
-        title = re.sub(r"[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in _ALL_CAPS_KEEP else m.group(0).capitalize(), title)
+        title = re.sub(r"\d*[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in _ALL_CAPS_KEEP or re.fullmatch(r"\d+(?:BR|BA|BD)", m.group(0)) else m.group(0).capitalize(), title)
         title = re.sub(r"^The\b", "The", title)
     return title
 
 
 def _not_a_name(line: str) -> bool:
     """A line that is a field ("Rent $2", "Deposit: 1.5x rent", "Pets: dogs ok"), a money amount or a pet rule, never a title."""
-    return bool(_LABEL_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line))
+    return bool(_LABEL_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line)
+                or _FACT_LABEL_LINE.search(line) or _STATUS_LINE.match(line) or _SENTENCE_LINE.search(line))
 
 
 def _title_raw(text: str, found: dict[str, Any]) -> str:
@@ -1693,6 +1893,9 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
     named = re.search(r"^[ \t*#|]*(?:property|community|building|listing|apartment)(?: name)?[ \t]*[:\-][ \t]*([A-Z][^\n]{2,60})$", text, re.M | re.I)
     if named and not re.search(r"\d", named.group(1)[:3]):
         return named.group(1).strip()
+    headline, _city = _craigslist_headline(text)
+    if headline:
+        return headline
     building = _building_name(text)
     if building:
         return building
@@ -1702,16 +1905,17 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
             and _ADDRESS.match(lines[1]):
         return lines[0]  # a one-word name on its own line above the address
     for raw_line in text.splitlines()[:25]:
-        line = " ".join(raw_line.strip(" \t|\u2022\u00b7*#").split())
+        line = " ".join(_PROMO_BANNER.sub(" ", raw_line).strip(" \t|\u2022\u00b7*#").split())
         if " | " in line:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
             parts = [x.strip() for x in line.split(" | ")]
             line = next((x for x in parts if len(x) >= 3 and not _not_a_name(x) and not _is_fact_line(x)), "")
         line = _name_segment(line)
+        if not line or _not_a_name(line):
+            continue
+        line = _headline_clean(line)
         if not line:
             continue
         low = line.lower().rstrip(":")
-        if _not_a_name(line):
-            continue
         if not 4 <= len(line) <= 90 or low in _UI_WORDS or line.startswith(("http", "$", "www.", "Skip to")) or _SITE_LINE.match(line):
             continue
         am = _ADDRESS.match(line)
@@ -1720,13 +1924,15 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         head = re.split(r"\s+[-|\u2013\u2014]\s+", line, maxsplit=1)
         if len(head) == 2 and found.get("address") and found["address"] in head[1] and re.fullmatch(r"[A-Za-z][A-Za-z '&.]{1,40}", head[0]):
             return head[0].strip()  # "Name - Unit 4C, 3329 N Broadway": the name is the title, the street is the address
-        if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or _is_fact_line(line):
+        if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or (_is_fact_line(line) and not re.search(r"\b(?:apartment|condo|house|townhome|townhouse|duplex|loft)\b", line, re.I)):
             continue
         if re.search(r"\b(?:call|text|email|contact|apply|posted|updated|listed|published)\b.*(?:\d{3}|ago|on\b)", low):
             continue
         if re.fullmatch(r"[A-Za-z .'-]+,\s*[A-Z]{2}(?:\s+\d{5})?", line):  # just "Champaign, IL"
             continue
-        return re.split(r"(?<=[a-z])[.!]\s", line)[0]
+        if len(line.split()) >= 6 and line.endswith((".", "?")):
+            continue  # a sentence, not a name
+        return re.split(r"(?<=[a-z])(?<!\bincl)(?<!\bapt)(?<!\bbldg)[.!]\s", line)[0]
     addr = found.get("address", "")
     return addr.split(",")[0] if addr else ""
 
@@ -1775,9 +1981,10 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     else:
         put("laundry", laundry)
     put("dishwasher", _try(lambda: _dishwasher(text)))
-    kind_cost = _try(lambda: _parking(text)) or ("", None)
+    kind_cost = _try(lambda: _parking_detail(text)) or ("", None, [])
     put("parking", kind_cost[0])
     put("parking_cost", kind_cost[1])
+    facts += kind_cost[2]
     doubt = _try(lambda: _pets_doubt(text)) or ""
     if doubt:
         facts.append(doubt)  # pets stays empty (unknown), so a pet owner sees "Fits, but check"
@@ -1945,9 +2152,10 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
             facts.append(per_person)
             if out.get("application_fee"):
                 out["application_fee_per_adult"] = 1  # the cost multiplies the fee by the adults who apply
-        credit = _try(lambda: _seller_credit(text))
+        credit, credit_notes = _try(lambda: _seller_credit_detail(text, out.get("price") if isinstance(out.get("price"), (int, float)) else None)) or (None, [])
         if credit:
             put("seller_credit", credit)
+        facts.extend(credit_notes)
         insurance = _try(lambda: _insurance(text))
         if insurance is not None:
             put("insurance", insurance)
@@ -1990,6 +2198,10 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     _try(fees)
     for key, value in (_try(lambda: _address(text)) or {}).items():
         put(key, value)
+    if "city" not in out:
+        hint = _try(lambda: _craigslist_headline(text)) or ("", "")
+        if hint[1]:
+            put("city", hint[1])
     title = _try(lambda: _title(text, out))
     if title:
         out["title"] = title
