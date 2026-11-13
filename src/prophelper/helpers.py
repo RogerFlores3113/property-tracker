@@ -140,7 +140,8 @@ def money(amount: int | float | None, cents: bool = False) -> str:
         n = float(amount)
     except (TypeError, ValueError):
         return str(amount)
-    return f"${n:,.2f}" if cents else f"${n:,.0f}"
+    sign = "-" if n < 0 and round(abs(n), 2 if cents else 0) else ""  # -$8,000, never $-8,000
+    return f"{sign}${abs(n):,.2f}" if cents else f"{sign}${abs(n):,.0f}"
 
 
 def beds_text(beds: Any) -> str:

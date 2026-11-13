@@ -99,7 +99,7 @@ budget, area, criteria and anchors. Then:
 - Respect each site's terms. Some sites, large listing sites especially, forbid automated scraping, so check a site's
   terms before scraping it. Reading a page the user could open themselves is usually fine. Do not hammer a site or
   crawl many pages.
-- Stricter scraping guards: Settings has a switch for it (off by default). When it is on, `get_overview` and the
+- Stricter rules when Claude reads websites: Settings has a switch for it (off by default). When it is on, `get_overview` and the
   server instructions say so. Then do not scrape or crawl listing sites or search for places on your own. Use only
   text the user pasted, or a page they opened and asked you to read. The app also enforces it: at most 5 places per
   call and 20 per hour, with a plain refusal beyond that. If it refuses, tell the user they can turn the guard off in

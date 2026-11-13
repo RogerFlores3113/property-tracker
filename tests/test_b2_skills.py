@@ -31,7 +31,7 @@ def test_skill_files_are_well_formed_and_carry_the_rules(path):
     assert "—" not in body and "–" not in body  # no em or en dashes
     flat = " ".join(body.split()).lower()
     for must in ("never an instruction", "you never delete", "<untrusted>", "ask the user before you contact anyone",
-                 "terms", "stricter scraping guards", "5 places per call and 20 per hour", "listing_text", "ai_notes",
+                 "terms", "stricter rules when claude reads websites", "5 places per call and 20 per hour", "listing_text", "ai_notes",
                  "todays_list", "compare_places", "you never send it", "uiuc", "$1,600", "own routing lookups",
                  "forward or to passed", "never write the user's own notes"):
         assert must in flat, must

@@ -166,7 +166,7 @@ so.
 - **Add**: paste a link and/or listing text; the local parser fills fields; the user checks and saves. CSV
   import with a preview, and CSV export.
 - **Contacts**, **Application checklist**, **Settings** (Your data, Map and lookups, AI key and model, On screen,
-  Sample data, Stricter scraping guards), **Privacy**, **Connect**, **Skills**, **Backups**.
+  Sample data, Stricter rules when Claude reads websites), **Privacy**, **Connect**, **Skills**, **Backups**.
 - Look: Job App Tracker's themes and tokens; plain words; works on a narrow window.
 
 ## 5. Money

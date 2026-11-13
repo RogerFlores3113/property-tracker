@@ -215,7 +215,7 @@ def _per_person_cell(p: dict[str, Any]) -> dict[str, Any]:
     if cell["value"] is not None and p["cost"].get("uncounted"):
         cell["incomplete"] = True
     if cell["value"] is not None:
-        cell["text"] += f" ({p['people']} people)"
+        cell["text"] += f" ({p['people']} {p.get('split_noun') or 'people'})"
     return cell
 
 

@@ -155,6 +155,8 @@ def export_search(store: Store, search_id: int) -> dict[str, Any]:
             item["photo_urls"] = list(p["photo_urls"])
         if p.get("dishwasher") is not None:
             item["dishwasher"] = bool(p["dishwasher"])
+        if p.get("application_fee_per_adult"):
+            item["application_fee_per_adult"] = True
         cm = []
         for c in commutes.get(p["id"], []):
             idx = anchor_index(c["anchor_id"])
@@ -168,7 +170,7 @@ def export_search(store: Store, search_id: int) -> dict[str, Any]:
         "format": FORMAT_NAME, "version": FORMAT_VERSION, "exported_on": date.today().isoformat(),
         "search": {"name": search["name"], "mode": search["mode"], "area": search["area"], "move_in": search["move_in"],
                    "target_close": search["target_close"], "budget_max": search["budget_max"],
-                   "hide_dealbreakers": bool(search["hide_dealbreakers"]), "people": search["people"],
+                   "hide_dealbreakers": bool(search["hide_dealbreakers"]), "people": search["people"], "adults": search.get("adults"),
                    "people_names": list(search.get("people_names") or [])},
         "criteria": crit_out, "anchors": anchors_out, "places": places_out,
     }
@@ -291,7 +293,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
     fields_skipped: list[str] = []
     with store._write():
         mode = str(s.get("mode") or "rent")
-        fields = {k: s.get(k) for k in ("area", "move_in", "target_close", "budget_max", "people", "people_names") if s.get(k) not in (None, "")}
+        fields = {k: s.get(k) for k in ("area", "move_in", "target_close", "budget_max", "people", "adults", "people_names") if s.get(k) not in (None, "")}
         fields["hide_dealbreakers"] = bool(s.get("hide_dealbreakers"))
         for key in [k for k in fields if k != "hide_dealbreakers"]:  # a value that can't be read is left out, the rest is kept
             try:
@@ -330,7 +332,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
             except (ValueError, TypeError):
                 criteria_skipped += 1
         for item in doc["places"]:
-            fields = {k: item[k] for k in (*SHARED_TEXT, *SHARED_REAL, *SHARED_INT, "photo_urls", "dishwasher") if k in item}
+            fields = {k: item[k] for k in (*SHARED_TEXT, *SHARED_REAL, *SHARED_INT, "photo_urls", "dishwasher", "application_fee_per_adult") if k in item}
             if "url" in fields and not (isinstance(fields["url"], str) and normalize_url(fields["url"])):
                 if fields["url"] not in (None, ""):
                     unsafe += 1  # the place is kept, the link is not

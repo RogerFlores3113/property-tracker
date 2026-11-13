@@ -464,7 +464,8 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
                 custom_scores: dict[int, float] | None = None, budget_max: float | None = None,
                 settings: dict[str, Any] | None = None, cost: dict[str, Any] | None = None,
                 serious_flag: bool | None = None, people: int = 1,
-                pets: dict[str, Any] | None = None, search: dict[str, Any] | None = None) -> dict[str, Any]:
+                pets: dict[str, Any] | None = None, search: dict[str, Any] | None = None,
+                adults: Any = None) -> dict[str, Any]:
     """Score a place. ``criteria`` rows have ``kind``, ``weight``, ``dealbreaker`` and ``target`` (a dict).
     ``commutes`` are the place's stored commute rows; ``cost`` can be passed to avoid computing it twice.
     ``pets`` is the search's pet profile ({kind, weight, count}); without it only the pet policy is checked.
@@ -473,7 +474,7 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     Also returned: ``near`` (must-haves missed by a little, only because of a guess), ``concerns`` (plain reasons a
     fitting place still loses points: a person's commute over the limit, a late opening) and ``caps`` (why the total
     was held down)."""
-    ctx = {"cost": cost if cost is not None else money.true_monthly_cost(place, mode, settings, people),
+    ctx = {"cost": cost if cost is not None else money.true_monthly_cost(place, mode, settings, people, adults=adults),
            "budget_max": budget_max, "anchors": {a["id"]: a for a in anchors}, "commutes": list(commutes),
            "custom_scores": custom_scores or {}, "mode": mode, "pets": pets or {}, "people": people}
     items = [score_criterion(c, place, ctx) for c in criteria]

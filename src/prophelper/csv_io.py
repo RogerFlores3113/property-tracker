@@ -36,7 +36,8 @@ EXPORT_COLUMNS: list[tuple[str, str]] = [
     ("Pet deposit (refundable)", "pet_deposit"), ("Months of rent due before move-in", "months_up_front"),
     ("Utilities you pay", "tenant_pays"), ("Fenced yard", "fenced_yard"), ("Days on market", "days_on_market"),
     ("Special assessment", "special_assessment"), ("Who pays the special assessment", "special_assessment_payer"),
-    ("Closing costs", "closing_costs"), ("Listing agent", "listing_agent"), ("Latitude", "lat"), ("Longitude", "lng"),
+    ("Closing costs", "closing_costs"), ("Seller credit", "seller_credit"),
+    ("Application fee charged per adult", "application_fee_per_adult"), ("Listing agent", "listing_agent"), ("Latitude", "lat"), ("Longitude", "lng"),
     ("Rating", "rating"), ("Fit score", "fit_score"), ("Red flags", "red_flags"), ("Notes", "notes"),
 ]
 EXPORT_ONLY = {"fit_score", "red_flags"}  # written on export, never read back (the AI and the local check own them)
@@ -189,7 +190,7 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
         row = []
         for _, field in EXPORT_COLUMNS:
             v = p.get(field)
-            if field in ("dishwasher", "fenced_yard"):
+            if field in ("dishwasher", "fenced_yard", "application_fee_per_adult"):
                 v = "" if v is None else ("yes" if v else "no")
             elif field in PLAIN_WORDS:
                 v = PLAIN_WORDS[field].get(str(v), v) if v else ""
@@ -203,7 +204,8 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
         row += [_plain(mine.get(n)) for n in names]
         total = p.get("cost_total")
         row.append(_plain(total))
-        row.append("" if total is None else round(float(total) / people, 2))
+        split = max(1, int(p.get("people") or people)) if p.get("cost") else people  # the adults, when the search names them
+        row.append("" if total is None else round(float(total) / split, 2))
         row.append(_plain(p.get("score_total")))
         for a in anchors:
             c = _commute_for(p, a.get("id"))

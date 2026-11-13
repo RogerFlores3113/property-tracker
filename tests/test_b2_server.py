@@ -58,7 +58,7 @@ def test_instructions_carry_the_rules(store):
                    "forward or to Passed", "<untrusted"):
         assert phrase.lower() in text_.lower()
     assert "—" not in text_ and "–" not in text_
-    assert "Stricter scraping guards are ON" not in text_
+    assert "Stricter rules when Claude reads websites are ON" not in text_
     store.set_setting("strict_scraping", "1")
     assert STRICT_RULE in " ".join(server(store).instructions.split())
 
@@ -371,7 +371,7 @@ def test_todays_list_and_overview(store):
     assert "New places the user has not looked at:" in out and "Your own documents list: 7 items" in out
     ov = text(call(s, "get_overview"))
     assert "(current)" in ov and "Top places:" in ov and "hidden by deal-breakers" in ov and "Anchors" in ov
-    assert "Rules:" in ov and "Stricter scraping guards: off." in ov
+    assert "Rules:" in ov and "Stricter rules when Claude reads websites: off." in ov
     assert structured(call(s, "get_overview"))["strict_scraping"] is False
 
 
@@ -382,7 +382,7 @@ def test_strict_batch_cap_and_hourly_cap(store, srv):
     assert structured(call(srv, "add_places", places=batch[5:] + [{"title": "Q", "address": "99 Q St"}]))["places"]
     store.set_setting("strict_scraping", "1")
     msg = err(srv, "add_places", places=[{"title": f"R{i}", "address": f"{i} R St"} for i in range(STRICT_MAX_BATCH + 1)])
-    assert "Stricter scraping guards are on" in msg and "5 places per call" in msg and "Nothing was saved" in msg
+    assert "Stricter rules when Claude reads websites are on" in msg and "5 places per call" in msg and "Nothing was saved" in msg
     assert store.count_places() == 9
     ok = call(srv, "add_places", places=[{"title": f"S{i}", "address": f"{i} S St"} for i in range(5)])
     assert STRICT_RULE in text(ok)

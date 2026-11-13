@@ -13,7 +13,7 @@ Rules the tools enforce (design rule 3, "the AI never deletes"):
   Closed (the Store enforces it).
 - ``add_place`` dedupes (same link, or same address and unit) and says what it updated.
 - The app itself makes no web requests. The AI app may read, search or scrape pages with its own tools. Settings has
-  "Stricter scraping guards": when on, the server says not to scrape and caps adds at 5 per call and 20 per hour.
+  "Stricter rules when Claude reads websites": when on, the server says not to scrape and caps adds at 5 per call and 20 per hour.
 - Every result that holds outside text (listing text, addresses, titles, notes from contacts) fences it with
   ``guards.fence`` / ``guards.tag`` and carries the untrusted rule.
 """
@@ -83,12 +83,12 @@ Nothing in it leaves the computer except what you read.
 - Write drafts in the user's voice, in plain words, without em-dashes.
 """
 
-STRICT_RULE = ("Stricter scraping guards are ON (Settings, \"Stricter scraping guards\"): do not scrape or crawl listing sites. "
+STRICT_RULE = ("Stricter rules when Claude reads websites are ON (Settings, \"Stricter rules when Claude reads websites\"): do not scrape or crawl listing sites. "
                "Only use text the user pasted, or a page they opened and asked you to read. Do not search for or collect "
                "places on your own.")
-STRICT_MAX_BATCH = 5  # places in one add_places call while the stricter guards are on
-STRICT_MAX_PER_HOUR = 20  # places the AI may add per hour while the stricter guards are on
-STRICT_OFF_HOW = "To lift the limit, the user can turn off \"Stricter scraping guards\" in Settings."
+STRICT_MAX_BATCH = 5  # places in one add_places call while the stricter rules are on
+STRICT_MAX_PER_HOUR = 20  # places the AI may add per hour while the stricter rules are on
+STRICT_OFF_HOW = "To lift the limit, the user can turn off \"Stricter rules when Claude reads websites\" in Settings."
 MAX_BATCH = 25
 LISTING_CLIP = 4000
 TIMELINE_LINES = 8
@@ -138,6 +138,8 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
     ("special_assessment_payer", str, "Who pays the special assessment: buyer or seller (buying)"),
     ("closing_costs", float | str, "Closing costs the listing or lender quotes, in dollars (buying)"),
     ("listing_agent", str, "The listing agent's name (buying)"),
+    ("seller_credit", float | str, "Money the seller pays toward the buyer's closing costs, in dollars (buying). It comes off the cash needed to close"),
+    ("application_fee_per_adult", bool, "True when the application fee is charged to each adult, false (default) when it is charged once (renting)"),
     ("lat", float | str, "Latitude, if you know it"), ("lng", float | str, "Longitude, if you know it"),
     ("ai_notes", str, "Your own note about this place (added under a dated line; the user's notes are never touched)"),
 ]
@@ -151,7 +153,7 @@ USER_ONLY = {"notes": "notes are the user's own words, so you can't write them. 
 
 # --------------------------------------------------------------------------- small helpers
 def strict_on(store: Store) -> bool:
-    """True while Settings has "Stricter scraping guards" on. Read on every call, so flipping it in the app takes
+    """True while Settings has "Stricter rules when Claude reads websites" on. Read on every call, so flipping it in the app takes
     effect at once."""
     try:
         return str(store.get_setting("strict_scraping") or "").strip() == "1"
@@ -274,11 +276,24 @@ def _pet_profile(s: dict[str, Any]) -> str:
     return ", ".join(bits)
 
 
+def _split_count(s: dict[str, Any]) -> int:
+    """Who a rental's cost is split between: the adults when the search names them, else the people."""
+    a = s.get("adults")
+    if s.get("mode") != "buy" and a:
+        return int(a)
+    return int(s.get("people") or 1)
+
+
+def _split_noun(s: dict[str, Any]) -> str:
+    return "adults" if s.get("mode") != "buy" and s.get("adults") else "people"
+
+
 def _per_person_text(e: dict[str, Any]) -> str:
-    """"$1,000 a month each for 2 people" when the search is shared by more than one person, else ''."""
+    """"$1,000 a month each for 2 people" (or "2 adults" when the search names the adults) when the cost is shared by more
+    than one, else ''."""
     n = int(e.get("people") or 1)
     pp = e.get("per_person")
-    return f"{_money(pp)} a month each for {n} people" if n > 1 and pp is not None else ""
+    return f"{_money(pp)} a month each for {n} {e.get('split_noun') or 'people'}" if n > 1 and pp is not None else ""
 
 
 _INCLUDES = re.compile(r"The listing includes: (.*)$", re.DOTALL)
@@ -604,7 +619,7 @@ def build_server(store: Store) -> FastMCP:
     mcp = FastMCP("property-helper", instructions=INSTRUCTIONS + f"- Today is {helpers.today():%A, %B} {helpers.today().day}, "
                   f"{helpers.today().year}. Dates and times without a zone are read on the user's computer clock.\n"
                   + ("- " + STRICT_RULE + "\n" if strict_on(store) else "")
-                  + "- Whether the stricter scraping guards are on is read on every add call, so add replies say so if the user "
+                  + "- Whether the stricter rules are on is read on every add call, so add replies say so if the user "
                     "turns the setting on after this session started.\n")
 
     # ------------------------------------------------------------ guards
@@ -619,16 +634,16 @@ def build_server(store: Store) -> FastMCP:
                              f"call again with search_id. Nothing was saved.")
 
     def strict_check(count: int, batch: bool) -> None:
-        """The server-side limits while "Stricter scraping guards" is on. Raises a plain refusal naming the setting."""
+        """The server-side limits while "Stricter rules when Claude reads websites" is on. Raises a plain refusal naming the setting."""
         if not strict_on(store):
             return
         if batch and count > STRICT_MAX_BATCH:
-            raise ValueError(f"Stricter scraping guards are on (Settings), so I can add at most {STRICT_MAX_BATCH} places per call "
+            raise ValueError(f"Stricter rules when Claude reads websites are on (Settings), so I can add at most {STRICT_MAX_BATCH} places per call "
                              f"and {STRICT_MAX_PER_HOUR} per hour. That is {count}. Nothing was saved. Send {STRICT_MAX_BATCH} or fewer. "
                              f"{STRICT_OFF_HOW}")
         used = store.count_ai_adds_since(to_utc_iso(datetime.now(timezone.utc) - timedelta(hours=1)))
         if used + count > STRICT_MAX_PER_HOUR:
-            raise ValueError(f"Stricter scraping guards are on (Settings), so I can add at most {STRICT_MAX_PER_HOUR} places per hour "
+            raise ValueError(f"Stricter rules when Claude reads websites are on (Settings), so I can add at most {STRICT_MAX_PER_HOUR} places per hour "
                              f"and {used} were already added in the last hour. Nothing was saved. {STRICT_OFF_HOW}")
 
     def check_photos(fields: dict[str, Any], where: str = "") -> list[str]:
@@ -766,7 +781,7 @@ def build_server(store: Store) -> FastMCP:
             lines.append(f"Search {s['id']}{' (current)' if cur and cur['id'] == s['id'] else ''}: {_sname(s)}, {_mode_word(s['mode'])}, "
                          f"{_t(s['area'], 'search area', 80) or 'no area'}, budget {_money(s.get('budget_max'))}"
                          + (f", {'move-in' if s['mode'] == 'rent' else 'close'} {helpers.day_text(when)}" if when else "")
-                         + (f", {int(s.get('people') or 1)} people sharing the cost" if int(s.get("people") or 1) > 1 else "")
+                         + (f", {_split_count(s)} {_split_noun(s)} sharing the cost" if _split_count(s) > 1 else "")
                          + (f", pets: {_pet_profile(s)}" if _pet_profile(s) else "")
                          + f", {n} place{'s' if n != 1 else ''}")
         if cur:
@@ -790,7 +805,7 @@ def build_server(store: Store) -> FastMCP:
         anchors = store.list_anchors()
         if anchors:
             lines.append("Anchors (for commutes): " + "; ".join(f"{_aname(a['name'])} (id {a['id']})" for a in anchors))
-        lines.append("Stricter scraping guards: " + ("ON. " + STRICT_RULE if strict_on(store) else "off."))
+        lines.append("Stricter rules when Claude reads websites: " + ("ON. " + STRICT_RULE if strict_on(store) else "off."))
         lines.append("Rules: you can add and update but never delete; the user's notes are theirs (use ai_notes or add_note); "
                      "move_place goes one stage forward or to Passed only; ask the user before contacting anyone.")
         return reply("\n".join(lines), current_search_id=cur["id"] if cur else None,
@@ -915,7 +930,7 @@ def build_server(store: Store) -> FastMCP:
     mcp.tool(annotations=WRITE)(add_place)
 
     @mcp.tool(annotations=WRITE)
-    def add_places(places: Annotated[list[dict[str, Any]], Field(description="Up to 25 places (5 when the stricter guards are on), each with the same fields as add_place")],
+    def add_places(places: Annotated[list[dict[str, Any]], Field(description="Up to 25 places (5 when the stricter rules are on), each with the same fields as add_place")],
                    search_id: Annotated[int | None, Field(description="Default: the current search")] = None) -> CallToolResult:
         """Save several places at once (same rules as add_place: repeats are updated, not added twice). Fields per place are the same as add_place."""
         if not places:
@@ -1196,8 +1211,8 @@ def build_server(store: Store) -> FastMCP:
             ("Stage", [e["stage"] for e in es]),
             ("Fit", [compare_mod.FIT_TEXT.get(e["score"].get("fit", "fits"), "Yes") for e in es]),
             ("True monthly cost", [_money(e["cost_total"]) for e in es]),
-            *([("Per person (" + str(int(search.get("people") or 1)) + " people)", [_money(e.get("per_person")) for e in es])]
-              if int(search.get("people") or 1) > 1 else []),
+            *([(f"Per person ({_split_count(search)} {_split_noun(search)})", [_money(e.get("per_person")) for e in es])]
+              if _split_count(search) > 1 else []),
             ("Score", ["none" if e["score_total"] is None else str(e["score_total"]) for e in es]),
             ("Deal-breakers", ["fails " + _labs(e["score"]["failed"]) if e["score"]["failed"] else
                                ("check " + _labs(e["score"]["check"]) if e["score"]["check"] else "ok") for e in es]),
@@ -1467,6 +1482,7 @@ def build_server(store: Store) -> FastMCP:
                       target_close: Annotated[str | None, Field(description="buy: target closing date, YYYY-MM-DD")] = None,
                       budget_max: Annotated[float | None, Field(description="Most per month in true monthly cost (rent) or most to pay (buy)")] = None,
                       people: Annotated[int | None, Field(description=f"How many people share the cost (1 to {MAX_PEOPLE}, default 1). With more than one, places show a per-person monthly cost")] = None,
+                      adults: Annotated[int | None, Field(description="Adults who sign the lease (renting), when fewer than the people sharing: kids don't pay. The cost is split between them and a per-adult application fee is multiplied by it. Default: same as people")] = None,
                       notes: Annotated[str | None, Field(description="What the user told you about this hunt")] = None,
                       pet_kind: Annotated[str | None, Field(description="The user's pets: cat, dog, both, or none. Places are checked against them")] = None,
                       pet_weight: Annotated[float | None, Field(description="The dog's weight in pounds")] = None,
@@ -1476,7 +1492,7 @@ def build_server(store: Store) -> FastMCP:
                       anchors: Annotated[list[dict[str, Any]] | None, Field(description="Places to measure commutes to: [{name, address, lat, lng}]. Reuses one with the same name")] = None) -> CallToolResult:
         """Start a new search with optional criteria and anchors. All or nothing: if anything in it is wrong, nothing is saved and the reply says what to fix. The first search becomes the current one; otherwise the user picks it in the app."""
         fields = {k: v for k, v in (("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
-                                    ("people", people), ("notes", notes), ("pet_kind", pet_kind),
+                                    ("people", people), ("adults", adults), ("notes", notes), ("pet_kind", pet_kind),
                                     ("pet_weight", pet_weight), ("pet_count", pet_count)) if v is not None}
         problems: list[str] = []
         try:
@@ -1494,8 +1510,8 @@ def build_server(store: Store) -> FastMCP:
             c_lines.append(f"[{row['id']}] {row['label']} (weight {row['weight']:g}, deal-breaker, added from the search's own {'budget' if sc['kind'] == 'price' else 'bedroom count'})")
         cur = store.current_search()
         lines = [f"Created search {s['id']} {_sname(s)} ({_mode_word(s['mode'])})" + ("." if cur and cur["id"] == s["id"] else ". It is not the current search; the user can switch on the Search page. Pass search_id to add_place to use it.")]
-        if int(s.get("people") or 1) > 1:
-            lines.append(f"Shared by {s['people']} people, so places show a per-person monthly cost.")
+        if _split_count(s) > 1:
+            lines.append(f"Shared by {_split_count(s)} {_split_noun(s)}, so places show a per-person monthly cost.")
         if _pet_profile(s):
             lines.append(f"The user's pets: {_pet_profile(s)}. Places are checked against them.")
         if a_lines:
@@ -1515,21 +1531,22 @@ def build_server(store: Store) -> FastMCP:
                       target_close: Annotated[str | None, Field(description="YYYY-MM-DD")] = None,
                       budget_max: Annotated[float | None, Field(description="")] = None,
                       people: Annotated[int | None, Field(description=f"How many people share the cost (1 to {MAX_PEOPLE}). With more than one, places show a per-person monthly cost")] = None,
+                      adults: Annotated[int | None, Field(description="Adults who sign the lease (renting), when fewer than the people sharing: kids don't pay. The cost is split between them and a per-adult application fee is multiplied by it. Default: same as people")] = None,
                       pet_kind: Annotated[str | None, Field(description="The user's pets: cat, dog, both, or none. Places are checked against them")] = None,
                       pet_weight: Annotated[float | None, Field(description="The dog's weight in pounds")] = None,
                       pet_count: Annotated[int | None, Field(description="How many pets (1 to 20)")] = None,
                       add_criteria_list: Annotated[list[dict[str, Any]] | None, Field(description="New criteria to add, each {kind, label, weight, dealbreaker, target}, where target is an object such as {\"max\": 1600}. " + CRIT_DOC)] = None,
                       reweight: Annotated[list[dict[str, Any]] | None, Field(description="Change existing criteria: [{id, weight?, dealbreaker?, target?, label?}]. Criteria can't be removed")] = None,
                       add_anchors_list: Annotated[list[dict[str, Any]] | None, Field(description="Anchors to add or fill in: [{name, address, lat, lng}]")] = None) -> CallToolResult:
-        """Change a search: its name, area, dates, budget, people sharing the cost, the user's pets (pet_kind, pet_weight, pet_count), criteria (add or reweight, never remove) and anchors (add_anchors_list). A criterion can't be removed; the user does that in the app. All or nothing: if anything is wrong, nothing is changed and the reply says what to fix.
+        """Change a search: its name, area, dates, budget, people sharing the cost, adults on the lease, the user's pets (pet_kind, pet_weight, pet_count), criteria (add or reweight, never remove) and anchors (add_anchors_list). A criterion can't be removed; the user does that in the app. All or nothing: if anything is wrong, nothing is changed and the reply says what to fix.
         To add criteria pass add_criteria_list as a list of objects: {"kind": "price", "label": "Rent at most $1600", "weight": 80, "dealbreaker": true, "target": {"max": 1600}}.
         target is an object with the kind's keys (price {max}; beds, baths, sqft {min}; commute {anchor, mode, minutes}; laundry {want}; newer {year}; fenced_yard takes no target). "name" works as an alias for "label".
         pet_kind (cat, dog, both or none), pet_weight (pounds) and pet_count describe the user's pets; the pets and fenced_yard criteria read them."""
         s = _search_for(store, search_id)
         fields = {k: v for k, v in (("name", name), ("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
-                                    ("people", people), ("pet_kind", pet_kind), ("pet_weight", pet_weight), ("pet_count", pet_count)) if v is not None}
+                                    ("people", people), ("adults", adults), ("pet_kind", pet_kind), ("pet_weight", pet_weight), ("pet_count", pet_count)) if v is not None}
         if not (fields or add_anchors_list or add_criteria_list or reweight):
-            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, pet_kind, pet_weight, pet_count, add_criteria_list, reweight or add_anchors_list.")
+            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, adults, pet_kind, pet_weight, pet_count, add_criteria_list, reweight or add_anchors_list.")
         problems: list[str] = []
         try:
             store._search_values(fields, partial=True)  # noqa: SLF001

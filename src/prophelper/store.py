@@ -1044,7 +1044,22 @@ class Store:
                 self._exec(f"UPDATE searches SET {sets} WHERE id = ?", (*values.values(), search_id))
                 if "people_names" in values or "people" in values:
                     self._rename_opinion_people(current, self.get_search(search_id))
+                if "budget_max" in values:
+                    self._sync_auto_price_rule(search_id)
         return self.get_search(search_id)
+
+    def _sync_auto_price_rule(self, search_id: int) -> None:
+        """The Monthly cost / Price must-have the app made from the budget follows the budget when it is edited. A rule the
+        user made or changed themselves (its target has no ``auto`` mark) is left alone, and nothing is created here."""
+        from .scoring import default_label  # late import: scoring reads the store's helpers
+        search = self.get_search(search_id)
+        budget = search.get("budget_max")
+        if not budget or budget <= 0:
+            return
+        for c in self.list_criteria(search_id):
+            if c["kind"] == "price" and (c.get("target") or {}).get("auto"):
+                target = {**c["target"], "max": budget}
+                self.update_criterion(c["id"], target=target, label=default_label("price", target, search["mode"]))
 
     # ------------------------------------------------------------------ opinions (each person's own rating and note)
     def _rename_opinion_people(self, before: dict[str, Any], after: dict[str, Any]) -> None:
