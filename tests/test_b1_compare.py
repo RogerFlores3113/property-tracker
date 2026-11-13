@@ -12,14 +12,14 @@ def cell(value, text=None):
 def test_mark_lowest_wins_and_flags_a_difference():
     cells = [cell(1500.0), cell(1400.0), cell(1700.0)]
     differs, note = compare.mark(cells, "low")
-    assert differs and note == "lowest"
+    assert differs and note == "best"
     assert [c["best"] for c in cells] == [False, True, False]
 
 
 def test_mark_highest_wins_and_ties_all_win():
     cells = [cell(80.0), cell(80.0), cell(60.0)]
     differs, note = compare.mark(cells, "high")
-    assert differs and note == "tied" and [c["best"] for c in cells] == [True, True, False]
+    assert differs and note == "tied best" and [c["best"] for c in cells] == [True, True, False]
 
 
 def test_mark_nothing_best_when_all_equal():

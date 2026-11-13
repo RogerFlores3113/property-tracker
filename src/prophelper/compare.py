@@ -5,14 +5,14 @@
 
 * ``text``: what the page shows.
 * ``value``: the number used to compare (None when unknown or not a number).
-* ``best``: True on the best value in the row (lowest cost, highest score and so on). A row where every known value
+* ``best``: True on the best value in the row (lowest cost, highest score and so on); ``marker`` is then "(best)" or "(tied best)". A row where every known value
   is the same, or where fewer than two places have a value, marks no best.
 * ``differs``: True when the known values are not all the same, so the page can highlight the row.
-* ``tied``: True when two or more places share the best value (``best_note`` is then "tied", said once for the row).
+* ``tied``: True when two or more places share the best value (``best_note`` is then "tied best").
 
 Which way is better is set per row: ``low`` (cost, fees, commute minutes), ``high`` (score, size, newer year built) or
 ``None`` (a fact where neither is better, such as bedrooms: only differences are shown). An unknown value is never
-best or worst, and a cost that leaves something out ("insurance not counted yet") is never marked lowest.
+best, and a cost that leaves something out ("insurance not counted yet") is never marked best. Worst is never marked.
 """
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ PARKING_RANK = {"garage": 4, "covered": 3, "lot": 2, "street": 1, "none": 0}
 PARKING_TEXT = {"garage": "Garage", "covered": "Covered", "lot": "Lot", "street": "Street", "none": "None"}
 PETS_TEXT = {"cats": "Cats", "dogs": "Dogs", "both": "Cats and dogs", "none": "No pets"}
 UNKNOWN = "unknown"
+NONE_LISTED = "None listed"  # a buy place with no special assessment entered
+NOT_COUNTED_NO_PETS = "Not counted, no pets"
 NOT_KNOWN = "Not known"  # shown for money nobody has filled in (never $0)
 
 
@@ -61,31 +63,33 @@ def check_count(n: int) -> None:
 
 
 def mark(cells: list[dict[str, Any]], better: str | None) -> tuple[bool, str]:
-    """Set ``best`` on the cells of one row, in place. Returns (differs, plain note about the best)."""
+    """Set ``best`` and ``marker`` on the cells of one row, in place. Returns (differs, note): "best", "tied best" or "".
+    The marker text on a cell is "(best)" or "(tied best)". Worst values are never marked."""
     known = [c["value"] for c in cells if c["value"] is not None]
     differs = len(set(round(v, 4) for v in known)) > 1
     for c in cells:
         c["best"] = False
         c["worst"] = False
+        c["marker"] = ""
     if not differs or better not in ("low", "high"):
         return differs, ""
-    # An incomplete number (something left out of it) can't win; it also can't be called the worst.
+    # An incomplete number (something left out of it) can't win, and unknowns never win.
     ranked = [c["value"] for c in cells if c["value"] is not None and not c.get("incomplete")]
     if len(set(round(v, 4) for v in ranked)) < 2:
         return differs, ""
-    best, worst = (min(ranked), max(ranked)) if better == "low" else (max(ranked), min(ranked))
+    best = min(ranked) if better == "low" else max(ranked)
     for c in cells:
-        ok = c["value"] is not None and not c.get("incomplete")
-        c["best"] = ok and abs(c["value"] - best) < 1e-9
-        c["worst"] = ok and abs(c["value"] - worst) < 1e-9
-    if sum(1 for c in cells if c["best"]) > 1:
-        return differs, "tied"
-    return differs, "lowest" if better == "low" else "highest"
+        c["best"] = c["value"] is not None and not c.get("incomplete") and abs(c["value"] - best) < 1e-9
+    n = sum(1 for c in cells if c["best"])
+    for c in cells:
+        if c["best"]:
+            c["marker"] = "(tied best)" if n > 1 else "(best)"
+    return differs, "tied best" if n > 1 else "best"
 
 
 def _cell(text: Any, value: float | None = None, unknown_text: str = UNKNOWN) -> dict[str, Any]:
     unknown = text is None or text == ""
-    return {"text": unknown_text if unknown else str(text), "value": value, "best": False, "worst": False,
+    return {"text": unknown_text if unknown else str(text), "value": value, "best": False, "worst": False, "marker": "",
             "unknown": unknown, "incomplete": False}
 
 
@@ -193,7 +197,7 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
     from .money import num
     sa = num(p.get("special_assessment"))
     if sa is None:
-        return _cell(None, unknown_text=NOT_KNOWN)
+        return _cell(None, unknown_text=NONE_LISTED)  # nothing entered; the page explains it
     if sa == 0:
         return _cell("None", 0.0)
     amount, payer = helpers.money(sa), str(p.get("special_assessment_payer") or "")
@@ -320,7 +324,13 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
             amount = found["amount"] if found else None
             if amount is not None and ((found or {}).get("unset") or _line_unset(p, key)):
                 amount = None
-            cells.append(_money(amount, True))
+            if key == "pet_rent" and not p["cost"].get("pets_counted", True):
+                cells.append(_cell(NOT_COUNTED_NO_PETS))  # the search has no pets: not a $0, not comparable
+                continue
+            cell = _money(amount, True)
+            if key == "pet_rent" and amount == 0:
+                cell["text"] = "$0 (none)"
+            cells.append(cell)
         cost_rows.append(_row("cost-" + key, label, cells, "low", only_if_any=True))
     cost_rows.append(_row("missing", "Not counted yet", [_plain(_not_counted_text(p)) for p in places]))
     section("What it really costs, line by line", cost_rows)
@@ -338,7 +348,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         _row("year_built", "Year built (newer is better)", [_year(p.get("year_built")) for p in places], "high"),
         _row("laundry", "Laundry", [_cell(LAUNDRY_TEXT.get(p.get("laundry") or ""), LAUNDRY_RANK.get(p.get("laundry") or "")) for p in places], "high"),
         _row("dishwasher", "Dishwasher", [_yes_no(p.get("dishwasher")) for p in places], "high"),
-        _row("parking", "Parking", [_cell(PARKING_TEXT.get(p.get("parking") or ""), PARKING_RANK.get(p.get("parking") or "")) for p in places], "high"),
+        _row("parking", "Parking", [_cell(PARKING_TEXT.get(p.get("parking") or ""), PARKING_RANK.get(p.get("parking") or "")) for p in places], None),
         _row("pets", "Pets", [_cell(PETS_TEXT.get(p.get("pets") or "")) for p in places]),
         _row("utilities", "Utilities included", [_plain(p.get("utilities_included")) for p in places], only_if_any=True),
     ])

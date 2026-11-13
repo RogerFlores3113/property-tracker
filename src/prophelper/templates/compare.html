@@ -4,7 +4,7 @@
 {% block title %}Compare &middot; Property Helper{% endblock %}
 {% block body %}
 <link rel="stylesheet" href="/static/compare.css">
-{% call page_head("Compare", "Put two to four places side by side. Rows that differ are shaded, and the best value in a row has a check mark.") %}
+{% call page_head("Compare", "Put two to four places side by side. Rows that differ are shaded, and the best value in a row says best, or tied best when places share it.") %}
   {% if places %}<button type="button" class="btn" data-print>Print or save as PDF</button>{% endif %}
   {{ button("Back to the board", href="/board") }}
 {% endcall %}
@@ -25,9 +25,9 @@
     <tr class="cmp-section"><th scope="colgroup" colspan="{{ places|length + 1 }}">{{ sec.title }}</th></tr>
     {% for r in sec.rows %}
     <tr class="{{ 'differs' if r.differs }}">
-      <th scope="row">{{ r.label }}{% if r.tied %} <span class="fine">(tied)</span>{% endif %}{% if r.differs %} <span class="sr">(differs)</span>{% endif %}</th>
+      <th scope="row">{{ r.label }}{% if r.differs %} <span class="sr">(differs)</span>{% endif %}</th>
       {% for c in r.cells %}
-      <td class="{{ 'best' if c.best }}{{ ' worst' if c.worst }}{{ ' unknown' if c.unknown }}">{{ c.text }}{% if c.best %} <span aria-hidden="true">&#10003;</span><span class="sr">({{ r.best_note }})</span>{% elif c.worst %}<span class="sr">({{ 'highest' if r.best_note == 'lowest' else 'lowest' }})</span>{% endif %}</td>
+      <td class="{{ 'best' if c.best }}{{ ' unknown' if c.unknown }}">{{ c.text }}{% if c.best %} <span class="fine">{{ c.marker }}</span>{% endif %}</td>
       {% endfor %}
     </tr>
     {% endfor %}
@@ -35,7 +35,7 @@
   {% endfor %}
 </table>
 </div>
-<p class="fine">A check mark is the best value in that row when the places differ: the lowest cost, the highest score, the biggest size, the newest building. Facts where neither is better, such as bedrooms, are only shaded. "Unknown" means the place has no value saved, so it can't win or lose that row. A cost that leaves something out can't be called the lowest.</p>
+<p class="fine">"(best)" marks the best value in a row when the places differ: the lowest cost, the highest score, the biggest size, the newest building. Facts where neither is better, such as bedrooms or parking type, are only shaded. "Not known" means nothing is saved, so that place can't win the row. "None listed" on a special assessment means none was entered and the listing did not mention one. A cost that leaves something out can't be best.</p>
 <section class="card no-print" aria-labelledby="share-h">
   <h2 id="share-h">Share this comparison</h2>
   <p class="fine">Saves one page you can email or text to a housemate or a parent. It opens in any browser and has no links, pictures or maps. Your contacts, phone numbers, documents and AI notes are never in it.</p>

@@ -42,15 +42,15 @@
     <tr class="sec"><th scope="colgroup" colspan="{{ places|length + 1 }}">{{ sec.title }}</th></tr>
     {% for r in sec.rows %}
     <tr>
-      <th scope="row">{{ r.label }}{% if r.tied %} (tied){% endif %}</th>
-      {% for c in r.cells %}<td class="{{ 'best' if c.best }}{{ ' unknown' if c.unknown }}{{ ' scam' if r.key == 'scam' and 'possible scam' in c.text }}">{{ c.text }}{% if c.best and not r.tied %} (best){% endif %}</td>{% endfor %}
+      <th scope="row">{{ r.label }}</th>
+      {% for c in r.cells %}<td class="{{ 'best' if c.best }}{{ ' unknown' if c.unknown }}{{ ' scam' if r.key == 'scam' and 'possible scam' in c.text }}">{{ c.text }}{% if c.best %} {{ c.marker }}{% endif %}</td>{% endfor %}
     </tr>
     {% endfor %}
   </tbody>
   {% endfor %}
 </table>
 </div>
-<p class="fine">"Unknown" and "Not known" mean the listing did not say, so that place can't win the row. A cost that leaves something out is never called the lowest.</p>
+<p class="fine">"(best)" marks the best value in a row, "(tied best)" when places share it. "Unknown" and "Not known" mean the listing did not say, so that place can't win the row. "None listed" on a special assessment means none was entered. A cost that leaves something out can't be best.</p>
 </main>
 </body>
 </html>
