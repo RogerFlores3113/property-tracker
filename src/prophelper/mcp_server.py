@@ -145,7 +145,9 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
 ]
 PLACE_KEYS = {n for n, _, _ in PLACE_PARAMS}
 UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: guess (default, shown as a guess), billed back or from the listing "
-                         "(the listing itself gives that monthly amount, so it is shown as from the listing)")
+                         "(the listing itself gives that monthly amount, so it is shown as from the listing). Send it only together with a "
+                         "utilities_estimate amount, for example utilities_estimate 120 with utilities_source \"from the listing\". "
+                         "utilities_included is a different field: the words for what the rent already covers, such as \"heat, water\" or \"all\"")
 ALL_UTILITIES = ("electric", "gas", "water", "sewer", "trash", "heat")  # same as the listing reader's "all utilities"
 USER_ONLY = {"notes": "notes are the user's own words, so you can't write them. Put your text in ai_notes, or use add_note",
              "rating": "the rating is the user's own gut feeling, so you can't set it",
@@ -1048,7 +1050,8 @@ def build_server(store: Store) -> FastMCP:
     add_place.__doc__ = ("Save a place from a listing, or update it if it is already saved (same link, or same address and unit in the same "
                          "search). Pass every fact you can read plus the full listing_text. Only empty fields are filled on a repeat. "
                          "Your own words go in ai_notes. commutes is a list like [{\"anchor\": \"Campus\", \"mode\": \"bike\", \"minutes\": 12}] "
-                         "from your own routing lookups.")
+                         "from your own routing lookups. utilities_included holds the words (\"heat, water\" or \"all\"); utilities_estimate is a monthly "
+                         "amount, and utilities_source (guess, billed back or from the listing) says where that amount came from.")
     add_place.__signature__ = _params(  # type: ignore[attr-defined]
         [_opt("search_id", int, "Default: the current search")],
         [("stage", str | None, "Saved by default; the stage it is already at, if the user says so", None),
@@ -1123,7 +1126,9 @@ def build_server(store: Store) -> FastMCP:
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
 
     update_place.__doc__ = ("Fill in or change facts on a place (price, fees, laundry, dates, lat/lng...). Never touches the user's notes or "
-                            "rating; put your words in ai_notes. A value you replace is logged on the timeline. Moving stages is move_place.")
+                            "rating; put your words in ai_notes. A value you replace is logged on the timeline. Moving stages is move_place. "
+                            "utilities_included holds the words (\"heat, water\" or \"all\"); utilities_estimate is a monthly amount, and "
+                            "utilities_source (guess, billed back or from the listing) says where that amount came from.")
     update_place.__signature__ = _params(  # type: ignore[attr-defined]
         [_req("place_id", int, "The place's id")],
         [("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor, mode, minutes}]", None),
@@ -1196,11 +1201,13 @@ def build_server(store: Store) -> FastMCP:
                  duration_minutes: Annotated[int, Field(description="Default 30")] = 30,
                  with_whom: Annotated[str | None, Field(description="Who is showing it")] = None,
                  where_note: Annotated[str | None, Field(description="Where to meet")] = None) -> CallToolResult:
-        """Record a tour the user has booked. This only records it in the app: it does not book anything or tell the landlord."""
+        """Record a tour the user has booked. This only records it in the app: it does not book anything or tell the landlord. A rental still at Saved moves straight to Tour booked (Contacted is skipped on purpose, since a tour is booked)."""
         p = _find_place(store, place_id)
         t = store.add_tour(p["id"], starts_at, duration_minutes=duration_minutes, with_whom=with_whom or "", where_note=where_note or "", by="ai")
         after = store.get_place(p["id"])
         extra = f" The place moved from {p['stage']} to {after['stage']}." if after["stage"] != p["stage"] else ""
+        if p["stage"] == "Saved" and after["stage"] == "Tour booked":
+            extra = " Moved from Saved to Tour booked (skipped Contacted, since a tour is booked)."
         past = " That time has already passed." if t["starts_at"] < datetime.now(timezone.utc).isoformat() else ""
         return reply(f"Recorded for {_title(p)} (id {p['id']}). {tour_line(t)}.{extra}{past}{overlap_note(t)} "
                      "Nothing was sent or booked with anyone; ask the user before you contact the landlord or agent.",
@@ -1477,7 +1484,12 @@ def build_server(store: Store) -> FastMCP:
                     '{"kind": "commute", "label": "Campus by bike", "weight": 60, "target": {"anchor": "Campus", "mode": "bike", "minutes": 15}}]')
     WEIGHT_NOTE = ("weight is optional (10 when left out) and is a number from 0 to 100. "
                    "A criterion looks like " + CRIT_EXAMPLE)
-    CRIT_DOC = ("criteria: list of {kind, label?, weight? (0-100, optional), dealbreaker?, target}. Kinds and targets: price {max}, beds/baths {min}, sqft {min}, "
+    TARGET_RULE = ("IMPORTANT: every limit goes inside a nested \"target\" object, never at the top level of the criterion. "
+                   "Right, a commute rule: {\"kind\": \"commute\", \"label\": \"Campus within 15 minutes by bike\", \"dealbreaker\": true, "
+                   "\"target\": {\"anchor\": \"Campus\", \"mode\": \"bike\", \"minutes\": 15}}. "
+                   "Right, a price rule: {\"kind\": \"price\", \"label\": \"Rent at most $1600\", \"weight\": 80, \"dealbreaker\": true, \"target\": {\"max\": 1600}}. "
+                   "Wrong: {\"kind\": \"price\", \"max\": 1600}. ")
+    CRIT_DOC = (TARGET_RULE + "criteria: list of {kind, label?, weight? (0-100, optional), dealbreaker?, target}. Kinds and targets: price {max}, beds/baths {min}, sqft {min}, "
                 "commute {anchor: name or id, mode, minutes}, laundry {want: in_unit|in_building}, dishwasher, parking {want?}, pets {want?}, fenced_yard (no target; it reads the place's fenced_yard), "
                 "newer {year}, custom (the user scores it by hand). target is an OBJECT with only that kind's keys, not extra keys on the criterion. "
                 "label may also be passed as name, and kind as field. Price is checked against true monthly cost, so include utilities and fees. Example: " + CRIT_EXAMPLE)
@@ -1682,10 +1694,11 @@ def build_server(store: Store) -> FastMCP:
                       pet_count: Annotated[int | None, Field(description="How many pets (1 to 20)")] = None,
                       down_payment_pct: Annotated[float | None, Field(description="buy: this search's down payment as a percent of the price (0 to 100). Empty: the one in the app's Settings")] = None,
                       add_criteria_list: Annotated[list[dict[str, Any]] | None, Field(description="New criteria to add, each {kind, label, weight, dealbreaker, target}, where target is an object such as {\"max\": 1600}. " + CRIT_DOC)] = None,
-                      reweight: Annotated[list[dict[str, Any]] | None, Field(description="Change existing criteria: [{id, weight?, dealbreaker?, target?, label?}]. Criteria can't be removed")] = None,
+                      reweight: Annotated[list[dict[str, Any]] | None, Field(description="Change existing criteria: [{id, weight?, dealbreaker?, target?, label?}]. A new limit is a nested object, for example {\"id\": 4, \"target\": {\"max\": 1500}} or {\"id\": 5, \"target\": {\"anchor\": \"Campus\", \"mode\": \"bike\", \"minutes\": 10}}. Criteria can't be removed")] = None,
                       add_anchors_list: Annotated[list[dict[str, Any]] | None, Field(description="Anchors to add or fill in: [{name, address, lat, lng}]")] = None) -> CallToolResult:
         """Change a search: its name, area, dates, budget, people sharing the cost, adults on the lease, the user's pets (pet_kind, pet_weight, pet_count), criteria (add or reweight, never remove) and anchors (add_anchors_list). A criterion can't be removed; the user does that in the app. All or nothing: if anything is wrong, nothing is changed and the reply says what to fix.
         To add criteria pass add_criteria_list as a list of objects: {"kind": "price", "label": "Rent at most $1600", "weight": 80, "dealbreaker": true, "target": {"max": 1600}}.
+        A commute rule: {"kind": "commute", "label": "Campus within 15 minutes by bike", "dealbreaker": true, "target": {"anchor": "Campus", "mode": "bike", "minutes": 15}}. The limits always sit inside "target", never beside "kind".
         target is an object with the kind's keys (price {max}; beds, baths, sqft {min}; commute {anchor, mode, minutes}; laundry {want}; newer {year}; fenced_yard takes no target). "name" works as an alias for "label".
         pet_kind (cat, dog, both or none), pet_weight (pounds) and pet_count describe the user's pets; the pets and fenced_yard criteria read them."""
         s = _search_for(store, search_id)

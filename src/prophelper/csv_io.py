@@ -315,6 +315,8 @@ _NUMBER_EXAMPLES = {"price": "1450", "beds": "2", "baths": "1.5", "sqft": "850",
 def _cell_problem(field: str, exc: Exception) -> str:
     """A plain note for one bad cell, naming the column by its label ("Price needs to be a number, like 1450")."""
     label = FIELD_LABELS.get(field, field)
+    if "user name or password" in str(exc):
+        return f"{label} has a user name or password in it, so it will be left blank. The place will still be added."
     if "needs to be a number" in str(exc):
         return f"{label} needs to be a number, like {_NUMBER_EXAMPLES.get(field, '12')}. The place will be added with {label.lower()} left blank."
     return f"{label}: {str(exc).rstrip('.')}. The place will be added with {label.lower()} left blank."

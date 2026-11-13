@@ -18,6 +18,7 @@
   {% if p.flags %}<div class="flag" title="{{ p.flags|join('; ') }}">&#9888; {{ p.flags|length }} thing{{ 's' if p.flags|length != 1 }} to check</div>{% endif %}
   {% if p.hidden or p.hidden_by_dealbreaker %}<div class="fine">Hidden: {{ 'by you' if p.hidden else 'misses a must have' }}</div>{% endif %}
   <div class="fine"><span data-days>{% if p.stage_changed_at %}{% set _when = p.stage_changed_at|ago %}{% if not (p.stage_changed_at == p.created_at and _when == 'today' and not some_added_earlier|default(true)) %}{{ ('Added ' if p.stage_changed_at == p.created_at else 'Moved ') ~ _when }}{% endif %}{% endif %}</span></div>
+  {% if closing_line|default('') and p.stage in closing_stages|default(()) %}<div class="fine kcard-closing">{{ closing_line }}</div>{% endif %}
   {% if p.next %}<div class="kcard-next">{{ p.next.text }} ({{ p.next.rel }})</div>{% endif %}
   <form class="stage-form" method="post" action="/places/{{ p.id }}/stage" data-board-move>
     <label class="sr" for="bs-{{ p.id }}">Move {{ p.title }} to</label>

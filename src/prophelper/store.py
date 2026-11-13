@@ -560,10 +560,10 @@ def clean_bool(value: Any) -> int | None:
         return int(value)
     if isinstance(value, (int, float)):
         return 1 if value else 0
-    word = str(value).strip().lower()
-    if word in ("1", "yes", "y", "true", "t", "on", "has one", "included"):
+    word = str(value).strip().lower().rstrip(".!")
+    if word in ("1", "yes", "y", "true", "t", "on", "yep", "yeah", "has one", "included"):
         return 1
-    if word in ("0", "no", "n", "false", "f", "off", "none"):
+    if word in ("0", "no", "n", "false", "f", "off", "nope", "none"):
         return 0
     if word in ("unknown", "?", "maybe"):
         return None
@@ -621,7 +621,8 @@ def normalize_unit(unit: Any) -> str:
 
 def has_userinfo(link: str) -> bool:
     """True when a web link carries a user name or password (https://user:pw@host/...). Such links are never saved."""
-    return bool(re.match(r"^(?:[a-z][a-z0-9+.-]*://)?[^/?#\s]*@", str(link or "").strip(), re.I))
+    rest = re.sub(r"^[a-z][a-z0-9+.-]*://", "", str(link or "").strip(), flags=re.I)
+    return "@" in re.split(r"[/?#]", rest, 1)[0]
 
 
 def photo_list(value: Any) -> list[str]:
@@ -1336,10 +1337,10 @@ class Store:
                 text = _text(raw, 2000)
                 # Kept as typed (so a spreadsheet export shows "www.zillow.com"). Only duplicate checks use the
                 # normalized form. A link typed without http(s):// gets https:// so it still opens.
+                if text and has_userinfo(text):
+                    raise ValueError("That link has a user name or password in it, so I won't save it. Use the plain listing address without it.")
                 if text and not normalize_url(text):
                     raise ValueError("That link doesn't look like a web address (it should start with https://).")
-                if text and re.match(r"^(https?://)?[^/?#\s]*@", text, re.I):
-                    raise ValueError("That link has a user name or password in it, so I won't save it. Use the plain listing address without it.")
                 out[key] = text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text
             else:
                 out[key] = _text(raw, TEXT_LIMITS.get(key, 500))
@@ -1868,7 +1869,8 @@ class Store:
             self._add_event(place_id, "tour", f"Tour {status}" + (f" with {_text(with_whom, 100)}" if with_whom else ""), None, by)
             self._touch(place_id)
             if advance and status == "booked":
-                self._advance_to(place, "Tour booked", by, "Because a tour was booked.")
+                skipped = self._require_place(place_id)["stage"] == "Saved" and self._mode_of(place["search_id"]) == "rent"
+                self._advance_to(place, "Tour booked", by, "Because a tour was booked, so Contacted was skipped on purpose." if skipped else "Because a tour was booked.")
         return self.get_tour(cur.lastrowid)
 
     @staticmethod
