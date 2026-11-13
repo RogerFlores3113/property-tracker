@@ -63,9 +63,9 @@ def test_tenant_pays_is_a_field():
 @pytest.mark.parametrize("text,expected", [
     ("Heat and water included. 1BR $1,200", "heat, water"),
     ("Rent includes heat and water. 1BR $1,200", "heat, water"),
-    ("Utilities included in rent. 1BR $1,200", "all utilities included"),
-    ("All utilities included. 1BR $1,200", "all utilities included"),
-    ("Utilities included. 1BR $1,200", "all utilities included"),
+    ("Utilities included in rent. 1BR $1,200", "all"),
+    ("All utilities included. 1BR $1,200", "all"),
+    ("Utilities included. 1BR $1,200", "all"),
 ])
 def test_included_utilities_fill_the_field(text, expected):
     assert P(text)["utilities_included"] == expected

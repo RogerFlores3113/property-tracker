@@ -39,7 +39,7 @@ _MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun",
 _STATES = frozenset("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK "
                     "OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR".split())
 _STREET = (r"(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|way|cir|circle|pkwy|parkway|"
-           r"ter|terrace|trl|trail|hwy|highway|loop|plaza|pike|(?:row|walk|alley|path|mews)(?![ \t]+(?:ln|lane|st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ct|court|pl|place|way|cir|circle|ter|terrace|trl|trail|pkwy|parkway)\b)|sq(?=\b\.?,)|square(?=\b,))")
+           r"ter|terrace|trl|trail|hwy|highway|loop|plaza|pike|(?:row|walk|alley|path|mews)(?![ \t]+(?:ln|lane|st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ct|court|pl|place|way|cir|circle|ter|terrace|trl|trail|pkwy|parkway)\b)|sq(?=\.?,|\.?[ \t]+(?:unit|apt|apartment|suite|ste|#))|square(?=\b,))")
 _NOT_STREET_WORDS = {"bed", "beds", "bedroom", "bedrooms", "bath", "baths", "bathroom", "bathrooms", "br", "ba", "bd", "bds", "sq",
                      "ft", "sqft", "month", "mo", "year", "years", "min", "minute", "minutes", "mile", "miles", "unit", "units",
                      "floor", "floors", "car", "cars", "pet", "pets", "story", "stories", "block", "blocks", "min."}
@@ -379,6 +379,10 @@ def _pet_fees(text: str) -> dict[str, float]:
     """Pet rent (monthly) and pet fee or deposit (one time), kept apart."""
     out: dict[str, float] = {}
     used: set[int] = set()
+    for m in re.finditer(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b"
+                         r"|(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b)", text, re.I):
+        used.add(m.start())
+        out.setdefault("pet_rent", float(m.group(1)))
     for m in re.finditer(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(/[ \t]*mo(?:nth)?|per month|monthly|a month)?[ \t]*(?:per pet[ \t]*)?"
                          r"(?:one[- ]time[ \t]+|non[- ]refundable[ \t]+|refundable[ \t]+)?(?:pet\s+(rent|fees?|deposit|charge)\b|per pet\b)", text, re.I):
         used.add(m.start())
@@ -479,6 +483,7 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     w = re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?(?:under|up to|less than|below|at most|max(?:imum)?(?: of)?|weigh(?:ing|s)?(?: up to| under)?|<)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", text, re.I) \
         or re.search(r"\b(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:weight\s*)?(?:limit|max(?:imum)?)", text, re.I) \
+        or re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?\b(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:each|apiece|max(?:imum)?|per (?:pet|dog|animal))", text, re.I) \
         or re.search(r"\bweight (?:limit|max(?:imum)?)\s*(?:of|is|:)?\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)?", text, re.I)
     if w and 3 <= int(w.group(1)) <= 300:
         out["pet_weight_limit"] = float(w.group(1))
@@ -586,7 +591,7 @@ def _three_months_up_front(text: str) -> bool:
 
 def _closing_costs(text: str) -> float | None:
     """"Estimated closing costs $9,800" -> 9800."""
-    m = re.search(r"\bclosing costs?(?:\s+(?:est\w*\.?|estimate[d]?))?[ \t:\-=]{0,6}(?:of |about |around |approx\.? |~)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", text, re.I) \
+    m = re.search(r"\bclosing costs?(?:\s+(?:(?:are|is)\s+)?(?:est\w*\.?|estimate[d]?)(?:\s+(?:at|to be|of|around|about))?)?[ \t:\-=]{0,6}(?:of |about |around |approx\.? |~)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", text, re.I) \
         or re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:in |for )?(?:est\w*\.?[ \t]+)?closing costs?\b", text, re.I)
     if not m:
         return None
@@ -695,7 +700,8 @@ def _listing_agent(text: str) -> str:
     m = re.search(r"\b(?:listed by|listing agent|listing provided by|listing courtesy of|presented by)\s*[:\-]?[ \t]*([^\n]{3,140})", text, re.I)
     if not m:
         return ""
-    line = re.sub(r"\(?\+?\d[\d\s().-]{6,}\d\)?", " ", m.group(1))
+    raw = re.split(r"(?<!\b[A-Z])(?<!\bInc)(?<!\bCo)(?<!\bJr)(?<!\bSr)(?<!\bLtd)(?<!\bCorp)(?<!\bLLC)[.!?]\s+(?=[A-Z])", m.group(1))[0]
+    line = re.sub(r"\(?\+?\d[\d\s().-]{6,}\d\)?", " ", raw)
     line = re.sub(r"\b(?:DRE|license|lic|BRE|MLS)\b[ \t#:.]*[\w-]*", " ", line, flags=re.I)
     line = re.sub(r"\s*[\u2022\u00b7|]\s*", ", ", line)
     line = " ".join(line.split()).strip(" ,;:-")
@@ -765,9 +771,9 @@ def _utilities(text: str) -> str:
             return _ordered_utilities(listed)
     if re.search(r"\ball[- ]utilities[- ](?:are[- ])?(?:included|paid|covered)|\butilities (?:are )?all included|\ball[- ]inclusive|\ball bills (?:paid|included)|\bincludes all utilities|\butilities (?:are )?(?:included|paid)\b(?! (?:for|in) )|\bincluded utilities\s*[:\-]\s*all", low) \
             and not re.search(r"\butilities\s*[:\-]?\s*(?:not|excluded)", low):
-        return "all utilities included"
+        return "all"
     if re.search(r"\b(?:all )?utilities\s*(?:are )?included\s+in\s+(?:the\s+)?(?:rent|lease|price|monthly)\b|\butilities\s*:\s*(?:all\s+)?(?:included|paid)\b", low):
-        return "all utilities included"
+        return "all"
     found: list[str] = []
     words = "|".join(re.escape(w) for w in _UTILITY_WORDS) + "|hot water|trash removal|garbage|sewage|electricity"
     for m in re.finditer(r"\b(?:rent |lease |monthly rent )?includes?\s+((?:(?:" + words + r")\s*(?:,|/|&|and|\+)?\s*(?:and\s+)?){1,6})(?!\s*(?:fee|charge|deposit|\$))", low):
@@ -811,6 +817,89 @@ def _billed_back(text: str) -> tuple[str, float] | None:
         return None
     found = re.findall(words, m.group(1))
     return (_ordered_utilities(found), float(m.group(2))) if found else None
+
+
+_ROLE_WORD = (r"hot water|water|sewer|sewage|trash removal|trash|garbage|gas|electricity|electric|heat|internet|wi-?fi|cable")
+_ROLE_ITEM = r"\b(?:" + _ROLE_WORD + r")\b(?!\s+(?:stove|range|oven|fireplace|cooktop|grill|appliances?|water heater|pump|bill\b|meter))"
+_ROLE_LIST = re.compile(_ROLE_ITEM + r"(?:\s*(?:,|/|&|\+|\band\b|\bor\b)\s*" + _ROLE_ITEM + r")*", re.I)
+_TENANT_SUFFIX = re.compile(
+    r"^\s*(?:(?:is|are)\s+)?(?:paid\s+(?:for\s+)?by\s+(?:the\s+)?(?:tenants?|residents?|renters?)\b|(?:the\s+)?(?:tenants?|residents?|renters?)'?s?\s+(?:responsibility|expense)\b|"
+    r"extra\b|not\s+(?:included|covered|provided)\b|(?:paid\s+|billed\s+|metered\s+)?separate(?:ly)?\b|billed\b|charged\b|passed\s+through\b|"
+    r"your\s+own\b|additional\b|excluded\b|at\s+(?:the\s+)?(?:tenant|resident)'?s?\s+expense\b)", re.I)
+_LANDLORD_SUFFIX = re.compile(
+    r"^\s*(?:(?:is|are)\s+)?(?:paid\s+(?:for\s+)?by\s+(?:the\s+)?(?:landlord|owner|management)\b|included\b|covered\b|provided\b|paid\b|free\b)", re.I)
+_TENANT_PREFIX = re.compile(
+    r"(?:\b(?:tenants?|residents?|renters?|lessees?|you)\s*(?:pays?|are responsible for|is responsible for|responsible for|will pay|must pay|to pay|covers?|handles?)\b"
+    r"|\bplus\b|\bextra\b|\bnot included\s*[:\-]?|\bexcluding\b)", re.I)
+_LANDLORD_PREFIX = re.compile(
+    r"(?:\b(?:landlord|owner|management|property manager|lessor)\s*(?:pays?|covers?|provides?)\b|\b(?:rent |lease )?includes?\b|\bincluded\s*[:\-]|\bincluding\b)", re.I)
+_EXCEPT = re.compile(r"\b(?:except|other than|besides)\b", re.I)
+_BILLED_WORDS = re.compile(r"\b(?:billed|charged|passed through|rubs)\b", re.I)
+
+
+def _last_role(gap: str) -> str:
+    """Which side the cue words just before a list put it on: "tenant", "landlord" or "" (no cue)."""
+    role, at = "", -1
+    for kind, pat in (("tenant", _TENANT_PREFIX), ("landlord", _LANDLORD_PREFIX)):
+        for m in pat.finditer(gap):
+            if m.start() >= at:
+                role, at = kind, m.start()
+    if role and _EXCEPT.search(gap[at:]):
+        role = "landlord" if role == "tenant" else "tenant"
+    elif not role and _EXCEPT.search(gap):
+        m = _EXCEPT.search(gap)
+        before = _last_role(gap[:m.start()])
+        role = {"tenant": "landlord", "landlord": "tenant"}.get(before, "")
+    return role
+
+
+def _utility_roles(text: str) -> dict[str, Any]:
+    """Who pays each utility the listing names. Each cue ("paid by tenant", "landlord pays", "included", "extra", "plus",
+    "billed back") belongs to the nearest list of utilities in its own sentence: the list right before it for a cue that
+    follows the list, the list right after it for a cue that leads. Returns {"tenant": [...], "landlord": [...],
+    "billed": [...], "amount": monthly $ or None}."""
+    tenant: list[str] = []
+    landlord: list[str] = []
+    billed: list[str] = []
+    amount: float | None = None
+    for sentence in re.split(r"\n|;|\.(?=\s|$)", text.lower()):
+        lists = list(_ROLE_LIST.finditer(sentence))
+        cursor = 0
+        for i, m in enumerate(lists):
+            words = re.findall(_ROLE_WORD, m.group(0))
+            nxt = lists[i + 1].start() if i + 1 < len(lists) else len(sentence)
+            tail = sentence[m.end():nxt]
+            role, used = "", 0
+            ts, ls = _TENANT_SUFFIX.match(tail), _LANDLORD_SUFFIX.match(tail)
+            if ts:
+                role, used = "tenant", ts.end()
+                if _BILLED_WORDS.match(tail.lstrip()) or re.match(r"\s*(?:billed|charged)", tail):
+                    billed += words
+                bm = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d{1,4})(?:\.\d\d)?", tail[:80])
+                if bm and _BILLED_WORDS.search(tail[:bm.start()]) and not re.search(r"deposit|fee|one[- ]time|set[- ]?up", tail[max(0, bm.start() - 20):bm.end() + 25]):
+                    amount = amount if amount is not None else float(bm.group(1).replace(",", ""))
+            elif ls:
+                role, used = "landlord", ls.end()
+            else:
+                role = _last_role(sentence[cursor:m.start()])
+            cursor = m.end() + used
+            if role == "tenant":
+                tenant += words
+            elif role == "landlord":
+                landlord += words
+    return {"tenant": tenant, "landlord": landlord, "billed": billed, "amount": amount}
+
+
+def listing_billed_amount(text: str) -> float | None:
+    """Public: the monthly utilities bill a listing's text gives ("billed back at $85/month", "billed back monthly (avg $55)"), or None."""
+    try:
+        text = _tidy(text or "")
+        billed = _billed_back(text)
+        if billed:
+            return billed[1]
+        return _utility_roles(text)["amount"]
+    except Exception:
+        return None
 
 
 def _tenant_pays_choices(pays: str) -> str:
@@ -1128,15 +1217,35 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     for key, value in side.items():
         if key not in out and not (key == "pet_fee" and "pet_fee" in out):
             put(key, value)
+    if out.get("pet_rent") and re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*)?(?:per|each|/)\s*(?:pet|dog|cat|animal)\b", text, re.I):
+        facts.append(f"Pet rent is ${out['pet_rent']:,.0f} for each pet, so with more than one pet it adds up.")
     for key, value in (_try(lambda: _pet_limit_fields(text)) or {}).items():
         put(key, value)
-    put("utilities_included", _try(lambda: _utilities(text)))
+    included = _try(lambda: _utilities(text)) or ""
     pays = _try(lambda: _tenant_pays(text)) or ""
+    roles = _try(lambda: _utility_roles(text)) or {"tenant": [], "landlord": [], "billed": [], "amount": None}
+    if roles["tenant"] or roles["landlord"]:
+        # The clause reading wins where the older sentence-wide reading put a tenant's utility in the included list.
+        mine = _ordered_utilities(list(roles["tenant"]))
+        pays = _ordered_utilities([w.strip() for w in (pays + ", " + mine).split(",") if w.strip() and w.strip() not in roles["landlord"]])
+        pay_set = {w.strip() for w in pays.split(",")}
+        keep = [w.strip() for w in included.split(",") if w.strip()] if included != "all" else []
+        included = included if included == "all" else _ordered_utilities(
+            [w for w in keep + list(roles["landlord"]) if w not in pay_set])
+    put("utilities_included", included)
     billed = _try(lambda: _billed_back(text))
     if billed:
         pays = _ordered_utilities([w.strip() for w in (pays + ", " + billed[0]).split(",") if w.strip()])
         put("utilities_estimate", billed[1])  # their own monthly figure, so it is counted in the cost
         facts.append(f"{billed[0].capitalize()} are billed back at ${billed[1]:,.0f}/month, counted as your utilities estimate.")
+    elif roles["billed"]:
+        names = _ordered_utilities(list(roles["billed"]))
+        pays = _ordered_utilities([w.strip() for w in (pays + ", " + names).split(",") if w.strip()])
+        if roles["amount"]:
+            put("utilities_estimate", roles["amount"])
+            facts.append(f"{names.capitalize()} are billed back at about ${roles['amount']:,.0f}/month, counted as your utilities estimate.")
+        else:
+            facts.append(f"{names.capitalize()} are billed back to you, but the listing gives no amount. Add a utilities estimate once you know it.")
     if pays:
         # Nothing is included for these, so the monthly cost keeps its own estimate line (a guess), and the listing's words are kept.
         facts.append(f"Tenant pays {pays}.")

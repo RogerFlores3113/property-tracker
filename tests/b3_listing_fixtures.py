@@ -172,7 +172,7 @@ Covered parking is $45 per month. Pet friendly: $300 pet deposit and $30 pet ren
         "expect": {
             "source": "cedarpointresidences.example", "price": 1560, "beds": 1, "baths": 1, "sqft": 700,
             "address": "2001 Cedar Point Parkway", "city": "Champaign", "state": "IL", "zip": "61822",
-            "available_from": "2027-07-31", "utilities_included": "all utilities included", "laundry": "in_unit",
+            "available_from": "2027-07-31", "utilities_included": "all", "laundry": "in_unit",
             "dishwasher": 1, "parking": "covered", "parking_cost": 45, "pets": "both", "pet_deposit": 300, "pet_rent": 30,
             "lease_months": 12, "deposit": 200, "application_fee": 40,
         },

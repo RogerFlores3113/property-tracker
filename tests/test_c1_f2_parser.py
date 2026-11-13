@@ -35,7 +35,7 @@ def test_included_and_not_included_in_one_line():
     assert out["utilities_included"] == "water, sewer, trash"
     out = parse("Landlord pays water and trash; tenant pays electric. 2 bed $1,250/mo")
     assert out["utilities_included"] == "water, trash"
-    assert parse("All utilities included! $1,900/mo studio")["utilities_included"] == "all utilities included"
+    assert parse("All utilities included! $1,900/mo studio")["utilities_included"] == "all"
 
 
 # 2 -------------------------------------------------------------------- price
