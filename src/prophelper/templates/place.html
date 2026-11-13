@@ -137,6 +137,8 @@
     <h2>Fit score {% if place.score.fit != 'doesnt_fit' %}{{ score_pill(place.score_total, place.band) }}{% endif %} {{ fit_badge(place) }}</h2>
     {% if place.score.raw_total is not none and place.score.raw_total != place.score_total %}<p class="fine">What matters to you alone gives {{ place.score.raw_total }}, but the score is held at {{ place.score_total }} because of the note above.</p>{% endif %}
     {{ score_note(place) }}
+    {% if place.score.late_note %}<p class="flag">{{ place.score.late_note }}, so the score is {{ place.score.late_penalty }} points lower.</p>{% endif %}
+    {% if place.score.conditional %}<p class="missing">{{ place.score.conditional|join(', ') }} passes only if the unknown costs are small, so the score stops at 85 until they are filled in.</p>{% endif %}
     {% if place.score['items'] %}
     <table class="score-table">
       <thead><tr><th>What matters</th><th>Score</th><th>How much it matters</th></tr></thead>
@@ -155,7 +157,8 @@
       {% endfor %}
     </table>
     {% if place.score.unknown %}<p class="missing">Counted as a maybe because it is unknown: {{ place.score.unknown|join(', ') }}.</p>{% endif %}
-    {% if place.score.failed %}<p class="flag">Misses a must have: {{ place.score.fit_reasons|join('; ') }}.</p>{% endif %}
+    {% if place.score.fit == 'near_miss' %}<p class="flag">Near miss: {{ place.score.fit_reasons|join('; ') }}.</p>
+    {% elif place.score.failed %}<p class="flag">Misses a must have: {{ place.score.fit_reasons|join('; ') }}.</p>{% endif %}
     {% if place.score.check %}<p class="missing">A must have can't be checked yet: {{ place.score.check|join(', ') }}.</p>{% endif %}
     {% else %}<p>Nothing here says what matters to you yet. <a href="/search?id={{ search.id }}#criteria">Add what matters to you</a> and every place gets a score.</p>{% endif %}
   </section>

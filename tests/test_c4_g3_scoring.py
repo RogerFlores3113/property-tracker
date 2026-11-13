@@ -60,8 +60,8 @@ def test_small_guess_overage_does_not_cliff(store):
     store.add_criterion(s["id"], "beds", weight=10, target={"min": 1})
     p, _ = store.add_place(title="Near", address="1 A St", price=3150, utilities_estimate=180, beds=2)
     e = _row(store, s, p)
-    assert e["score"]["fit"] == "fits" and e["score"]["near"] and e["score_total"] >= 70
-    assert not today.is_best_fit(e) and today.near_miss_text(e).startswith("$30 over because the utilities estimate counts")
+    assert e["score"]["fit"] == "near_miss" and e["score"]["near"] and e["score_total"] >= 70
+    assert not today.is_best_fit(e) and today.near_miss_text(e).startswith("$30 over because the utilities guess counts")
 
 
 def test_each_persons_commute_is_checked(store):

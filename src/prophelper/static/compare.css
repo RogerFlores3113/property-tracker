@@ -1,5 +1,5 @@
 /* Compare page extras: a print layout (paper, no menus, one table that fits the page). */
-.fit-scam, .fit-no { display: inline-block; padding: 0 .45rem; border-radius: 6px; font-weight: 600; background: var(--warn-bg); color: var(--warn-text); }
+.fit-scam, .fit-no, .fit-near { display: inline-block; padding: 0 .45rem; border-radius: 6px; font-weight: 600; background: var(--warn-bg); color: var(--warn-text); }
 .fit-why { font-size: .85rem; color: var(--warn-text); }
 .print-only { display: none; }
 @media print {

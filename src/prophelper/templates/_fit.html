@@ -2,6 +2,7 @@
 {% macro fit_badge(p, with_reason=True) -%}
 {%- set fit = p.score.fit -%}
 {% if fit == 'check_first' %}<span class="badge fit-scam" role="note">Check first: possible scam</span>
+{% elif fit == 'near_miss' %}<span class="badge fit-near" role="note">Near miss</span>{% if with_reason and p.score.fit_reasons %} <span class="fit-why">{{ p.score.fit_reasons|join('; ') }}</span>{% endif %}
 {% elif fit == 'doesnt_fit' %}<span class="badge fit-no" role="note">Doesn't fit</span>{% if with_reason and p.score.fit_reasons %} <span class="fit-why">{{ p.score.fit_reasons|join('; ') }}</span>{% endif %}{% elif p.score.concerns %}<span class="badge" role="note">Fits, but check</span>{% if with_reason %} <span class="fit-why">{{ p.score.concerns|join('; ') }}</span>{% endif %}{% endif %}
 {%- endmacro %}
 

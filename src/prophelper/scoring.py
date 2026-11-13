@@ -8,11 +8,15 @@
 * ``total``: 0 to 100, ``100 * sum(weight * score) / sum(weight)`` rounded, or None when there is nothing to score.
 * ``unknown``, ``failed`` and ``check``: labels, so a page can say what to fill in.
 * ``fails_dealbreaker`` / ``needs_check``: booleans for the "doesn't fit" badge and for the "check this" note.
-* ``fit``: ``"fits"``, ``"doesnt_fit"`` (a deal-breaker fails; ``fit_reasons`` says each gap, such as "Over budget by
-  $6") or ``"check_first"`` (a serious red flag, ``fit_reasons`` says why). The total is capped (49 when a
+* ``fit``: the one shared state every page and tool reads: ``"fits"``, ``"near_miss"`` (a must-have missed by a little,
+  under 3 percent or only because of a guess; ``fit_reasons`` and ``near_texts`` say how much and why),
+  ``"doesnt_fit"`` (a deal-breaker fails; ``fit_reasons`` says each gap, such as "Over budget by $6") or
+  ``"check_first"`` (a serious red flag, ``fit_reasons`` says why). ``fit_label`` is its plain-words name
+  ("Fits, but check" when a fitting place has ``concerns``). The total is capped (49 when a
   deal-breaker fails, 50 for a serious red flag) so a place that fails never looks like a great match, and
-  ``raw_total`` keeps the uncapped number. ``sort_group`` is 0 for ``fits``, 1 for ``doesnt_fit`` and 2 for a
+  ``raw_total`` keeps the uncapped number. ``sort_group`` is 0 for ``fits``, 1 for ``near_miss``, 2 for ``doesnt_fit`` and 3 for a
   possible scam (``check_first``, even when it also fails a deal-breaker): sort on it first.
+* ``conditional``: labels of price must-haves that pass only because a cost is unknown (the score is capped at 85).
 * ``unknown_count``: how many criteria rest on an unknown value (each scored at 0.5).
 """
 from __future__ import annotations
@@ -35,6 +39,10 @@ CAP_SCAM = 50
 CAP_NEAR = 74  # a must-have missed by a little, only because of a guess
 CAP_FAR_COMMUTE = 69  # someone's commute is more than a quarter over their limit: not a "good" match
 CAP_MOSTLY_UNKNOWN = 59
+CAP_UNKNOWN_COST = 85  # a price must-have that passes only while a cost is unknown
+NEAR_MISS_PCT = 0.03  # a must-have missed by less than this share is a near miss
+SORT_GROUPS = {"fits": 0, "near_miss": 1, "doesnt_fit": 2, "check_first": 3}
+FIT_LABELS = {"fits": "Yes", "near_miss": "Near miss", "doesnt_fit": "Doesn't fit", "check_first": "Check first: possible scam"}
 LATE_PENALTY = 10
 LAUNDRY_RANK = {"in_unit": 3, "in_building": 2, "hookups": 1, "none": 0}
 LAUNDRY_WORDS = {"in_unit": "in the unit", "in_building": "in the building", "hookups": "hookups only", "none": "none"}
@@ -151,6 +159,7 @@ def _score_price(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) 
     limit = _num(t.get("max")) or _num(ctx.get("budget_max"))
     buying = ctx.get("mode") == "buy"
     guess = 0.0
+    rent_only = False
     if buying:
         have = _num(place.get("price"))
         what, unit = "The price", ""
@@ -181,8 +190,14 @@ def _score_price(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) 
         note = (f" A special assessment of {_fmt(_buyer_assessment(place), '$')} that you pay is not in this score; "
                 "it is in the cash to close.")
     if have <= limit:
-        return _result(1.0, value, target, f"{value}, {_fmt(limit - have, '$')} under your limit.{note}",
-                       known=True, passes=True)
+        r = _result(1.0, value, target, f"{value}, {_fmt(limit - have, '$')} under your limit.{note}",
+                    known=True, passes=True)
+        unknown_costs = list((ctx.get("cost") or {}).get("uncounted") or []) if not buying and not rent_only else []
+        if unknown_costs:
+            names = ", ".join(unknown_costs)
+            r["detail"] += f" This passes only if the unknown costs are small: {names} not counted yet."
+            r["conditional"] = names
+        return r
     over = have - limit
     score = over_score(over / limit)
     near = guess > 0 and have - guess <= limit + 1e-9 and over / limit <= NEAR_GUESS
@@ -194,6 +209,46 @@ def _score_price(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) 
                 gap=f"Over budget by {_fmt(over, '$')}" if buying else f"{value}, over {_fmt(limit, '$')} by {_fmt(over, '$')}")
     r["over_amount"], r["over_pct"], r["near"] = over, over / limit, near
     return r
+
+
+_NEAR_NAMES = {"pet_rent": ("pet rent", "counts"), "utilities": ("the utilities estimate", "counts"), "parking": ("parking", "counts"),
+               "other": ("the other monthly fees", "count"), "one_time": ("the one-time fees", "count")}
+
+
+def _near_reason(cost: dict[str, Any] | None, over: float, guessed: bool) -> str:
+    """' because pet rent counts' for the first cost line that, left out, would bring the place under the limit."""
+    lines = (cost or {}).get("lines") or []
+    for line in lines:
+        if line["key"] in _NEAR_NAMES and (line["amount"] or 0) >= over - 1e-9 and (line["amount"] or 0) > 0:
+            if guessed and line["key"] == "utilities" and line.get("estimated"):
+                return " because the utilities guess counts"
+            name, verb = _NEAR_NAMES[line["key"]]
+            return f" because {name} {verb}"
+    if guessed:
+        return " because the utilities guess counts" if any(l["key"] == "utilities" and l.get("estimated") for l in lines) \
+            else " because a guessed cost counts"
+    return ""
+
+
+def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[str, str]]:
+    """When every missed must-have is a small miss (a guess-only overage, or under 3 percent), one ``{"label", "text"}``
+    per miss: '$51 over because the utilities guess counts'. Otherwise []. The one rule for a "near miss"."""
+    items = score.get("items") or []
+    misses = [i for i in items if i.get("dealbreaker_status") in ("fail", "near")]
+    if not misses:
+        return []
+    out = []
+    for item in misses:
+        over, pct = item.get("over_amount"), item.get("over_pct")
+        if over is None or pct is None or over <= 0 or (pct >= NEAR_MISS_PCT and item.get("dealbreaker_status") != "near"):
+            return []
+        if item["kind"] == "price":
+            text = f"${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near")))
+        else:
+            text = item.get("gap") or f"{item.get('label', 'A must-have')} is just short"
+        shown = ("Price" if (cost or {}).get("mode") == "buy" else KIND_LABELS["price"]) if item["kind"] == "price" else item.get("label") or ""
+        out.append({"label": shown, "kind": item["kind"], "text": text})
+    return out
 
 
 def _beds_word(n: float) -> str:
@@ -420,6 +475,7 @@ def score_criterion(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any
     else:
         r = _unknown("", kind)
     if not c.get("dealbreaker"):
+        r.pop("conditional", None)  # only a must-have is held back by an unknown cost
         status = ""
     elif r["passes"] is None:
         status = "check"
@@ -497,6 +553,10 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
         concerns.append(late)
         if raw is not None:
             raw = max(0, raw - LATE_PENALTY)
+    conditional = [i["label"] for i in items if i.get("conditional") and i["dealbreaker_status"] == "pass"]
+    for i in items:
+        if i.get("conditional") and i["dealbreaker_status"] == "pass":
+            concerns.append(f"{i['label']} passes only if the unknown costs are small ({i['conditional']})")
     fit = "fits"
     total = raw
     caps: list[str] = []
@@ -506,13 +566,18 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
         if total is not None and total > n:
             total = n
             caps.append(why)
+    parts_ = near_parts({"items": items}, ctx["cost"]) if (failed or near) else []
     if failed:
-        fit = "doesnt_fit"
+        fit = "near_miss" if parts_ else "doesnt_fit"
         cap(CAP_DEALBREAKER, "a must-have fails")
+    elif near:
+        fit = "near_miss"
     if near:
         cap(CAP_NEAR, "a must-have is just over")
     if far_commute:
         cap(CAP_FAR_COMMUTE, "someone's commute is well over the limit")
+    if conditional:
+        cap(CAP_UNKNOWN_COST, "a cost is not known yet, so the price only passes if it is small")
     if check:  # unknown must-haves: neutral-ish, but never a high score
         cap({1: 80, 2: 65}.get(len(check), 55), f"{len(check)} must-have{'s' if len(check) != 1 else ''} not known yet")
     unknown_n = sum(1 for i in items if not i["known"])
@@ -522,11 +587,21 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
         fit = "check_first"
         reasons = ["Check first: possible scam. Do not pay anything before you have toured it."] + reasons
         cap(CAP_SCAM, "possible scam")
+    near_texts = [f"{p['label']} {p['text']}" if p["kind"] == "price" else p["text"] for p in parts_] if fit == "near_miss" else []
+    if fit == "near_miss":
+        reasons = near_texts
+        concerns[:] = [c for c in concerns if c not in {i["gap"] for i in items if i["dealbreaker_status"] == "near"}]
+    if late:
+        concerns[:] = [c for c in concerns if c != late]
+        concerns.append(f"{late}, so the score is {LATE_PENALTY} points lower")
     unknown = [i["label"] for i in items if not i["known"]]
+    fit_label = "Fits, but check" if fit == "fits" and concerns else FIT_LABELS[fit] if fit != "fits" else "Fits"
     return {"total": total, "raw_total": raw, "items": items, "unknown": unknown, "unknown_count": len(unknown),
             "failed": failed, "near": near, "concerns": concerns, "caps": caps, "check": check, "fails_dealbreaker": bool(failed), "needs_check": bool(check),
-            "fit": fit, "fit_reasons": reasons, "scam": scam, "sort_group": {"fits": 0, "doesnt_fit": 1}.get(fit, 2),
-            "cost": ctx["cost"]}
+            "fit": fit, "fit_label": fit_label, "fit_reasons": reasons, "near_texts": near_texts, "near_parts": parts_ if fit == "near_miss" else [], "conditional": conditional,
+            "conditional_costs": [i["conditional"] for i in items if i.get("conditional") and i["dealbreaker_status"] == "pass"],
+            "late_penalty": LATE_PENALTY if late else 0, "late_note": late,
+            "scam": scam, "sort_group": SORT_GROUPS[fit], "cost": ctx["cost"]}
 
 
 def sort_key(p: dict[str, Any]) -> tuple[int, int, str]:

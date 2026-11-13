@@ -414,15 +414,40 @@ def _score_text(e: dict[str, Any]) -> str:
     return f"Score {s['total']} ({e['band']})" + (": " + "; ".join(why) if why else "")
 
 
+def _near_line(e: dict[str, Any]) -> str:
+    """The near misses of a place, '<label> $51 over because the utilities guess counts', the label fenced."""
+    return "; ".join(f"{p['label']} {p['text']}" if p["kind"] == "price" else _t(p["text"], "fit reason", 160)
+                     for p in e["score"].get("near_parts") or [])
+
+
+def _fit_text(e: dict[str, Any]) -> str:
+    """'Fit: Near miss ($51 over because ...)' / 'Fit: Fits, but check (reason)': the one shared fit state."""
+    s = e["score"]
+    fit = s.get("fit", "fits")
+    if fit == "fits" and not s.get("concerns"):
+        return "Fit: Yes"
+    label = s.get("fit_label") or scoring.FIT_LABELS.get(fit, "Yes")
+    if fit == "near_miss" and s.get("near_parts"):
+        return f"Fit: {label} ({_near_line(e)})"
+    reasons = s.get("fit_reasons") if fit != "fits" else s.get("concerns")
+    return f"Fit: {label}" + (f" ({'; '.join(_t(r, 'fit reason', 160) for r in reasons or [])})" if reasons else "")
+
+
 def _deal_text(e: dict[str, Any]) -> str:
     s = e["score"]
     if not any(i["dealbreaker"] for i in s["items"]):
         return "Deal-breakers: none set"
+    if s.get("fit") == "near_miss" and s.get("near_texts"):
+        n = len(s["near_parts"])
+        return f"Deal-breakers: {n} near miss{'es' if n != 1 else ''}, " + _near_line(e)
     if s["failed"]:
         extra = f"; check {_labs(s['check'])}" if s["check"] else ""
         return "Deal-breakers: FAILS " + _labs(s["failed"]) + extra
     if s["check"]:
         return "Deal-breakers: none failed, but check " + _labs(s["check"])
+    if s.get("conditional"):
+        return "Deal-breakers: none failed, but " + "; ".join(f"{_lab(c)} passes only if the unknown costs are small" for c in s["conditional"]) \
+            + " (" + "; ".join(s.get("conditional_costs") or []) + " not counted yet)"
     return "Deal-breakers: all passed"
 
 
@@ -464,8 +489,12 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
     c = _commute_text(e)
     if c:
         bits.append(c)
-    if e["score"]["fails_dealbreaker"]:
+    if e["score"].get("fit") == "near_miss":
+        bits.append("NEAR MISS: " + _near_line(e))
+    elif e["score"]["fails_dealbreaker"]:
         bits.append("FAILS " + _labs(e["score"]["failed"]))
+    elif e["score"].get("fit_label") == "Fits, but check":
+        bits.append("Fits, but check: " + "; ".join(_t(c, "fit reason", 120) for c in e["score"]["concerns"]))
     if e["flags"] and e["score"].get("fit") != "check_first":
         bits.append(f"{len(e['flags'])} thing{'s' if len(e['flags']) != 1 else ''} to check (possible scam signs)")
     if e.get("is_sample"):
@@ -483,7 +512,9 @@ def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
     if f:
         lines.append(f)
     lines += _extra_facts(e)
-    lines += [_cost_text(e), _score_text(e), _deal_text(e)]
+    lines += [_cost_text(e), _score_text(e), _fit_text(e), _deal_text(e)]
+    if e["score"].get("late_note"):
+        lines.append(f"Late opening: {e['score']['late_note']}; the score is {e['score']['late_penalty']} points lower for it.")
     unknown = _unknown_list(e)
     if unknown:
         lines.append("Unknowns to fill: " + _unknown_text(e))
@@ -850,13 +881,13 @@ def build_server(store: Store) -> FastMCP:
             es = [e for e in es if e["cost_total"] is not None and e["cost_total"] <= max_cost]
         if min_score is not None:
             es = [e for e in es if e["score_total"] is not None and e["score_total"] >= min_score]
-        es.sort(key=lambda e: (e["score"].get("sort_group", 1 if e["score"]["fails_dealbreaker"] else 0),
+        es.sort(key=lambda e: (e["score"].get("sort_group", 2 if e["score"]["fails_dealbreaker"] else 0),
                                -(e["score_total"] if e["score_total"] is not None else -1), e["id"]))
         total = len(es)
         shown = es[:max(1, min(int(limit), 100))]
         head = f"{total} place{'s' if total != 1 else ''} in search {_sname(search, 60)} ({_mode_word(search['mode'])})"
         if any(e["score"].get("fit", "fits") != "fits" for e in es):
-            head += ", places that fail a deal-breaker or need a check first (possible scam) are listed last with the reason"
+            head += ", then near misses, places that fail a deal-breaker and places to check first (possible scam), each with the reason"
         if hidden:
             head += f", {hidden} hidden by deal-breakers or by hand (include_hidden=true shows them)"
         lines = [head + ":" if total else head + ". Nothing matches."] + [_line(e) for e in shown]
@@ -1219,12 +1250,14 @@ def build_server(store: Store) -> FastMCP:
         es.sort(key=lambda e: order[e["id"]])
         rows: list[tuple[str, list[str]]] = [
             ("Stage", [e["stage"] for e in es]),
-            ("Fit", [compare_mod.FIT_TEXT.get(e["score"].get("fit", "fits"), "Yes") for e in es]),
+            ("Fit", [(e["score"].get("fit_label") or "Yes") if e["score"].get("fit", "fits") == "fits" and e["score"].get("concerns")
+                    else scoring.FIT_LABELS.get(e["score"].get("fit", "fits"), "Yes") for e in es]),
             ("True monthly cost", [_money(e["cost_total"]) for e in es]),
             *([(f"Per person ({_split_count(search)} {_split_noun(search)})", [_money(e.get("per_person")) for e in es])]
               if _split_count(search) > 1 else []),
             ("Score", ["none" if e["score_total"] is None else str(e["score_total"]) for e in es]),
-            ("Deal-breakers", ["fails " + _labs(e["score"]["failed"]) if e["score"]["failed"] else
+            ("Deal-breakers", ["near miss: " + _near_line(e) if e["score"].get("fit") == "near_miss" and e["score"].get("near_parts") else
+                               "fails " + _labs(e["score"]["failed"]) if e["score"]["failed"] else
                                ("check " + _labs(e["score"]["check"]) if e["score"]["check"] else "ok") for e in es]),
             ("Size", [helpers.place_line(e) or "unknown" for e in es]),
             ("Laundry", [_plain(compare_mod.LAUNDRY_TEXT, e["laundry"]) or "unknown" for e in es]),
@@ -1275,7 +1308,7 @@ def build_server(store: Store) -> FastMCP:
                 lines.append(f"Lowest true monthly cost: #{cheap['id']} at {_money(cheap['cost_total'])} (of the places that fit).")
             cheaper = [e for e in priced_all if e not in fitting and e["cost_total"] < cheap["cost_total"]]
             if cheaper:
-                lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({compare_mod.FIT_TEXT.get(e['score'].get('fit'), 'does not fit')})" for e in cheaper) + ".")
+                lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({scoring.FIT_LABELS.get(e['score'].get('fit'), 'does not fit').lower()})" for e in cheaper) + ".")
         elif priced_all:
             lines.append("No place here fits, so I am not naming a lowest-cost place.")
         if scored:
@@ -1304,7 +1337,8 @@ def build_server(store: Store) -> FastMCP:
         lines.append("Best fits right now:" + (" none yet." if not fits else ""))
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
-            lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}/mo true cost{each}")
+            lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}/mo true cost{each}"
+                         + (f". {p['caution']}" if p.get("caution") else ""))
         tours = store.upcoming_tours(days, search_id=cur["id"])
         lines.append(f"Tours in the next {days} days:" + (" none." if not tours else ""))
         for t in tours:

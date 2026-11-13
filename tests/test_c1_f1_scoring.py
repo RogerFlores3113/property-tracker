@@ -98,7 +98,7 @@ def test_buy_price_cap_compares_the_list_price(store):
     over, _ = store.add_place(title="Over", address="1 B St", price=349000)
     under, _ = store.add_place(title="Under", address="2 B St", price=330000)
     a, b = _row(store, s, over), _row(store, s, under)
-    assert a["score"]["fit"] == "doesnt_fit" and a["score"]["fit_reasons"] == ["Over budget by $9,000"]
+    assert a["score"]["fit"] == "near_miss" and a["score"]["fit_reasons"] == ["Price $9,000 over"]  # 2.6 percent over is a near miss
     assert b["score"]["fit"] == "fits"
     item = a["score"]["items"][0]
     assert item["label"] == "Price, at most $340,000" and "a month" not in item["value"] + item["target"]
