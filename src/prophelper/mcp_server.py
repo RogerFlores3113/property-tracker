@@ -121,7 +121,7 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
     ("pet_breed_note", str, "What the listing says about breed limits, in a few words"),
     ("fenced_yard", bool, "True if there is a fenced yard, false if not"),
     ("utilities_included", str | bool, "What the rent covers, in words (for example 'water and trash', or 'all utilities'). false means none"),
-    ("tenant_pays", str, "Utilities the tenant pays on top of the rent, from: electric, gas, water, trash, internet, heat (for example 'gas, electric')"),
+    ("tenant_pays", str, "Utilities the tenant pays on top of the rent, from: electric, gas, water, sewer, trash, internet, heat (for example 'gas, electric')"),
     ("months_up_front", int | str, "Months of rent due before move-in, 0 to 12 (1 when only the first month, 2 for first and last month)"),
     ("utilities_estimate", float | str, "Monthly utilities the user would pay on top (only if you really know)"),
     ("year_built", int | str, ""),

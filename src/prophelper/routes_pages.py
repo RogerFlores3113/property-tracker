@@ -40,7 +40,7 @@ FORM_FIELDS = (
     "application_fee", "other_monthly_fees", "move_in_fees", "broker_fee", "hoa", "property_tax", "insurance", "rating", "notes",
     "pet_weight_limit", "pet_count_limit", "pet_breed_note", "pet_deposit", "fenced_yard",
     "days_on_market", "special_assessment", "special_assessment_payer", "closing_costs", "listing_agent",
-    "months_up_front", "tenant_pays")
+    "months_up_front", "tenant_pays", "seller_credit", "application_fee_per_adult")
 
 
 def _form_fields(form: Any, names: tuple[str, ...] = FORM_FIELDS) -> dict[str, str]:
@@ -376,7 +376,8 @@ async def create_search(request: Request):
         s = store.add_search(str(form.get("name", "")), str(form.get("mode", "rent")), area=form.get("area", ""),
                              move_in=form.get("move_in", ""), target_close=form.get("target_close", ""),
                              budget_max=form.get("budget_max", ""), notes=form.get("notes", ""),
-                             **({"people": form.get("people")} if form.get("people") else {}))
+                             **({"people": form.get("people")} if form.get("people") else {}),
+                             **({"adults": form.get("adults")} if form.get("adults") else {}))
         store.set_current_search(s["id"])
     except ValueError as exc:
         return redirect("/search", error=str(exc))
@@ -387,7 +388,7 @@ async def create_search(request: Request):
 async def update_search(request: Request, search_id: int):
     store = get_store(request)
     form = await request.form()
-    values: dict[str, Any] = {k: form.get(k) for k in ("name", "mode", "area", "move_in", "target_close", "budget_max", "notes", "people", "pet_kind", "pet_weight", "pet_count", "people_names") if k in form}
+    values: dict[str, Any] = {k: form.get(k) for k in ("name", "mode", "area", "move_in", "target_close", "budget_max", "notes", "people", "adults", "pet_kind", "pet_weight", "pet_count", "people_names") if k in form}
     values["hide_dealbreakers"] = "1" if form.get("hide_dealbreakers") == "1" else "0"
     try:
         store.update_search(search_id, **values)
@@ -613,8 +614,8 @@ async def add_parse(request: Request):
         chosen = store.get_search(int(sid)) if str(sid or "").isdigit() else store.current_search()
     except NotFound:
         chosen = store.current_search()
-    if chosen and int(chosen.get("people") or 1) > 1:
-        parsers.app_fee_note_for_people(values, int(chosen["people"]))
+    if chosen and int(chosen.get("adults") or chosen.get("people") or 1) > 1:
+        parsers.app_fee_note_for_people(values, int(chosen.get("adults") or chosen["people"]))
     return _add_page(request, values=values, parsed=True, text=text, url=url, search_id=int(sid) if str(sid or "").isdigit() else None)
 
 

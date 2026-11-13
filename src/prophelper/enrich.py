@@ -43,7 +43,8 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     tours = store.list_tours(place["id"]) if tours is None else tours
     settings = store.buy_settings() if settings is None else settings
     people = int(search.get("people") or 1)
-    cost = money.true_monthly_cost(place, search["mode"], settings, people, pets=money.has_pets(search.get("pet_kind")))
+    cost = money.true_monthly_cost(place, search["mode"], settings, people, pets=money.has_pets(search.get("pet_kind")),
+                                   adults=search.get("adults"))
     flags = redflags.local_flags(place, peer_prices or [])
     serious = redflags.is_serious(place, peer_prices or [])
     score = scoring.score_place(place, criteria, mode=search["mode"], anchors=anchors, commutes=commutes,
@@ -79,7 +80,7 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
         "next": _next_date(place, tours),
         "flags": flags, "possible_scam": serious,
         "hidden_by_dealbreaker": bool(search.get("hide_dealbreakers") and score["fails_dealbreaker"] and not protected),
-        "people": people, "per_person": cost.get("per_person"),
+        "people": cost["people"], "split_noun": cost.get("split_noun", "people"), "per_person": cost.get("per_person"),  # people = who the cost is split between (adults, when the search says)
         "opinions": store.opinion_stats(place["id"]) if people > 1 else None,  # {"count", "average"} of the people's own ratings
     })
     return out

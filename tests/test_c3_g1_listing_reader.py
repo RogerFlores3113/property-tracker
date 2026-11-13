@@ -158,6 +158,9 @@ def test_migration_adds_the_two_columns(tmp_path):
     con = sqlite3.connect(path)
     for col in ("months_up_front", "tenant_pays"):
         con.execute(f"ALTER TABLE places DROP COLUMN {col}")
+    for col in ("seller_credit", "application_fee_per_adult"):
+        con.execute(f"ALTER TABLE places DROP COLUMN {col}")  # the step after these two
+    con.execute("ALTER TABLE searches DROP COLUMN adults")
     con.execute("PRAGMA user_version = 6")
     con.commit()
     con.close()

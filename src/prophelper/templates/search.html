@@ -65,6 +65,7 @@
       {% if shown.mode != 'buy' %}{{ field("Move in by", "move_in", shown.move_in or '', kind="date") }}{% endif %}
       {% if shown.mode == 'buy' %}{{ field("Target close date", "target_close", shown.target_close or '', kind="date") }}{% endif %}
       {{ field("People splitting the cost (leave at 1 for a family or couple sharing one budget)", "people", shown.people or 1, kind="number", step="1", hint=(("Payment" if shown.mode == "buy" else "Rent") ~ " split between this many people. Place pages, the board and Compare then show a per-person cost.")) }}
+      {{ field("Adults who will sign the lease", "adults", shown.adults if shown.adults is not none else '', kind="number", step="1", hint="Kids don't count. Leave empty when it is the same as the people above. A per-adult application fee and the 'each' cost use this number.") if shown.mode != 'buy' }}
       {{ select("Your pets", "pet_kind", [("cat", "A cat"), ("dog", "A dog"), ("both", "Cats and dogs")], shown.pet_kind or '', blank="No pets") }}
       {{ field("How heavy your dog is (lb)", "pet_weight", shown.pet_weight if shown.pet_weight is not none else '', kind="number", step="any", hint="A place that only allows smaller dogs then shows as not fitting your pets.") }}
       {{ field("How many pets", "pet_count", shown.pet_count if shown.pet_count is not none else '', kind="number", step="1") }}

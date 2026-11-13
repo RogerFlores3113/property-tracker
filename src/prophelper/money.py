@@ -50,6 +50,22 @@ def utilities_covered(place: dict[str, Any]) -> bool:
 
 
 NO_PETS_NOTE = "not counted: you have no pets"
+NOTHING_WORDS = ("none", "nothing", "n/a", "na")
+
+
+def adult_count(adults: Any = None, people: Any = 1) -> int:
+    """How many adults sign the lease: ``adults`` when it is 1 or more, else ``people``, else 1."""
+    for v in (adults, people):
+        n = num(v)
+        if n is not None and n >= 1:
+            return int(n)
+    return 1
+
+
+def application_fee_total(place: dict[str, Any], adults: int = 1) -> float:
+    """The application fee for everyone who applies: the fee times the adults when it is charged per adult."""
+    fee = num(place.get("application_fee")) or 0
+    return fee * adults if fee and num(place.get("application_fee_per_adult")) and adults > 1 else fee
 
 
 def tenant_pays_list(place: dict[str, Any]) -> list[str]:
@@ -63,9 +79,10 @@ def has_pets(pet_kind: Any) -> bool:
     return str(pet_kind or "").strip().lower() in ("cat", "dog", "both")
 
 
-def rent_cost(place: dict[str, Any], pets: bool = True) -> dict[str, Any]:
+def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict[str, Any]:
     """The true monthly cost of renting this place, line by line. ``pets`` False (the search has no pets) leaves pet
-    rent, the pet fee and the pet deposit out of the cost and the cash at move-in and says so on the pet line."""
+    rent, the pet fee and the pet deposit out of the cost and the cash at move-in and says so on the pet line. ``adults``
+    is how many adults apply: an application fee charged per adult is multiplied by it."""
     price = num(place.get("price"))
     missing: list[str] = []
     uncounted: list[str] = []
@@ -78,8 +95,12 @@ def rent_cost(place: dict[str, Any], pets: bool = True) -> dict[str, Any]:
     util = num(place.get("utilities_estimate"))
     if util is None:
         pays = tenant_pays_list(place)
-        if utilities_covered(place) or (pays and all(w in ("none", "nothing", "n/a", "na") for w in pays)):
+        listed = str(place.get("utilities_included") or "").strip()
+        if utilities_covered(place) or (pays and all(w in NOTHING_WORDS for w in pays)):
             lines.append(_line("utilities", "Utilities", 0, "included in the rent"))
+        elif listed and not pays and listed.lower() not in NOTHING_WORDS:
+            # "Heat, water and trash included" and nothing the tenant pays: say what is included, don't call it unknown.
+            lines.append(_line("utilities", "Utilities", 0, f"included in the rent: {listed}"))
         elif pays:
             names = _join_words(pays)
             missing.append("utilities estimate")
@@ -136,10 +157,14 @@ def rent_cost(place: dict[str, Any], pets: bool = True) -> dict[str, Any]:
                 "pet_fee": "Pet fee"}
     if not pets:
         one_time.pop("pet_fee")
-    one_total = sum(num(place.get(k)) or 0 for k in one_time)
+    app_total = application_fee_total(place, adults)
+    amounts = {k: (app_total if k == "application_fee" else num(place.get(k)) or 0) for k in one_time}
+    one_total = sum(amounts.values())
     spread = one_total / months
-    detail = ", ".join(f"{label.lower()} ${num(place.get(k)):,.0f}" for k, label in one_time.items()
-                       if num(place.get(k)))
+    detail = ", ".join(f"{label.lower()} ${amounts[k]:,.0f}" for k, label in one_time.items() if amounts[k])
+    app_fee = num(place.get("application_fee")) or 0
+    if app_fee and app_total != app_fee:
+        detail = detail.replace(f"application fee ${app_total:,.0f}", f"application fee ${app_total:,.0f} (${app_fee:,.0f} each for {adults} adults)")
     one_line = _line("one_time", f"One-time fees spread over {months} months", spread, detail or "none entered")
     if all(place.get(k) in (None, "") for k in one_time):
         one_line["unset"] = True
@@ -150,7 +175,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True) -> dict[str, Any]:
     total = None if price is None else _r(sum(l["amount"] or 0 for l in lines))
     if deposit:
         notes.append(f"Deposit ${deposit:,.0f} is not included in the monthly cost because it comes back.")
-    cash = cash_at_move_in(place, pets)
+    cash = cash_at_move_in(place, pets, adults)
     return {"mode": "rent", "total": total, "lines": lines, "missing": missing, "notes": notes, "deposit": deposit,
             "lease_months": months, "one_time_total": _r(one_total), "uncounted": uncounted,
             "pets_counted": pets, "cash_at_move_in": cash,
@@ -163,7 +188,7 @@ def months_up_front(place: dict[str, Any]) -> int:
     return int(n) if n is not None and n >= 1 and n == int(n) else 1
 
 
-def cash_at_move_in(place: dict[str, Any], pets: bool = True) -> dict[str, Any] | None:
+def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict[str, Any] | None:
     """Cash needed on move-in day for a rental: the rent due up front (``months_up_front`` months, 1 by default; when
     the listing text asks for a last month and no count is saved, first plus last), deposit, application fee and the
     other one-time fees. Pet fee and pet deposit are left out when ``pets`` is False. Kept apart from the true monthly
@@ -192,6 +217,11 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True) -> dict[str, Any] 
         keys += [("pet_fee", "Pet fee"), ("pet_deposit", "Pet deposit (comes back)")]
     for key, label in keys:
         v = num(place.get(key))
+        if key == "application_fee" and v:
+            total_fee = application_fee_total(place, adults)
+            if total_fee != v:
+                label = f"Application fee (${v:,.0f} each for {adults} adults)"
+            v = total_fee
         if v:
             parts.append((label, v))
     unknown = num(place.get("deposit")) is None
@@ -241,6 +271,11 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
     sa = num(place.get("special_assessment"))
     if sa and str(place.get("special_assessment_payer") or "") == "buyer":
         parts.append({"label": "Special assessment (you pay it)", "amount": _r(sa), "estimated": False})
+    credit = num(place.get("seller_credit"))
+    if credit and credit > 0:
+        # The seller pays part of the closing costs, so it lowers the cash you bring (never below zero overall).
+        credit = min(credit, sum(p["amount"] for p in parts))
+        parts.append({"label": "Seller credit toward closing (comes off)", "amount": _r(-credit), "estimated": False})
     return {"total": _r(sum(p["amount"] for p in parts)), "parts": parts,
             "has_estimate": any(p["estimated"] for p in parts)}
 
@@ -331,7 +366,7 @@ def _join_words(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def headline(cost: dict[str, Any], people: int = 1) -> str:
+def headline(cost: dict[str, Any], people: int = 1, noun: str = "people") -> str:
     """The one line next to the total: '$2,414/mo, insurance not counted yet' (and '$807 each' when people share it)."""
     total = cost.get("total")
     if total is None:
@@ -341,22 +376,30 @@ def headline(cost: dict[str, Any], people: int = 1) -> str:
     if unc:
         text += f", {_join_words(unc)} not counted yet"
     if people and people > 1:
-        text += f" ({_dollars(total / people)} each for {people} people)"
+        text += f" ({_dollars(total / people)} each for {people} {noun})"
     return text
 
 
 def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[str, Any] | None = None,
-                      people: Any = 1, pets: bool = True) -> dict[str, Any]:
+                      people: Any = 1, pets: bool = True, adults: Any = None) -> dict[str, Any]:
     """Rent or buy breakdown depending on the search's mode. ``people`` (people sharing the cost) adds
     ``people`` and, when more than one, ``per_person``. ``headline`` is the line to show next to the total.
-    ``pets`` False means the search has no pets: pet charges are left out (see ``rent_cost``). Rent only."""
-    out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets)
+    ``pets`` False means the search has no pets: pet charges are left out (see ``rent_cost``). Rent only.
+    ``adults`` (adults who sign the lease, None = same as ``people``): the cost is split between them, so kids are not
+    counted as paying, and a per-adult application fee is multiplied by it. ``people`` in the result is the number the
+    cost is split between and ``split_noun`` is "adults" or "people"."""
     try:
         n = max(1, int(people or 1))
     except (TypeError, ValueError):
         n = 1
+    a = num(adults)
+    explicit = a is not None and a >= 1 and mode != "buy"
+    n = int(a) if explicit else n
+    out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets, n)
+    noun = "adults" if explicit and mode != "buy" else "people"
     out["people"] = n
+    out["split_noun"] = noun
     out["per_person"] = _r(out["total"] / n) if out["total"] is not None and n > 1 else None
     out["headline"] = headline(out, 1)
-    out["headline_each"] = headline(out, n)
+    out["headline_each"] = headline(out, n, noun)
     return out
