@@ -666,6 +666,8 @@ def _clean_target(kind: str, target: Any) -> dict[str, Any]:
         n = to_number(target.get("max"), "price limit")
         if n is not None:
             out["max"] = _tidy_num(n)
+        if str(target.get("count") or "").lower() == "rent":  # "count rent only"; the default is all in
+            out["count"] = "rent"
     elif kind in ("beds", "baths", "sqft"):
         n = to_number(target.get("min"), "minimum")
         if n is not None:
@@ -676,6 +678,8 @@ def _clean_target(kind: str, target: Any) -> dict[str, Any]:
         mode = str(target.get("mode") or "bike").lower()
         if mode not in COMMUTE_MODES:
             raise ValueError(f"The commute needs a way to travel: {', '.join(COMMUTE_MODES)}.")
+        if clean_bool(target.get("all_anchors")) and "anchor_id" not in out:  # check every important place, one per person
+            out["all_anchors"] = True
         out["mode"] = mode
         n = to_number(target.get("minutes"), "minutes")
         if n is not None:
@@ -693,6 +697,8 @@ def _clean_target(kind: str, target: Any) -> dict[str, Any]:
     elif kind == "newer":
         n = to_number(target.get("year"), "year")
         out["year"] = int(n) if n else 2000
+    if clean_bool(target.get("auto")):  # made for the user from the search form; their own rule of the same kind replaces it
+        out["auto"] = True
     return out
 
 

@@ -1424,6 +1424,7 @@ def build_server(store: Store) -> FastMCP:
                       pet_kind: Annotated[str | None, Field(description="The user's pets: cat, dog, both, or none. Places are checked against them")] = None,
                       pet_weight: Annotated[float | None, Field(description="The dog's weight in pounds")] = None,
                       pet_count: Annotated[int | None, Field(description="How many pets (1 to 20)")] = None,
+                      bedrooms: Annotated[int | None, Field(description="Bedrooms the user needs (1 or more). Adds a must-have so a studio does not pass a 1-bed search")] = None,
                       criteria: Annotated[list[dict[str, Any]] | None, Field(description="Weighted criteria. " + CRIT_DOC)] = None,
                       anchors: Annotated[list[dict[str, Any]] | None, Field(description="Places to measure commutes to: [{name, address, lat, lng}]. Reuses one with the same name")] = None) -> CallToolResult:
         """Start a new search with optional criteria and anchors. All or nothing: if anything in it is wrong, nothing is saved and the reply says what to fix. The first search becomes the current one; otherwise the user picks it in the app."""
@@ -1441,6 +1442,9 @@ def build_server(store: Store) -> FastMCP:
         s = store.add_search(name, mode, **fields)
         a_lines = add_anchors(a_clean)
         c_lines = add_criteria(s["id"], c_clean)
+        for sc in scoring.starter_criteria(s["mode"], s.get("budget_max"), bedrooms, {c["kind"] for c in c_clean}):  # must-haves from the budget and bedroom count
+            row = store.add_criterion(s["id"], sc["kind"], label=sc["label"], weight=sc["weight"], dealbreaker=True, target=sc["target"])
+            c_lines.append(f"[{row['id']}] {row['label']} (weight {row['weight']:g}, deal-breaker, added from the search's own {'budget' if sc['kind'] == 'price' else 'bedroom count'})")
         cur = store.current_search()
         lines = [f"Created search {s['id']} {_sname(s)} ({_mode_word(s['mode'])})" + ("." if cur and cur["id"] == s["id"] else ". It is not the current search; the user can switch on the Search page. Pass search_id to add_place to use it.")]
         if int(s.get("people") or 1) > 1:

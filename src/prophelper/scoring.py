@@ -32,6 +32,10 @@ KIND_LABELS: dict[str, str] = {
 UNKNOWN_SCORE = 0.5
 CAP_DEALBREAKER = 49
 CAP_SCAM = 50
+CAP_NEAR = 74  # a must-have missed by a little, only because of a guess
+CAP_FAR_COMMUTE = 69  # someone's commute is more than a quarter over their limit: not a "good" match
+CAP_MOSTLY_UNKNOWN = 59
+LATE_PENALTY = 10
 LAUNDRY_RANK = {"in_unit": 3, "in_building": 2, "hookups": 1, "none": 0}
 LAUNDRY_WORDS = {"in_unit": "in the unit", "in_building": "in the building", "hookups": "hookups only", "none": "none"}
 PARKING_RANK = {"garage": 3, "covered": 2, "lot": 1, "street": 0, "none": -1}
@@ -119,38 +123,79 @@ def _buyer_assessment(place: dict[str, Any]) -> float:
     return sa if sa and str(place.get("special_assessment_payer") or "") == "buyer" else 0.0
 
 
+NEAR_GUESS = 0.05  # over by this share or less, only because of a guess, is a near miss and not a fail
+_PART_NAMES = {"utilities": "utilities", "parking": "parking", "pet_rent": "pet rent", "other": "other fees"}
+
+
+def _cost_parts(cost: dict[str, Any]) -> tuple[float | None, list[str], float]:
+    """(rent, ['utilities guess $180', ...], the guessed part) from a rent cost breakdown."""
+    rent, parts, guess = None, [], 0.0
+    for line in cost.get("lines") or []:
+        amount = line.get("amount")
+        if line["key"] == "price":
+            rent = amount
+        elif line["key"] in _PART_NAMES and amount:
+            est = bool(line.get("estimated"))
+            parts.append(f"{_PART_NAMES[line['key']]}{' guess' if est else ''} {_fmt(amount, '$')}")
+            if est:
+                guess += amount
+    return rent, parts, guess
+
+
 def _score_price(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
-    """Rent compares the true monthly cost to the cap. Buy compares the listed PRICE to the cap (not the monthly cost)."""
+    """Rent compares the true monthly cost to the cap (or the rent alone when the rule says "count rent only"). Buy
+    compares the listed PRICE to the cap (not the monthly cost). The detail always says what was compared."""
     t = c["target"]
     limit = _num(t.get("max")) or _num(ctx.get("budget_max"))
     buying = ctx.get("mode") == "buy"
+    guess = 0.0
     if buying:
         have = _num(place.get("price"))
         what, unit = "The price", ""
         target = f"at most {_fmt(limit, '$')}" if limit else "no limit set"
+        shown = f"{_fmt(have, '$')}" if have is not None else ""
     else:
-        have = (ctx.get("cost") or {}).get("total")
-        what, unit = "The monthly cost", " a month"
-        target = f"at most {_fmt(limit, '$')} a month" if limit else "no limit set"
+        cost = ctx.get("cost") or {}
+        rent, parts, guess = _cost_parts(cost)
+        rent_only = str(t.get("count") or "") == "rent"
+        what = "The rent" if rent_only else "The monthly cost"
+        if rent_only:
+            have, unit, guess = rent, " a month, rent only", 0.0
+            shown = f"{_fmt(have, '$')} a month, rent only" if have is not None else ""
+        else:
+            have, unit = cost.get("total"), " a month"
+            if have is not None and parts and rent is not None:
+                shown = f"{_fmt(have, '$')} a month all in (rent {_fmt(rent, '$')} + {' + '.join(parts)})"
+            else:
+                shown = f"{_fmt(have, '$')} a month" if have is not None else ""
+        target = (f"at most {_fmt(limit, '$')} a month" + (", rent only" if rent_only else " all in")) if limit else "no limit set"
     if have is None:
         return _unknown(target, what)
-    value = f"{_fmt(have, '$')}{unit}"
+    value = shown or f"{_fmt(have, '$')}{unit}"
     if not limit:
-        return _result(1.0, value, target, "No price limit set on this search.", known=True, passes=True)
-    if buying and _buyer_assessment(place) and have <= limit:
-        return _result(1.0, value, target, f"{_fmt(limit - have, '$')} under your limit. A special assessment of "
-                       f"{_fmt(_buyer_assessment(place), '$')} that you pay is not in this score; it is in the cash to close.",
-                       known=True, passes=True)
-    if have <= limit:
-        return _result(1.0, value, target, f"{_fmt(limit - have, '$')} under your limit.", known=True, passes=True)
-    score = over_score((have - limit) / limit)
-    detail = f"{_fmt(have - limit, '$')} over your limit."
+        return _result(1.0, value, target, f"{value}. No price limit set on this search.", known=True, passes=True)
+    note = ""
     if buying and _buyer_assessment(place):
-        detail += (f" A special assessment of {_fmt(_buyer_assessment(place), '$')} that you pay is not in this score; "
-                   "it is in the cash to close.")
-    r = _result(score, value, target, detail, known=True, passes=False, gap=f"Over budget by {_fmt(have - limit, '$')}")
-    r["over_amount"], r["over_pct"] = have - limit, (have - limit) / limit
+        note = (f" A special assessment of {_fmt(_buyer_assessment(place), '$')} that you pay is not in this score; "
+                "it is in the cash to close.")
+    if have <= limit:
+        return _result(1.0, value, target, f"{value}, {_fmt(limit - have, '$')} under your limit.{note}",
+                       known=True, passes=True)
+    over = have - limit
+    score = over_score(over / limit)
+    near = guess > 0 and have - guess <= limit + 1e-9 and over / limit <= NEAR_GUESS
+    detail = f"{value}, {_fmt(over, '$')} over your limit of {_fmt(limit, '$')}."
+    if near:
+        detail += " It is only over because of the utilities guess, so this is a near miss."
+    detail += note
+    r = _result(score, value, target, detail, known=True, passes=False,
+                gap=f"Over budget by {_fmt(over, '$')}" if buying else f"{value}, over {_fmt(limit, '$')} by {_fmt(over, '$')}")
+    r["over_amount"], r["over_pct"], r["near"] = over, over / limit, near
     return r
+
+
+def _beds_word(n: float) -> str:
+    return "Studio" if n == 0 else f"{_fmt(n)} bedroom{'' if n == 1 else 's'}"
 
 
 def _score_min(c: dict[str, Any], place: dict[str, Any], field: str, label: str, unit: str) -> dict[str, Any]:
@@ -159,45 +204,87 @@ def _score_min(c: dict[str, Any], place: dict[str, Any], field: str, label: str,
     have = _num(place.get(field))
     if have is None:
         return _unknown(target, label)
-    value = _fmt(have, '', unit)
+    value = "Studio" if field == "beds" and have == 0 else _fmt(have, '', unit)
     if want is None or have >= want:
         return _result(1.0, value, target, "Meets it.", known=True, passes=True)
     if field == "sqft":
         score = (have - 0.6 * want) / (0.4 * want) if want > 0 else 0.0
     else:
         score = 0.5 if have >= want - 1 else 0.0
-    return _result(score, value, target, "Below what you wanted.", known=True, passes=False,
-                   gap=f"{label.replace('The ', '').capitalize()} {value}, wanted {target}")
+    if field == "beds":
+        gap = f"{value}, you need {_beds_word(want)}"
+    else:
+        gap = f"{label.replace('The ', '').capitalize()} {value}, wanted {target}"
+    r = _result(score, value, target, "Below what you wanted.", known=True, passes=False, gap=gap)
+    if field == "sqft" and want and want > 0:
+        r["over_amount"], r["over_pct"] = want - have, (want - have) / want
+    return r
+
+
+def _commute_anchors(t: dict[str, Any], ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """The places this commute rule checks: the one chosen; every important place when the rule says so or when
+    several people share the search (each person's commute counts); else the first one."""
+    anchors = ctx.get("anchors", {})
+    if t.get("anchor_id") is not None:
+        a = anchors.get(t["anchor_id"])
+        return [a] if a else []
+    if anchors and (t.get("all_anchors") or int(ctx.get("people") or 1) > 1):
+        return list(anchors.values())
+    first = next(iter(anchors.values()), None)
+    return [first] if first else []
 
 
 def _score_commute(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     t = c["target"]
     mins = _num(t.get("minutes"))
     mode = t.get("mode") or "bike"
-    anchors = ctx.get("anchors", {})
-    # A commute with no place chosen means the first important place (the form's "First one" choice).
-    anchor = anchors.get(t["anchor_id"]) if t.get("anchor_id") is not None else next(iter(anchors.values()), None)
-    anchor_name = anchor["name"] if anchor else "that place"
+    chosen = _commute_anchors(t, ctx)
+    many = len(chosen) > 1
+    anchor_name = "everyone's places" if many else (chosen[0]["name"] if chosen else "that place")
     target = f"{_fmt(mins, '', ' min')} or less by {mode} to {anchor_name}" if mins else "any"
-    if anchor is None:
+    if not chosen:
         gone = t.get("anchor_id") is not None
         return _result(None, "", target, "The important place you wanted to reach was removed, so choose another one in What matters." if gone
                        else "There is no important place yet. Add one on the Search page, like Work or Campus.", known=False, passes=None)
-    found = commute_mod.resolve(place, anchor, mode, ctx.get("commutes", ()))
-    if found is None:
+    found_all, missing = [], []
+    for anchor in chosen:
+        found = commute_mod.resolve(place, anchor, mode, ctx.get("commutes", ()))
+        if found is None:
+            missing.append(anchor)
+        else:
+            found_all.append((anchor, found))
+    if not found_all:
+        anchor = missing[0]
         if not commute_mod.has_point(anchor):
-            return _result(None, "", target, commute_mod.NO_LOCATION_MESSAGE.format(name=anchor_name), known=False, passes=None)
-        return _unknown(target, f"The {mode} time to {anchor_name}")
-    value = found["label"]
+            return _result(None, "", target, commute_mod.NO_LOCATION_MESSAGE.format(name=anchor["name"]), known=False, passes=None)
+        return _unknown(target, f"The {mode} time to {anchor['name']}")
+    if many:
+        value = ", ".join(f"{a['name']} {f['minutes']:.0f} min" for a, f in found_all)
+    else:
+        value = found_all[0][1]["label"]
     if not mins:
         return _result(1.0, value, target, "", known=True, passes=True)
-    have = found["minutes"]
-    score = 1.0 if have <= mins else 1 - (have - mins) / mins
-    detail = "Within your limit." if have <= mins else f"{have - mins:.0f} min over your limit."
-    if found["source"] == "estimate":
+    over = [(a, f) for a, f in found_all if f["minutes"] > mins]
+    worst = max(f["minutes"] for _, f in found_all)
+    score = 1.0 if worst <= mins else 1 - (worst - mins) / mins
+    if over:
+        who = [f"{a['name']}: {f['minutes']:.0f} min, limit {mins:.0f}" for a, f in over] if many \
+            else [f"Commute {over[0][1]['minutes']:.0f} min, limit {mins:.0f}"]
+        detail = ("; ".join(who) + ".") if many else f"{worst - mins:.0f} min over your limit."
+    else:
+        detail = "Everyone is within your limit." if many else "Within your limit."
+    if any(f["source"] == "estimate" for _, f in found_all):
         detail += " This is an estimate from the map, so check it."
-    gap = "" if have <= mins else f"Commute {have:.0f} min, limit {mins:.0f}" + (f" ({anchor_name})" if len(ctx.get("anchors", {})) > 1 else "")
-    return _result(score, value, target, detail, known=True, passes=have <= mins, gap=gap)
+    if missing:
+        detail += " No time yet for " + ", ".join(a["name"] for a in missing) + "."
+    gap = "; ".join(who) if over else ""
+    if over and not many and len(ctx.get("anchors", {})) > 1:
+        gap += f" ({over[0][0]['name']})"
+    r = _result(score, value, target, detail, known=True, passes=not over, gap=gap)
+    if over:
+        r["over_amount"], r["over_pct"] = worst - mins, (worst - mins) / mins
+        r["concern"] = gap
+    return r
 
 
 def _score_laundry(c: dict[str, Any], place: dict[str, Any]) -> dict[str, Any]:
@@ -334,6 +421,8 @@ def score_criterion(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any
         status = ""
     elif r["passes"] is None:
         status = "check"
+    elif not r["passes"] and r.get("near"):
+        status = "near"  # over only because of a guess, and by a little: not a hard fail
     else:
         status = "pass" if r["passes"] else "fail"
     return {"id": c.get("id"), "kind": kind, "label": c.get("label") or _auto_label(kind, c["target"], ctx),
@@ -345,42 +434,94 @@ def has_serious_flag(place: dict[str, Any], peer_prices: Iterable[float] = ()) -
     return redflags.is_serious(place, peer_prices)
 
 
+def starter_criteria(mode: str, budget_max: Any, bedrooms: Any, have_kinds: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """The must-haves a new search gets by itself: Bedrooms (when it names a bedroom count of 1 or more) and Monthly cost
+    or Price (when it has a budget). A kind the caller already has is skipped, so nothing doubles. Each is
+    ``{kind, label, weight, dealbreaker, target}`` ready for ``store.add_criterion``; the target is marked ``auto``."""
+    have = set(have_kinds)
+    out: list[dict[str, Any]] = []
+    budget, beds = _num(budget_max), _num(bedrooms)
+    if budget and budget > 0 and "price" not in have:
+        t = {"max": budget, "auto": True}
+        out.append({"kind": "price", "label": default_label("price", t, mode), "weight": 20, "dealbreaker": True, "target": t})
+    if beds and beds >= 1 and "beds" not in have:
+        t = {"min": beds, "auto": True}
+        out.append({"kind": "beds", "label": default_label("beds", t, mode), "weight": 15, "dealbreaker": True, "target": t})
+    return out
+
+
+def _late_opening(place: dict[str, Any], search: dict[str, Any] | None, mode: str) -> str:
+    """The plain reason when a rental opens well after the move-in date ('' otherwise). Early openings are only a note."""
+    if not search or mode == "buy":
+        return ""
+    from . import movein  # late import: movein reads today, which reads enrich, which reads this module
+    msg = movein.gap_warning(place, {**search, "mode": mode})
+    return msg if msg and "after your move-in" in msg else ""
+
+
 def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mode: str = "rent",
                 anchors: Iterable[dict[str, Any]] = (), commutes: Iterable[dict[str, Any]] = (),
                 custom_scores: dict[int, float] | None = None, budget_max: float | None = None,
                 settings: dict[str, Any] | None = None, cost: dict[str, Any] | None = None,
                 serious_flag: bool | None = None, people: int = 1,
-                pets: dict[str, Any] | None = None) -> dict[str, Any]:
+                pets: dict[str, Any] | None = None, search: dict[str, Any] | None = None) -> dict[str, Any]:
     """Score a place. ``criteria`` rows have ``kind``, ``weight``, ``dealbreaker`` and ``target`` (a dict).
     ``commutes`` are the place's stored commute rows; ``cost`` can be passed to avoid computing it twice.
     ``pets`` is the search's pet profile ({kind, weight, count}); without it only the pet policy is checked.
-    ``serious_flag`` says the listing shows a serious scam sign (worked out from the text when left as None)."""
+    ``serious_flag`` says the listing shows a serious scam sign (worked out from the text when left as None).
+    ``search`` (optional) lets a place that opens well after the move-in date count against fit.
+    Also returned: ``near`` (must-haves missed by a little, only because of a guess), ``concerns`` (plain reasons a
+    fitting place still loses points: a person's commute over the limit, a late opening) and ``caps`` (why the total
+    was held down)."""
     ctx = {"cost": cost if cost is not None else money.true_monthly_cost(place, mode, settings, people),
            "budget_max": budget_max, "anchors": {a["id"]: a for a in anchors}, "commutes": list(commutes),
-           "custom_scores": custom_scores or {}, "mode": mode, "pets": pets or {}}
+           "custom_scores": custom_scores or {}, "mode": mode, "pets": pets or {}, "people": people}
     items = [score_criterion(c, place, ctx) for c in criteria]
     total_w = sum(max(0.0, float(i["weight"] or 0)) for i in items)
     raw = None
     if items and total_w > 0:
         raw = int(round(100 * sum(max(0.0, float(i["weight"] or 0)) * i["score"] for i in items) / total_w + 1e-9))
     failed = [i["label"] for i in items if i["dealbreaker_status"] == "fail"]
+    near = [i["label"] for i in items if i["dealbreaker_status"] == "near"]
     check = [i["label"] for i in items if i["dealbreaker_status"] == "check"]
     scam = has_serious_flag(place) if serious_flag is None else bool(serious_flag)
     reasons = [i["gap"] or f"Fails: {i['label']}" for i in items if i["dealbreaker_status"] == "fail"]
+    concerns = [i["gap"] for i in items if i["dealbreaker_status"] == "near" and i["gap"]]
+    concerns += [i["concern"] for i in items if i.get("concern") and i["dealbreaker_status"] != "fail"]
+    far_commute = any(i.get("concern") and (i.get("over_pct") or 0) > 0.25 for i in items)
+    late = _late_opening(place, search, mode)
+    if late:
+        concerns.append(late)
+        if raw is not None:
+            raw = max(0, raw - LATE_PENALTY)
     fit = "fits"
     total = raw
+    caps: list[str] = []
+
+    def cap(n: int, why: str) -> None:
+        nonlocal total
+        if total is not None and total > n:
+            total = n
+            caps.append(why)
     if failed:
         fit = "doesnt_fit"
-        if total is not None:
-            total = min(total, CAP_DEALBREAKER)
+        cap(CAP_DEALBREAKER, "a must-have fails")
+    if near:
+        cap(CAP_NEAR, "a must-have is just over")
+    if far_commute:
+        cap(CAP_FAR_COMMUTE, "someone's commute is well over the limit")
+    if check:  # unknown must-haves: neutral-ish, but never a high score
+        cap({1: 80, 2: 65}.get(len(check), 55), f"{len(check)} must-have{'s' if len(check) != 1 else ''} not known yet")
+    unknown_n = sum(1 for i in items if not i["known"])
+    if unknown_n >= 3 and unknown_n * 2 >= len(items):
+        cap(CAP_MOSTLY_UNKNOWN, "most of what matters is not known yet")
     if scam:
         fit = "check_first"
         reasons = ["Check first: possible scam. Do not pay anything before you have toured it."] + reasons
-        if total is not None:
-            total = min(total, CAP_SCAM)
+        cap(CAP_SCAM, "possible scam")
     unknown = [i["label"] for i in items if not i["known"]]
     return {"total": total, "raw_total": raw, "items": items, "unknown": unknown, "unknown_count": len(unknown),
-            "failed": failed, "check": check, "fails_dealbreaker": bool(failed), "needs_check": bool(check),
+            "failed": failed, "near": near, "concerns": concerns, "caps": caps, "check": check, "fails_dealbreaker": bool(failed), "needs_check": bool(check),
             "fit": fit, "fit_reasons": reasons, "scam": scam, "sort_group": {"fits": 0, "doesnt_fit": 1}.get(fit, 2),
             "cost": ctx["cost"]}
 

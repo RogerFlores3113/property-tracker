@@ -48,7 +48,7 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     serious = redflags.is_serious(place, peer_prices or [])
     score = scoring.score_place(place, criteria, mode=search["mode"], anchors=anchors, commutes=commutes,
                                 custom_scores=store.custom_scores(place["id"]), budget_max=search.get("budget_max"),
-                                settings=settings, cost=cost, serious_flag=serious, people=people,
+                                settings=settings, cost=cost, serious_flag=serious, people=people, search=search,
                                 pets={"kind": (search.get("pet_kind") or "") if money.has_pets(search.get("pet_kind")) else "", "weight": search.get("pet_weight"), "count": search.get("pet_count")})
     if protected is None:
         protected = place["id"] in store.protected_place_ids(search["id"])
