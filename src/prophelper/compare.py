@@ -519,6 +519,43 @@ def _utilities_cell(p: dict[str, Any]) -> dict[str, Any]:
     return _cell(text)
 
 
+def _pet_limits_text(p: dict[str, Any]) -> str:
+    """'Dogs, up to 50 lb, 2 pets at most', from the facts a place has. Empty when none is known."""
+    bits: list[str] = []
+    allowed = PETS_TEXT.get(p.get("pets") or "")
+    if allowed:
+        bits.append(allowed)
+    w = p.get("pet_weight_limit")
+    if w not in (None, ""):
+        bits.append(f"up to {float(w):g} lb")
+    n = p.get("pet_count_limit")
+    if n not in (None, ""):
+        bits.append(f"{int(n)} pet{'s' if int(n) != 1 else ''} at most")
+    return ", ".join(bits)
+
+
+def _pet_limits_cell(p: dict[str, Any]) -> dict[str, Any]:
+    return _cell(_pet_limits_text(p) or None)
+
+
+def _fenced_yard_cell(p: dict[str, Any]) -> dict[str, Any]:
+    return _yes_no(p.get("fenced_yard"))
+
+
+def _search_cares_about(places: list[dict[str, Any]], *kinds: str) -> bool:
+    """True when the search has a rule of one of these kinds (the scored items say so)."""
+    return any(i.get("kind") in kinds for p in places for i in (p.get("score") or {}).get("items") or [])
+
+
+def shows_pet_limits(places: list[dict[str, Any]]) -> bool:
+    return any(p.get("pet_weight_limit") not in (None, "") or p.get("pet_count_limit") not in (None, "") for p in places) \
+        or _search_cares_about(places, "pets")
+
+
+def shows_fenced_yard(places: list[dict[str, Any]]) -> bool:
+    return any(p.get("fenced_yard") is not None for p in places) or _search_cares_about(places, "fenced_yard")
+
+
 def _line_unset(p: dict[str, Any], key: str) -> bool:
     """True when a $0 cost line is really "never filled in" (pet rent with pets unknown, parking never set)."""
     if key == "pet_rent":
@@ -644,6 +681,8 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row("dishwasher", "Dishwasher", [_yes_no(p.get("dishwasher")) for p in places], "high"),
         row("parking", "Parking", [_cell(PARKING_TEXT.get(p.get("parking") or ""), PARKING_RANK.get(p.get("parking") or "")) for p in places], None),
         row("pets", "Pets", [_cell(PETS_TEXT.get(p.get("pets") or "")) for p in places]),
+        row("pet_limits", "Pet limits (kinds, weight, how many)", [_pet_limits_cell(p) for p in places]) if shows_pet_limits(places) else None,
+        row("fenced_yard", "Fenced yard", [_fenced_yard_cell(p) for p in places], "high") if shows_fenced_yard(places) else None,
         row("utilities", "Utilities included", [_utilities_cell(p) for p in places], only_if_any=True),
     ])
     section("Dates and money up front", [
