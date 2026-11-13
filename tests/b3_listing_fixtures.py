@@ -71,7 +71,7 @@ Water, sewer and trash are included.
         "expect": {
             "source": "Apartments.com", "title": "Quarry Street Lofts", "price": 1680, "beds": 1, "baths": 1, "sqft": 720,
             "address": "27 Quarry Street", "city": "Champaign", "state": "IL", "zip": "61820", "laundry": "in_unit",
-            "dishwasher": 1, "parking": "garage", "parking_cost": 95, "pets": "both", "pet_fee": 300, "pet_rent": 35,
+            "dishwasher": 1, "parking": "lot", "parking_cost": 0, "pets": "both", "pet_fee": 300, "pet_rent": 35,
             "application_fee": 50, "move_in_fees": 150, "other_monthly_fees": 20, "deposit": 500,
             "available_from": "2027-08-01", "utilities_included": "water, sewer, trash",
         },

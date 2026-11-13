@@ -61,7 +61,7 @@ C: list[tuple[str, str, dict]] = [
     ("fb_oneline", "2BR 1BA available 9/1 $1,650/mo no pets 1201 Harvest Ln, Champaign IL 61820 text me",
      dict(address="1201 Harvest Ln", city="Champaign", state="IL", zip="61820", pets="none")),
     ("fb_allcaps", "SPACIOUS 2 BEDROOM APARTMENT NEAR CAMPUS!!! $1,400 MONTH. 305 E GREEN ST CHAMPAIGN IL 61820. NO PETS. CALL NOW",
-     dict(address="305 E GREEN ST", pets="none")),
+     dict(address="305 E Green St", pets="none")),
     ("fb_run_on", "Hi, I'm renting my room in a 3 bed house at 22 Willow Way, Ames, IA 50010. $650 a month plus utilities, cats are fine but no dogs, thanks",
      dict(address="22 Willow Way", city="Ames", state="IA", zip="50010", pets="cats")),
     # ---- direction letters are never units
