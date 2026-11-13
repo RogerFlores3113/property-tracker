@@ -168,7 +168,7 @@ def _place_page(request: Request, place_id: int, *, status: int = 200, form_valu
     search = _search_of(store, place)
     full = enrich.enrich_places(store, search, [place])[0]
     # Peers for the "far under the others" rule are the search's other prices; enrich_places already did that.
-    anchors = store.list_anchors()
+    anchors = store.list_anchors(search["id"])
     stored = {(c["anchor_id"], c["mode"]): c for c in store.list_commutes(place_id)}
     commute_rows = []
     from . import commute as cm
@@ -319,12 +319,12 @@ def _target_from_form(kind: str, form: Any) -> dict[str, Any]:
     return t
 
 
-def _commute_target(store: Store, target: dict[str, Any]) -> dict[str, Any]:
+def _commute_target(store: Store, target: dict[str, Any], search_id: int | None = None) -> dict[str, Any]:
     """A commute with no place chosen means the first important place: say which one, so the label can name it."""
     if target.get("anchor_id") == "all":  # "everyone's places": each one is checked against the limit
         return {k: v for k, v in target.items() if k != "anchor_id"} | {"all_anchors": True}
     if target.get("anchor_id") in (None, ""):
-        anchors = store.list_anchors()
+        anchors = store.list_anchors(search_id)
         if anchors:
             target = {**target, "anchor_id": anchors[0]["id"]}
     return target
@@ -363,7 +363,7 @@ def search_page(request: Request, id: int | None = None):
         shown = store.get_search(id) if id else current
     except NotFound:
         raise HTTPException(404, "That search doesn't exist.") from None
-    anchors = store.list_anchors()
+    anchors = store.list_anchors(shown["id"] if shown else None)
     criteria = store.list_criteria(shown["id"]) if shown else []
     ctx = {"anchors": {a["id"]: a for a in anchors}, "people": int((shown or {}).get("people") or 1)}
     crit_labels = {c["id"]: scoring._auto_label(c["kind"], c["target"], ctx) for c in criteria}
@@ -381,7 +381,8 @@ async def create_search(request: Request):
                              move_in=form.get("move_in", ""), target_close=form.get("target_close", ""),
                              budget_max=form.get("budget_max", ""), notes=form.get("notes", ""),
                              **({"people": form.get("people")} if form.get("people") else {}),
-                             **({"adults": form.get("adults")} if form.get("adults") else {}))
+                             **({"adults": form.get("adults")} if form.get("adults") else {}),
+                             **({"down_payment_pct": form.get("down_payment_pct")} if str(form.get("down_payment_pct", "")).strip() else {}))
         store.set_current_search(s["id"])
         beds = str(form.get("bedrooms", "")).strip()
         for c in scoring.starter_criteria(s["mode"], s.get("budget_max"), beds):
@@ -397,7 +398,7 @@ async def create_search(request: Request):
 async def update_search(request: Request, search_id: int):
     store = get_store(request)
     form = await request.form()
-    values: dict[str, Any] = {k: form.get(k) for k in ("name", "mode", "area", "move_in", "target_close", "budget_max", "notes", "people", "adults", "pet_kind", "pet_weight", "pet_count", "people_names") if k in form}
+    values: dict[str, Any] = {k: form.get(k) for k in ("name", "mode", "area", "move_in", "target_close", "budget_max", "notes", "people", "adults", "pet_kind", "pet_weight", "pet_count", "people_names", "down_payment_pct") if k in form}
     values["hide_dealbreakers"] = "1" if form.get("hide_dealbreakers") == "1" else "0"
     try:
         store.update_search(search_id, **values)
@@ -474,9 +475,9 @@ async def add_criterion(request: Request, search_id: int):
             plain = ", ".join(("Price" if k == "price" and search["mode"] == "buy" else scoring.KIND_LABELS.get(k, k)) for k in CRITERION_KINDS)
             return redirect(f"/search?id={search_id}#criteria", error=f"Pick what kind of thing matters: {plain}.")
         if kind == "commute":
-            if not store.list_anchors():
+            if not store.list_anchors(search_id):
                 return redirect(f"/search?id={search_id}#anchors", error="A commute needs a place to travel to. Add an important place first, like Work or Campus, then add the commute.")
-            target = _commute_target(store, target)
+            target = _commute_target(store, target, search_id)
             label = label or _commute_label(store, target)
         existing = store.list_criteria(search_id)
         for old in existing:  # their own rule replaces the one made for them at the start, so nothing counts twice
@@ -505,7 +506,7 @@ async def update_criterion(request: Request, criterion_id: int):
         target = _target_from_form(c["kind"], form)
         label = str(form.get("label", "")).strip()
         if c["kind"] == "commute":
-            target = _commute_target(store, target)
+            target = _commute_target(store, target, c["search_id"])
             auto_before = _commute_label(store, c["target"]) or c["label"]
             if not label or label == auto_before:  # a name they never changed follows the new place, way and minutes
                 label = _commute_label(store, target)
@@ -534,6 +535,18 @@ def _anchors_back(form: Any) -> str:
     return f"/search?id={sid}#anchors" if sid.isdigit() else "/search#anchors"
 
 
+def _anchor_search_id(store: Store, form: Any) -> int | None:
+    """The search a new important place belongs to: the one the form came from, else the one the app is showing."""
+    sid = str(form.get("search_id") or "")
+    if sid.isdigit():
+        try:
+            return store.get_search(int(sid))["id"]
+        except NotFound:
+            pass
+    cur = store.current_search()
+    return cur["id"] if cur else None
+
+
 NO_LOCATION_NOTE = "Commutes need a location. Press Find on map from address next to it, or enter coordinates yourself."
 
 
@@ -544,8 +557,9 @@ async def add_anchor(request: Request):
     back = _anchors_back(form)
     try:
         name = str(form.get("name", "")).strip()
-        dupe = any(a["name"].strip().lower() == name.lower() for a in store.list_anchors()) if name else False
-        a = store.add_anchor(name, str(form.get("address", "")), form.get("lat"), form.get("lng"))
+        sid = _anchor_search_id(store, form)
+        dupe = any(a["name"].strip().lower() == name.lower() for a in store.list_anchors(sid)) if name else False
+        a = store.add_anchor(name, str(form.get("address", "")), form.get("lat"), form.get("lng"), search_id=sid)
     except ValueError as exc:
         return redirect(back, error=str(exc))
     if form.get("find") == "1":
@@ -565,7 +579,8 @@ async def update_anchor(request: Request, anchor_id: int):
     back = _anchors_back(form)
     try:
         name = str(form.get("name", "")).strip()
-        dupe = any(o["id"] != anchor_id and o["name"].strip().lower() == name.lower() for o in store.list_anchors()) if name else False
+        mine = store.get_anchor(anchor_id).get("search_id")
+        dupe = any(o["id"] != anchor_id and o["name"].strip().lower() == name.lower() for o in store.list_anchors(mine)) if name else False
         a = store.update_anchor(anchor_id, name=name, address=form.get("address", ""), lat=form.get("lat"), lng=form.get("lng"))
     except NotFound:
         raise HTTPException(404, "That important place doesn't exist.") from None

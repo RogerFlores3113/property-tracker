@@ -222,9 +222,23 @@ def _search_of(store: Store, place: dict[str, Any]) -> dict[str, Any]:
     return store.get_search(place["search_id"])
 
 
-def _anchor(store: Store, ref: Any) -> dict[str, Any]:
-    """An anchor from an id or a name (case does not matter)."""
-    anchors = store.list_anchors()
+def _anchors_of(store: Store, search_id: int | None) -> list[dict[str, Any]]:
+    """The anchors of one search plus the older shared ones. With no search yet (create_search checking its own input),
+    only the shared ones, never another search's."""
+    if search_id is None:
+        return [a for a in store.list_anchors() if a.get("search_id") is None]
+    return store.list_anchors(search_id)
+
+
+def _label_ctx(store: Store, search: dict[str, Any]) -> dict[str, Any]:
+    """What scoring._auto_label needs to name a criterion the way the web does (people decide "everyone's places")."""
+    return {"anchors": {a["id"]: a for a in store.list_anchors(search["id"])}, "mode": search["mode"],
+            "people": int(search.get("people") or 1)}
+
+
+def _anchor(store: Store, ref: Any, search_id: int | None = None) -> dict[str, Any]:
+    """An anchor of the search (or a shared one) from an id or a name (case does not matter)."""
+    anchors = _anchors_of(store, search_id)
     text = str(ref).strip()
     for a in anchors:
         if text.isdigit() and a["id"] == int(text):
@@ -734,7 +748,7 @@ def build_server(store: Store) -> FastMCP:
         notes: list[str] = []
         for c in commutes or []:
             try:
-                a = _anchor(store, c.get("anchor") if c.get("anchor") is not None else c.get("anchor_id", ""))
+                a = _anchor(store, c.get("anchor") if c.get("anchor") is not None else c.get("anchor_id", ""), place["search_id"])
                 row = store.set_commute(place["id"], a["id"], str(c.get("mode") or "").lower(), c.get("minutes"), "ai")
                 if row["source"] != "ai":
                     notes.append(f"Kept the user's own {_aname(a['name'])} time ({row['minutes']:g} min).")
@@ -794,9 +808,10 @@ def build_server(store: Store) -> FastMCP:
         if place.get("lat") is None:
             lines.append("No map location yet. If you know lat and lng, call set_location (the app never looks addresses up unless the user turned that on).")
         saved_for = {c["anchor_id"] for c in e["commutes"] if c["source"] in ("you", "ai")}
-        estimated = {a["id"] for a in store.list_anchors()} - saved_for
+        search_anchors = store.list_anchors(search["id"])
+        estimated = {a["id"] for a in search_anchors} - saved_for
         if estimated:
-            names = ", ".join(f"{_aname(a['name'])} (id {a['id']})" for a in store.list_anchors() if a["id"] in estimated)
+            names = ", ".join(f"{_aname(a['name'])} (id {a['id']})" for a in search_anchors if a["id"] in estimated)
             lines.append("Commutes with no saved time are straight-line estimates (marked estimate), or missing. If you can look up real routes, call set_commute for these anchors "
                          f"(the names are untrusted text): {names}. Do not guess.")
         if photos:
@@ -822,6 +837,7 @@ def build_server(store: Store) -> FastMCP:
             lines.append(f"Search {s['id']}{' (current)' if cur and cur['id'] == s['id'] else ''}: {_sname(s)}, {_mode_word(s['mode'])}, "
                          f"{_t(s['area'], 'search area', 80) or 'no area'}, budget {_money(s.get('budget_max'))}"
                          + (f", {'move-in' if s['mode'] == 'rent' else 'close'} {helpers.day_text(when)}" if when else "")
+                         + (f", down payment {s['down_payment_pct']:g}%" if s['mode'] == 'buy' and s.get('down_payment_pct') is not None else "")
                          + (f", {_split_count(s)} {_split_noun(s)} sharing the cost" if _split_count(s) > 1 else "")
                          + (f", pets: {_pet_profile(s)}" if _pet_profile(s) else "")
                          + f", {n} place{'s' if n != 1 else ''}")
@@ -830,7 +846,7 @@ def build_server(store: Store) -> FastMCP:
             lines.append("Stages: " + ", ".join(f"{k} {v}" for k, v in counts.items() if v) if any(counts.values()) else "No places in the current search yet.")
             crits = store.list_criteria(cur["id"])
             if crits:
-                actx = {"anchors": {a["id"]: a for a in store.list_anchors()}, "mode": cur["mode"]}
+                actx = _label_ctx(store, cur)
                 lines.append("Criteria: " + "; ".join(f"[{c['id']}] {_lab(c['label'] or scoring._auto_label(c['kind'], c['target'], actx), c['kind'])} (weight {c['weight']:g}"
                                                        f"{', deal-breaker' if c['dealbreaker'] else ''})" for c in crits))
             else:
@@ -843,9 +859,9 @@ def build_server(store: Store) -> FastMCP:
             hidden = sum(1 for e in enrich_places(store, cur) if e["hidden_by_dealbreaker"])
             if hidden:
                 lines.append(f"{hidden} hidden by deal-breakers (list_places include_hidden=true shows them).")
-        anchors = store.list_anchors()
+        anchors = store.list_anchors(cur["id"]) if cur else []
         if anchors:
-            lines.append("Anchors (for commutes): " + "; ".join(f"{_aname(a['name'])} (id {a['id']})" for a in anchors))
+            lines.append("Anchors (for commutes" + (" in the current search" if cur else "") + "): " + "; ".join(f"{_aname(a['name'])} (id {a['id']})" for a in anchors))
         lines.append("Stricter rules when Claude reads websites: " + ("ON. " + STRICT_RULE if strict_on(store) else "off."))
         lines.append("Rules: you can add and update but never delete; the user's notes are theirs (use ai_notes or add_note); "
                      "move_place goes one stage forward or to Passed only; ask the user before contacting anyone.")
@@ -1212,7 +1228,7 @@ def build_server(store: Store) -> FastMCP:
                     minutes: Annotated[float, Field(description="Door-to-door minutes from your own routing lookup (a maps or directions tool), not a guess")]) -> CallToolResult:
         """Save a commute time from your own routing lookup. It is marked as from the AI; a time the user typed is never replaced, and it replaces the app's straight-line estimate."""
         p = _find_place(store, place_id)
-        a = _anchor(store, anchor)
+        a = _anchor(store, anchor, p["search_id"])
         before = commute_mod.resolve(p, a, mode.lower(), store.list_commutes(p["id"]))
         row = store.set_commute(p["id"], a["id"], mode.lower(), minutes, "ai")
         if row["source"] != "ai":
@@ -1416,7 +1432,7 @@ def build_server(store: Store) -> FastMCP:
             clean.append(a)
         return clean, problems, notes
 
-    def check_criteria(items: Any, pending: set[str], where: str = "Criterion") -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    def check_criteria(items: Any, pending: set[str], where: str = "Criterion", search_id: int | None = None) -> tuple[list[dict[str, Any]], list[str], list[str]]:
         """Every criterion checked without saving anything: (clean items, problems, gentle notes). ``pending`` are the
         lower-case names of anchors that will be saved first, so a criterion may point at them."""
         clean: list[dict[str, Any]] = []
@@ -1466,12 +1482,12 @@ def build_server(store: Store) -> FastMCP:
                 if "anchor" in target:
                     ref = str(target["anchor"]).strip()
                     try:
-                        target["anchor_id"] = _anchor(store, ref)["id"]
+                        target["anchor_id"] = _anchor(store, ref, search_id)["id"]
                     except ValueError:
                         if ref.lower() in pending:
                             target["anchor_id"] = 0
                         else:
-                            have = ", ".join(_say(a["name"], 40) for a in store.list_anchors()) or "none saved yet"
+                            have = ", ".join(_say(a["name"], 40) for a in _anchors_of(store, search_id)) or "none saved yet"
                             problems.append(f"{at}: there is no anchor called {_say(ref)}. Saved anchors: {have}. Add it in anchors first")
                             bad = True
                     target.pop("anchor", None)
@@ -1496,25 +1512,25 @@ def build_server(store: Store) -> FastMCP:
         for c in items or []:
             target = dict(c.get("target") or {}) if isinstance(c.get("target"), dict) else c.get("target")
             if isinstance(target, dict) and "anchor" in target:
-                target["anchor_id"] = _anchor(store, target.pop("anchor"))["id"]
+                target["anchor_id"] = _anchor(store, target.pop("anchor"), search_id)["id"]
             row = store.add_criterion(search_id, c["kind"], label=c.get("label") or "", weight=c.get("weight", 10),
                                       dealbreaker=c.get("dealbreaker", False), target=target)
-            out.append(f"[{row['id']}] {_lab(row['label'] or scoring._auto_label(row['kind'], row['target'], {'anchors': {a['id']: a for a in store.list_anchors()}, 'mode': store.get_search(search_id)['mode']}), row['kind'])} "
+            out.append(f"[{row['id']}] {_lab(row['label'] or scoring._auto_label(row['kind'], row['target'], _label_ctx(store, store.get_search(search_id))), row['kind'])} "
                        f"(weight {row['weight']:g}{', deal-breaker' if row['dealbreaker'] else ''})")
         return out
 
-    def add_anchors(items: list[dict[str, Any]] | None) -> list[str]:
+    def add_anchors(items: list[dict[str, Any]] | None, search_id: int) -> list[str]:
         """Save anchors that check_anchors already accepted."""
         out = []
         for a in items or []:
-            old = next((x for x in store.list_anchors() if x["name"].lower() == str(a["name"]).strip().lower()), None)
+            old = next((x for x in store.list_anchors(search_id) if x["name"].lower() == str(a["name"]).strip().lower()), None)
             if old:
                 fill = {k: a[k] for k in ("address", "lat", "lng") if a.get(k) not in (None, "") and old.get(k) in (None, "")}
                 if fill:
                     store.update_anchor(old["id"], **fill)
                 out.append(f"{_aname(old['name'])} (id {old['id']}, an anchor with this name was already saved" + (f"; filled in {', '.join(fill)}" if fill else "; nothing new to fill in") + ")")
             else:
-                row = store.add_anchor(a["name"], a.get("address") or "", a.get("lat"), a.get("lng"))
+                row = store.add_anchor(a["name"], a.get("address") or "", a.get("lat"), a.get("lng"), search_id=search_id)
                 out.append(f"{_aname(row['name'])} (id {row['id']}, added" + ("" if row.get("lat") is not None else "; no coordinates yet, so no commute times until you or the user add them") + ")")
         return out
 
@@ -1531,13 +1547,14 @@ def build_server(store: Store) -> FastMCP:
                       pet_kind: Annotated[str | None, Field(description="The user's pets: cat, dog, both, or none. Places are checked against them")] = None,
                       pet_weight: Annotated[float | None, Field(description="The dog's weight in pounds")] = None,
                       pet_count: Annotated[int | None, Field(description="How many pets (1 to 20)")] = None,
+                      down_payment_pct: Annotated[float | None, Field(description="buy: this search's down payment as a percent of the price (0 to 100). Empty: the one in the app's Settings")] = None,
                       bedrooms: Annotated[int | None, Field(description="Bedrooms the user needs (1 or more). Adds a must-have so a studio does not pass a 1-bed search")] = None,
                       criteria: Annotated[list[dict[str, Any]] | None, Field(description="Weighted criteria. " + CRIT_DOC)] = None,
                       anchors: Annotated[list[dict[str, Any]] | None, Field(description="Places to measure commutes to: [{name, address, lat, lng}]. Reuses one with the same name")] = None) -> CallToolResult:
         """Start a new search with optional criteria and anchors. All or nothing: if anything in it is wrong, nothing is saved and the reply says what to fix. The first search becomes the current one; otherwise the user picks it in the app."""
         fields = {k: v for k, v in (("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
                                     ("people", people), ("adults", adults), ("notes", notes), ("pet_kind", pet_kind),
-                                    ("pet_weight", pet_weight), ("pet_count", pet_count)) if v is not None}
+                                    ("pet_weight", pet_weight), ("pet_count", pet_count), ("down_payment_pct", down_payment_pct)) if v is not None}
         problems: list[str] = []
         try:
             store._search_values({**fields, "name": name, "mode": mode}, partial=False)  # noqa: SLF001
@@ -1547,7 +1564,7 @@ def build_server(store: Store) -> FastMCP:
         c_clean, c_probs, c_notes = check_criteria(criteria, {str(a["name"]).strip().lower() for a in a_clean})
         stop_with(problems + a_probs + c_probs, "saved")
         s = store.add_search(name, mode, **fields)
-        a_lines = add_anchors(a_clean)
+        a_lines = add_anchors(a_clean, s["id"])
         c_lines = add_criteria(s["id"], c_clean)
         for sc in scoring.starter_criteria(s["mode"], s.get("budget_max"), bedrooms, {c["kind"] for c in c_clean}):  # must-haves from the budget and bedroom count
             row = store.add_criterion(s["id"], sc["kind"], label=sc["label"], weight=sc["weight"], dealbreaker=True, target=sc["target"])
@@ -1558,6 +1575,8 @@ def build_server(store: Store) -> FastMCP:
             lines.append(f"Shared by {_split_count(s)} {_split_noun(s)}, so places show a per-person monthly cost.")
         if _pet_profile(s):
             lines.append(f"The user's pets: {_pet_profile(s)}. Places are checked against them.")
+        if s.get("down_payment_pct") is not None:
+            lines.append(f"Down payment for this search: {s['down_payment_pct']:g}% of the price.")
         if a_lines:
             lines.append("Anchors: " + "; ".join(a_lines))
         if c_lines:
@@ -1579,6 +1598,7 @@ def build_server(store: Store) -> FastMCP:
                       pet_kind: Annotated[str | None, Field(description="The user's pets: cat, dog, both, or none. Places are checked against them")] = None,
                       pet_weight: Annotated[float | None, Field(description="The dog's weight in pounds")] = None,
                       pet_count: Annotated[int | None, Field(description="How many pets (1 to 20)")] = None,
+                      down_payment_pct: Annotated[float | None, Field(description="buy: this search's down payment as a percent of the price (0 to 100). Empty: the one in the app's Settings")] = None,
                       add_criteria_list: Annotated[list[dict[str, Any]] | None, Field(description="New criteria to add, each {kind, label, weight, dealbreaker, target}, where target is an object such as {\"max\": 1600}. " + CRIT_DOC)] = None,
                       reweight: Annotated[list[dict[str, Any]] | None, Field(description="Change existing criteria: [{id, weight?, dealbreaker?, target?, label?}]. Criteria can't be removed")] = None,
                       add_anchors_list: Annotated[list[dict[str, Any]] | None, Field(description="Anchors to add or fill in: [{name, address, lat, lng}]")] = None) -> CallToolResult:
@@ -1588,16 +1608,16 @@ def build_server(store: Store) -> FastMCP:
         pet_kind (cat, dog, both or none), pet_weight (pounds) and pet_count describe the user's pets; the pets and fenced_yard criteria read them."""
         s = _search_for(store, search_id)
         fields = {k: v for k, v in (("name", name), ("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
-                                    ("people", people), ("adults", adults), ("pet_kind", pet_kind), ("pet_weight", pet_weight), ("pet_count", pet_count)) if v is not None}
+                                    ("people", people), ("adults", adults), ("pet_kind", pet_kind), ("pet_weight", pet_weight), ("pet_count", pet_count), ("down_payment_pct", down_payment_pct)) if v is not None}
         if not (fields or add_anchors_list or add_criteria_list or reweight):
-            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, adults, pet_kind, pet_weight, pet_count, add_criteria_list, reweight or add_anchors_list.")
+            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, adults, pet_kind, pet_weight, pet_count, down_payment_pct, add_criteria_list, reweight or add_anchors_list.")
         problems: list[str] = []
         try:
             store._search_values(fields, partial=True)  # noqa: SLF001
         except ValueError as exc:
             problems.append(str(exc))
         a_clean, a_probs, a_notes = check_anchors(add_anchors_list)
-        c_clean, c_probs, c_notes = check_criteria(add_criteria_list, {str(a["name"]).strip().lower() for a in a_clean})
+        c_clean, c_probs, c_notes = check_criteria(add_criteria_list, {str(a["name"]).strip().lower() for a in a_clean}, search_id=s["id"])
         problems += a_probs + c_probs
         valid = {c["id"]: c for c in store.list_criteria(s["id"])}
         r_clean: list[dict[str, Any]] = []
@@ -1624,7 +1644,7 @@ def build_server(store: Store) -> FastMCP:
                 if isinstance(ch.get("target"), dict):
                     t = dict(ch["target"])
                     if "anchor" in t:
-                        t["anchor_id"] = _anchor(store, t.pop("anchor"))["id"]
+                        t["anchor_id"] = _anchor(store, t.pop("anchor"), s["id"])["id"]
                     ch["target"] = t
                     _clean_target(valid[cid]["kind"], t)
             except ValueError as exc:
@@ -1636,7 +1656,7 @@ def build_server(store: Store) -> FastMCP:
         if fields:
             s = store.update_search(s["id"], **fields)
             notes.append("Changed " + ", ".join(k.replace("_", " ") for k in fields) + ".")
-        a_lines = add_anchors(a_clean)
+        a_lines = add_anchors(a_clean, s["id"])
         if a_lines:
             notes.append("Anchors: " + "; ".join(a_lines))
         for r in r_clean:

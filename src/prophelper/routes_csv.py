@@ -163,5 +163,5 @@ def places_csv(request: Request, search_id: int | None = None, stage: str = "", 
 
     names = people_slots(search)
     opinions = {r["id"]: {o["person"]: o["rating"] for o in store.list_opinions(r["id"])} for r in rows} if names else {}
-    return Response(csv_io.export_csv(rows, store.list_anchors(), search.get("people") or 1, names, opinions), media_type="text/csv; charset=utf-8",
+    return Response(csv_io.export_csv(rows, store.list_anchors(search["id"]), search.get("people") or 1, names, opinions), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})

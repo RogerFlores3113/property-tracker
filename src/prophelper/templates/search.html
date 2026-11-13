@@ -63,6 +63,7 @@
       {{ select("Renting or buying?", "mode", [("rent", "Renting"), ("buy", "Buying")], shown.mode) }}
       {{ field("Area", "area", shown.area) }}
       {{ field("Most you'd pay for the home" if shown.mode == 'buy' else "Most you can spend per month", "budget_max", shown.budget_max if shown.budget_max is not none else '', kind="number", step="any") }}
+      {% if shown.mode == 'buy' %}{{ field("Down payment (percent of the price)", "down_payment_pct", shown.down_payment_pct if shown.down_payment_pct is not none else '', kind="number", step="any", hint="From 0 to 100. Leave empty to use the one in Settings. Monthly costs for this search use it.") }}{% endif %}
       {% if shown.mode != 'buy' %}{{ field("Move in by", "move_in", shown.move_in or '', kind="date") }}{% endif %}
       {% if shown.mode == 'buy' %}{{ field("Target close date", "target_close", shown.target_close or '', kind="date") }}{% endif %}
       {{ field("People splitting the cost (leave at 1 for a family or couple sharing one budget)", "people", shown.people or 1, kind="number", step="1", hint=(("Payment" if shown.mode == "buy" else "Rent") ~ " split between this many people. Place pages, the board and Compare then show a per-person cost.")) }}
