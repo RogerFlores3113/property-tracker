@@ -86,10 +86,10 @@ def test_cats_with_a_fee_means_cats():
     assert r["pets"] == "cats" and r["pet_fee"] == 200
 
 
-def test_conflicting_pet_lines_keep_no_pets_and_say_so():
+def test_conflicting_pet_lines_leave_pets_unknown_and_say_so():
     r = parse_listing("No pets allowed. Pets: up to 2 dogs")
-    assert r["pets"] == "none"
-    assert "no pets and also says some pets are allowed" in r["found_in_listing"]
+    assert "pets" not in r  # changed in cycle 8: a contradiction is unknown, not "no pets"
+    assert "not clear about pets" in r["found_in_listing"] and "ask the landlord" in r["found_in_listing"]
 
 
 def test_plain_no_pets_has_no_conflict_note():
