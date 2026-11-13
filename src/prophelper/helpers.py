@@ -116,6 +116,31 @@ def until(value: str | date | None, today_: date | None = None) -> str:
     return f"in {n} days" if n > 0 else f"{-n} days ago"
 
 
+def closing_info(search: dict[str, Any] | None, today_: date | None = None) -> dict[str, str] | None:
+    """The buyer's closing countdown for a buy search with a target close date, or None.
+    ``place_line`` is 'Closing in 12 days (Feb 15, 2027)' ('Closing target was 3 days ago (...)' once past);
+    ``today_line`` is 'Closing target: Feb 15, 2027, in 12 days'."""
+    if not search or search.get("mode") != "buy" or not search.get("target_close"):
+        return None
+    try:
+        d = date.fromisoformat(str(search["target_close"])[:10])
+    except ValueError:
+        return None
+    n = (d - (today_ or today())).days
+    nice = day_text(d, year=True)
+    nice = nice.split(" ", 1)[1] if nice[:3] in _DAYS else nice  # 'Feb 15, 2027' (no weekday)
+    when = until(d, today_)
+    if n > 1:
+        place_line = f"Closing in {n} days ({nice})"
+    elif n == 1:
+        place_line = f"Closing tomorrow ({nice})"
+    elif n == 0:
+        place_line = f"Closing today ({nice})"
+    else:
+        place_line = f"Closing target was {when} ({nice})"
+    return {"place_line": place_line, "today_line": f"Closing target: {nice}, {when}", "days": str(n)}
+
+
 def days_in_stage(place: dict[str, Any]) -> int:
     n = days_since(place.get("stage_changed_at") or place.get("created_at"))
     return max(0, n or 0)

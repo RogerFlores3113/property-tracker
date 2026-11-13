@@ -228,12 +228,43 @@ def imported_name(name: Any) -> str:
     return base[:200 - len(IMPORT_SUFFIX)].rstrip() + IMPORT_SUFFIX
 
 
-def preview_text(doc: dict[str, Any], places: int | None = None) -> str:
-    """'Adds a search named X (imported) with 7 places' (the name is cut to a sane length; the page escapes it).
-    ``places`` is how many will really be added (from ``dry_run``); without it every readable place is counted."""
+def preview_text(doc: dict[str, Any], places: int | None = None, report: dict[str, Any] | None = None) -> str:
+    """"Adds the search 'X (imported)' (renting) with 7 places, 2 things that matter and 1 important place." The name is
+    cut to a sane length (the page escapes it). ``places`` is how many will really be added (from ``dry_run``); without it
+    every readable place is counted. ``report`` (from ``dry_run``) makes the other counts agree with what will happen, and
+    adds what can't be read. With no places to add, it says so plainly."""
     name = imported_name(doc["search"].get("name"))
+    mode = "buying" if str(doc["search"].get("mode") or "rent") == "buy" else "renting"
+    rep = report or {}
     n = len(doc["places"]) if places is None else places
-    return f"Adds a search named {name} with {n} place{'s' if n != 1 else ''}"
+    crit = max(0, len(doc.get("criteria") or []) - int(rep.get("criteria_skipped") or 0))
+    anch = max(0, len(doc.get("anchors") or []) - int(rep.get("anchors_skipped") or 0))
+    bad = int(rep.get("places_skipped") or 0)
+
+    def count(k: int, one: str, many: str) -> str:
+        return f"{k} {one if k == 1 else many}"
+
+    if n == 0:
+        text = f"Adds the search '{name}' ({mode}) but no places"
+    else:
+        text = f"Adds the search '{name}' ({mode}) with {count(n, 'place', 'places')}"
+    text += f", {count(crit, 'thing that matters', 'things that matter')} and {count(anch, 'important place', 'important places')}."
+    if bad:
+        text += (f" {count(bad, 'place', 'places')} can't be read and will be left out."
+                 if n else f" {'The place' if bad == 1 else 'All ' + str(bad) + ' places'} can't be read, so none will be added.")
+    elif n == 0:
+        text += " The file has no places."
+    return text
+
+
+def anchor_dropped_lines(report: dict[str, Any], *, done: bool = False) -> list[str]:
+    """One line for each important place with coordinates (or an address) that can't be used, so it is left out."""
+    out = []
+    for item in report.get("anchors_dropped") or []:
+        name = str(item.get("name") or "An important place")[:60]
+        why = "has coordinates that can't be used" if item.get("coords") else "can't be read"
+        out.append(f"The important place '{name}' {why}, so it {'was' if done else 'will be'} left out.")
+    return out
 
 
 def clean_photo_links(value: Any) -> tuple[list[str], int, int]:
@@ -283,7 +314,9 @@ def left_out_lines(report: dict[str, Any], *, done: bool = False) -> list[str]:
         out.append(f"{n('places_skipped')} place{s('places_skipped', '', 's')} can't be read and {gone('places_skipped')} left out.")
     if n("criteria_skipped"):
         out.append(f"{n('criteria_skipped')} thing{s('criteria_skipped', '', 's')} that matter{s('criteria_skipped', 's', '')} can't be read and {gone('criteria_skipped')} left out.")
-    if n("anchors_skipped"):
+    if report.get("anchors_dropped") and n("anchors_skipped") == len(report["anchors_dropped"]):
+        out.extend(anchor_dropped_lines(report, done=done))
+    elif n("anchors_skipped"):
         out.append(f"{n('anchors_skipped')} important place{s('anchors_skipped', '', 's')} can't be read and {gone('anchors_skipped')} left out.")
     if n("link_unsafe"):
         out.append(f"{n('link_unsafe')} place{s('link_unsafe', ' has a link that isn' + chr(39) + 't', 's have links that aren' + chr(39) + 't')} a normal web address. "
@@ -335,6 +368,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
     photos_dropped = photos_upgraded = 0
     created = 0
     fields_skipped: list[str] = []
+    anchors_dropped: list[dict[str, Any]] = []
     with store._write():
         mode = str(s.get("mode") or "rent")
         fields = {k: s.get(k) for k in ("area", "move_in", "target_close", "budget_max", "people", "adults", "people_names", "down_payment_pct") if s.get(k) not in (None, "")}
@@ -359,6 +393,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
                 made = match or store.add_anchor(name, addr, a.get("lat"), a.get("lng"), search_id=sid)
             except ValueError:
                 anchors_skipped += 1
+                anchors_dropped.append({"name": name, "coords": a.get("lat") not in (None, "") or a.get("lng") not in (None, "")})
                 continue
             if match is None:
                 existing.append(made)
@@ -406,7 +441,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
                     pass  # a travel time that can't be read is simply not added
     return {"search": store.get_search(sid), "places": created, "link_dropped": dropped, "link_unsafe": unsafe,
             "places_skipped": places_skipped, "criteria_skipped": criteria_skipped, "anchors_skipped": anchors_skipped,
-            "fields_skipped": fields_skipped, "photos_dropped": photos_dropped, "photos_upgraded": photos_upgraded, "skipped": places_skipped + criteria_skipped + anchors_skipped}
+            "fields_skipped": fields_skipped, "anchors_dropped": anchors_dropped, "photos_dropped": photos_dropped, "photos_upgraded": photos_upgraded, "skipped": places_skipped + criteria_skipped + anchors_skipped}
 
 
 # --------------------------------------------------------------------------- a file waiting for "Add it"

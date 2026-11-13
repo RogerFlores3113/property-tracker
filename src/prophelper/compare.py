@@ -184,7 +184,7 @@ def _yes_no(v: Any) -> dict[str, Any]:
 
 
 def _cost_cell(p: dict[str, Any]) -> dict[str, Any]:
-    cell = _money(p["cost_total"], True)
+    cell = _money(p["cost_total"])
     unc = p["cost"].get("uncounted") or []
     if cell["value"] is not None and unc:
         cell["text"] += f" ({', '.join(unc)} not counted yet)"
@@ -357,7 +357,7 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
 
 
 def _per_person_cell(p: dict[str, Any]) -> dict[str, Any]:
-    cell = _money(p.get("per_person"), True)
+    cell = _money(p.get("per_person"))
     if cell["value"] is not None and p["cost"].get("uncounted"):
         cell["incomplete"] = True
     if cell["value"] is not None:
@@ -517,7 +517,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if key == "pet_rent" and not p["cost"].get("pets_counted", True):
                 cells.append(_cell(NOT_COUNTED_NO_PETS))  # the search has no pets: not a $0, not comparable
                 continue
-            cell = _money(amount, True)
+            cell = _money(amount)
             if key == "utilities" and amount == 0 and not _utilities_fully_included(p):
                 cell["incomplete"] = True  # a $0 guess for a place that only includes some utilities can't tie a fully included one
             if key == "pet_rent" and amount == 0:

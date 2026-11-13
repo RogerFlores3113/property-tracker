@@ -38,6 +38,7 @@
         {{ field("Bedrooms you need", "bedrooms", "", kind="number", step="1", hint="Optional. A place with fewer bedrooms then shows as not fitting. Leave empty if any size is fine.", id="new-bedrooms") }}
         {{ field("Move in by (renting)", "move_in", "", kind="date") }}
         {{ field("Target close date (buying)", "target_close", "", kind="date") }}
+        <div data-buy-only>{{ field("Down payment (percent of the price, buying)", "down_payment_pct", "", kind="number", step="any", hint="Only for buying. From 0 to 100. Leave empty to use the one in Settings.", id="new-down") }}</div>
       </div>
       {{ field("Notes", "notes", "", kind="textarea", rows=2) }}
       <p>{{ button("Make this search", kind="primary") }}</p>
@@ -78,6 +79,7 @@
     {{ check("Hide places that fail a must have from the board (never hides a place with a tour, a contact, or a stage past Saved)", "hide_dealbreakers", shown.hide_dealbreakers) }}
     <p>{{ button("Save search", kind="primary") }}</p>
   </form>
+  <p class="fine"><a class="btn small" href="/places.csv?search_id={{ shown.id }}" download id="csv-link">Download spreadsheet (CSV)</a> All the places in this search in one file you can open in Excel or Google Sheets.</p>
   <p class="fine"><a class="btn small" href="/search/export.json?id={{ shown.id }}" download>Export this search</a> Saves a file with this search, what matters, the important places and the places with their listing text, to send to a housemate. It never holds your contacts, documents, notes or ratings.</p>
   {% set _shown_places = request.app.state.store.list_places(shown.id) %}
   <div id="share-links">

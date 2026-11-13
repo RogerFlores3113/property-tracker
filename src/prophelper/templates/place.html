@@ -22,6 +22,7 @@
     <a class="btn small" href="/board">Back to the board</a>
   </div>
 </div>
+{% if closing %}<p id="closing-days" class="{{ 'flash' if closing.prominent else 'fine' }}">{% if closing.prominent %}<strong>{{ closing.place_line }}</strong>{% else %}{{ closing.place_line }}{% endif %}</p>{% endif %}
 <p class="fine">Part of <a href="/search?id={{ search.id }}">{{ search.name }}</a>. Last moved {{ place.stage_changed_at|ago if place.stage_changed_at else 'never' }}.</p>
 
 {% if place.commute_all %}<p class="fine place-commutes">Commute: {% for c in place.commute_all %}{{ c.anchor }} {% if c.source == 'estimate' %}about {% endif %}{{ c.minutes|round|int }} min {{ c.mode }}{% if c.source == 'estimate' %} (estimate){% endif %}{% if not loop.last %} &middot; {% endif %}{% endfor %}</p>{% endif %}
@@ -53,9 +54,9 @@
     {% if c.mode == 'buy' and c.down_payment is not none %}<p class="fine">Down payment {{ c.down_payment|money }} ({{ '%g'|format(c.settings.down_payment_pct) }}%). Loan {{ c.loan_amount|money }}.{% if c.pmi is not none %} Mortgage insurance (PMI) is a rough estimate of {{ c.pmi|money }} a month, since you put down under 20%.{% endif %}</p>{% endif %}
     <table class="cost-table">
       {% for l in c.lines %}<tr><td>{{ l.label }}{% if l.note %}<div class="fine">{{ l.note }}</div>{% endif %}</td>
-        <td class="amt">{% if l.amount is none %}<span class="missing">unknown</span>{% elif l.unset %}<span class="fine">Not known</span>{% else %}{{ l.amount|money(cents=True) }}{% endif %}</td></tr>{% endfor %}
-      <tr class="total"><td>Per month{% if c.uncounted %}, so far{% else %}, all in{% endif %}</td><td class="amt">{% if c.total is not none %}{{ c.total|money(cents=True) }}{% else %}&ndash;{% endif %}</td></tr>
-      {% if c.per_person is not none %}<tr class="total"><td>Per person ({{ c.people }} {{ c.split_noun or "people" }})</td><td class="amt">{{ c.per_person|money(cents=True) }}</td></tr>{% endif %}
+        <td class="amt">{% if l.amount is none %}<span class="missing">unknown</span>{% elif l.unset %}<span class="fine">Not known</span>{% else %}{{ l.amount|money }}{% endif %}</td></tr>{% endfor %}
+      <tr class="total"><td>Per month{% if c.uncounted %}, so far{% else %}, all in{% endif %}</td><td class="amt">{% if c.total is not none %}{{ c.total|money }}{% else %}&ndash;{% endif %}</td></tr>
+      {% if c.per_person is not none %}<tr class="total"><td>Per person ({{ c.people }} {{ c.split_noun or "people" }})</td><td class="amt">{{ c.per_person|money }}</td></tr>{% endif %}
     </table>
     {% else %}<p>Add the price to see the true monthly cost.</p>{% endif %}
     {% if c.missing %}<p class="missing">Not counted yet because it is missing: {{ c.missing|join(', ') }}. Fill {{ 'it' if c.missing|length == 1 else 'them' }} in under Facts to make the number honest.</p>{% endif %}

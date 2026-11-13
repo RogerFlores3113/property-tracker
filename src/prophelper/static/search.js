@@ -31,6 +31,13 @@
       };
       setBudget();
       modeSel.addEventListener("change", setBudget);
+      // The down payment box is for buying only.
+      var buyOnly = document.querySelectorAll("[data-buy-only]");
+      var setBuy = function () {
+        for (var b = 0; b < buyOnly.length; b++) { buyOnly[b].hidden = modeSel.value !== "buy"; }
+      };
+      setBuy();
+      modeSel.addEventListener("change", setBuy);
     }
     // A saved place you go often with no location starts with its coordinates folded away; one with a location too.
     var folded = document.querySelectorAll("details.coords");
