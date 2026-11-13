@@ -80,6 +80,12 @@ def feature_info(feature: str) -> dict[str, Any] | None:
     return FEATURES.get(feature)
 
 
+def style_rules(mode: str = "") -> str:
+    """The shared style rules, with the intro naming what the person is doing (renting, buying, or either when unknown)."""
+    what = {"rent": "to rent", "buy": "to buy"}.get(mode, "to rent or buy")
+    return STYLE_RULES.replace("looking for a place to rent or buy", f"looking for a place {what}", 1)
+
+
 STYLE_RULES = (
     "You are helping a person who is looking for a place to rent or buy. Write in plain, warm, natural language. "
     "Never use em-dashes or en-dashes; use commas, periods or parentheses instead. Avoid filler such as "
@@ -401,7 +407,7 @@ def build_prompt(store: Store, place_id: int, feature: str, purpose: str = "") -
     search = store.get_search(place["search_id"])
     contacts = store.contacts_for_place(place_id) if feature == "message" else []
     prompt = _instructions(feature, place, purpose, contacts, search["mode"]) + "\n\n" + _context(store, place, search)
-    return STYLE_RULES, prompt, place
+    return style_rules(search["mode"]), prompt, place
 
 
 def claude_link(prompt: str) -> tuple[str, bool]:

@@ -15,7 +15,7 @@
     <li>Automatic backups are in the same folder, in <code>backups</code>. The app makes one before a restore, before removing the sample data and before a delete. Each is a full copy of your data, notes included, and the newest 10 of each kind are kept.</li>
     <li>Downloads (a backup copy, the documents zip, spreadsheet (CSV) files, JSON and calendar files) go only to your browser's downloads folder, and only a page you opened from the app can ask for them. Backups never include your AI key.</li>
     <li>There are no accounts and no cloud copy. If you delete the folder, your data is gone, so download a backup now and then.</li>
-    <li>This window only answers requests from this computer, and only from a browser opened by the app icon (or <code>prophelper open</code>). That browser gets a random code in a cookie that works for 12 hours after you last used it; restarting the app ends it.</li>
+    <li>This window only answers requests from this computer, and only from a browser opened by the app icon (or <code>prophelper open</code>). That browser gets a random code in a cookie that works for 12 hours after you last used it (after that the page asks you to open the app again); restarting the app ends it.</li>
   </ul>
 </section>
 
@@ -48,7 +48,7 @@
   <ul class="privacy-list">
     <li>No telemetry, no analytics, no update checks, no advertising.</li>
     <li>The app itself never opens a listing link or a listing website. When you paste a link, only its shape is read on your computer. Photos from a listing load from the listing's website only if you turn on "Show listing photos" in Settings (see the list above).</li>
-    <li>Your AI app (Claude or Codex) may read, search or scrape listing pages with its own tools and pass what it found to Property Helper. Some sites forbid automated scraping in their terms of service, so check a site's terms first. Reading a page you could open yourself is usually fine. Settings has a "Stricter scraping guards" switch that tells the AI not to scrape and limits how many places it can add.</li>
+    <li>Your AI app (Claude or Codex) may read and search listing pages with its own tools and pass what it found to Property Helper. Some sites forbid automated reading in their terms of service, so check a site's terms first. Reading a page you could open yourself is usually fine. Settings has a "Stricter rules when Claude reads websites" switch that tells the AI not to crawl sites and limits how many places it can add.</li>
     <li>An AI app you connected can read and add places, and update them, but it cannot delete anything, and it never changes your own notes.</li>
   </ul>
 </section>

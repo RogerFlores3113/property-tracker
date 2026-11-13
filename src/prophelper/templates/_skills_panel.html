@@ -1,7 +1,7 @@
 <section class="card" id="skills-panel">
   <h2>{% if show_step %}Step 2. {% endif %}Add skills</h2>
   {% if show_step %}<p><strong>A skill is a short page of written instructions that your AI app reads so it does its work well here.</strong></p>
-  {% endif %}<p>Press the button. It saves one add-on file (Claude calls it a plugin). Then, in the Claude app, upload that file once: Customize, then Plugins, then Add, then Upload plugin.</p>
+  {% endif %}<p>Press the button. It saves one add-on file (Claude calls it a plugin). Then, in the Claude app, upload that file once: Customize, then Plugins, then Add, then Upload plugin. (Those are the menu names in the Claude app. "Upload plugin" just means picking the file we saved, from your computer.)</p>
   <p>
     <button class="btn primary" type="button" id="add-skills-btn" hx-post="/skills/add" hx-target="#skills-add-result" hx-swap="innerHTML" hx-indicator="#skills-add-busy">Add skills</button>
     <span id="skills-add-busy" class="htmx-indicator fine" aria-live="polite">Adding...</span>

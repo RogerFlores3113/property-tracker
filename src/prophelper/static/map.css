@@ -19,3 +19,5 @@
 .ph-ring { stroke: var(--accent); stroke-dasharray: 6 5; }
 .ph-popup a { font-weight: 700; }
 .map-list .item { padding: .5rem 0; }
+
+.ph-pin.pin-passed { opacity: .5; filter: grayscale(.8); }

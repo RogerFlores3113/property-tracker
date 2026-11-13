@@ -41,7 +41,7 @@
       {% if located %}
       <ul class="items map-list">
         {% for p in located %}
-        <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a>
+        <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a>{% if p.stage == "Passed" %} <span class="fine">(passed)</span>{% endif %}
           <span class="item-sub">{{ score_pill(p.score_total, p.band) }} {% if p.cost_total is not none %}{{ p.cost_total|money }}/mo{% else %}no cost yet{% endif %}{% if p.miles is not none and chosen %} &middot; {{ p.miles }} mi from {{ chosen.name }}{% endif %}</span>
           <span class="fine">{{ p.lat|round(4) }}, {{ p.lng|round(4) }}</span></div></li>
         {% endfor %}

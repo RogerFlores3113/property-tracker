@@ -58,7 +58,7 @@ def test_buy_place_roles_documents_and_pets(store):
     kinds = options_of(html, "doc-kind")
     assert kinds[:6] == ["Offer", "Purchase contract", "Inspection report", "Appraisal", "Disclosures", "Loan estimate"]
     assert "Lease" not in kinds
-    assert "Pets allowed by the HOA or building" in visible(html)
+    assert "Pets allowed by the HOA or building" not in visible(html) and "name=\"pets\"" not in html  # C4: no Pets selector when buying
 
 
 def test_buy_contact_and_document_kinds_are_accepted(store):

@@ -209,7 +209,7 @@ def save_look(request: Request, theme: str = Form(""), color_mode: str = Form(""
 def save_strict(request: Request, on: str = Form("")):
     store = get_store(request)
     store.set_setting("strict_scraping", "1" if on == "1" else "0")
-    return redirect("/settings#scraping", notice="Stricter scraping guards are on." if on == "1" else "Stricter scraping guards are off.")
+    return redirect("/settings#scraping", notice="Stricter rules for AI reading websites are on." if on == "1" else "Stricter rules for AI reading websites are off.")
 
 
 @router.post("/settings/ai-key", include_in_schema=False)
