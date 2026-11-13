@@ -97,7 +97,7 @@ def test_unknown_parts_cannot_be_lowest_unless_all_have_them(store):
     es = _e(store, s, cheap, other)
     r = compare.lowest_cost(es)
     assert r["all_unknown"] and [p["title"] for p in r["winners"]] == ["Cheap"]
-    assert "every place leaves a cost part out" in compare.summary_lines(es, compare.build_rows(es))[0]
+    assert "its utilities aren't counted" in compare.summary_lines(es, compare.build_rows(es))[0]
 
 
 # ---- 3: wording

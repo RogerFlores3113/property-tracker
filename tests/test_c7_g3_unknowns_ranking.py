@@ -183,10 +183,10 @@ def test_at_a_glance_has_no_stacked_brackets_and_mcp_agrees(store):
     b, _ = store.add_place(title="Other", address="2 A St", price=1000, beds=1)
     es = _es(store, s, a, b)
     first = compare.summary_lines(es, compare.build_rows(es))[0]
-    assert "(" not in first and first == "Cheap has the lowest true monthly cost, though every place leaves a cost part out."
+    assert "(" not in first and first == "Cheap has the lowest true monthly cost, but its utilities aren't counted."
     out = text(call(server(store), "compare_places", place_ids=[a["id"], b["id"]]))
     low = [l for l in out.split("\n") if l.startswith("Lowest true")][0]
-    assert "(" not in low and "though every place leaves a cost part out" in low
+    assert "(" not in low and "but its utilities aren't counted" in low
 
 
 def test_score_cell_names_the_unknowns(store):

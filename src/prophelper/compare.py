@@ -238,11 +238,17 @@ def _yes_no(v: Any) -> dict[str, Any]:
     return _cell("Yes" if v else "No", 1.0 if v else 0.0)
 
 
+def flat_cost_name(u: str) -> str:
+    """'utilities (electric and gas)' becomes 'electric and gas utilities', so a name never nests brackets inside brackets."""
+    m = re.fullmatch(r"utilities \((.*)\)", u.strip())
+    return f"{m.group(1)} utilities" if m else u
+
+
 def _cost_cell(p: dict[str, Any]) -> dict[str, Any]:
     cell = _money(p["cost_total"])
     unc = _uncounted(p)
     if cell["value"] is not None and unc:
-        cell["text"] += f" ({', '.join(unc)} not counted yet)"
+        cell["text"] += f" ({', '.join(flat_cost_name(u) for u in unc)} not counted yet)"
         cell["incomplete"] = True
     return cell
 
@@ -694,7 +700,13 @@ def lowest_note(r: dict[str, Any]) -> str:
     """The plain tail of the lowest-cost sentence, never nested brackets: ' of the places that fit', and, when every place
     leaves a cost part out, ', though every place leaves a cost part out'."""
     note = " of the places that fit" if r["of_fit"] else ""
-    return note + (", though every place leaves a cost part out" if r["all_unknown"] else "")
+    if not r["all_unknown"]:
+        return note
+    w = r.get("winners") or []
+    if len(w) == 1:  # name what the winner leaves out: "..., but its electric isn't counted"
+        left = _join_and([("utilities" if u == "utilities estimate" else u) for u in cost_unknowns(w[0])] or [_short_parts(w[0])])
+        return note + f", but its {left} {'aren' if _aren_t(left) == 'are' else 'isn'}'t counted"
+    return note + ", though every place leaves a cost part out"
 
 
 def _short_parts(p: dict[str, Any]) -> str:

@@ -100,7 +100,9 @@ def test_compare_and_share_show_months_and_name_the_utilities(store, two_rent):
     for path in (f"/compare?ids={a['id']}&ids={b['id']}", f"/compare/share.html?ids={a['id']}&ids={b['id']}&notes=0"):
         flat = _flat(c.get(path).text)
         assert "Months of rent due before move-in" in flat, path
-        assert "utilities (electric and gas)" in flat or "utilities (gas and electric)" in flat or "utilities (electric, gas)" in flat, flat[:0] or path
+        # C8: no nested brackets, so the cost cell says "electric and gas utilities not counted yet"
+        assert "utilities (" not in flat, path
+        assert any(f"{x} utilities not counted yet" in flat for x in ("electric and gas", "gas and electric", "electric, gas")), path
         assert re.search(r"Other monthly fees\s+Not known\s+\$25", flat), path
         assert not re.search(r"Other monthly fees\s+\$0", flat), path
 

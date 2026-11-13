@@ -204,6 +204,10 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
     writer.writerow([h for h, _ in EXPORT_COLUMNS] + [_safe_cell(f"{n}'s rating") for n in names]
                     + ["True monthly cost", "Cost per person per month", "Score out of 100"]
                     + [_safe_cell(h) for a in anchors for h in (f"Commute to {a.get('name', '')} (minutes)", f"Commute to {a.get('name', '')} (way)")])
+    if places and all(isinstance(p.get("score"), dict) and "sort_group" in p["score"] for p in places):
+        # fit state first (fits, near miss, doesn't fit, check first), then the best score, so a scam at 50 is not mid-table
+        from .scoring import sort_key
+        places = sorted(places, key=sort_key)
     for p in places:
         mine = opinions.get(p.get("id")) or {}
         row = []

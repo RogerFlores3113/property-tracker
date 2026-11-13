@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from . import enrich, helpers, redflags, scoring, stages
+from . import compare, enrich, helpers, redflags, scoring, stages
 from .store import PLACE_DATE_LABELS, Store
 
 COMING_UP_DAYS = 14
@@ -46,8 +46,13 @@ def is_near(place: dict[str, Any]) -> bool:
     return bool(score.get("near")) or score.get("fit") == "near_miss"
 
 
+def ai_text_only(place: dict[str, Any]) -> bool:
+    """True when the only thing to check in the listing is text aimed at AI tools (no scam sign)."""
+    return compare.ai_text_only(place)
+
+
 def is_best_fit(place: dict[str, Any]) -> bool:
-    return fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place)
+    return fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place)
 
 
 def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
@@ -70,18 +75,34 @@ def no_price(place: dict[str, Any]) -> bool:
     return "cost_total" in place and place["cost_total"] is None
 
 
+def _open(p: dict[str, Any]) -> bool:
+    return not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed")
+
+
 def needs_price(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Open places that would be best fits but have no rent or price yet: listed after the priced fits as "no price yet"."""
-    return [p for p in rows if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and is_best_fit(p) and no_price(p)]
+    """Open places with no rent or price yet that fit so far (a score, no failed must-have, no scam or AI-text sign).
+    A no-price place always lands here, whatever else is still unknown about it, so it never drops out of Today."""
+    return [p for p in rows if _open(p) and fits(p) and not ai_text_only(p) and no_price(p)]
 
 
 CHECK_FIRST_TEXT = "Possible scam signs in the listing. Tour it and read the lease before you pay anything."
+CHECK_FIRST_BUY_TEXT = "Possible scam signs in the listing. See it in person and read the contract, and use escrow, before you send any money."
+AI_TEXT_CHECK_TEXT = "Text aimed at AI tools in the listing. Read it yourself before you rely on this score."
 
 
-def check_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Open places flagged as a possible scam: [{"place", "text"}]. They are not best fits or new places, but never hidden."""
-    return [{"place": p, "text": CHECK_FIRST_TEXT} for p in rows
-            if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and possible_scam(p)]
+def check_first(rows: list[dict[str, Any]], mode: str = "rent") -> list[dict[str, Any]]:
+    """Open places flagged as a possible scam, or whose only flag is text aimed at AI tools: [{"place", "text"}].
+    They are not best fits or new places, but never hidden."""
+    scam_text = CHECK_FIRST_BUY_TEXT if mode == "buy" else CHECK_FIRST_TEXT
+    out = []
+    for p in rows:
+        if not _open(p):
+            continue
+        if possible_scam(p):
+            out.append({"place": p, "text": scam_text})
+        elif ai_text_only(p):
+            out.append({"place": p, "text": AI_TEXT_CHECK_TEXT})
+    return out
 
 
 def caution(place: dict[str, Any]) -> str:
@@ -297,7 +318,7 @@ def new_places(store: Store, search: dict[str, Any]) -> list[dict[str, Any]]:
     if not unseen:
         return []
     rows = enrich.enrich_places(store, search, unseen)
-    return [p for p in rows if not fails_dealbreakers(p) and not possible_scam(p)]
+    return [p for p in rows if not fails_dealbreakers(p) and not possible_scam(p) and not ai_text_only(p)]
 
 
 def late_availability(rows: list[dict[str, Any]], search: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
@@ -311,8 +332,11 @@ def late_availability(rows: list[dict[str, Any]], search: dict[str, Any], limit:
     return out[:limit]
 
 
-def build(store: Store, search: dict[str, Any]) -> dict[str, Any]:
-    """Everything the Today template needs for one search."""
+def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> dict[str, Any]:
+    """Everything the Today page and the MCP todays_list need for one search: the one place both read from, so every
+    section holds the same places on the page and in Claude's list."""
     rows = enrich.enrich_places(store, search)
-    return {"fits": best_fits(rows), "needs_price": needs_price(rows), "check_first": check_first(rows), "near_miss": near_misses(rows), "coming": coming_up(store, search, rows), "waiting": waiting_rows(store, search),
-            "new": new_places(store, search), "late": late_availability(rows, search)}
+    return {"fits": best_fits(rows), "needs_price": needs_price(rows), "check_first": check_first(rows, search.get("mode", "rent")),
+            "near_miss": near_misses(rows), "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
+            "new": new_places(store, search), "late": late_availability(rows, search),
+            "tours": store.upcoming_tours(days, search_id=search["id"])}
