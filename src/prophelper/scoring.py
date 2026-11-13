@@ -134,7 +134,7 @@ def _buyer_assessment(place: dict[str, Any]) -> float:
 
 
 NEAR_GUESS = 0.05  # over by this share or less, only because of a guess, is a near miss and not a fail
-_PART_NAMES = {"utilities": "utilities", "parking": "parking", "pet_rent": "pet rent", "other": "other fees"}
+_PART_NAMES = {"utilities": "utilities", "parking": "parking", "pet_rent": "pet rent", "other": "other fees", "one_time": "fees spread"}
 
 
 def _cost_parts(cost: dict[str, Any]) -> tuple[float | None, list[str], float]:
