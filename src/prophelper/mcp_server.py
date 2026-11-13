@@ -1426,37 +1426,39 @@ def build_server(store: Store) -> FastMCP:
         if cur is None:
             return reply(lines[0] + " There is no search yet. Call create_search.", tours=0)
         days = max(1, int(days))
-        rows = enrich_places(store, cur)
-        fits = today_view.best_fits(rows)
+        data = today_view.build(store, cur, days)
+        fits = data["fits"]
         lines.append("Best fits right now:" + (" none yet." if not fits else ""))
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
             lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}/mo true cost{each}"
                          + (f". {p['caution']}" if p.get("caution") else ""))
-        for p in today_view.needs_price(rows):
+        for p in data["needs_price"]:
             lines.append(f"Needs a price: #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, no price yet, so it is not ranked.")
-        for c in today_view.check_first(rows):
-            lines.append(f"Check first: #{c['place']['id']} {_title(c['place'])}: possible scam signs in the listing. Tour it and read the lease before paying anything.")
-        tours = store.upcoming_tours(days, search_id=cur["id"])
+        for c in data["check_first"]:
+            lines.append(f"Check first: #{c['place']['id']} {_title(c['place'])}: {c['text'][0].lower() + c['text'][1:]}")
+        for n in data["near_miss"]:
+            lines.append(f"Near miss: #{n['place']['id']} {_title(n['place'])}: {n['text']}.")
+        tours = data["tours"]
         lines.append(f"Tours in the next {days} days:" + (" none." if not tours else ""))
         for t in tours:
             lines.append(f"  - {helpers.local_time(t['starts_at'])}: {_t(t['title'])} (place {t['place_id']}, tour {t['id']}), {t['duration_minutes']} min"
                          + (f", with {_t(t['with_whom'], 'tour contact', 60)}" if t["with_whom"] else "")
                          + ". For prep, get_place and the tour checklist.")
-        dates = [c for c in today_view.coming_up(store, cur, rows, days) if c["kind"] != "tour"]
+        dates = [c for c in data["coming"] if c["kind"] != "tour"]
         lines.append(f"Dates in the next {days} days:" + (" none." if not dates else ""))
         for d in dates[:8]:
             lines.append(f"  - {helpers.day_text(d['date'])}: {_t(d['label'], 'date label', 60)} at {_t(d['title'])}" + (f", {_t(d['note'], 'date note', 80)}" if d["note"] else ""))
-        waiting = today_view.waiting_rows(store, cur)
+        waiting = data["waiting"]
         lines.append("Waiting on a reply:" + (" none." if not waiting else ""))
         for w in waiting[:8]:
             pl = f" about {_t(w['place']['title'])}" if w.get("place") else ""
             lines.append(f"  - {_t(w['contact']['name'], 'contact name', 60)}{pl}: you wrote {w['days']} days ago. A nudge could help; ask the user before sending.")
-        new = today_view.new_places(store, cur)
+        new = data["new"]
         lines.append("New places the user has not looked at:" + (" none." if not new else ""))
         for p in new[:8]:
             lines.append(f"  - #{p['id']} {_title(p)}" + (" (no price yet)" if p.get("cost_total") is None else ""))
-        late = today_view.late_availability(rows, cur)
+        late = data["late"]
         for item in late:
             lines.append(f"Heads up: {_title(item['place'])} (id {item['place']['id']}): {item['text']}.")
         if not store.list_criteria(cur["id"]):

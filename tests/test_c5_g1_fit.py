@@ -64,7 +64,8 @@ def test_unknown_cost_caps_a_passing_price(store):
     assert e2["score_total"] == 100 and not e2["score"]["conditional"]
 
 
-def test_ai_text_flag_gets_a_caution_in_best_fits_and_scams_are_left_out(store):
+def test_ai_text_flag_goes_to_check_first_not_best_fits_and_scams_too(store):
+    # C8: a place whose only flag is text aimed at AI tools is no longer a best fit with a caution; it sits under Check first
     s = store.add_search("R", "rent", budget_max=2000)
     store.add_criterion(s["id"], "price", weight=30, dealbreaker=True, target={"max": 2000})
     store.add_place(title="Ai", address="1 A St", price=1000, utilities_estimate=50,
@@ -74,13 +75,12 @@ def test_ai_text_flag_gets_a_caution_in_best_fits_and_scams_are_left_out(store):
     rows = enrich.enrich_places(store, s)
     titles = {r["title"]: r for r in rows}
     assert titles["Scam"]["possible_scam"]
-    best = today.best_fits(rows)
-    assert [p["title"] for p in best] == ["Ai"] and best[0]["caution"]
-    assert "Check first: text aimed at AI tools in the listing" in text(call(server(store), "todays_list"))
-    assert "Check first: text aimed at AI tools in the listing" in local_client(store).get("/").text
+    assert today.best_fits(rows) == []
+    assert sorted(c["place"]["title"] for c in today.check_first(rows)) == ["Ai", "Scam"]
     out = text(call(server(store), "todays_list"))
-    # C7: a possible scam is not a best fit, but Today lists it under "Check first" instead of hiding it
-    assert "Scam" not in out.split("Best fits right now:")[1].split("Check first: #")[0]
+    assert "Check first: #1 " in out and "text aimed at AI tools in the listing" in out
+    assert "Text aimed at AI tools in the listing" in local_client(store).get("/").text
+    assert "Ai" not in out.split("Best fits right now:")[1].split("Check first: #")[0]
     assert "Check first: #2" in out
 
 
