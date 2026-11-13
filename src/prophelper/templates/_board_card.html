@@ -1,0 +1,29 @@
+{% from "_macros.html" import sample_badge, score_pill %}
+{% from "_fit.html" import fit_badge, score_note %}
+<article class="card kcard" draggable="true" data-id="{{ p.id }}" data-search="{{ (p.title ~ ' ' ~ p.address ~ ' ' ~ p.city)|lower }}" data-stage="{{ p.stage }}">
+  <a class="kcard-title" href="/places/{{ p.id }}">{{ p.title }}</a>{% if p.is_sample %} {{ sample_badge(true) }}{% endif %}
+  <div class="kcard-meta">
+    {% if p.score.fit != 'doesnt_fit' %}{{ score_pill(p.score_total, p.band) }}{% endif %}
+    <strong>{% if p.cost_total is not none %}{{ p.cost_total|money }}/mo{% else %}<span class="missing">no cost yet</span>{% endif %}</strong>
+    <span class="fine">{% if p.beds is not none %}{{ p.beds|beds }}{% endif %}</span>
+  </div>
+  {% if p.cost.mode == 'buy' and p.price %}<div class="fine">Price {{ p.price|money }}</div>{% endif %}
+  {% if p.score.fit != 'fits' %}<div class="kcard-fit">{{ fit_badge(p) }}</div>{% endif %}
+  {% if p.cost_total is not none and p.cost.uncounted %}<div class="fine">{{ p.cost.uncounted|join(', ') }} not counted yet</div>{% endif %}
+  {% if p.per_person is not none %}<div class="fine">{{ p.per_person|money }} per person ({{ p.people }} people)</div>{% endif %}
+  {% if p.opinions %}<div class="fine">Average of {{ p.opinions.count }}: {{ p.opinions.average }} of 5</div>{% endif %}
+  {% if p.commute_tops %}<div class="fine kcard-commutes">{% for t in p.commute_tops %}{{ t.anchor }} {{ t.minutes|round|int }} min {{ t.mode }}{% if not loop.last %} &middot; {% endif %}{% endfor %}</div>
+  {% elif p.top_commute %}<div class="fine kcard-commutes">{{ p.top_commute.anchor }} {{ p.top_commute.minutes|round|int }} min {{ p.top_commute.mode }}</div>{% endif %}
+  {% if p.score_total is not none and p.score.unknown_count %}<div class="fine">{{ score_note(p) }}</div>{% endif %}
+  {% if p.flags %}<div class="flag" title="{{ p.flags|join('; ') }}">&#9888; {{ p.flags|length }} thing{{ 's' if p.flags|length != 1 }} to check</div>{% endif %}
+  {% if p.hidden or p.hidden_by_dealbreaker %}<div class="fine">Hidden: {{ 'by you' if p.hidden else 'misses a must have' }}</div>{% endif %}
+  <div class="fine"><span data-days>{{ p.stage_changed_at|ago if p.stage_changed_at else '' }}</span></div>
+  {% if p.next %}<div class="kcard-next">{{ p.next.text }} ({{ p.next.rel }})</div>{% endif %}
+  <form class="stage-form" method="post" action="/places/{{ p.id }}/stage" data-board-move>
+    <label class="sr" for="bs-{{ p.id }}">Move {{ p.title }} to</label>
+    <select id="bs-{{ p.id }}" name="stage">
+      {% for s in stages %}<option value="{{ s }}"{% if s == p.stage %} selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+    <noscript><button class="btn small" type="submit">Move</button></noscript>
+  </form>
+</article>

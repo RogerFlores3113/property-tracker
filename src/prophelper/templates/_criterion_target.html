@@ -1,0 +1,23 @@
+{# Inputs for a criterion's target. `kind` and `t` (a dict, may be empty) and `pre` (an id prefix) come from the includer. #}
+{% if kind == 'price' %}
+<div class="field"><label for="{{ pre }}-max">{{ "Most you'd pay for the home" if search_mode == 'buy' else 'Most per month, all in' }}</label><input id="{{ pre }}-max" name="t_max" type="number" step="any" value="{{ t.get('max', '') }}"></div>
+{% elif kind in ('beds', 'baths', 'sqft') %}
+<div class="field"><label for="{{ pre }}-min">At least</label><input id="{{ pre }}-min" name="t_min" type="number" step="any" value="{{ t.get('min', '') }}"></div>
+{% elif kind == 'commute' %}
+<div class="field"><label for="{{ pre }}-anchor">Commute to</label>
+  <select id="{{ pre }}-anchor" name="t_anchor_id"><option value="">The first important place</option>{% for a in anchors %}<option value="{{ a.id }}"{% if t.get('anchor_id') == a.id %} selected{% endif %}>{{ a.name }}</option>{% endfor %}</select></div>
+<div class="field"><label for="{{ pre }}-mode">By</label>
+  <select id="{{ pre }}-mode" name="t_mode">{% for m in COMMUTE_MODES %}<option value="{{ m }}"{% if (t.get('mode') or 'bike') == m %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></div>
+<div class="field"><label for="{{ pre }}-min">Minutes or less</label><input id="{{ pre }}-min" name="t_minutes" type="number" step="1" value="{{ t.get('minutes', '') }}"></div>
+{% elif kind == 'laundry' %}
+<div class="field"><label for="{{ pre }}-want">Want</label>
+  <select id="{{ pre }}-want" name="t_want"><option value="in_unit"{% if t.get('want', 'in_unit') == 'in_unit' %} selected{% endif %}>In the unit</option><option value="in_building"{% if t.get('want') == 'in_building' %} selected{% endif %}>In the building is fine</option></select></div>
+{% elif kind == 'parking' %}
+<div class="field"><label for="{{ pre }}-want">Want</label>
+  <select id="{{ pre }}-want" name="t_want">{% for p in ('garage', 'covered', 'lot', 'street') %}<option value="{{ p }}"{% if t.get('want') == p %} selected{% endif %}>{{ p|capitalize }} or better</option>{% endfor %}</select></div>
+{% elif kind == 'pets' %}
+<div class="field"><label for="{{ pre }}-want">Pets</label>
+  <select id="{{ pre }}-want" name="t_want"><option value="">Any pets</option><option value="cats"{% if t.get('want') == 'cats' %} selected{% endif %}>Cats</option><option value="dogs"{% if t.get('want') == 'dogs' %} selected{% endif %}>Dogs</option><option value="both"{% if t.get('want') == 'both' %} selected{% endif %}>Cats and dogs</option></select></div>
+{% elif kind == 'newer' %}
+<div class="field"><label for="{{ pre }}-year">Built in or after</label><input id="{{ pre }}-year" name="t_year" type="number" step="1" value="{{ t.get('year', '') }}"></div>
+{% endif %}

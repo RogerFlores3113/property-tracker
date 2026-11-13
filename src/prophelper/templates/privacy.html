@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head %}
+{% block title %}Privacy &middot; Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/data.css">
+<div class="data-page">
+{% call page_head("Privacy", "Your data stays on this computer. The map shows plain pins until you turn on street pictures. Here is exactly what leaves, and when.") %}{% endcall %}
+
+<section class="card">
+  <h2>What is stored, and where</h2>
+  <ul class="privacy-list">
+    <li>Your searches, places, notes, contacts, tours and AI drafts are in one database file on this computer. It is not encrypted, so keep your computer account protected.</li>
+    <li>The data folder is: <span class="path">{{ data_folder }}</span></li>
+    <li>The folder is private to your computer account where your system supports that (Mac and Linux). The database file is <code>prophelper.db</code>; documents you add to a place are in <code>files</code>; the other items are the app's own (<code>backups</code>, <code>ai.key</code> if you added a key, and a few small working files).</li>
+    <li>Automatic backups are in the same folder, in <code>backups</code>. The app makes one before a restore, before removing the sample data and before a delete. Each is a full copy of your data, notes included, and the newest 10 of each kind are kept.</li>
+    <li>Downloads (a backup copy, the documents zip, spreadsheet (CSV) files, JSON and calendar files) go only to your browser's downloads folder, and only a page you opened from the app can ask for them. Backups never include your AI key.</li>
+    <li>There are no accounts and no cloud copy. If you delete the folder, your data is gone, so download a backup now and then.</li>
+    <li>This window only answers requests from this computer, and only from a browser opened by the app icon (or <code>prophelper open</code>). That browser gets a random code in a cookie that works for 12 hours after you last used it; restarting the app ends it.</li>
+  </ul>
+</section>
+
+<section class="card" id="network">
+  <h2>What leaves this computer</h2>
+  <p>Only these five things can use the network. Each one happens only when you turn it on or click it:</p>
+  <ol class="privacy-list">
+    <li><strong>Map tiles</strong> (the street pictures of the map). <strong>Off until you turn them on</strong> (a new data folder starts with them off; an older folder keeps the choice it had). Once on, when you open the Map page, your browser loads them from OpenStreetMap (<code>tile.openstreetmap.org</code>). They are loaded by your browser, so OpenStreetMap sees the area you look at and your network address. Now: <strong>{{ 'on' if map_tiles else 'off' }}</strong>. <a href="/settings#map">Change it in Settings</a>, or press "Show street map" on the Map page. With tiles off the map shows places on a plain background and nothing is loaded from OpenStreetMap; no other page ever loads a picture from another site (except listing photos, if you turn those on).</li>
+    <li><strong>Address lookup</strong> ("Find map locations for addresses"). Off unless you turn it on. It uses OpenStreetMap's free address lookup (<code>nominatim.openstreetmap.org</code>), and only runs when you press a Find on map button on a place or an important place. If it is off, pressing the button asks you first. Now: <strong>{{ 'on' if geocode else 'off' }}</strong>. One lookup sends this:
+      <ul>
+        <li>the street address, city, state and ZIP of that one place, as the search words (not its name, unit, notes, listing text or rating);</li>
+        <li>the request options <code>format=json</code> and <code>limit=1</code>;</li>
+        <li>a generic user agent, <code>{{ geocode_agent }}</code>, which names this app and no person or computer;</li>
+        <li>and, as with any web request, your network address.</li>
+      </ul>
+      At most one request goes out per second, with a 10 second timeout. The answer (a point on the map and a name) is saved with the place.</li>
+    <li><strong>AI calls to Anthropic</strong>. Only when you saved your own Anthropic key and press an AI button (or the Test key button). {% if key['set'] %}A key is saved ({{ key.hint }}).{% else %}No key is set, so nothing is sent: each AI button just gives you a prompt to copy.{% endif %} The request goes straight from this computer to <code>api.anthropic.com</code> using the model <code>{{ ai_model }}</code>. Pressing a place's AI button sends:
+      <ul>
+        <li>the place's saved facts, your notes on it and its timeline;</li>
+        <li>what matters to you in your search;</li>
+        <li>the names and roles of people you saved for that place (their email addresses and phone numbers are taken out first);</li>
+        <li>the listing text you pasted for that place;</li>
+        <li>for a message draft, the purpose you chose (availability, questions, tour or follow-up);</li>
+        <li>and your key, as the sign-in for that request.</li>
+      </ul>
+      It never sends your other places, your documents, or your data folder. The "Show what will be sent" box on the place page shows the exact text before you press. The Test key button sends only the word OK. The app never sends a message to anyone for you: drafts are for you to copy.</li>
+    <li><strong>The "Open in Claude" link</strong> on a place's AI help. Only when you click it. It opens <code>claude.ai</code> in a new browser tab with the prompt text (this place's details, your notes and the listing) written in the web address, so that text goes to Claude on the web, under your own Claude account. Nothing is sent before you click. The Copy button sends nothing.</li>
+    <li><strong>Listing photos</strong>. Off by default (Settings, "Show listing photos"). Now: <strong>{{ 'on' if show_photos else 'off' }}</strong>. When on, your browser loads each photo from whatever website the listing's photo link points to. A listing that was pasted or added by an AI app can point to any site it likes, so that site would see your network address. Keep it off unless you trust the listings you save.</li>
+  </ol>
+  <ul class="privacy-list">
+    <li>No telemetry, no analytics, no update checks, no advertising.</li>
+    <li>The app itself never opens a listing link or a listing website. When you paste a link, only its shape is read on your computer. Photos from a listing load from the listing's website only if you turn on "Show listing photos" in Settings (see the list above).</li>
+    <li>Your AI app (Claude or Codex) may read, search or scrape listing pages with its own tools and pass what it found to Property Helper. Some sites forbid automated scraping in their terms of service, so check a site's terms first. Reading a page you could open yourself is usually fine. Settings has a "Stricter scraping guards" switch that tells the AI not to scrape and limits how many places it can add.</li>
+    <li>An AI app you connected can read and add places, and update them, but it cannot delete anything, and it never changes your own notes.</li>
+  </ul>
+</section>
+
+<section class="card" id="outside">
+  <h2>Files this app writes outside its data folder</h2>
+  <p>Only when you ask, and only what is listed here. Your places never go into these files.</p>
+  <ul class="privacy-list">
+    <li><strong>Connect:</strong> pressing Connect adds one entry called <code>property-helper</code> to the settings file of Claude Desktop, Codex or LM Studio (the Connect page shows the exact file). Everything else in that file is kept as it was, and a copy named <code>.bak</code> is saved next to it first. That copy holds whatever else was in the file at the time, secrets included, so treat it like the original.</li>
+    <li><strong>Skills:</strong> the Skills page, when you press Install, writes one small text file into the folder Claude Code or Codex reads its skills from (the page shows the exact path first). Uninstall removes only the files we wrote.</li>
+    <li>Nothing here is sent anywhere. To undo any of it, delete the entry or the file.</li>
+  </ul>
+</section>
+
+<section class="card" id="ai-updates">
+  <h2>When an AI app updates a place</h2>
+  <p>An AI app you connected can update a place you already saved. Your own notes are never replaced, and an AI app can only move a place forward through the stages, never back. Every time an update replaces something, the old value is written to that place's timeline so you can put it back by hand.</p>
+</section>
+
+<section class="card">
+  <h2>Deleting things</h2>
+  <p>Only you delete, from this window. AI apps connected to Property Helper can add and update, but have no way to delete or restore anything. A backup is taken before each delete, so a mistake can be undone from Settings.</p>
+</section>
+</div>
+{% endblock %}

@@ -1,0 +1,22 @@
+{# The "found on this computer" line. Re-sent out of band after an install so it refreshes. #}
+<div id="skills-found"{% if oob %} hx-swap-oob="true"{% endif %} role="status">
+  {% if skill_plan.found %}
+  <p><strong>Found on this computer:</strong> {{ skill_plan.found | map(attribute="label") | join(", ") }}.</p>
+  <ul class="plain skill-states">
+    {% for p in skill_plan.plans %}
+    <li>{{ p.name }}:
+      {% if p.label == "new" %}skills not added yet.
+      {% elif p.label == "unchanged" %}<span class="ok">skills installed and up to date.</span>
+      {% elif p.label == "updated" %}skills installed, a newer version can replace them.
+      {% elif p.label == "kept" %}a file is already there that we left alone ({{ p.reason }}).
+      {% else %}{{ p.reason }}{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if skill_plan.found %}{% for m in skill_plan.missing %}
+  <p class="fine">{{ m.label }} isn't installed here.
+    <button class="btn small" type="button" hx-post="/skills/all/preview" hx-vals='{"targets": "{{ m.target }}"}' hx-target="#skills-result" hx-swap="innerHTML">Create the folder and add skills for {{ m.label }}</button>
+    <span class="fine">A file you edited is always kept.</span></p>
+  {% endfor %}{% endif %}
+</div>

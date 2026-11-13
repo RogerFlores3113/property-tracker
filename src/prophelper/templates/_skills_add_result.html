@@ -1,0 +1,12 @@
+<div class="skills-installed skills-add-done" id="skills-add-done" data-focus tabindex="-1" role="status">
+  {% if error %}
+  <p class="flash warn">That didn't work: {{ error }} You can also use "For Claude Code or Codex" below.</p>
+  {% else %}
+  {% if not r.plugin_repeat and not r.plugin_error %}
+  <p><strong>Claude app, one step left:</strong> open Customize, then Plugins, then Add, then Upload plugin, and pick {{ r.plugin_file }}{% if r.selected %} (it is selected in the window that just opened){% elif r.shown %} (it is in the folder that just opened){% endif %}.</p>
+  {% endif %}
+  <p class="{{ 'flash warn' if r.plugin_error else 'flash' }}">{{ r.line }}</p>
+  <p class="fine">Then start a new chat so your AI app picks up the skills.</p>
+  {% endif %}
+</div>
+{% if r %}{% with oob = true %}{% include "_skills_found.html" %}{% endwith %}{% endif %}

@@ -1,0 +1,27 @@
+{% from "_macros.html" import button %}
+{% if search.mode != 'buy' %}
+{% set _store = request.app.state.store %}
+{% set _items = _store.place_checklist(place.id) %}
+{% set _left = _items|rejectattr('done_here')|list|length %}
+{% set _next = _store.application_deadline(place.id) %}
+<section class="card" id="applying">
+  <h2>Applying here{% if _items %} <span class="count">{{ _left }} to do</span>{% endif %}</h2>
+  {% if _next %}<p><strong>Apply by {{ _next.date|day }}, {{ _next.date|until }}</strong>{% if _next.note %} <span class="fine">({{ _next.note }})</span>{% endif %}</p>
+  {% else %}<p class="fine">No application deadline yet. You can add one under <a href="#dates">Key dates</a>.</p>{% endif %}
+  <p>Application fee: {% if place.application_fee is not none %}<strong>{{ place.application_fee|money }}</strong>{% else %}<span class="fine">not filled in</span>{% endif %}</p>
+  {% if _items %}
+  <ul class="items check-list">
+    {% for i in _items %}
+    <li class="item" id="apply-item-{{ i.id }}"><div class="item-main">
+      <span class="item-title{{ ' is-done' if i.done_here }}">{{ i.label }}{% if i.done_here %} <span class="badge">Done</span>{% endif %}</span>
+      {% if i.note %}<span class="item-sub">{{ i.note }}</span>{% endif %}</div>
+      <div class="item-actions">
+        <form class="inline" method="post" action="/places/{{ place.id }}/checklist/{{ i.id }}">
+          <input type="hidden" name="value" value="{{ '0' if i.done_here else '1' }}">{{ button("Not done" if i.done_here else "Mark done", small=True, aria=("Mark " ~ i.label ~ " not done for this place") if i.done_here else ("Mark " ~ i.label ~ " done for this place")) }}</form>
+      </div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">The list is the same for every place; the ticks are only for this one. Your own "Ready" marks on the <a href="/checklist">documents list</a> are separate, so its count can differ. <a href="/checklist">Change the list</a>.</p>
+  {% else %}<p class="fine">Your application checklist is empty. <a href="/checklist">Add what a landlord is likely to ask for</a>.</p>{% endif %}
+</section>
+{% endif %}

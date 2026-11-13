@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button %}
+{% block title %}Settings &middot; Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/data.css">
+<div class="data-page">
+{% call page_head("Settings", "Your data and backups, the map, optional AI help, and how the app looks.") %}{% endcall %}
+
+<details class="card" id="data" open>
+  <summary><h2>Your data</h2></summary>
+  <p>Everything lives in one folder on this computer: <span class="path">{{ data_folder }}</span> ({{ places|num }} place{{ 's' if places != 1 }}{% if archived_count %}, {{ archived_count|num }} archived{% endif %}, {{ searches_count|num }} search{{ 'es' if searches_count != 1 }}{% if files_count %}, {{ files_count|num }} document{{ 's' if files_count != 1 }}{% endif %}).</p>
+  <form method="post" action="/settings/open-folder" class="actions-inline">
+    {{ button(folder_button, small=True, title="Opens the folder in your file manager") }}
+  </form>
+  <h3>Back up and restore</h3>
+  <ul class="link-list">
+    <li><a href="/backup">Download a backup copy</a> <span class="fine">Everything except your AI key. Save it somewhere safe, like Dropbox or a USB drive.</span></li>
+    <li><a href="/backups#restore-file">Restore from a backup file</a> <span class="fine">Put back a copy you downloaded earlier.</span></li>
+    <li><a href="/backups">Automatic backups</a> <span class="fine">The app makes a copy before every restore and delete.</span></li>
+  </ul>
+  <h3>Other</h3>
+  <ul class="link-list">
+    <li><a href="/connect">Connect an AI app</a> <span class="fine">Claude Desktop, Codex or LM Studio. Optional.</span></li>
+    <li><a href="/skills">Skills for Claude Code and Codex</a> <span class="fine">Optional. Nothing is written until you press Install.</span></li>
+    <li><a href="/privacy">Privacy</a> <span class="fine">What is stored, and the few things that can use the network.</span></li>
+  </ul>
+  <h3>Reminders</h3>
+  <form method="post" action="/settings" class="stack">
+    <div class="field">
+      <label for="follow_up_days">Nudge me after (days without a reply)</label>
+      <input id="follow_up_days" name="follow_up_days" type="number" min="1" max="365" value="{{ follow_up_days }}">
+      <div class="hint">Today lists a contact you wrote to who has not replied for this long.</div>
+    </div>
+    {{ button("Save reminders", kind="primary", small=True) }}
+  </form>
+</details>
+
+<details class="card" id="map">
+  <summary><h2>Map and lookups</h2></summary>
+  <p class="fine">The map pictures are off until you turn them on. These are the only network uses besides AI and the Open in Claude link. <a href="/privacy#network">See exactly what is sent</a>.</p>
+  <form method="post" action="/settings" class="stack">
+    <input type="hidden" name="map_tiles" value="0"><input type="hidden" name="geocode" value="0"><input type="hidden" name="show_photos" value="0">
+    <div class="checks"><input id="map_tiles" type="checkbox" name="map_tiles" value="1"{% if map_tiles %} checked{% endif %}><label for="map_tiles">Show map pictures (off until you turn it on: your browser then loads street tiles from OpenStreetMap when you open the Map. Leave it off to keep the map plain and load nothing)</label></div>
+    <div class="checks"><input id="geocode" type="checkbox" name="geocode" value="1"{% if geocode %} checked{% endif %}><label for="geocode">Find map locations for addresses (sends only a street address to OpenStreetMap's free lookup service, at most one a second, and only when you press Find on map)</label></div>
+    <div class="checks"><input id="show_photos" type="checkbox" name="show_photos" value="1"{% if show_photos %} checked{% endif %}><label for="show_photos">Show listing photos (your browser loads each photo from whatever website the listing's photo link points to. A listing you saved or an AI app added could point to any site, which would then see your network address. Keep this off unless you trust your listings)</label></div>
+    <h3>If you are buying</h3>
+    <div class="row-fields">
+      <div class="field"><label for="down_payment_pct">Down payment (%)</label><input id="down_payment_pct" name="down_payment_pct" type="number" min="0" max="100" step="any" value="{{ down_payment_pct }}"></div>
+      <div class="field"><label for="mortgage_rate">Mortgage rate (%)</label><input id="mortgage_rate" name="mortgage_rate" type="number" min="0" max="30" step="any" value="{{ mortgage_rate }}"></div>
+      <div class="field"><label for="loan_years">Loan length (years)</label><input id="loan_years" name="loan_years" type="number" min="1" max="50" step="1" value="{{ loan_years }}"></div>
+      <div class="field"><label for="pmi_rate_pct">Mortgage insurance, % of the loan a year</label><input id="pmi_rate_pct" name="pmi_rate_pct" type="number" min="0" max="5" step="any" value="{{ pmi_rate_pct }}"></div>
+      <div class="field"><label for="closing_cost_pct">Closing costs, % of the price (a guess)</label><input id="closing_cost_pct" name="closing_cost_pct" type="number" min="0" max="15" step="any" value="{{ closing_cost_pct }}"></div>
+    </div>
+    <p class="fine">These make the monthly estimate for homes you would buy. Mortgage insurance (PMI) is only added when the down payment is under 20%, and 0.5% a year is a rough guess. It is an estimate, not financial advice.</p>
+    {{ button("Save", kind="primary", small=True) }}
+  </form>
+</details>
+
+<details class="card" id="ai"{% if key['set'] %} open{% endif %}>
+  <summary><h2>AI key and model</h2></summary>
+  <div>
+    <p><strong>You don't need this.</strong> Claude desktop works without it. If you want, you can use your own Anthropic key so the app writes drafts for you (a message to a landlord, questions to ask on a tour). The text goes straight from this computer to Anthropic and nowhere else. Without a key, each button gives you text to paste into Claude yourself. <a href="/privacy#network">What gets sent?</a></p>
+    <p>
+      {% if key['set'] %}<span class="key-status on">Key saved, {{ key.hint }}</span>{% if key.source == 'env' %} <span class="fine">(from the ANTHROPIC_API_KEY setting on this computer)</span>{% endif %}
+      {% else %}<span class="key-status off">No key set</span>{% endif %}
+    </p>
+    <form method="post" action="/settings/ai-key" autocomplete="off">
+      <div class="field">
+        <label for="ai-key">{{ 'Replace your Anthropic key' if key['set'] else 'Your Anthropic key (optional)' }}</label>
+        <input id="ai-key" name="key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
+        <div class="hint">Kept in a private file in your data folder, never in the database or in backups, and never shown again.</div>
+      </div>
+      <div class="actions-inline">{{ button("Save key", kind="primary") }}</div>
+    </form>
+    {% if key.source == 'file' %}
+    <form method="post" action="/settings/ai-key/remove" style="margin-top:.6rem">{{ button("Remove saved key", kind="danger", small=True) }}</form>
+    {% endif %}
+    {% if key['set'] %}
+    <form method="post" action="/ai/test-key" style="margin-top:.6rem">{{ button("Test key", small=True, title="Sends the word OK to Anthropic and nothing about your places") }} <span class="fine">Sends the word OK and nothing about your places, to check that the key and model work.</span></form>
+    {% endif %}
+    <form method="post" action="/settings" class="stack" style="margin-top:1rem">
+      <div class="field">
+        <label for="ai_model">Which Claude model the app asks</label>
+        <input id="ai_model" name="ai_model" type="text" value="{{ model }}" spellcheck="false">
+        <div class="hint">Only used when you have a key. The one already here is fine.</div>
+      </div>
+      {{ button("Save model", small=True) }}
+    </form>
+  </div>
+</details>
+
+<details class="card" id="on-screen">
+  <summary><h2>On screen</h2></summary>
+  <form method="post" action="/settings/look" class="stack" id="look">
+    <h3>Colors</h3>
+    <p class="fine">Pick a look. The page changes as you choose, and Save keeps it.</p>
+    {% set themes = [('sunset', 'Sunset to forest', 'Orange fading into deep green. The default.', True), ('forest-night', 'Forest night', 'Dark green with warm orange.', False), ('ocean', 'Ocean', 'Fresh blue and teal.', False), ('midnight', 'Midnight', 'Dark with indigo and violet.', False), ('classic', 'Classic', 'Plain and neutral, with blue.', True), ('contrast', 'High contrast', 'Easier to read: black and white with strong edges.', True)] %}
+    {% set _saved = setting('theme') %}{% set current = _saved if _saved in ('sunset', 'forest-night', 'ocean', 'midnight', 'classic', 'contrast') else 'sunset' %}
+    <div class="theme-grid" role="radiogroup" aria-label="Color theme">
+      {% for value, name, blurb, both in themes %}
+      <label class="theme-card" data-t="{{ value }}"><input type="radio" name="theme" value="{{ value }}" data-theme-pick{{ ' checked' if current == value }}>
+        <span class="sw"><span class="chip-bar{{ ' split' if both }}"></span><strong>{{ name }}</strong><span class="fine">{{ blurb }}</span></span></label>
+      {% endfor %}
+    </div>
+    {% set mode = setting('color_mode') if setting('color_mode') in ('light', 'dark') else 'auto' %}
+    <fieldset class="mode-row" style="border:0;padding:0;margin:0">
+      <legend class="fine">Light or dark</legend>
+      <label class="check"><input type="radio" name="color_mode" value="auto" data-mode-pick{{ ' checked' if mode == 'auto' }}> Follow my computer</label>
+      <label class="check"><input type="radio" name="color_mode" value="light" data-mode-pick{{ ' checked' if mode == 'light' }}> Always light</label>
+      <label class="check"><input type="radio" name="color_mode" value="dark" data-mode-pick{{ ' checked' if mode == 'dark' }}> Always dark</label>
+    </fieldset>
+    {{ button("Save colors", kind="primary", small=True) }}
+  </form>
+</details>
+
+<details class="card" id="sample">
+  <summary><h2>Sample data</h2></summary>
+  <p>A made-up search with 10 places so you can look around. They are marked "Sample" and removing them never touches your own entries.</p>
+  <div class="actions-inline">
+    {% if has_sample() %}
+    <form method="post" action="/sample-data/remove">{{ button("Remove sample data", kind="danger") }}</form>
+    {% else %}
+    <form method="post" action="/sample-data">{{ button("Load sample data") }}</form>
+    {% endif %}
+  </div>
+</details>
+
+<details class="card" id="scraping">
+  <summary><h2>Stricter rules when Claude reads websites for you</h2></summary>
+  <form method="post" action="/settings/strict-scraping" class="stack">
+    <p>The stricter rules are <strong>{{ "on" if strict else "off" }}</strong>. When they are on, Claude and Codex may only use text you paste or a page you opened and asked them to read, and may not crawl listing sites on their own. They are also limited to {{ strict_per_call }} places per call and {{ strict_per_hour }} places per hour.</p>
+    <p class="fine">Some sites forbid automated reading in their terms, so check a site's terms before having an AI read it. By default Claude and Codex may read, search or scrape listing pages with their own tools and hand what they found to Property Helper (the app itself opens no listing pages). A change takes effect right away.</p>
+    <input type="hidden" name="on" value="{{ '0' if strict else '1' }}">
+    {{ button("Turn off the stricter rules" if strict else "Turn on the stricter rules", small=True) }}
+  </form>
+</details>
+
+<p class="fine"><a href="/privacy">Read the privacy page</a>: what is stored, where, and what can leave this computer.</p>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/settings.js" defer></script>{% endblock %}

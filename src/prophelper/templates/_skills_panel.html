@@ -1,0 +1,27 @@
+<section class="card" id="skills-panel">
+  <h2>{% if show_step %}Step 2. {% endif %}Add skills</h2>
+  {% if show_step %}<p><strong>A skill is a short page of written instructions that your AI app reads so it does its work well here.</strong></p>
+  {% endif %}<p>Press the button. It saves one add-on file (Claude calls it a plugin). Then, in the Claude app, upload that file once: Customize, then Plugins, then Add, then Upload plugin.</p>
+  <p>
+    <button class="btn primary" type="button" id="add-skills-btn" hx-post="/skills/add" hx-target="#skills-add-result" hx-swap="innerHTML" hx-indicator="#skills-add-busy">Add skills</button>
+    <span id="skills-add-busy" class="htmx-indicator fine" aria-live="polite">Adding...</span>
+  </p>
+  <div id="skills-add-result" aria-live="polite"></div>
+  <details class="fine" id="skills-more">
+    <summary>Other ways to add skills</summary>
+    <p class="fine">The same button also adds the skill to Claude Code and Codex when they are on this computer. A file you edited, or one we didn't write, is always kept. The skill is plain text and can't run anything itself.</p>
+    {% include "_skills_found.html" %}
+    <p><button class="btn" type="button" id="install-skills-btn" hx-post="/skills/all/preview" hx-target="#skills-result" hx-swap="innerHTML">Install skills</button> after a preview of each file.</p>
+    <div id="skills-result" aria-live="polite"></div>
+    {% if show_plugin %}{% include "_claude_plugin_block.html" %}{% endif %}
+    <div id="skills-uninstall">
+      <p><strong>Remove skills.</strong> Removes only the files this app wrote, and only if you haven't edited them.</p>
+      {% for t in ["claude", "codex"] %}
+      <form method="post" action="/skills/uninstall" class="inline-form">
+        <input type="hidden" name="target" value="{{ t }}">
+        <button class="btn small" type="submit">Remove the {{ "Claude Code" if t == "claude" else "Codex" }} skill</button>
+      </form>
+      {% endfor %}
+    </div>
+  </details>
+</section>

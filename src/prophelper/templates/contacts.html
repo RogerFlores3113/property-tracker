@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, field, select %}
+{% block title %}Contacts &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head("Contacts", "Landlords, agents and leasing offices, and what you said to each.") %}
+  <a class="btn small" href="#add-contact">Add a contact</a>
+{% endcall %}
+
+{% if waiting_count %}
+<p class="flash" role="status">{{ waiting_count }} {{ 'person has' if waiting_count == 1 else 'people have' }} not replied to your last message in {{ follow_up_days }} days or more. They are listed first.</p>
+{% endif %}
+
+<form method="get" action="/contacts" class="inline-form" role="search">
+  <div class="field"><label for="q">Search contacts</label><input id="q" type="search" name="q" value="{{ q }}" placeholder="Name, company or email"></div>
+  {{ button("Search", small=True) }}{% if q %} <a class="btn small ghost" href="/contacts">Show everyone</a>{% endif %}
+</form>
+
+<section class="card" aria-labelledby="list-h">
+  <h2 id="list-h">{{ 'Matches' if q else 'Everyone' }} <span class="count">{{ rows|length }}</span></h2>
+  {% if rows %}
+  <ul class="items">
+    {% for r in rows %}{% set c = r.contact %}
+    <li class="item"><div class="item-main">
+      <a class="item-title" href="/contacts/{{ c.id }}">{{ c.name }}</a>
+      <span class="item-sub">{{ c.role|capitalize }}{% if c.company %} at {{ c.company }}{% endif %}{% if c.phone %} &middot; {{ c.phone }}{% endif %}{% if c.email %} &middot; {{ c.email }}{% endif %}</span>
+      <span class="item-sub">{% if r.places %}For {% for p in r.places %}<a href="/places/{{ p.id }}">{{ p.title }}</a>{{ ', ' if not loop.last }}{% endfor %}.{% else %}Not linked to a place yet.{% endif %}
+        {% if r.last %}Last: {{ 'you wrote' if r.last.direction == 'out' else 'they wrote' }} by {{ r.last.kind }} {{ r.last.at|ago }}.{% endif %}</span>
+    </div>
+    {% if r.waiting %}<div class="item-actions"><span class="badge wait">Waiting on a reply ({{ r.waiting.days }} day{{ 's' if r.waiting.days != 1 }})</span></div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% elif q %}<p class="fine">Nobody matches that.</p>
+  {% else %}<p class="fine">No contacts yet. Add the leasing office or landlord below, or from a place's page.</p>{% endif %}
+</section>
+
+<section class="card" id="add-contact" aria-labelledby="add-h">
+  <h2 id="add-h">Add a contact</h2>
+  <form method="post" action="/contacts" class="stack">
+    <div class="form-grid">
+      {{ field("Name", "name", required=True, id="ac-name") }}
+      {{ select("Role", "role", CONTACT_ROLES, value="other", id="ac-role") }}
+      {{ field("Company", "company", id="ac-company") }}
+      {{ field("Email", "email", kind="email", id="ac-email") }}
+      {{ field("Phone", "phone", id="ac-phone") }}
+    </div>
+    {{ field("Notes", "notes", kind="textarea", rows=3, id="ac-notes") }}
+    <p>{{ button("Add contact", kind="primary") }}</p>
+  </form>
+</section>
+{% endblock %}

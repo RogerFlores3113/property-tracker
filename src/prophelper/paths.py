@@ -1,0 +1,226 @@
+"""Where the app keeps its data.
+
+Packaged app: the platform's per-user data folder
+  (macOS: ~/Library/Application Support/Property Helper,
+   Windows: %LOCALAPPDATA%\\Property Helper).
+Running from source: the same per-user folder, so unzipping a newer download never loses your places. PROPHELPER_DATA_DIR overrides all of this.
+
+Documents you add to a place are kept in the "files" folder inside the data folder (see ``files_dir``).
+"""
+from __future__ import annotations
+
+import hmac
+import os
+import secrets
+import sys
+import time
+from pathlib import Path
+
+APP_NAME = "Property Helper"
+APP_SLUG = "property-helper"
+DB_NAME = "prophelper.db"
+
+
+def downloads_override() -> Path | None:
+    """The folder PROPHELPER_DOWNLOADS_DIR names, or None. Files the app saves for the person (the plugin zip, the AI app's
+    spreadsheet) go there when it is set."""
+    value = os.environ.get("PROPHELPER_DOWNLOADS_DIR")
+    return Path(value) if value else None
+
+
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _private(path: Path, mode: int) -> None:
+    """Owner-only access where the OS has POSIX permissions (not Windows)."""
+    if os.name == "nt":
+        return
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+def private_dir(path: Path, tighten: bool = True) -> Path:
+    """Make a folder only this user can open. tighten: also fix one that already exists."""
+    existed = path.exists()
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if not existed or (tighten and path.stat().st_mode & 0o077):
+        _private(path, 0o700)
+    return path
+
+
+# What the app itself keeps in its data folder.
+OUR_FILES = (DB_NAME, "backups", "files", "skills-manifest.json", "connect-report.txt", "app.key", "app.port", "app.log", "launch.code", "ai.key", ".DS_Store",
+             DB_NAME + "-wal", DB_NAME + "-shm", DB_NAME + "-journal")
+
+
+def _only_ours(path: Path) -> bool:
+    """True when the folder holds nothing but the app's own files (or nothing at all). Exact names, so a file
+    like "backups-old" or "app.keyx" is someone else's."""
+    try:
+        return all(entry.name in OUR_FILES for entry in path.iterdir())
+    except OSError:
+        return False
+
+
+def data_dir() -> Path:
+    override = os.environ.get("PROPHELPER_DATA_DIR")
+    if override:
+        base = Path(override)
+    else:
+        from platformdirs import user_data_dir
+
+        base = Path(user_data_dir(APP_NAME, appauthor=False))
+    # The data folder is made owner-only (0700) on start, also one that already exists. A folder someone
+    # pointed PROPHELPER_DATA_DIR at that also holds other files keeps its permissions (the privacy page says so).
+    tighten = not override or not base.exists() or not base.stat().st_mode & 0o077 or _only_ours(base)
+    return private_dir(base, tighten=tighten)
+
+
+def data_dir_private() -> bool:
+    """Only this user account can open the data folder (always reported True where there are no POSIX modes)."""
+    if os.name == "nt":
+        return True
+    try:
+        return not data_dir().stat().st_mode & 0o077
+    except OSError:
+        return False
+
+
+def db_path() -> Path:
+    """The database file, created owner-only (0600) before SQLite opens it."""
+    path = data_dir() / DB_NAME
+    if os.name != "nt":
+        if not path.exists():
+            try:
+                os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))  # empty file = new SQLite database
+            except OSError:
+                pass
+        elif path.stat().st_mode & 0o077:
+            _private(path, 0o600)
+    return path
+
+
+def backups_dir() -> Path:
+    """Automatic backups (before every import) live here, inside the data folder."""
+    return private_dir(data_dir() / "backups")
+
+
+def files_dir() -> Path:
+    """Documents the user added to places (leases, applications, photos). One sub-folder per place id."""
+    return private_dir(data_dir() / "files")
+
+
+def resource_dir() -> Path:
+    """Folder holding templates/ and static/ (inside the bundle when frozen)."""
+    if is_frozen():
+        return Path(getattr(sys, "_MEIPASS")) / "prophelper"
+    return Path(__file__).parent
+
+
+DEFAULT_PORT = 8767
+
+
+def port_file() -> Path:
+    return data_dir() / "app.port"
+
+
+def record_port(port: int) -> None:
+    """Write the port this app really answers on, if the port file says something else (or is gone), so the AI
+    app's links never point at a stale port. Never raises."""
+    try:
+        f = port_file()
+        try:
+            if int(f.read_text().strip()) == port:
+                return
+        except (OSError, ValueError):
+            pass
+        fd = os.open(f, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(str(port))
+    except OSError:
+        pass
+
+
+def app_url(path: str = "/") -> str:
+    """Where the app window is (or will be) served. The app records its port when it starts."""
+    try:
+        port = int(port_file().read_text().strip())
+    except (OSError, ValueError):
+        port = DEFAULT_PORT
+    return f"http://127.0.0.1:{port}{path}"
+
+
+# ------------------------------------------------------------ app window key
+# The app window is locked with a per-install key so other programs and other
+# accounts on this computer can't read it. The key lives in a 0600 file in the
+# data folder and reaches the browser only as an HttpOnly cookie. The launch URL
+# carries a one-time code instead of the key, so the key never lands in browser
+# history, logs, the port file or the AI app's links.
+LAUNCH_CODE_TTL = 300  # seconds a launch code works
+
+
+def _write_private(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    _private(path, 0o600)
+
+
+def app_key() -> str:
+    """This install's secret for the app window, created on first run."""
+    path = data_dir() / "app.key"
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        key = ""
+    if len(key) < 32:
+        key = secrets.token_urlsafe(32)
+        _write_private(path, key)
+    elif path.stat().st_mode & 0o077:
+        _private(path, 0o600)
+    return key
+
+
+def new_launch_code() -> str:
+    """A one-time code for the launch URL. Only the newest one works, once, for a few minutes."""
+    code = secrets.token_urlsafe(24)
+    _write_private(data_dir() / "launch.code", code)
+    return code
+
+
+def use_launch_code(code: str) -> bool:
+    """True (and the code is used up) when it's the current, unexpired launch code."""
+    path = data_dir() / "launch.code"
+    try:
+        current = path.read_text(encoding="utf-8").strip()
+        fresh = time.time() - path.stat().st_mtime < LAUNCH_CODE_TTL
+    except OSError:
+        return False
+    if not (code and current and hmac.compare_digest(code.encode(), current.encode())):
+        return False
+    path.unlink(missing_ok=True)
+    return fresh
+
+
+def subkey(key: str, purpose: str) -> bytes:
+    """A key for one purpose ("flash", "health", "cards"), derived from this install's key, so a value made for
+    one purpose (an answer from /api/health, say) is no use for another."""
+    return hmac.new(key.encode(), f"property-helper:{purpose}".encode(), "sha256").digest()
+
+
+def health_proof(key: str, nonce: str, port: int) -> str:
+    """What /api/health answers for a nonce: an HMAC of it and the port the request came in on, under this
+    install's key. Only the real app (or another process that can read app.key) can make it, so a second
+    launch never hands a launch code to an impostor listening on the port. The port is in it so a program
+    that passes the nonce on to the real app on another port gets a proof for that port, not its own."""
+    return hmac.new(subkey(key, "health"), f"prophelper-health:{int(port)}:".encode() + nonce.encode(),
+                    "sha256").hexdigest()
+
+
+def launch_url(port: int | None = None) -> str:
+    """Opens the app window and unlocks it. Never log or store this address."""
+    base = f"http://127.0.0.1:{port}" if port else app_url("").rstrip("/")
+    return f"{base}/launch?code={new_launch_code()}"

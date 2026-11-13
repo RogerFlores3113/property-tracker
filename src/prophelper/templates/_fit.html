@@ -1,0 +1,10 @@
+{# Small pieces shared by the Board card and the place page: whether a place fits, and the score note. #}
+{% macro fit_badge(p, with_reason=True) -%}
+{%- set fit = p.score.fit -%}
+{% if fit == 'check_first' %}<span class="badge fit-scam" role="note">Check first: possible scam</span>
+{% elif fit == 'doesnt_fit' %}<span class="badge fit-no" role="note">Doesn't fit</span>{% if with_reason and p.score.fit_reasons %} <span class="fit-why">{{ p.score.fit_reasons|join('; ') }}</span>{% endif %}{% endif %}
+{%- endmacro %}
+
+{% macro score_note(p) -%}
+{% if p.score_total is not none and p.score.unknown_count %}<span class="fine score-note" title="{{ p.score.unknown|join(', ') }}">based on {{ p.score.unknown_count }} unknown{{ 's' if p.score.unknown_count != 1 }}</span>{% endif %}
+{%- endmacro %}

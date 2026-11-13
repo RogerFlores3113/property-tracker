@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, select %}
+{% block title %}Import places &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head("Import places from a spreadsheet", "Bring in a list you already keep. You see a preview first, and nothing is saved until you press Import.") %}{% endcall %}
+{% if form_error %}<p class="flash warn" role="alert" tabindex="-1">{{ form_error }}</p>{% endif %}
+{% if not searches %}
+<section class="card"><h2>Make a search first</h2><p>Places live inside a search. <a href="/search">Start one</a>, then come back here.</p></section>
+{% else %}
+<section class="card">
+  <form method="post" action="/import" enctype="multipart/form-data" class="stack">
+    <div class="field"><label for="import-file">Spreadsheet file (CSV)</label>
+      <input id="import-file" name="file" type="file" accept=".csv,text/csv,text/plain" required>
+      <div class="hint">In Excel, Numbers or Google Sheets choose Save As or Download, then CSV (a plain spreadsheet file). The first row should have headings like Title, Address, Price, Beds.</div></div>
+    {{ select("Put the places in which search", "search_id", search_options, chosen) }}
+    <p>{{ button("Read the file and show a preview", kind="primary") }}</p>
+  </form>
+</section>
+<section class="card">
+  <h2>Good to know</h2>
+  <ul>
+    <li>Take a <a href="/backup">backup copy</a> first if you like. The preview shows everything before anything is saved.</li>
+    <li>The file stays in this app's memory for 30 minutes so you can change the column matches. It is never saved to disk and never leaves this computer.</li>
+    <li>A place you already have (same link, or same street address and unit) is not added twice. Only its empty details are filled in, and your notes are never changed.</li>
+    <li>Blank rows, totals rows and rows with spreadsheet formulas are skipped, and the preview says why.</li>
+    <li>Going the other way: <a href="/places.csv">download the current search as a spreadsheet (CSV)</a>.</li>
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

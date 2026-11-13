@@ -1,0 +1,36 @@
+/* AI help panel on an application page. Uses the colour tokens from style.css. */
+.ai-panel { display: block; }
+.ai-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin-bottom: .5rem; }
+.ai-head h2 { margin: 0; }
+.ai-note { background: var(--accent-soft); border-radius: 8px; padding: .6rem .85rem; margin: 0 0 .9rem; }
+.ai-features { display: grid; gap: .5rem; margin-bottom: .75rem; }
+.ai-feature { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin: 0; }
+.ai-feature select { width: auto; max-width: 18rem; }
+.ai-feature .fine { flex: 1 1 12rem; }
+.ai-busy { display: none; margin: .25rem 0 .75rem; color: var(--muted); }
+.ai-busy.htmx-request { display: block; }
+.ai-busy::before {
+  content: ""; display: inline-block; width: .8em; height: .8em; margin-right: .5em; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent); animation: ai-spin .9s linear infinite; vertical-align: -.1em;
+}
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ai-busy::before { animation: none; } }
+.fit-badge { font-weight: 700; padding: .15rem .65rem; border-radius: 999px; font-size: .9rem; }
+.fit-good { background: var(--good-bg); color: var(--good-text); }
+.fit-mid { background: var(--s-interview-bg); color: var(--s-interview-fg); }
+.fit-low { background: var(--warn-bg); color: var(--warn-text); }
+.ai-prompt textarea { min-height: 9rem; font-size: .9rem; }
+.ai-drafts { display: grid; gap: .75rem; margin-top: .75rem; }
+.ai-draft { border: 1px solid var(--border); border-radius: 8px; padding: .75rem .9rem; background: var(--surface-2); }
+.ai-draft.fresh { border-color: var(--accent); }
+.ai-draft header { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; flex-wrap: wrap; margin-bottom: .35rem; }
+.ai-draft h3 { margin: 0; }
+.ai-draft-body { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: .6rem; }
+.ai-keystatus { margin: 0 0 .75rem; }
+.ai-keytest.ok { color: var(--good-text); background: var(--good-bg); border-radius: 6px; padding: 0 .4rem; }
+.ai-keytest.bad { color: var(--warn-text); background: var(--warn-bg); border-radius: 6px; padding: 0 .4rem; }
+.ai-feature .btn { min-height: 2.5rem; }
+.ai-resume { margin: 0 0 .75rem; }
+.ai-sent { margin: -.25rem 0 .5rem 1rem; }
+.ai-sent summary { cursor: pointer; color: var(--accent); font-size: .85rem; }
+.ai-sent textarea { min-height: 7rem; font-size: .85rem; width: 100%; }

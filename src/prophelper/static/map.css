@@ -1,0 +1,21 @@
+/* The Map page. Pin colors come from the app's score colors, so every theme works; each pin also shows its cost and
+   the legend names the bands, so color is never the only signal. */
+.map-layout { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1.25rem; align-items: start; }
+@media (max-width: 900px) { .map-layout { grid-template-columns: 1fr; } }
+.map-box { height: 28rem; border: 1px solid var(--border); border-radius: var(--radius, 10px); background: var(--surface-2); overflow: hidden; }
+@media (max-width: 600px) { .map-box { height: 20rem; } }
+.map-box.map-plain.map-ready { background: var(--surface-2); }
+.map-box .leaflet-container { background: var(--surface-2); font: inherit; }
+.ph-pin-host { background: none; border: 0; }
+.ph-pin { position: absolute; transform: translate(-50%, -100%); white-space: nowrap; padding: .1rem .45rem; border-radius: 999px; font-weight: 700; font-size: .8rem; border: 2px solid var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
+.ph-pin::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -5px; border: 5px solid transparent; border-top-color: inherit; border-bottom: 0; }
+.pin-good { background: var(--s-offer-bg); color: var(--s-offer-fg); border-color: var(--s-offer-fg); }
+.pin-ok { background: var(--s-interview-bg); color: var(--s-interview-fg); border-color: var(--s-interview-fg); }
+.pin-low { background: var(--s-rejected-bg); color: var(--s-rejected-fg); border-color: var(--s-rejected-fg); }
+.pin-none { background: var(--s-saved-bg); color: var(--s-saved-fg); border-color: var(--s-saved-fg); }
+.pin-anchor { background: var(--text); color: var(--bg); border-color: var(--bg); border-radius: 4px; }
+.pin-key { display: inline-block; padding: 0 .45rem; margin-right: .25rem; border-radius: 999px; border: 2px solid; font-weight: 600; }
+.pin-key.pin-anchor { border-radius: 4px; }
+.ph-ring { stroke: var(--accent); stroke-dasharray: 6 5; }
+.ph-popup a { font-weight: 700; }
+.map-list .item { padding: .5rem 0; }

@@ -1,0 +1,116 @@
+{# Shared macros. Import what you need:  {% from "_macros.html" import stage_badge, button, empty_state, flash %} #}
+
+{% macro stage_badge(stage) -%}
+<span class="badge stage-{{ stage | stage_slug }}">{{ stage }}</span>
+{%- endmacro %}
+
+{# A link or button that looks like a button. kind: "" (plain), "primary", "ghost" or "danger".
+   With href it renders a link, otherwise a <button type="submit"> (pass type="button" for no submit). #}
+{% macro button(label, href=None, kind="", type="submit", name=None, value=None, small=False, title=None, aria=None) -%}
+{%- set cls = "btn" ~ (" " ~ kind if kind else "") ~ (" small" if small else "") -%}
+{%- if href -%}
+<a class="{{ cls }}" href="{{ href }}"{% if title %} title="{{ title }}"{% endif %}{% if aria %} aria-label="{{ aria }}"{% endif %}>{{ label }}</a>
+{%- else -%}
+<button class="{{ cls }}" type="{{ type }}"{% if name %} name="{{ name }}"{% endif %}{% if value is not none %} value="{{ value }}"{% endif %}{% if title %} title="{{ title }}"{% endif %}{% if aria %} aria-label="{{ aria }}"{% endif %}>{{ label }}</button>
+{%- endif -%}
+{%- endmacro %}
+
+{# A calm "nothing here yet" box with an optional next step. #}
+{% macro empty_state(title, text="", action_label=None, action_href=None) -%}
+<div class="empty">
+  <h2>{{ title }}</h2>
+  {% if text %}<p>{{ text }}</p>{% endif %}
+  {% if action_label and action_href %}<p>{{ button(action_label, href=action_href, kind="primary") }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
+{# A one-line message. kind: "" (good news) or "warn" (something went wrong). #}
+{% macro flash(message, kind="") -%}
+{% if message %}<p class="flash{{ ' ' ~ kind if kind }}" role="{{ 'alert' if kind == 'warn' else 'status' }}" tabindex="-1">{{ message }}</p>{% endif %}
+{%- endmacro %}
+
+{# A small "Sample" tag for made-up data. #}
+{% macro sample_badge(is_sample) -%}
+{% if is_sample %}<span class="badge sample" title="Made-up sample data. Remove it in Settings.">Sample</span>{% endif %}
+{%- endmacro %}
+
+{# A page title row: heading on the left, actions (caller block) on the right. #}
+{% macro page_head(title, subtitle="") -%}
+<div class="page-head">
+  <div><h1>{{ title }}</h1>{% if subtitle %}<p class="sub">{{ subtitle }}</p>{% endif %}</div>
+  <div class="page-actions">{{ caller() if caller else "" }}</div>
+</div>
+{%- endmacro %}
+
+{# ---- pages ---- #}
+
+
+{# A form field. kind: text, url, date, number, datetime-local, email or textarea. #}
+{% macro field(label, name, value="", kind="text", hint=None, placeholder="", required=False, id=None, autofocus=False, rows=4, step=None, error=None) -%}
+{%- set fid = id or ("f-" ~ name) -%}
+<div class="field{% if error %} has-error{% endif %}">
+  <label for="{{ fid }}">{{ label }}</label>
+  {% if error %}<div class="field-error" id="{{ fid }}-err" role="alert">{{ error }}</div>{% endif %}
+  {% if kind == "textarea" -%}
+  <textarea id="{{ fid }}" name="{{ name }}" rows="{{ rows }}" placeholder="{{ placeholder }}"{% if required %} required{% endif %}{% if autofocus %} autofocus{% endif %}>{{ "" if value is none else value }}</textarea>
+  {%- else -%}
+  <input id="{{ fid }}" type="{{ kind }}" name="{{ name }}" value="{{ "" if value is none else value }}" placeholder="{{ placeholder }}"{% if step %} step="{{ step }}"{% endif %}{% if required %} required{% endif %}{% if autofocus %} autofocus{% endif %}{% if error %} aria-invalid="true" aria-describedby="{{ fid }}-err"{% endif %}>
+  {%- endif %}
+  {% if hint %}<div class="hint">{{ hint }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{# A select. options: a list of values or of (value, label) pairs. blank: the label of an empty choice (None for none). #}
+{% macro select(label, name, options, value="", blank=None, id=None, required=False) -%}
+{%- set fid = id or ("f-" ~ name) -%}
+<div class="field">
+  <label for="{{ fid }}">{{ label }}</label>
+  <select id="{{ fid }}" name="{{ name }}"{% if required %} required{% endif %}>
+    {% if blank is not none %}<option value="">{{ blank }}</option>{% endif %}
+    {% for o in options %}{% set ov = o if o is string else o[0] %}{% set ol = o if o is string else o[1] %}
+    <option value="{{ ov }}"{% if ov|string == value|string %} selected{% endif %}>{{ ol }}</option>{% endfor %}
+  </select>
+</div>
+{%- endmacro %}
+
+{# A one-button POST form. #}
+{% macro post_button(action, label, kind="", name=None, value=None, title=None, aria=None) -%}
+<form class="inline" method="post" action="{{ action }}">{{ button(label, kind=kind, small=True, name=name, value=value, title=title, aria=aria) }}</form>
+{%- endmacro %}
+
+{# The note that sample data is showing, with the way to remove it. #}
+{% macro sample_notice() -%}
+{% if has_sample() %}
+<div class="sample-note">You are looking at made-up sample data.
+  <form class="inline" method="post" action="/sample-data/remove"><button class="linklike" type="submit">Remove sample data</button></form></div>
+{% endif %}
+{%- endmacro %}
+
+
+{# A tick box with its label (slice E). #}
+{% macro check(label, name, checked=False, id=None, value="1", hint=None) -%}
+{%- set fid = id or ("f-" ~ name) -%}
+<div class="field check-field">
+  <label for="{{ fid }}"><input id="{{ fid }}" type="checkbox" name="{{ name }}" value="{{ value }}"{% if checked %} checked{% endif %}> {{ label }}</label>
+  {% if hint %}<div class="hint">{{ hint }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{# A stage picker that saves when it changes (a Move button shows when scripts are off). #}
+{% macro stage_form(place, mode="rent", prefix="st", board=False) -%}
+<form class="stage-form inline" method="post" action="/places/{{ place.id }}/stage"{% if board %} data-board-move{% endif %}>
+  <label class="sr" for="{{ prefix }}-{{ place.id }}">Stage for {{ place.title }}</label>
+  <select id="{{ prefix }}-{{ place.id }}" name="stage" data-autosubmit>
+    {% for s in stages_for(mode) if s not in CLOSED_STAGES %}<option value="{{ s }}"{% if s == place.stage %} selected{% endif %}>{{ s }}</option>{% endfor %}
+    <optgroup label="Final steps">
+    {% for s in stages_for(mode) if s in CLOSED_STAGES %}<option value="{{ s }}"{% if s == place.stage %} selected{% endif %}>{{ s }}</option>{% endfor %}
+    </optgroup>
+  </select>
+  <noscript><button class="btn small" type="submit">Move</button></noscript>
+</form>
+{%- endmacro %}
+
+{# The 0 to 100 fit score as a small pill; "no score" when nothing is known. #}
+{% macro score_pill(score, band) -%}
+{% if score is none %}<span class="score score-none" title="Nothing to score yet">&ndash;</span>{% else %}<span class="score score-{{ band }}" title="Fit score out of 100">{{ score|round|int }}</span>{% endif %}
+{%- endmacro %}

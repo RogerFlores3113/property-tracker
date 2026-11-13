@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, field, select, post_button %}
+{% block title %}{{ contact.name }} &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head(contact.name, (contact.role|capitalize) ~ ((" at " ~ contact.company) if contact.company else "")) %}
+  <a class="btn small" href="/contacts">All contacts</a>
+{% endcall %}
+{% if waiting %}
+<p class="flash" role="status">You wrote {{ waiting.days }} day{{ 's' if waiting.days != 1 }} ago and they have not replied (after {{ follow_up_days }} days a nudge may help). Log their reply below when it comes and this note goes away.</p>
+{% endif %}
+
+<div class="place-layout">
+<div>
+  <section class="card" id="log" aria-labelledby="log-h">
+    <h2 id="log-h">Conversation log</h2>
+    <form method="post" action="/contacts/{{ contact.id }}/log" class="stack">
+      <div class="form-grid">
+        <div class="field"><label for="lg-dir">Who wrote or called</label>
+          <select id="lg-dir" name="direction"><option value="out">I contacted them</option><option value="in">They contacted me</option></select></div>
+        <div class="field"><label for="lg-kind">How</label>
+          <select id="lg-kind" name="kind">{% for k in CONTACT_LOG_KINDS %}<option value="{{ k }}">{{ k|capitalize }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="lg-day">Day (blank means now)</label><input id="lg-day" type="date" name="day"></div>
+        <div class="field"><label for="lg-place">About which place</label>
+          <select id="lg-place" name="place_id"><option value="">No place in particular</option>
+            {% for p in places %}<option value="{{ p.id }}">{{ p.title }}</option>{% endfor %}
+            {% for p in options %}<option value="{{ p.id }}">{{ p.title }}</option>{% endfor %}</select></div>
+      </div>
+      {{ field("What was said", "body", kind="textarea", rows=3, id="lg-body", placeholder="Asked about the July 31 move-in") }}
+      <p>{{ button("Add to the log", kind="primary", small=True) }}</p>
+    </form>
+    {% if log %}
+    <ol class="timeline">
+      {% for e in log %}
+      <li><span class="fine">{{ e.at|local }} &middot; {{ e.kind }} &middot; {{ 'you wrote' if e.direction == 'out' else 'they wrote' }}{% if e.place_id and e.place_id in titles %} &middot; about <a href="/places/{{ e.place_id }}">{{ titles[e.place_id] }}</a>{% endif %}</span>
+        {% if e.body %}<br>{{ e.body }}{% endif %}
+        <form class="inline" method="post" action="/contact-log/{{ e.id }}/delete">{{ button("Remove", small=True, aria="Remove this log line") }}</form></li>
+      {% endfor %}
+    </ol>
+    {% else %}<p class="fine">Nothing logged yet. Each call, email, text or visit you note here helps you see who still owes you a reply.</p>{% endif %}
+  </section>
+
+  <section class="card" id="places" aria-labelledby="pl-h">
+    <h2 id="pl-h">Places <span class="count">{{ places|length }}</span></h2>
+    {% if places %}
+    <ul class="items">
+      {% for p in places %}
+      <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a><span class="item-sub">{{ p.stage }}</span></div>
+        <div class="item-actions"><form class="inline" method="post" action="/contacts/{{ contact.id }}/unlink"><input type="hidden" name="place_id" value="{{ p.id }}">{{ button("Take off", small=True, aria="Take " ~ contact.name ~ " off " ~ p.title) }}</form></div></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="fine">Not linked to any place yet.</p>{% endif %}
+    {% if options %}
+    <form method="post" action="/contacts/{{ contact.id }}/link" class="inline-form">
+      <div class="field"><label for="lk-place">Link to a place</label>
+        <select id="lk-place" name="place_id">{% for p in options %}<option value="{{ p.id }}">{{ p.title }}</option>{% endfor %}</select></div>
+      {{ button("Link", small=True) }}
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<aside>
+  <section class="card" aria-labelledby="det-h">
+    <h2 id="det-h">Details</h2>
+    <form method="post" action="/contacts/{{ contact.id }}" class="stack">
+      {{ field("Name", "name", contact.name, required=True, id="ct-name") }}
+      {{ select("Role", "role", CONTACT_ROLES, value=contact.role, id="ct-role") }}
+      {{ field("Company", "company", contact.company, id="ct-company") }}
+      {{ field("Email", "email", contact.email, kind="email", id="ct-email") }}
+      {{ field("Phone", "phone", contact.phone, id="ct-phone") }}
+      {{ field("Notes", "notes", contact.notes, kind="textarea", rows=3, id="ct-notes") }}
+      <p>{{ button("Save", kind="primary", small=True) }}</p>
+    </form>
+  </section>
+  <section class="card danger-zone">
+    <h2>Delete this contact</h2>
+    <form method="post" action="/contacts/{{ contact.id }}/delete" class="stack" data-confirm="Delete {{ contact.name }} for good?">
+      <div class="checks"><input id="dc-ok" type="checkbox" name="confirm" value="yes"><label for="dc-ok">Yes, delete this contact and its conversation log. This can't be undone.</label></div>
+      <p>{{ button("Delete contact", kind="danger", small=True) }}</p>
+    </form>
+  </section>
+</aside>
+</div>
+{% endblock %}

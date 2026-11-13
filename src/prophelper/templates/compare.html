@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, check, stage_badge, score_pill %}
+{% from "_fit.html" import fit_badge %}
+{% block title %}Compare &middot; Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/compare.css">
+{% call page_head("Compare", "Put two to four places side by side. Rows that differ are shaded, and the best value in a row has a check mark.") %}
+  {% if places %}<button type="button" class="btn" data-print>Print or save as PDF</button>{% endif %}
+  {{ button("Back to the board", href="/board") }}
+{% endcall %}
+{% if problem %}<p class="flash warn" role="alert" tabindex="-1">{{ problem }}</p>{% endif %}
+{% if missing %}<p class="flash warn" role="alert">{{ missing }} of the places you picked no longer exist, so they are left out.</p>{% endif %}
+
+{% if places %}
+<p class="print-only print-title">Property Helper comparison, {{ places|map(attribute='title')|join(' and ') }}</p>
+{% if summary %}<section class="card"><h2>At a glance</h2><ul>{% for s in summary %}<li>{{ s }}</li>{% endfor %}</ul></section>{% endif %}
+<div class="cmp-wrap">
+<table class="cmp" aria-label="Places side by side">
+  <thead>
+    <tr><th scope="col"><span class="sr">What is compared</span></th>
+      {% for p in places %}<th scope="col"><a href="/places/{{ p.id }}">{{ p.title }}</a><div class="fine">{{ p.address }}{% if p.unit %} #{{ p.unit }}{% endif %}</div>{{ stage_badge(p.stage) }}{% if p.score.fit != 'fits' %}<div>{{ fit_badge(p, False) }}</div>{% endif %}</th>{% endfor %}</tr>
+  </thead>
+  {% for sec in sections %}
+  <tbody>
+    <tr class="cmp-section"><th scope="colgroup" colspan="{{ places|length + 1 }}">{{ sec.title }}</th></tr>
+    {% for r in sec.rows %}
+    <tr class="{{ 'differs' if r.differs }}">
+      <th scope="row">{{ r.label }}{% if r.tied %} <span class="fine">(tied)</span>{% endif %}{% if r.differs %} <span class="sr">(differs)</span>{% endif %}</th>
+      {% for c in r.cells %}
+      <td class="{{ 'best' if c.best }}{{ ' worst' if c.worst }}{{ ' unknown' if c.unknown }}">{{ c.text }}{% if c.best %} <span aria-hidden="true">&#10003;</span><span class="sr">({{ r.best_note }})</span>{% elif c.worst %}<span class="sr">({{ 'highest' if r.best_note == 'lowest' else 'lowest' }})</span>{% endif %}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+</table>
+</div>
+<p class="fine">A check mark is the best value in that row when the places differ: the lowest cost, the highest score, the biggest size, the newest building. Facts where neither is better, such as bedrooms, are only shaded. "Unknown" means the place has no value saved, so it can't win or lose that row. A cost that leaves something out can't be called the lowest.</p>
+<section class="card no-print" aria-labelledby="share-h">
+  <h2 id="share-h">Share this comparison</h2>
+  <p class="fine">Saves one page you can email or text to a housemate or a parent. It opens in any browser and has no links, pictures or maps. Your contacts, phone numbers, documents and AI notes are never in it.</p>
+  <form method="get" action="/compare/share.html" class="stack">
+    {% for p in places %}<input type="hidden" name="ids" value="{{ p.id }}">{% endfor %}
+    {{ check("Include my notes", "notes", false, id="share-notes", hint="Adds the notes you wrote and what each person thinks. Leave it off to keep them private.") }}
+    <p>{{ button("Save a copy to share", kind="primary") }}</p>
+  </form>
+</section>
+<h2 class="no-print">Pick different places</h2>
+{% endif %}
+
+<section class="card no-print" aria-labelledby="pick-h">
+  <h2 id="pick-h">{% if places %}Change the places{% else %}Pick the places to compare{% endif %}</h2>
+  {% if options %}
+  <form method="get" action="/compare" class="stack">
+    <fieldset class="pick-list">
+      <legend>Choose 2 to 4 places{% if search %} from {{ search.name }}{% endif %}</legend>
+      {% for o in options %}
+      <div class="checks"><input id="pick-{{ o.id }}" type="checkbox" name="ids" value="{{ o.id }}"{% if o.id in picked %} checked{% endif %}>
+        <label for="pick-{{ o.id }}">{{ o.title }} <span class="fine">{{ o.stage }}{% if o.price %}, {% if search and search.mode == 'buy' %}{{ o.price|money }} price{% else %}{{ o.price|money }}/mo listed{% endif %}{% endif %}</span></label></div>
+      {% endfor %}
+    </fieldset>
+    <p>{{ button("Compare these places", kind="primary") }}</p>
+  </form>
+  {% else %}
+  <p>There are no places to compare yet. <a href="/add">Add a place</a> first.</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/print.js" defer></script>{% endblock %}

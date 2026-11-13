@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button %}
+{% block title %}Import a search &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head("Import a search", "Look it over first. Nothing is added until you press the button.") %}
+  {{ button("Back to Search", href="/search") }}
+{% endcall %}
+<section class="card">
+  <h2>{{ headline }}</h2>
+  <p>From the file <strong>{{ filename }}</strong>. It is a {{ 'buying' if mode == 'buy' else 'renting' }} search with {{ criteria }} thing{{ 's' if criteria != 1 }} that matter and {{ anchors }} important place{{ 's' if anchors != 1 }}.</p>
+  <p>It will be saved as <strong>{{ new_name }}</strong>.</p>
+  {% if left_out %}<div class="flash warn"><p><strong>Some things in the file will be left out or cleaned:</strong></p><ul>{% for line in left_out %}<li>{{ line }}</li>{% endfor %}</ul></div>{% endif %}
+  {% if same_name %}<p class="flash warn">You already have a search with this name. This adds another one next to it and changes nothing you have.</p>{% endif %}
+  <p class="fine">The file never holds contacts, documents, notes or ratings. Everything in it was written by someone else, so check the places before you rely on them. It becomes a new search; your other searches stay as they are.</p>
+  <form method="post" action="/searches/import/apply" class="stack">
+    <input type="hidden" name="token" value="{{ token }}">
+    <p>{{ button("Add this search", kind="primary") }} {{ button("Cancel", href="/search") }}</p>
+  </form>
+</section>
+{% endblock %}
