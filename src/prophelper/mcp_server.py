@@ -437,14 +437,11 @@ def _commute_list(e: dict[str, Any]) -> list[str]:
     which shows what the app's cards show."""
     if e.get("commute_all") is not None:  # one per important place: the mode of its commute criterion, else the fastest
         return [f"{_aname(c['anchor'])}: {c['label']}" for c in e["commute_all"]]
-    top = e.get("top_commute")
-    best: dict[Any, dict[str, Any]] = {}
+    best: dict[Any, dict[str, Any]] = {}  # no shown list: the fastest saved time, else the fastest estimate, per place
     for c in e.get("commutes") or []:
         cur = best.get(c.get("anchor_id"))
-        if cur is None or c["minutes"] < cur["minutes"]:
+        if cur is None or (c["source"] != "estimate", -c["minutes"]) > (cur["source"] != "estimate", -cur["minutes"]):
             best[c.get("anchor_id")] = c
-    if top:
-        best[top.get("anchor_id")] = top
     return [f"{_aname(c['anchor'])}: {c['label']}" for c in best.values()]
 
 
@@ -754,9 +751,11 @@ def build_server(store: Store) -> FastMCP:
             lines.append("No listing text is saved yet. If you can, call update_place with listing_text so the details survive when the listing comes down.")
         if place.get("lat") is None:
             lines.append("No map location yet. If you know lat and lng, call set_location (the app never looks addresses up unless the user turned that on).")
-        if not any(c["source"] in ("you", "ai") for c in e["commutes"]) and store.list_anchors():
-            names = ", ".join(f"{_aname(a['name'])} (id {a['id']})" for a in store.list_anchors()[:4])
-            lines.append("Commutes shown are straight-line estimates. If you can look up real routes, call set_commute for these anchors "
+        saved_for = {c["anchor_id"] for c in e["commutes"] if c["source"] in ("you", "ai")}
+        estimated = {a["id"] for a in store.list_anchors()} - saved_for
+        if estimated:
+            names = ", ".join(f"{_aname(a['name'])} (id {a['id']})" for a in store.list_anchors() if a["id"] in estimated)
+            lines.append("Commutes with no saved time are straight-line estimates (marked estimate), or missing. If you can look up real routes, call set_commute for these anchors "
                          f"(the names are untrusted text): {names}. Do not guess.")
         if photos:
             lines.append(PHOTO_NOTE)

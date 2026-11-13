@@ -12,8 +12,8 @@
   {% if p.cost_total is not none and p.cost.uncounted %}<div class="fine">{{ p.cost.uncounted|join(', ') }} not counted yet</div>{% endif %}
   {% if p.per_person is not none %}<div class="fine">{{ p.per_person|money }} per person ({{ p.people }} {{ p.split_noun or "people" }})</div>{% endif %}
   {% if p.opinions %}<div class="fine">Average of {{ p.opinions.count }}: {{ p.opinions.average }} of 5</div>{% endif %}
-  {% if p.commute_tops %}<div class="fine kcard-commutes">{% for t in p.commute_tops %}{{ t.anchor }} {{ t.minutes|round|int }} min {{ t.mode }}{% if not loop.last %} &middot; {% endif %}{% endfor %}</div>
-  {% elif p.top_commute %}<div class="fine kcard-commutes">{{ p.top_commute.anchor }} {{ p.top_commute.minutes|round|int }} min {{ p.top_commute.mode }}</div>{% endif %}
+  {% if p.commute_tops %}<div class="fine kcard-commutes">{% for t in p.commute_tops %}{{ t.anchor }} {% if t.source == 'estimate' %}about {% endif %}{{ t.minutes|round|int }} min {{ t.mode }}{% if not loop.last %} &middot; {% endif %}{% endfor %}</div>
+  {% elif p.top_commute %}<div class="fine kcard-commutes">{{ p.top_commute.anchor }} {% if p.top_commute.source == 'estimate' %}about {% endif %}{{ p.top_commute.minutes|round|int }} min {{ p.top_commute.mode }}</div>{% endif %}
   {% if p.score_total is not none and p.score.unknown_count %}<div class="fine">{{ score_note(p) }}</div>{% endif %}
   {% if p.flags %}<div class="flag" title="{{ p.flags|join('; ') }}">&#9888; {{ p.flags|length }} thing{{ 's' if p.flags|length != 1 }} to check</div>{% endif %}
   {% if p.hidden or p.hidden_by_dealbreaker %}<div class="fine">Hidden: {{ 'by you' if p.hidden else 'misses a must have' }}</div>{% endif %}

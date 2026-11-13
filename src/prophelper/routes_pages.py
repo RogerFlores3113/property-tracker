@@ -331,8 +331,9 @@ def _commute_target(store: Store, target: dict[str, Any]) -> dict[str, Any]:
 
 
 def _commute_label(store: Store, target: dict[str, Any]) -> str:
+    a: dict[str, Any] | None = {"name": "everyone's places"} if target.get("all_anchors") and target.get("anchor_id") is None else None
     try:
-        a = store.get_anchor(int(target["anchor_id"]))
+        a = a or store.get_anchor(int(target["anchor_id"]))
     except (KeyError, ValueError, TypeError, NotFound):
         return ""
     try:
@@ -364,7 +365,7 @@ def search_page(request: Request, id: int | None = None):
         raise HTTPException(404, "That search doesn't exist.") from None
     anchors = store.list_anchors()
     criteria = store.list_criteria(shown["id"]) if shown else []
-    ctx = {"anchors": {a["id"]: a for a in anchors}}
+    ctx = {"anchors": {a["id"]: a for a in anchors}, "people": int((shown or {}).get("people") or 1)}
     crit_labels = {c["id"]: scoring._auto_label(c["kind"], c["target"], ctx) for c in criteria}
     return render(request, "search.html", current=current, shown=shown, searches=store.list_searches(include_archived=True),
                   criteria=criteria, crit_labels=crit_labels, anchors=anchors,
