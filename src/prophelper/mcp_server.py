@@ -144,6 +144,8 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
     ("ai_notes", str, "Your own note about this place (added under a dated line; the user's notes are never touched)"),
 ]
 PLACE_KEYS = {n for n, _, _ in PLACE_PARAMS}
+UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: guess (default, shown as a guess), billed back or from the listing "
+                         "(the listing itself gives that monthly amount, so it is shown as from the listing)")
 ALL_UTILITIES = ("electric", "gas", "water", "sewer", "trash", "heat")  # same as the listing reader's "all utilities"
 USER_ONLY = {"notes": "notes are the user's own words, so you can't write them. Put your text in ai_notes, or use add_note",
              "rating": "the rating is the user's own gut feeling, so you can't set it",
@@ -718,7 +720,56 @@ def build_server(store: Store) -> FastMCP:
         return [f"{upgraded} photo link{'s were' if upgraded != 1 else ' was'} plain http://, so I saved {'them' if upgraded != 1 else 'it'} as https:// "
                 f"(pictures only load over https). If a photo doesn't show, the site may not offer it over https."] if upgraded else []
 
+    def apply_utilities_source(fields: dict[str, Any], where: str = "") -> None:
+        """utilities_source says where utilities_estimate came from: "guess" (the default), "billed back" or "from the listing".
+        The last two are recorded in AI notes so the cost line is labelled right, and only when the listing text agrees."""
+        raw = fields.pop("utilities_source", None)
+        if raw in (None, ""):
+            return
+        word = " ".join(str(raw).replace("_", " ").lower().split())
+        if word in ("guess", "a guess", "estimate", "my guess"):
+            return
+        if word not in ("billed back", "from the listing", "listing"):
+            raise ValueError(f"{where}utilities_source needs to be one of: guess, billed back, from the listing. Nothing was saved.")
+        try:
+            amount = float(str(fields.get("utilities_estimate")).replace("$", "").replace(",", ""))
+        except (TypeError, ValueError):
+            raise ValueError(f"{where}utilities_source goes with a utilities_estimate amount, and none was sent. Nothing was saved.") from None
+        text = str(fields.get("listing_text") or "")
+        if text:
+            from .parsers import listing_billed_amount
+            shown = listing_billed_amount(text)
+            if not ((shown is not None and abs(shown - amount) < 0.5) or re.search(r"\$\s?" + re.escape(f"{amount:,.0f}") + r"(?!\d)|\$\s?" + re.escape(f"{amount:.0f}") + r"(?!\d)", text)):
+                raise ValueError(f"{where}utilities_source says ${amount:,.0f}/month comes from the listing, but the listing text doesn't show that amount. "
+                                 f"Send utilities_source \"guess\" or fix the amount. Nothing was saved.")
+        fields["ai_notes"] = " ".join(filter(None, [str(fields.get("ai_notes") or ""),
+                                                    f"Utilities estimate ${amount:,.0f}/month: {'billed back, ' if word == 'billed back' else ''}from the listing."]))
+
+    def read_listing_text(fields: dict[str, Any]) -> None:
+        """Read the pasted listing text with the same reader the web Add page uses, and fill only what the caller left empty."""
+        text = str(fields.get("listing_text") or "")
+        if not text.strip():
+            return
+        from . import parsers
+        try:
+            found = parsers.parse_listing(text, str(fields.get("url") or ""))
+        except Exception:  # noqa: BLE001 - a reader failure must not lose the place
+            fields["_text_notes"] = ["The listing text was saved but not read (the reader could not make sense of it), so no facts were filled from it. "
+                                     "Send the facts you can read yourself."]
+            return
+        filled: list[str] = []
+        for key, value in found.items():
+            if key == "found_in_listing" or key not in PLACE_KEYS or key == "listing_text" or value in (None, ""):
+                continue
+            if _is_blank(fields.get(key)):
+                fields[key] = value
+                filled.append(key.replace("_", " "))
+        fields["_text_notes"] = ([f"Read from the listing text and filled in: {', '.join(filled)}. Check them against the listing; "
+                                  f"anything you sent yourself was kept as you sent it."] if filled else
+                                 ["The listing text was saved and read, but I found no facts in it to fill in. Send the facts you can read yourself."])
+
     def check_fields(fields: dict[str, Any], where: str = "") -> dict[str, Any]:
+        apply_utilities_source(fields, where)
         word = " ".join(str(fields.get("parking") or "").replace("_", " ").lower().split())
         if word and re.search(r"\b(reserved|assigned)\b", word):
             raise ValueError(f"{where}parking \"{_clip(str(fields.get('parking')), 40)}\" isn't one of the options. Parking is one of: "
@@ -765,6 +816,7 @@ def build_server(store: Store) -> FastMCP:
         """Add or update one place. Returns (place, created, notes, matched_on)."""
         fields = dict(fields)
         photo_notes = fields.pop("_photo_notes", [])
+        text_notes = fields.pop("_text_notes", [])
         search = _search_for(store, fields.pop("search_id", None))
         stage = fields.pop("stage", None)
         commutes = fields.pop("commutes", None)
@@ -793,6 +845,7 @@ def build_server(store: Store) -> FastMCP:
                 ignored.append("values for " + ", ".join(sorted(kept)) + " (already filled; use update_place to change them)")
             if ignored:
                 notes.append("Ignored on this repeat: " + "; ".join(ignored) + ".")
+        notes += text_notes
         notes += photo_notes
         notes += set_commutes(place, commutes)
         return store.get_place(place["id"]), created, notes, matched
@@ -966,6 +1019,7 @@ def build_server(store: Store) -> FastMCP:
     # ------------------------------------------------------------ places: write
     def add_place(**kw: Any) -> CallToolResult:
         fields = check_fields(kw)
+        read_listing_text(fields)
         if not any(fields.get(k) for k in ("title", "address", "url")):
             raise ValueError("A place needs at least a title, an address or a link. Nothing was saved.")
         need_search(fields.get("search_id"))
@@ -986,7 +1040,8 @@ def build_server(store: Store) -> FastMCP:
     add_place.__signature__ = _params(  # type: ignore[attr-defined]
         [_opt("search_id", int, "Default: the current search")],
         [("stage", str | None, "Saved by default; the stage it is already at, if the user says so", None),
-         ("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor: name or id, mode: walk|bike|transit|drive, minutes}]", None)])
+         ("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor: name or id, mode: walk|bike|transit|drive, minutes}]", None),
+         ("utilities_source", str | None, UTILITIES_SOURCE_HELP, None)])
     mcp.tool(annotations=WRITE)(add_place)
 
     @mcp.tool(annotations=WRITE)
@@ -1003,6 +1058,7 @@ def build_server(store: Store) -> FastMCP:
             if not isinstance(item, dict):
                 raise ValueError(f"Place {i} needs to be an object of fields. Nothing was saved.")
             f = check_fields(item, f"Place {i}{_title_part(item)}: ")
+            read_listing_text(f)
             if not any(f.get(k) for k in ("title", "address", "url")):
                 raise ValueError(f"Place {i} needs at least a title, an address or a link. Nothing was saved.")
             if search_id is not None:
@@ -1018,7 +1074,7 @@ def build_server(store: Store) -> FastMCP:
                     raise ValueError(_named_error(f"Place {i}", f, exc)) from None
                 e = _enrich(store, place)
                 lines.append(("Added " if created else "Already saved, updated ") + _line(e) + ("" if created else " (filled only empty fields)"))
-                lines += ["  " + n for n in notes if n.startswith("Ignored on this repeat")]
+                lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "Read from the listing text", "The listing text was saved"))]
                 out.append({"id": place["id"], "created": created})
         added = sum(1 for o in out if o["created"])
         lines.insert(0, f"Added {added}, updated {len(out) - added}.")
@@ -1057,7 +1113,8 @@ def build_server(store: Store) -> FastMCP:
                             "rating; put your words in ai_notes. A value you replace is logged on the timeline. Moving stages is move_place.")
     update_place.__signature__ = _params(  # type: ignore[attr-defined]
         [_req("place_id", int, "The place's id")],
-        [("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor, mode, minutes}]", None)])
+        [("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor, mode, minutes}]", None),
+         ("utilities_source", str | None, UTILITIES_SOURCE_HELP, None)])
     mcp.tool(annotations=SAME_AGAIN)(update_place)
 
     @mcp.tool(annotations=WRITE)

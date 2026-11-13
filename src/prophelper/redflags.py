@@ -53,7 +53,13 @@ _BUY_SAME_DAY = re.compile(r"\b(?:today|tonight|same[- ]day|within 24 hours|righ
 # Text written to steer an AI tool, not a person.
 _AI_TARGETED = re.compile(r"\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|prompts?|rules?)\b|"
                           r"\b(?:delete|remove|erase|wipe)\s+(?:all|every|my)\s+(?:the\s+)?(?:places?|listings?|data|notes|searches)\b|"
-                          r"\b(?:system prompt|you are now|new instructions?:|as an ai (?:assistant|agent)|assistant,? (?:please |you must ))", re.I)
+                          r"\b(?:system prompt|you are now|new instructions?:|as an ai (?:assistant|agent)|assistant,? (?:please |you must ))|"
+                          r"\b(?:ignore|disregard|forget|override|bypass)\s+(?:all\s+|any\s+|the\s+|your\s+|these\s+|my\s+)*(?:previous\s+|prior\s+|above\s+|earlier\s+|original\s+|current\s+)?(?:instructions?|prompts?|rules|guidelines|directions)\b|"
+                          r"\b(?:ai|a\.i\.|llm|claude|chatgpt|gpt|language model|chatbot|bot|assistant)\s*(?:assistant|agent|model|tool)?\s*[:,]\s*(?:please\s+)?(?:tell|say|report|respond|reply|write|mark|move|delete|send|approve|rate|call|ignore|forget|you (?:must|should|will|are))\b|"
+                          r"\b(?:tell|inform|assure|convince|say to)\s+the\s+(?:user|renter|reader|buyer|person)\s+(?:that\s+)?(?:this|it|the (?:place|listing))\s+(?:is|looks|seems)\s+(?:safe|legit|legitimate|real|fine|trustworthy|verified)\b|"
+                          r"\b(?:move|mark|set|change|put|send)\s+(?:every|all|each)\s+(?:the\s+)?(?:place|listing|apartment|home)s?\s+(?:to|as)\b|"
+                          r"\b(?:if you are|as|when you are)\s+an?\s+(?:ai|llm|language model|chatbot|assistant that is reading)\b|"
+                          r"\b(?:do not|don'?t)\s+(?:tell|warn|mention to|inform)\s+the\s+(?:user|renter|buyer)\b", re.I)
 PRICE_FLOOR_RATIO = 0.55  # under this share of the typical price in the same search is "far under"
 
 
