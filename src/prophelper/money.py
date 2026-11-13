@@ -105,8 +105,8 @@ def _unpriced_tenant_utilities(place: dict[str, Any]) -> list[str]:
     """What the tenant pays that the listing's billed-back amount does not cover ("electric, gas, internet" when only trash
     is billed back). Empty when the amount covers everything the tenant pays, or the listing text does not say what it covers."""
     priced = {"water" if w == "hot water" else w for w in _billed_names(place)}
-    if not priced or "utilities" in priced:
-        return []  # a billed-back amount that names no utility ("RUBS, avg $120/mo") covers all of them
+    if not priced:
+        return []
     return [w for w in tenant_pays_list(place) if w not in priced and w not in NOTHING_WORDS]
 
 

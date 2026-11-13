@@ -79,3 +79,23 @@ def test_billed_back_rubs_without_names():
     line = [l for l in rent_cost(place)["lines"] if l["key"] == "utilities"][0]
     assert line["amount"] == 120 and line["note"].startswith("Billed back, from the listing")
     assert not line["estimated"]
+
+
+def test_rubs_alone_keeps_estimate_and_asks():
+    text = "2BR $1,400. Utilities billed back via RUBS, avg $120/mo"
+    out = parse_listing(text)
+    assert out["utilities_estimate"] == 120
+    assert "billed-back average of $120 a month but doesn't say which utilities it covers. Ask the landlord." in out["found_in_listing"]
+    line = [l for l in rent_cost(dict(out, listing_text=text))["lines"] if l["key"] == "utilities"][0]
+    assert line["amount"] == 120 and line["note"].startswith("Billed back, from the listing")
+
+
+def test_rubs_plus_tenant_pays_electric_gas_stays_uncounted():
+    text = "2BR $1,400. Utilities billed back via RUBS, avg $120/mo. Tenant pays electric and gas."
+    out = parse_listing(text)
+    assert out["utilities_estimate"] == 120
+    assert out["tenant_pays"] == "electric, gas"
+    cost = rent_cost(dict(out, listing_text=text))
+    line = [l for l in cost["lines"] if l["key"] == "utilities"][0]
+    assert "electric" in line["note"] and "gas" in line["note"] and "not counted yet" in line["note"]
+    assert "utilities estimate" in cost["missing"]

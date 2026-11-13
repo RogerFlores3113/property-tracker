@@ -1046,7 +1046,13 @@ def listing_billed_names(text: str) -> list[str]:
     try:
         billed = _billed_back(_util_text(_tidy(text or "")))
         if billed:
-            return [w.strip() for w in billed[0].split(",") if w.strip()] or ["utilities"]
+            names = [w.strip() for w in billed[0].split(",") if w.strip()]
+            if not names:
+                # an amount that names no utility: assume water, sewer and trash, minus anything named as tenant-paid elsewhere
+                utext = _util_text(_tidy(text or ""))
+                paid = set(_utility_roles(utext)["tenant"]) | set(w.strip() for w in _tenant_pays(utext).split(",")) | set(_util_sections(utext)["pays"])
+                names = [w for w in ("water", "sewer", "trash") if w not in paid]
+            return names
         return [w.strip() for w in _ordered_utilities(list(_utility_roles(_util_text(_tidy(text or "")))["billed"])).split(",") if w.strip()]
     except Exception:
         return []
@@ -1745,7 +1751,7 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
         if billed[0]:
             facts.append(f"{billed[0].capitalize()} are billed back at ${billed[1]:,.0f}/month, counted as your utilities estimate.")
         else:
-            facts.append(f"Utilities are billed back at about ${billed[1]:,.0f}/month, counted as your utilities estimate.")
+            facts.append(f"The listing gives a billed-back average of ${billed[1]:,.0f} a month but doesn't say which utilities it covers. Ask the landlord.")
         if moved:
             facts.append(f"The listing also says {moved} is included, but a billed-back amount means you pay it, so it is not counted as included.")
     elif roles["billed"]:
