@@ -5,7 +5,7 @@
 {% block body %}
 <link rel="stylesheet" href="/static/compare.css">
 {% call page_head("Compare", "Put two to four places side by side. Rows that differ are shaded, and the best value in a row says best, or tied best when places share it.") %}
-  {% if places %}<button type="button" class="btn" data-print>Print or save as PDF</button>{% endif %}
+  {% if places %}<a class="btn primary" href="#share-h">Share a copy</a><button type="button" class="btn" data-print>Print or save as PDF</button>{% endif %}
   {{ button("Back to the board", href="/board") }}
 {% endcall %}
 {% if problem %}<p class="flash warn" role="alert" tabindex="-1">{{ problem }}</p>{% endif %}
