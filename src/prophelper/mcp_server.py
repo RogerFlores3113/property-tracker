@@ -693,6 +693,9 @@ def build_server(store: Store) -> FastMCP:
             if not re.match(r"^https?://[^\s/]+\S*$", link, re.I):
                 raise ValueError(f"{where}photo link \"{_clip(link, 40)}\" isn't a web address. Photo links must start with https:// "
                                  f"(or http://). Nothing was saved.")
+            if re.match(r"^https?://[^/?#\s]*@", link, re.I):
+                raise ValueError(f"{where}photo link \"{_clip(link.split('@')[-1], 40)}\" has a user name or password in it, so I won't save it. "
+                                 f"Send the plain photo address without it. Nothing was saved.")
             if link[:5].lower() == "http:":
                 link = "https:" + link[5:]
                 upgraded += 1

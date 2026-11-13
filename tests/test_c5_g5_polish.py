@@ -84,7 +84,9 @@ def test_add_form_hides_pets_in_buy_mode(client, store):
 def test_board_says_added_for_a_place_never_moved(client, store):
     s = store.add_search("Rent", "rent")
     p, _ = store.add_place(search_id=s["id"], by="you", title="Fresh")
-    html = client.get("/board").text
+    old, _ = store.add_place(search_id=s["id"], by="you", title="Older")
+    store._exec("UPDATE places SET created_at = '2020-01-01T00:00:00Z', stage_changed_at = '2020-01-01T00:00:00Z' WHERE id = ?", (old["id"],))
+    html = client.get("/board").text  # cycle 6: "Added today" only shows when some places are older
     assert "Added today" in html and "Moved today" not in html
     store._exec("UPDATE places SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?", (p["id"],))
     store.move_stage(p["id"], "Contacted")

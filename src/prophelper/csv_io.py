@@ -38,9 +38,9 @@ EXPORT_COLUMNS: list[tuple[str, str]] = [
     ("Special assessment", "special_assessment"), ("Who pays the special assessment", "special_assessment_payer"),
     ("Closing costs", "closing_costs"), ("Seller credit", "seller_credit"),
     ("Application fee charged per adult", "application_fee_per_adult"), ("Listing agent", "listing_agent"), ("Latitude", "lat"), ("Longitude", "lng"),
-    ("Rating", "rating"), ("Fit score", "fit_score"), ("Red flags", "red_flags"), ("Notes", "notes"),
+    ("Rating", "rating"), ("Fit score", "fit_score"), ("Fit", "fit"), ("Red flags", "red_flags"), ("Notes", "notes"),
 ]
-EXPORT_ONLY = {"fit_score", "red_flags"}  # written on export, never read back (the AI and the local check own them)
+EXPORT_ONLY = {"fit_score", "fit", "red_flags"}  # written on export, never read back (the AI and the local check own them)
 
 _COMPUTED_HEADS = {"true monthly cost", "cost per person per month", "score out of 100"}
 
@@ -49,7 +49,7 @@ def is_computed_header(heading: Any) -> bool:
     """A column our own export adds that the app works out itself (fit score, red flags, costs, commutes, each person's
     rating). Reading it back would only copy stale numbers, so import ignores it, quietly."""
     n = _norm_header(heading)
-    return (n in _COMPUTED_HEADS or SYNONYMS.get(n) in EXPORT_ONLY or n in ("fit score", "red flags")
+    return (n in _COMPUTED_HEADS or SYNONYMS.get(n) in EXPORT_ONLY or n in ("fit score", "fit", "red flags")
             or bool(re.match(r"^commute to .+ (minutes|way)( fastest way)?$", n)) or bool(re.search(r" s rating$", n)))
 
 
@@ -195,6 +195,8 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
                 v = PLAIN_WORDS[field].get(str(v), v) if v else ""
             elif field == "fit_score":
                 v = p.get("score_total") if p.get("score_total") is not None else v
+            elif field == "fit":
+                v = str((p.get("score") or {}).get("fit_label") or "").split(":")[0]  # "Check first: possible scam" -> "Check first"
             elif field == "red_flags":
                 v = _red_flags_text(p)
             elif field == "rating":
@@ -294,8 +296,8 @@ def _cell_problem(field: str, exc: Exception) -> str:
     """A plain note for one bad cell, naming the column by its label ("Price needs to be a number, like 1450")."""
     label = FIELD_LABELS.get(field, field)
     if "needs to be a number" in str(exc):
-        return f"{label} needs to be a number, like {_NUMBER_EXAMPLES.get(field, '12')}. It is left empty."
-    return f"{label}: {str(exc).rstrip('.')}. It is left empty."
+        return f"{label} needs to be a number, like {_NUMBER_EXAMPLES.get(field, '12')}. The place will be added with {label.lower()} left blank."
+    return f"{label}: {str(exc).rstrip('.')}. The place will be added with {label.lower()} left blank."
 
 
 def plan_import(store: Store, search_id: int, headers: list[str], rows: list[list[str]], mapping: dict[int, str]) -> list[dict[str, Any]]:

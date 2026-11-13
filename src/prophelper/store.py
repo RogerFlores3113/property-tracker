@@ -610,6 +610,11 @@ def normalize_unit(unit: Any) -> str:
     return text
 
 
+def has_userinfo(link: str) -> bool:
+    """True when a web link carries a user name or password (https://user:pw@host/...). Such links are never saved."""
+    return bool(re.match(r"^(?:[a-z][a-z0-9+.-]*://)?[^/?#\s]*@", str(link or "").strip(), re.I))
+
+
 def photo_list(value: Any) -> list[str]:
     """A list of http(s) photo links from a list, a JSON list or lines of text. At most PHOTOS_MAX. Never fetched."""
     if value is None or value == "":
@@ -626,7 +631,7 @@ def photo_list(value: Any) -> list[str]:
     out: list[str] = []
     for item in value if isinstance(value, (list, tuple)) else []:
         link = str(item or "").strip()
-        if re.match(r"^https?://[^\s]+$", link, re.I) and link not in out:
+        if re.match(r"^https?://[^\s]+$", link, re.I) and not has_userinfo(link) and link not in out:
             out.append(link[:2000])
     return out[:PHOTOS_MAX]
 

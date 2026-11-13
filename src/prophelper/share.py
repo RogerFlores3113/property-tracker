@@ -21,7 +21,7 @@ from datetime import date
 from typing import Any
 
 from . import compare, helpers
-from .store import (COMMUTE_MODES, PLACE_INT, PLACE_REAL, PLACE_TEXT, Store, normalize_url, people_slots)
+from .store import (COMMUTE_MODES, has_userinfo, PLACE_INT, PLACE_REAL, PLACE_TEXT, Store, normalize_url, people_slots)
 
 FORMAT_NAME = "property-helper-search"
 FORMAT_VERSION = 1
@@ -236,6 +236,34 @@ def preview_text(doc: dict[str, Any], places: int | None = None) -> str:
     return f"Adds a search named {name} with {n} place{'s' if n != 1 else ''}"
 
 
+def clean_photo_links(value: Any) -> tuple[list[str], int, int]:
+    """``(links, dropped, upgraded)`` for the photo links of an imported place: a link with a user name or password, or one that
+    isn't a web address, is dropped; a plain http:// link becomes https:// (pictures only load over https)."""
+    if value in (None, ""):
+        return [], 0, 0
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            value = json.loads(text) if text.startswith("[") else re.split(r"[\s,]+", text)
+        except ValueError:
+            value = text.split()
+    kept: list[str] = []
+    dropped = upgraded = 0
+    for item in value if isinstance(value, (list, tuple)) else []:
+        link = str(item or "").strip()
+        if not link:
+            continue
+        if not re.match(r"^https?://[^\s/]+\S*$", link, re.I) or has_userinfo(link):
+            dropped += 1
+            continue
+        if link[:5].lower() == "http:":
+            link = "https:" + link[5:]
+            upgraded += 1
+        if link not in kept:
+            kept.append(link)
+    return kept, dropped, upgraded
+
+
 def left_out_lines(report: dict[str, Any], *, done: bool = False) -> list[str]:
     """Plain words for what an import leaves out or cleans, from ``dry_run`` or ``apply_import`` numbers."""
     def n(k: str) -> int:
@@ -259,10 +287,22 @@ def left_out_lines(report: dict[str, Any], *, done: bool = False) -> list[str]:
         out.append(f"{n('anchors_skipped')} important place{s('anchors_skipped', '', 's')} can't be read and {gone('anchors_skipped')} left out.")
     if n("link_unsafe"):
         out.append(f"{n('link_unsafe')} place{s('link_unsafe', ' has a link that isn' + chr(39) + 't', 's have links that aren' + chr(39) + 't')} a normal web address. "
-                   f"{s('link_unsafe', 'The place is', 'The places are')} kept without {s('link_unsafe', 'its link', 'their links')}.")
+                   f"{s('link_unsafe', 'The place ' + ('was' if done else 'is'), 'The places ' + ('were' if done else 'are'))} kept without {s('link_unsafe', 'its link', 'their links')}.")
     if n("link_dropped"):
-        out.append(f"{n('link_dropped')} listing link{s('link_dropped', ' is', 's are')} already saved in another search, so "
-                   f"{s('link_dropped', 'that place', 'those places')} will have no link.")
+        k = n("link_dropped")
+        who = "that place" if k == 1 else "those places"
+        verb = ("has" if k == 1 else "have") if done else "will have"
+        out.append(f"{k} listing link{' is' if k == 1 else 's are'} already saved in another search, so {who} {verb} no link.")
+    if n("photos_dropped"):
+        k = n("photos_dropped")
+        out.append(f"{k} photo link{' has' if k == 1 else 's have'} a user name or password in {'it' if k == 1 else 'them'}, or {'isn' + chr(39) + 't' if k == 1 else 'aren' + chr(39) + 't'} "
+                   f"a web address, so {'it' if k == 1 else 'they'} {'was' if k == 1 else 'were'} left out." if done else
+                   f"{k} photo link{' has' if k == 1 else 's have'} a user name or password in {'it' if k == 1 else 'them'}, or {'isn' + chr(39) + 't' if k == 1 else 'aren' + chr(39) + 't'} "
+                   f"a web address, so {'it' if k == 1 else 'they'} will be left out.")
+    if n("photos_upgraded"):
+        k = n("photos_upgraded")
+        out.append(f"{k} photo link{' was' if k == 1 else 's were'} plain http://, so {'it' if k == 1 else 'they'} {'was' if done and k == 1 else 'were' if done else 'will be'} "
+                   f"saved as https:// (pictures only load over https).")
     return out
 
 
@@ -292,6 +332,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
     criteria_skipped = int(not_obj.get("criteria") or 0)
     anchors_skipped = int(not_obj.get("anchors") or 0)
     dropped = unsafe = 0
+    photos_dropped = photos_upgraded = 0
     created = 0
     fields_skipped: list[str] = []
     with store._write():
@@ -343,6 +384,10 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
             if fields.get("url") and store.find_duplicate(url=str(fields["url"])) is not None:
                 fields.pop("url")  # a link is saved once across all searches; this one is already in use
                 dropped += 1
+            if "photo_urls" in fields:
+                fields["photo_urls"], d, u = clean_photo_links(fields["photo_urls"])
+                photos_dropped += d
+                photos_upgraded += u
             try:
                 place, made_new = store.add_place(search_id=sid, by="you", **fields)
             except (ValueError, TypeError):
@@ -361,7 +406,7 @@ def apply_import(store: Store, doc: dict[str, Any]) -> dict[str, Any]:
                     pass  # a travel time that can't be read is simply not added
     return {"search": store.get_search(sid), "places": created, "link_dropped": dropped, "link_unsafe": unsafe,
             "places_skipped": places_skipped, "criteria_skipped": criteria_skipped, "anchors_skipped": anchors_skipped,
-            "fields_skipped": fields_skipped, "skipped": places_skipped + criteria_skipped + anchors_skipped}
+            "fields_skipped": fields_skipped, "photos_dropped": photos_dropped, "photos_upgraded": photos_upgraded, "skipped": places_skipped + criteria_skipped + anchors_skipped}
 
 
 # --------------------------------------------------------------------------- a file waiting for "Add it"

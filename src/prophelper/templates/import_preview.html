@@ -42,7 +42,7 @@
   </section>
 
   {% if new_sample %}
-  {% if counts.unreadable %}<p class="flash warn" role="status">{{ counts.unreadable|num }} row{{ 's have' if counts.unreadable != 1 else ' has' }} values I can't read (see the notes below). Those values are left empty; the rest of the row is still used.</p>{% endif %}
+  {% if counts.unreadable %}<p class="flash warn" role="status">{{ counts.unreadable|num }} row{{ 's have' if counts.unreadable != 1 else ' has' }} values I can't read (see the notes below). Each of those places will be added with that value left blank; the rest of the row is still used.</p>{% endif %}
   <section class="card">
     <h2>New places (first {{ new_sample|length }})</h2>
     <ul>
