@@ -186,3 +186,10 @@ def test_unknown_assessment_is_empty_with_note(text):
     r = parse_listing("List price $500,000\n" + text)
     assert "special_assessment" not in r
     assert "A special assessment is mentioned but no amount is given" in notes(r)
+
+
+def test_title_drops_price_written_in_words():
+    from prophelper import parsers
+    r = parsers.parse_listing("FB Marketplace - 2 bedroom duplex 1400 dollars a month. $700 deposit. Everything included except cable. Pm me")
+    assert r["title"] == "2 bedroom duplex"
+    assert r["price"] == 1400

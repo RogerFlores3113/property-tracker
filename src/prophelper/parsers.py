@@ -2069,7 +2069,9 @@ def _clean_title(title: str) -> str:
         if cut == out or len(cut) < 3:
             break
         out = cut
-    return out
+    # "2 bedroom duplex 1400 dollars a month": a price written in words is a fact, not part of the name
+    cut = re.sub(r"[ \t,\-|]*\$?\d[\d,]*[ \t]*(?:dollars|bucks)\b(?:[ \t]*(?:a|per|/)[ \t]*(?:month|mo)\b)?.*$", "", out, flags=re.I).strip(" -|:,")
+    return cut if len(cut) >= 3 else out
 
 
 _ALL_CAPS_KEEP = ("LLC", "II", "III", "IV", "NE", "NW", "SE", "SW", "UIUC", "BR", "BA", "HOA", "USA", "UW", "UC", "MIT", "NYC", "SF", "LA")
