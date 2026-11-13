@@ -645,7 +645,7 @@ async def delete_anchor(request: Request, anchor_id: int):
 # --------------------------------------------------------------------------- Add
 # What the preview checks for after "Read the listing": (label, the saved fields that count as found).
 _PREVIEW_RENT = (("rent", ("price",)), ("bedrooms", ("beds",)), ("bathrooms", ("baths",)), ("address", ("address",)), ("laundry", ("laundry",)),
-                 ("parking", ("parking", "parking_cost")), ("pets", ("pets",)), ("available date", ("available_from",)), ("deposit", ("deposit",)),
+                 ("parking", ("parking", "parking_cost")), ("pets", ("pets", "pet_rent", "pet_fee", "pet_deposit", "pet_weight_limit", "pet_count_limit", "pet_breed_note")), ("available date", ("available_from",)), ("deposit", ("deposit",)),
                  ("utilities included", ("utilities_included", "tenant_pays", "utilities_estimate")))
 _PREVIEW_BUY = (("price", ("price",)), ("bedrooms", ("beds",)), ("bathrooms", ("baths",)), ("address", ("address",)), ("HOA", ("hoa",)),
                 ("property tax", ("property_tax",)), ("insurance", ("insurance",)))

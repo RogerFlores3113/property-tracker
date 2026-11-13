@@ -240,6 +240,8 @@ def _baths(text: str) -> float | None:
         hits.append((m.start(), float(m.group(1))))
     for m in re.finditer(r"\bbath(?:room)?s?\s*[:\-]\s*(\d{1,2}(?:\.\d)?)\b", low):
         hits.append((m.start(), float(m.group(1))))
+    for m in re.finditer(r"\b(?:bath(?:room)?s?)\b[ \t]+(\d{1,2}(?:\.\d)?)\b(?![ \t]*(?:sq|sf|ft|\$|/|%|\d|min|mi\b|blocks?|years?|yr|bed|bd|br))", low):
+        hits.append((m.start(), float(m.group(1))))
     for m in re.finditer(r"\b\d\s*(?:bd|br|bed)\s*[/|]\s*(\d(?:\.\d)?)\s*(?:ba|bth|bath)", low):
         hits.append((m.start(), float(m.group(1))))
     hits = [h for h in hits if h[1] <= 15]
@@ -370,7 +372,7 @@ def _pets(text: str) -> str:
     cats = dogs = False
     no_cats = re.search(r"\bno cats?\b(?!\s+(?:over|above|under|larger|bigger|heavier|exceeding|more))|\bcats? (?:are )?not (?:allowed|permitted|accepted)|\bno cats? allowed", work)
     no_dogs = re.search(r"\bno dogs?\b(?!\s+(?:over|above|under|larger|bigger|heavier|exceeding|more))|\bdogs? (?:are )?not (?:allowed|permitted|accepted)|\bno dogs? allowed", work)
-    if re.search(r"\bcats? and dogs?\b|\bdogs? and cats?\b|\bcats?\s*(?:&|/|,)\s*dogs?\b|\bdogs?\s*(?:&|/|,)\s*cats?\b|\bpet[- ]friendly\b|\bpets (?:ok|okay|allowed|welcome|considered|accepted)\b|\bpets\s*[:\-]\s*(?:yes|ok|okay|allowed|welcome)\b|\ball pets\b|\bdogs? (?:are )?ok.{0,40}cats? (?:are )?ok|\bcats? (?:are )?ok.{0,40}dogs? (?:are )?ok", work):
+    if re.search(r"\bcats? and dogs?\b|\bdogs? and cats?\b|\bcats?\s*(?:&|/|,)\s*dogs?\b|\bdogs?\s*(?:&|/|,)\s*cats?\b|\bpet[- ]friendly\b|\bpets (?:ok|okay|allowed|welcome|accepted)\b(?!\s+(?:with|by|on|upon|subject to)\s+(?:landlord\s+|owner\s+|management\s+)?(?:approval|permission))|\bpets\s*[:\-]\s*(?:yes|ok|okay|allowed|welcome)\b|\ball pets\b|\bdogs? (?:are )?ok.{0,40}cats? (?:are )?ok|\bcats? (?:are )?ok.{0,40}dogs? (?:are )?ok", work):
         cats = dogs = True
     if re.search(r"\bcats?\b(?:\s*(?:are|is))?\s*(?:ok|okay|fine|allowed|welcome|accepted|friendly|permitted)|\bcats? only\b|\bcat[- ]friendly\b|\bpurrr|\bcats?\s*[:\-]?\s*\$\s?\d", work):
         cats = True  # "Cats $200 deposit": a fee for cats means cats are taken
@@ -384,9 +386,10 @@ def _pets(text: str) -> str:
     if pm and not re.search(r"\b(?:no|not|none)\b", pm.group(1)):
         cats = cats or bool(re.search(r"\bcats?\b", pm.group(1)))
         dogs = dogs or bool(re.search(r"\bdogs?\b", pm.group(1)))
-    if re.search(r"\bcats?\s+(?:are\s+)?(?:negotiable|considered|case[- ]by[- ]case|by approval|with approval|on approval|upon approval)", work):
+    # "considered", "case by case" and "with approval" are not a yes: _pets_doubt and _pets_soft_note say so in a note
+    if re.search(r"\bcats?\s+(?:are\s+)?negotiable", work):
         cats = True
-    if re.search(r"\bdogs?\s+(?:are\s+)?(?:negotiable|considered|case[- ]by[- ]case|by approval|with approval|on approval|upon approval)", work):
+    if re.search(r"\bdogs?\s+(?:are\s+)?negotiable", work):
         dogs = True
     if no_cats and not re.search(r"\bcats? only\b", work):
         cats = False
@@ -408,8 +411,12 @@ def _pets(text: str) -> str:
 _NO_PETS_CLAUSE = re.compile(r"\bno pets\b(?!\s+(?:restrictions?|limits?|problem|fee))[^.\n;]*|\bpets (?:are )?not (?:allowed|permitted|accepted)[^.\n;]*|"
                              r"\bnot pet[- ]friendly\b|\bpets\s*[:\-]\s*(?:no\b|none|not allowed)[^.\n;]*|\bpet policy\s*[:\-]\s*no\b[^.\n;]*|\bno animals\b[^.\n;]*", re.I)
 _NO_SPECIES = re.compile(r"\bno\s+(cats?|dogs?)\b(?!\s+(?:over|above|under|larger|bigger|heavier|exceeding|more|breeds?))|\b(cats?|dogs?)\s+(?:are\s+)?not\s+(?:allowed|permitted|accepted)", re.I)
-_MAYBE_PETS = re.compile(r"\b(cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?:considered|negotiable|case[- ]by[- ]case|(?:with|by|on|upon|subject to)\s+(?:landlord\s+|owner\s+|management\s+)?approval)", re.I)
-_APPROVAL_ONLY = re.compile(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?:case[- ]by[- ]case|(?:with|by|on|upon|subject to)\s+(?:landlord\s+|owner\s+|management\s+)?approval)", re.I)
+_HARD_APPROVAL = (r"(?:(?:with|by|on|upon|subject to|needs?|requires?|required)\s+(?:prior\s+)?(?:written\s+)?(?:landlord\s+|owner\s+|management\s+)?(?:approval|permission)"
+                  r"|(?:approval|permission)\s+(?:is\s+)?(?:required|needed))")
+_SOFT_APPROVAL = r"(?:considered|negotiable|case[- ]by[- ]case)"
+_MAYBE_PETS = re.compile(r"\b(cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?:" + _SOFT_APPROVAL + "|" + _HARD_APPROVAL + ")", re.I)
+_HARD_ONLY = re.compile(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b" + _HARD_APPROVAL, re.I)
+_APPROVAL_ONLY = re.compile(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?:case[- ]by[- ]case|" + _HARD_APPROVAL + ")", re.I)
 _SPECIES = ("cats", "dogs")
 
 
@@ -435,9 +442,10 @@ def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
                 says[(m.group(1) or m.group(2)).lower().rstrip("s") + "s"] = "no"
             for m in _MAYBE_PETS.finditer(piece):
                 word = m.group(1).lower().rstrip("s")
+                hard = bool(re.search(_HARD_APPROVAL, m.group(0), re.I))
                 for sp in (_SPECIES if word in ("pet", "animal") else (word + "s",)):
                     if says.get(sp) != "no":
-                        says[sp] = "maybe"
+                        says[sp] = "appr" if hard else ("maybe" if says.get(sp) != "appr" else "appr")
             if says:
                 quoted.append(piece.strip(" -:"))
                 for sp, v in says.items():
@@ -445,24 +453,50 @@ def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
     return stances, quoted
 
 
-def _pets_doubt(text: str) -> str:
-    """A plain sentence when the listing contradicts itself about pets ("Pets: dogs ok. Pets: no pets allowed.", "Dogs ok, no cats
-    allowed? Cats considered with approval.") or leaves it to the landlord's approval, else "". Then pets is left unknown."""
-    stances, quoted = _pet_stances(text)
-    clash = any("no" in v and (v & {"yes", "maybe"}) for v in stances.values())
-    approval = False
-    if not clash and not any("no" in v for v in stances.values()):
-        approval = bool(_APPROVAL_ONLY.search(text)) and not any("yes" in v for v in stances.values())
-    if not (clash or approval):
-        return ""
+def _ask_who(text: str) -> str:
+    """Who to ask about the pet rule: the landlord for a rental, the seller or listing agent for a home for sale."""
+    return "the seller or listing agent" if _SALE_WORDS.search(text) else "the landlord"
+
+
+def _quoted_pieces(quoted: list[str]) -> str:
     seen: list[str] = []
     for q in quoted:
         if q.lower() not in [x.lower() for x in seen]:
             seen.append(q)
-    said = ", then ".join(f'"{q[:60]}"' for q in seen[:4])
+    return ", then ".join(f'"{q[:60]}"' for q in seen[:4])
+
+
+def _pets_doubt(text: str) -> str:
+    """A plain sentence when the listing contradicts itself about pets ("Pets: dogs ok. Pets: no pets allowed.", "Dogs ok, no cats
+    allowed? Cats considered with approval.") or leaves it to the landlord's approval ("Cats ok. Dogs need approval."), else "".
+    Then pets is left unknown."""
+    stances, quoted = _pet_stances(text)
+    clash = any("no" in v and (v & {"yes", "maybe", "appr"}) for v in stances.values())
+    approval = False
+    if not clash and not any("no" in v for v in stances.values()):
+        if any("appr" in v for v in stances.values()) or _HARD_ONLY.search(text):
+            approval = True  # a pet rule that needs approval is never a plain yes
+        else:
+            approval = bool(_APPROVAL_ONLY.search(text)) and not any("yes" in v for v in stances.values())
+    if not (clash or approval):
+        return ""
+    said = _quoted_pieces(quoted)
+    who = _ask_who(text)
     if clash:
-        return f"The listing is not clear about pets. It says {said}. Pets is left empty, so ask the landlord which pets are allowed before you count on it."
-    return f"The listing says pets depend on the landlord's approval ({said}). Pets is left empty, so ask the landlord which pets are allowed."
+        return f"The listing is not clear about pets. It says {said}. Pets is left empty, so ask {who} which pets are allowed before you count on it."
+    return f"The listing says pets depend on approval ({said}). Pets is left empty, so ask {who} which pets are allowed."
+
+
+def _pets_soft_note(text: str) -> str:
+    """"Cats welcome. Dogs considered case by case": cats is saved, and this says dogs are not a yes. "" when there is nothing to say."""
+    stances, quoted = _pet_stances(text)
+    soft = [sp for sp, v in stances.items() if "maybe" in v and "yes" not in v and "no" not in v]
+    if not soft or not any("yes" in v for v in stances.values()):
+        return ""
+    names = " and ".join(sp for sp in soft)
+    said = _quoted_pieces([q for q in quoted if _MAYBE_PETS.search(q)])
+    return (f"The listing says {names} are considered case by case ({said}). Only the pets it clearly allows are saved, "
+            f"so ask {_ask_who(text)} about {names}.")
 
 
 def _pets_conflict(text: str) -> bool:
@@ -480,6 +514,20 @@ def _split_wired_deposit(text: str) -> tuple[str, bool]:
     return "".join(kept), len(kept) != len(parts)
 
 
+_PET_LEAD = re.compile(r"^\W*(?:pets?|pet[- ]friendly|pet policy|cats?|dogs?|animals?)\b", re.I)
+
+
+def _in_pet_sentence(text: str, pos: int) -> bool:
+    """True when position ``pos`` sits in a sentence that starts with a pet word ("Pet friendly (cats only, $40/month, deposit $250)")
+    or inside a bracket that follows one, and that sentence does not talk about the lease or the security deposit."""
+    start = max(text.rfind(c, 0, pos) for c in ".!?;\n") + 1
+    sent = text[start:pos]
+    if _PET_LEAD.match(sent) and not re.search(r"\bsecurity\b|\bdamage\b|\blease\b|\brent\b(?!\s*:)", sent, re.I):
+        return True
+    op = text.rfind("(", 0, pos)
+    return op >= 0 and text.find(")", op, pos) < 0 and bool(_PET_WORD.search(text[max(0, op - 30):op + 1]))
+
+
 def _pet_fees(text: str) -> dict[str, float]:
     """Pet rent (monthly) and pet fee or deposit (one time), kept apart."""
     out: dict[str, float] = {}
@@ -490,6 +538,11 @@ def _pet_fees(text: str) -> dict[str, float]:
         out.setdefault("pet_rent", float(m.group(1)))
     for m in re.finditer(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(/[ \t]*mo(?:nth)?|per month|monthly|a month)?[ \t]*(?:per pet[ \t]*)?"
                          r"(?:one[- ]time[ \t]+|non[- ]refundable[ \t]+|refundable[ \t]+)?(?:pet\s+(rent|fees?|deposit|charge)\b|per pet\b)", text, re.I):
+        if not m.group(3) and re.search(r"\bper pet\b", m.group(0), re.I) \
+                and (re.search(r"\bdeposits?\W{0,4}$", text[max(0, m.start() - 14):m.start()], re.I)
+                     or re.search(r"\bpet\s+(?:rent|fees?|deposit|charge)s?\W{0,6}$", text[max(0, m.start() - 22):m.start()], re.I)
+                     or re.match(r"\s*deposit", text[m.end():m.end() + 12], re.I)):
+            continue  # "deposit $250 per pet" and "Monthly pet rent $35 per pet": the label owns the amount, not a pet fee
         used.add(m.start())
         rent = bool(m.group(2)) or (m.group(3) or "").lower() in ("rent", "charge")
         out.setdefault("pet_rent" if rent else "pet_fee", float(m.group(1)))
@@ -520,6 +573,11 @@ def _pet_fees(text: str) -> dict[str, float]:
             or re.search(r"\bpet[ \t]+rent\b[^.\n;$]{0,25}\$[ \t]?\d{1,4}(?:\.\d\d)?[^.\n;$]{0,15}?,[ \t]*(?:and[ \t]+)?\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b(?![ \t]*(?:/|per month|monthly))", text, re.I)
         if m:
             out["pet_fee"] = float(m.group(1))
+    if "pet_rent" not in out:  # "Pet friendly (cats only, $40/month, deposit $250)": a monthly amount inside a pet sentence is the pet rent
+        for m in re.finditer(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b(?![ \t]*(?:deposit|fee))", text, re.I):
+            if _in_pet_sentence(text, m.start()) and not re.search(r"parking|garage|storage|utilit|trash|hoa|internet|cable|water|\brent\b", text[max(0, m.start() - 20):m.start()], re.I):
+                out["pet_rent"] = float(m.group(1))
+                break
     if not out:  # "cats negotiable, $50 extra": an extra charge for the pet, taken as monthly pet rent
         m = re.search(r"\b(?:cats?|dogs?|pets?)\b[^.\n$]{0,40}\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:extra|more|additional)\b([^.\n]{0,25})", text, re.I)
         if m:
@@ -571,7 +629,7 @@ def _pet_side_deposits(text: str, rent: float | None) -> tuple[dict[str, float],
         else:
             near_before = re.split(r"[,.!?;\n]", before)[-1]
             near_after = re.split(r"[,.!?;\n]", after)[0]
-            pet = bool(_PET_WORD.search(near_before) or _PET_WORD.search(near_after))
+            pet = bool(_PET_WORD.search(near_before) or _PET_WORD.search(near_after)) or _in_pet_sentence(text, m.start())
         if not pet:
             continue
         found.setdefault("pet_fee" if nonref else "pet_deposit", amount)
@@ -598,7 +656,9 @@ def _clauses(text: str) -> list[str]:
 def _pet_limit_fields(text: str) -> dict[str, Any]:
     """Structured pet limits: pet_weight_limit (lb), pet_count_limit, pet_breed_note and fenced_yard (1 or 0)."""
     out: dict[str, Any] = {}
-    w = re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?(?:under|up to|less than|below|at most|max(?:imum)?(?: of)?|weigh(?:ing|s)?(?: up to| under)?|<)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", text, re.I) \
+    w = re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?(?:under|up to|less than|below|at most|no more than|not (?:to )?exceed(?:ing)?|max(?:imum)?(?: of)?|weigh(?:ing|s)?(?: up to| under)?|<)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", text, re.I) \
+        or re.search(r"\bno\s+(?:dogs?|pets?|animals?|breeds?|cats?)?\s*(?:over|above|exceeding|larger than|heavier than|more than)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", text, re.I) \
+        or re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,30}?\b(?:over|above|exceeding)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:are\s+)?(?:not\s+(?:allowed|permitted|accepted)|prohibited)", text, re.I) \
         or re.search(r"\b(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:weight\s*)?(?:limit|max(?:imum)?)", text, re.I) \
         or re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?\b(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:each|apiece|max(?:imum)?|per (?:pet|dog|animal))", text, re.I) \
         or re.search(r"\bweight (?:limit|max(?:imum)?)\s*(?:of|is|:)?\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)?", text, re.I)
@@ -615,6 +675,16 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
         count = int(v) if v.isdigit() else _NUM_WORDS[v]
         if count >= 1:
             out["pet_count_limit"] = count
+    if "pet_count_limit" not in out:  # "Cats ok, up to 2"
+        for sentence in re.split(r"[.\n;]", text):
+            if _PET_WORD.search(sentence):
+                n = re.search(r"\b(?:up to|max(?:imum)?(?: of)?|limit(?: of)?|no more than|at most)\s+(\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch|bed|bath|sq|people|persons?|occupants?|adults?|residents?|%|months?))", sentence, re.I)
+                if n:
+                    v = n.group(1).lower()
+                    count = int(v) if v.isdigit() else _NUM_WORDS[v]
+                    if count >= 1:
+                        out["pet_count_limit"] = count
+                        break
     if "pet_count_limit" not in out:
         for sentence in re.split(r"[.\n;]", text):
             if _PET_WORD.search(sentence):
@@ -628,6 +698,11 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
     b = next((c for c in _clauses(text) if re.search(r"\b(?:breed|breeds|breed restrictions?)\b", c, re.I)), None)
     if b:
         clause = " ".join(b.split()).strip(" -:,")
+        if "," in clause and "(" not in clause:  # "Dogs OK, 1 dog max, breed restrictions apply": keep the pieces that are about breeds
+            other = re.compile(r"\b\d{1,3}\s*(?:lbs?|pounds?)|\bmax(?:imum)?\b|\b(?:dogs?|cats?|pets?|animals?)\b[^,]{0,12}\b(?:ok|okay|allowed|welcome|accepted)\b|\bconsidered\b|case[- ]by[- ]case|\bno more than\b|\bup to\b|\bunder\b|approval|\bfees?\b|\$", re.I)
+            pieces = [x.strip() for x in clause.split(",") if re.search(r"\bbreeds?\b", x, re.I) and not other.search(x)]
+            if pieces:
+                clause = ", ".join(pieces)
         if 0 < len(clause) <= 140:
             out["pet_breed_note"] = clause[0].upper() + clause[1:]
     if re.search(r"\b(?:no|not a|without a)\s+fenced\b|\bunfenced\b|\bnot fenced\b", text, re.I):
@@ -692,6 +767,23 @@ def _move_in_months(text: str) -> tuple[int, bool]:
 
 
 _WORD_NUM = {"one": 1, "a": 1, "1": 1, "two": 2, "2": 2}
+
+
+_BEST_CASE_DEPOSIT = (
+    r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:security[ \t]+)?deposit[ \t]*,?[ \t]*(?:(?:with|upon|on|w/)[ \t]+(?:approved|good|qualifying|excellent)[ \t]+credit|o\.?a\.?c\.?\b|(?:with|subject to)[ \t]+credit[ \t]+approval)",
+    r"\b(?:security[ \t]+)?deposits?[ \t]*(?:is[ \t]+|of[ \t]+|[:\-][ \t]*)?(?:as low as|as little as|low as|starting (?:at|from)|starts? (?:at|from)|beginning at|from only)[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?",
+    r"\b(?:security[ \t]+)?deposits?[ \t]*(?:is[ \t]+|of[ \t]+|[:\-][ \t]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:(?:with|upon|on|w/)[ \t]+(?:approved|good|qualifying|excellent)[ \t]+credit|o\.?a\.?c\.?\b)",
+)
+
+
+def _best_case_deposit(text: str) -> tuple[float | None, str]:
+    """A deposit that is only the best case ("$500 deposit with approved credit", "deposit as low as $500"): not what every renter
+    pays, so it is not saved as the deposit. Returns (amount, text with that phrase blanked)."""
+    for pat in _BEST_CASE_DEPOSIT:
+        m = re.search(pat, text, re.I)
+        if m:
+            return _num(m.group(1)), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    return None, text
 
 
 def _deposit_in_months(text: str) -> float:
@@ -1545,6 +1637,9 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
         facts.append(doubt)  # pets stays empty (unknown), so a pet owner sees "Fits, but check"
     else:
         put("pets", _try(lambda: _pets(text)))
+        soft = _try(lambda: _pets_soft_note(text)) or ""
+        if soft:
+            facts.append(soft)
     deposit_amount, fee_text = _try(lambda: _pet_deposit(text)) or (None, text)
     put("pet_deposit", deposit_amount)
     for key, value in (_try(lambda: _pet_fees(fee_text)) or {}).items():
@@ -1628,6 +1723,9 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
 
     def fees() -> None:
         dep_src, wired = _split_wired_deposit(dep_text)
+        best_case, dep_src = _try(lambda: _best_case_deposit(dep_src)) or (None, dep_src)
+        if best_case:
+            facts.append(f"The listing gives a best-case deposit of ${best_case:,.0f} with approved credit. The deposit is not saved, because it may be more for you, so ask what the deposit will be.")
         if wired:
             facts.append("The listing asks for a deposit by wire. A wire can't be taken back, so the deposit is left blank. Don't send money before you have toured the place.")
         dep = _money_after(dep_src, r"(?:security |refundable |damage |rental )?deposits?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage)\s*$")
@@ -1638,6 +1736,8 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
             put("deposit", dep[0])
         elif by_months and isinstance(rent_now, (int, float)) and 200 <= rent_now <= 30000 and not _SALE_WORDS.search(text):
             put("deposit", by_months * float(rent_now))  # "security deposit one month", "deposit equal to one month's rent"
+        elif by_months and not _SALE_WORDS.search(text):
+            facts.append(f"The listing says the security deposit is {by_months:g} month{'s' if by_months != 1 else ''} of rent, but the rent was not read, so the deposit is left empty. Fill it in once you know the rent.")
         elif re.search(r"\b(?:no|zero|\$0) (?:security )?deposit|\bdeposit\s*[:\-]?\s*(?:\$0|none|waived|zero)\b", text, re.I):
             put("deposit", 0.0)
         app = _money_after(text, r"application(?: processing)? fees?|app(?:lication)? fee|screening fee|background check fee", hi=1000)
@@ -1646,7 +1746,7 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
             put("application_fee", app[0])
         elif per_adult_fee:
             put("application_fee", per_adult_fee)
-        elif re.search(r"\b(?:no|free|zero|\$0|waived)\s+application (?:fee|processing)|\bapplication fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b", text, re.I):
+        elif re.search(r"\b(?:no|free|zero|\$0|waived)\s+app(?:lication)?[ \t]+(?:fee|processing)|\bapp(?:lication)? fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b|\bapplication fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b", text, re.I):
             put("application_fee", 0.0)
         mi = _money_after(text, r"(?:admin(?:istrative|istration)?|move[- ]in|lease[- ](?:signing|initiation|admin)|processing|community|one[- ]time) fees?", hi=5000)
         if mi:
