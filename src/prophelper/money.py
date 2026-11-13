@@ -93,6 +93,23 @@ def _estimate_from_listing(place: dict[str, Any], util: float) -> bool:
     return amount is not None and abs(amount - util) < 0.5
 
 
+def _billed_names(place: dict[str, Any]) -> list[str]:
+    try:
+        from .parsers import listing_billed_names
+        return listing_billed_names(str(place.get("listing_text") or ""))
+    except Exception:
+        return []
+
+
+def _unpriced_tenant_utilities(place: dict[str, Any]) -> list[str]:
+    """What the tenant pays that the listing's billed-back amount does not cover ("electric, gas, internet" when only trash
+    is billed back). Empty when the amount covers everything the tenant pays, or the listing text does not say what it covers."""
+    priced = {"water" if w == "hot water" else w for w in _billed_names(place)}
+    if not priced:
+        return []
+    return [w for w in tenant_pays_list(place) if w not in priced and w not in NOTHING_WORDS]
+
+
 def has_pets(pet_kind: Any) -> bool:
     """True when the search says the person has pets ("cat", "dog" or "both"). Empty or "none" means no pets."""
     return str(pet_kind or "").strip().lower() in ("cat", "dog", "both")
@@ -134,10 +151,21 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
     else:
         from_listing = _estimate_from_listing(place, util)
         note = "From the listing" if from_listing else "A guess, not from the listing"
+        if from_listing and (re.search(r"Utilities estimate \$[\d,.]+/month: billed back, from the listing", str(place.get("ai_notes") or ""))
+                             or _billed_names(place)):
+            note = "Billed back, from the listing"
         if place.get("utilities_included"):
             note += f". The listing includes: {place['utilities_included']}"
         line = _line("utilities", "Utilities" if from_listing else "Utilities (a guess)", util, note)
         line["estimated"] = True
+        unpriced = _unpriced_tenant_utilities(place) if from_listing else []
+        if unpriced:
+            # The listing prices only part of what the tenant pays (for example trash billed back), so the rest is not counted yet.
+            names = _join_words(unpriced)
+            line["note"] = f"{note}. It covers only what the listing prices; you also pay {names}, not counted yet"
+            missing.append("utilities estimate")
+            uncounted.append(f"utilities ({names})")
+            notes.append(f"You also pay {names}; not counted yet. Add them to your utilities estimate under Facts.")
         lines.append(line)
 
     parking = num(place.get("parking_cost"))

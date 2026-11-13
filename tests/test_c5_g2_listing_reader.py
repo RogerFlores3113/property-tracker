@@ -53,7 +53,7 @@ def test_billed_back_estimate_is_from_the_listing():
     r = parse_listing(text)
     place = {"price": 1500, "utilities_estimate": r["utilities_estimate"], "listing_text": text}
     line = next(x for x in money.rent_cost(place)["lines"] if x["key"] == "utilities")
-    assert "From the listing" in line["note"] and "guess" not in line["note"]
+    assert "from the listing" in line["note"].lower() and "guess" not in line["note"]
     place["utilities_estimate"] = 90  # typed by the person
     line = next(x for x in money.rent_cost(place)["lines"] if x["key"] == "utilities")
     assert "guess" in line["note"].lower()

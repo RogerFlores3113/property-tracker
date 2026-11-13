@@ -853,12 +853,18 @@ def build_server(store: Store) -> FastMCP:
     PHOTO_NOTE = ("Photo links are saved as links only. Photos load from whatever site the link points to, and only if the user turns photos on "
                   "in the app.")
 
+    def seen_not_counted(place: dict[str, Any]) -> list[str]:
+        """A fee the reader saw in the listing text but left out of the cost because it looks optional (a storage locker)."""
+        from .parsers import listing_uncounted_fees
+        seen = listing_uncounted_fees(str(place.get("listing_text") or ""))
+        return [f"Seen but not counted: {', '.join(seen)} (looks optional; add it to other monthly fees if you need it)."] if seen else []
+
     def finish_add(place: dict[str, Any], created: bool, notes: list[str], photos: bool = False) -> list[str]:
         e = _enrich(store, place)
         search = _search_of(store, place)
         head = (f"Added {_title(e)} (id {e['id']}) to search {_sname(search, 60)} as {e['stage']}." if created
                 else f"Updated {_title(e)} (id {e['id']}).")
-        lines = [head, *notes, *_card(e)[1:]]
+        lines = [head, *notes, *_card(e)[1:], *seen_not_counted(place)]
         if not place.get("listing_text"):
             lines.append("No listing text is saved yet. If you can, call update_place with listing_text so the details survive when the listing comes down.")
         if place.get("lat") is None:
@@ -1075,6 +1081,7 @@ def build_server(store: Store) -> FastMCP:
                 e = _enrich(store, place)
                 lines.append(("Added " if created else "Already saved, updated ") + _line(e) + ("" if created else " (filled only empty fields)"))
                 lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "Read from the listing text", "The listing text was saved"))]
+                lines += ["  " + n for n in seen_not_counted(place)]
                 out.append({"id": place["id"], "created": created})
         added = sum(1 for o in out if o["created"])
         lines.insert(0, f"Added {added}, updated {len(out) - added}.")
