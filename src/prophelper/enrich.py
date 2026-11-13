@@ -57,7 +57,7 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     # One commute per important place, by the shared rule in commute.show_commute: the way of that place's commute rule,
     # a saved time before an estimate, never an estimate of another way.
     crit_rows = commute_mod.place_rows(place, anchors, commutes, criteria, people)
-    commute_all = [{"anchor": r["anchor"]["name"], "anchor_id": r["anchor"]["id"], **r["found"]} for r in crit_rows if r["found"]]
+    commute_all = [{"anchor": r["anchor"]["name"], "anchor_id": r["anchor"]["id"], **r["found"]} for r in crit_rows if r["found"]]  # "assumed" says which way an estimate assumes
     ruled = commute_mod.criterion_modes(criteria, anchors, people)
     # The board card shows each person's commute (every place a commute rule covers), compactly.
     commute_tops = [{**c, "short": f"{c['anchor']} {c['minutes']:.0f} min {c['mode']}"} for c in commute_all if c["anchor_id"] in ruled]

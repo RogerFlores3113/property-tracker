@@ -184,7 +184,7 @@
       <p><strong>{{ r.mode|capitalize }}</strong></p>
       {{ minutes_form(r, r.mode, r.found) }}
       <div class="fine">
-        {% if r.found %}{{ r.found.label }}{% if r.found.miles is not none %}, {{ r.found.miles }} mi straight line{% endif %}
+        {% if r.found %}{{ r.found.label }}{% if r.found.miles is not none %}, {{ r.found.miles }} mi straight line{% endif %}{% if r.found.assumed %}<br>{{ r.found.assumed }}{% endif %}
         {% elif not r.anchor_has_point %}Add a location for {{ r.anchor.name }} to see commutes.
           {% if r.anchor.address %}<form method="post" action="/anchors/{{ r.anchor.id }}/geocode" class="inline"><input type="hidden" name="search_id" value="{{ search.id }}">{{ button("Find on map", small=True) }}</form>
           {% else %}<a href="/search?id={{ search.id }}#anchors">Find on map</a>{% endif %}

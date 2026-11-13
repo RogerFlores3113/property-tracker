@@ -37,7 +37,7 @@ from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
 from .store import (AI_EVENT_TEXT_MAX, AI_NEVER_ENTERS, COMMUTE_MODES, CONTACT_LOG_KINDS, CONTACT_ROLES, CRITERION_KINDS, MAX_PEOPLE, NotFound,
-                    PARKING_VALUES, Store, _clean_target, ai_move_problem, normalize_url, to_utc_iso)
+                    PARKING_VALUES, Store, _clean_target, clean_people_names, ai_move_problem, normalize_url, to_utc_iso)
 
 INSTRUCTIONS = """\
 Property Helper keeps the user's own apartment or house hunt on their computer: every place they found, where it
@@ -483,6 +483,20 @@ def _unknown_list(e: dict[str, Any]) -> list[str]:
     return [_unknown_text(e)] if _unknown_text(e) else []
 
 
+def _people_args(people: Any, names: Any) -> tuple[Any, Any]:
+    """people may be a count or a list of names. Names with no count set the count to match (at least 1)."""
+    if isinstance(people, (list, tuple)):
+        names, people = people, None
+    if names is not None:
+        cleaned = clean_people_names(names)
+        if cleaned and people is None and len(cleaned) >= 2:
+            people = len(cleaned)
+        elif cleaned and people is not None and len(cleaned) > int(people):
+            raise ValueError(f"{len(cleaned)} names were given but people is {people}. Set people to at least {len(cleaned)}, or give fewer names.")
+        names = cleaned
+    return people, names
+
+
 def _commute_list(e: dict[str, Any]) -> list[str]:
     """The best commute to every anchor, each named (the name is fenced): the fastest mode, except the first anchor,
     which shows what the app's cards show."""
@@ -548,6 +562,9 @@ def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
     commutes = _commute_list(e)
     if commutes:
         lines.append("Commutes: " + "; ".join(commutes[:12]))
+        notes_ = sorted({c["assumed"] for c in e.get("commute_all") or [] if c.get("assumed")})
+        if notes_:
+            lines.append("Commute note: " + " ".join(notes_))
     if other_ways:
         shown = {(c["anchor_id"], c["mode"]) for c in e.get("commute_all") or []}
         more = [f"{_aname(c['anchor'])} {c['label']}" for c in e["commutes"] if (c["anchor_id"], c["mode"]) not in shown]
@@ -1641,7 +1658,8 @@ def build_server(store: Store) -> FastMCP:
                       move_in: Annotated[str | None, Field(description="rent: move-in date, YYYY-MM-DD")] = None,
                       target_close: Annotated[str | None, Field(description="buy: target closing date, YYYY-MM-DD")] = None,
                       budget_max: Annotated[float | None, Field(description="Most per month in true monthly cost (rent) or most to pay (buy)")] = None,
-                      people: Annotated[int | None, Field(description=f"How many people share the cost (1 to {MAX_PEOPLE}, default 1). With more than one, places show a per-person monthly cost")] = None,
+                      people: Annotated[int | list[str] | None, Field(description=f"How many people share the cost (1 to {MAX_PEOPLE}, default 1). With more than one, places show a per-person monthly cost. A list of names such as [\"Ana\", \"Ben\", \"Cam\"] works too: it sets the count and the names")] = None,
+                      people_names: Annotated[list[str] | None, Field(description="Names of the people sharing, for example [\"Ana\", \"Ben\", \"Cam\"]. Each person rates places under their own name. Unnamed seats stay Person 3, Person 4 and so on")] = None,
                       adults: Annotated[int | None, Field(description="Adults who sign the lease (renting), when fewer than the people sharing: kids don't pay. The cost is split between them and a per-adult application fee is multiplied by it. Default: same as people")] = None,
                       notes: Annotated[str | None, Field(description="What the user told you about this hunt")] = None,
                       pet_kind: Annotated[str | None, Field(description="The user's pets: cat, dog, both, or none. Places are checked against them")] = None,
@@ -1652,8 +1670,9 @@ def build_server(store: Store) -> FastMCP:
                       criteria: Annotated[list[dict[str, Any]] | None, Field(description="Weighted criteria. " + CRIT_DOC)] = None,
                       anchors: Annotated[list[dict[str, Any]] | None, Field(description="Places to measure commutes to: [{name, address, lat, lng}]. Reuses one with the same name")] = None) -> CallToolResult:
         """Start a new search with optional criteria and anchors. All or nothing: if anything in it is wrong, nothing is saved and the reply says what to fix. The first search becomes the current one; otherwise the user picks it in the app."""
+        people, people_names = _people_args(people, people_names)
         fields = {k: v for k, v in (("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
-                                    ("people", people), ("adults", adults), ("notes", notes), ("pet_kind", pet_kind),
+                                    ("people", people), ("people_names", people_names), ("adults", adults), ("notes", notes), ("pet_kind", pet_kind),
                                     ("pet_weight", pet_weight), ("pet_count", pet_count), ("down_payment_pct", down_payment_pct)) if v is not None}
         problems: list[str] = []
         try:
@@ -1673,6 +1692,8 @@ def build_server(store: Store) -> FastMCP:
         lines = [f"Created search {s['id']} {_sname(s)} ({_mode_word(s['mode'])})" + ("." if cur and cur["id"] == s["id"] else ". It is not the current search; the user can switch on the Search page. Pass search_id to add_place to use it.")]
         if _split_count(s) > 1:
             lines.append(f"Shared by {_split_count(s)} {_split_noun(s)}, so places show a per-person monthly cost.")
+        if s.get("people_names"):
+            lines.append("People named: " + ", ".join(_say(n) for n in s["people_names"]) + ".")
         if _pet_profile(s):
             lines.append(f"The user's pets: {_pet_profile(s)}. Places are checked against them.")
         if s.get("down_payment_pct") is not None:
@@ -1693,7 +1714,8 @@ def build_server(store: Store) -> FastMCP:
                       move_in: Annotated[str | None, Field(description="YYYY-MM-DD")] = None,
                       target_close: Annotated[str | None, Field(description="YYYY-MM-DD")] = None,
                       budget_max: Annotated[float | None, Field(description="")] = None,
-                      people: Annotated[int | None, Field(description=f"How many people share the cost (1 to {MAX_PEOPLE}). With more than one, places show a per-person monthly cost")] = None,
+                      people: Annotated[int | list[str] | None, Field(description=f"How many people share the cost (1 to {MAX_PEOPLE}). With more than one, places show a per-person monthly cost. A list of names such as [\"Ana\", \"Ben\", \"Cam\"] works too: it sets the count and the names")] = None,
+                      people_names: Annotated[list[str] | None, Field(description="Names of the people sharing, for example [\"Ana\", \"Ben\", \"Cam\"]. Each person rates places under their own name")] = None,
                       adults: Annotated[int | None, Field(description="Adults who sign the lease (renting), when fewer than the people sharing: kids don't pay. The cost is split between them and a per-adult application fee is multiplied by it. Default: same as people")] = None,
                       pet_kind: Annotated[str | None, Field(description="The user's pets: cat, dog, both, or none. Places are checked against them")] = None,
                       pet_weight: Annotated[float | None, Field(description="The dog's weight in pounds")] = None,
@@ -1708,10 +1730,11 @@ def build_server(store: Store) -> FastMCP:
         target is an object with the kind's keys (price {max}; beds, baths, sqft {min}; commute {anchor, mode, minutes}; laundry {want}; newer {year}; fenced_yard takes no target). "name" works as an alias for "label".
         pet_kind (cat, dog, both or none), pet_weight (pounds) and pet_count describe the user's pets; the pets and fenced_yard criteria read them."""
         s = _search_for(store, search_id)
+        people, people_names = _people_args(people, people_names)
         fields = {k: v for k, v in (("name", name), ("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
-                                    ("people", people), ("adults", adults), ("pet_kind", pet_kind), ("pet_weight", pet_weight), ("pet_count", pet_count), ("down_payment_pct", down_payment_pct)) if v is not None}
+                                    ("people", people), ("people_names", people_names), ("adults", adults), ("pet_kind", pet_kind), ("pet_weight", pet_weight), ("pet_count", pet_count), ("down_payment_pct", down_payment_pct)) if v is not None}
         if not (fields or add_anchors_list or add_criteria_list or reweight):
-            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, adults, pet_kind, pet_weight, pet_count, down_payment_pct, add_criteria_list, reweight or add_anchors_list.")
+            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, people_names, adults, pet_kind, pet_weight, pet_count, down_payment_pct, add_criteria_list, reweight or add_anchors_list.")
         problems: list[str] = []
         try:
             store._search_values(fields, partial=True)  # noqa: SLF001
