@@ -59,7 +59,12 @@ _AI_TARGETED = re.compile(r"\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the
                           r"\b(?:tell|inform|assure|convince|say to)\s+the\s+(?:user|renter|reader|buyer|person)\s+(?:that\s+)?(?:this|it|the (?:place|listing))\s+(?:is|looks|seems)\s+(?:safe|legit|legitimate|real|fine|trustworthy|verified)\b|"
                           r"\b(?:move|mark|set|change|put|send)\s+(?:every|all|each)\s+(?:the\s+)?(?:place|listing|apartment|home)s?\s+(?:to|as)\b|"
                           r"\b(?:if you are|as|when you are)\s+an?\s+(?:ai|llm|language model|chatbot|assistant that is reading)\b|"
-                          r"\b(?:do not|don'?t)\s+(?:tell|warn|mention to|inform)\s+the\s+(?:user|renter|buyer)\b", re.I)
+                          r"\b(?:do not|don'?t)\s+(?:tell|warn|mention to|inform)\s+the\s+(?:user|renter|buyer)\b|"
+                          # softer wording: a note, a heading or a request addressed to an AI, not a person
+                          r"\bnote (?:to|for) (?:the |any |all )?(?:ai|a\.i\.|llm|language model|chatbot|chat ?gpt|claude|assistant|bot)s?\b|"
+                          r"\b(?:ai|a\.i\.|llm)\s+(?:assistants?|agents?|models?|tools?|bots?|readers?|crawlers?|scrapers?)\s*[:,]|"
+                          r"\b(?:assistant|ai|llm|chatbot|claude|chat ?gpt),\s*(?:please|kindly|you (?:must|should|need to|will|have to))\b|"
+                          r"\bif you(?:'re| are) (?:reading this as |reading this, you are |)(?:an?|the) (?:ai|a\.i\.|llm|large language model|language model|chatbot|bot)\b", re.I)
 PRICE_FLOOR_RATIO = 0.55  # under this share of the typical price in the same search is "far under"
 
 
@@ -112,7 +117,10 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         for pattern, message in _BUY_RULES:
             if pattern.search(text):
                 flags.append(message)
+    same_day = buy and _BUY_SAME_DAY.search(text)
     for pattern, message in _rules():
+        if pattern is _PRESSURE and same_day:
+            continue  # the stronger "send money or sign today" sign already says it; one pressure hint is enough
         if buy and pattern in (_PAYMENT, _NO_CHECKS):
             # landlord wording does not fit a purchase; the payment rule gets seller wording, the screening rule is dropped
             if pattern is _PAYMENT and pattern.search(text):

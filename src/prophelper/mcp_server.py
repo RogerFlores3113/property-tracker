@@ -432,7 +432,8 @@ def _score_text(e: dict[str, Any]) -> str:
            for i in sorted(items, key=lambda i: -float(i["weight"] or 0)) if i["known"] and i["score"] < 0.5 and (i.get("detail") or i.get("gap") or i.get("value"))][:2]
     why = [f"+ {g}" for g in good] + [f"- {b}" for b in bad]
     notes = "".join(f" {_t(n, 'fit reason', 120)}." for n in s.get("notes") or [])
-    return f"Score {s['total']} ({e['band']})" + (": " + "; ".join(why) if why else "") + notes
+    mark = " (check first: do not trust this score until you have read the listing)" if e.get("check_first") else ""
+    return f"Score {s['total']} ({e['band']})" + mark + (": " + "; ".join(why) if why else "") + notes
 
 
 def _near_line(e: dict[str, Any]) -> str:
@@ -502,7 +503,7 @@ def _commute_text(e: dict[str, Any]) -> str:
 
 def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
     """One short line for a list: id, title, stage, cost, score, top commute."""
-    score = "no score" if e["score_total"] is None else f"score {e['score_total']}"
+    score = "no score" if e["score_total"] is None else f"score {e['score_total']}" + (" (check first, do not trust this score)" if e.get("check_first") else "")
     bits = [f"#{e['id']} {_title(e)} [{e['stage']}]", _money(e["cost_total"]) + "/mo true cost" if e["cost_total"] is not None else "cost unknown", score]
     if _per_person_text(e):
         bits.insert(2, _per_person_text(e))
@@ -1448,7 +1449,14 @@ def build_server(store: Store) -> FastMCP:
             lines.append(f"Needs a price: #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, no price yet, so it is not ranked.")
         for c in data["check_first"]:
             lines.append(f"Check first: #{c['place']['id']} {_title(c['place'])}: {c['text'][0].lower() + c['text'][1:]}")
+        shown_closest = {c["place"]["id"] for c in data["closest"]}
+        if data["closest"]:
+            lines.append("Closest so far (nothing fits yet):")
+        for c in data["closest"]:
+            lines.append(f"  - #{c['place']['id']} {_title(c['place'])} [{c['place']['stage']}], score {c['place']['score_total']}: {_t(c['text'], 'fit reason', 200)}")
         for n in data["near_miss"]:
+            if n["place"]["id"] in shown_closest:
+                continue
             lines.append(f"Near miss: #{n['place']['id']} {_title(n['place'])}: {n['text']}.")
         tours = data["tours"]
         lines.append(f"Tours in the next {days} days:" + (" none." if not tours else ""))

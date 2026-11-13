@@ -11,7 +11,7 @@
     <p class="sub">{{ [_street, _locality]|select|join(', ') }}
       {% if place.url %} &middot; <a href="{{ place.url }}" rel="noopener noreferrer" target="_blank">{{ place.source or (place.url|host) }}</a>{% endif %}</p>
     <p>{{ stage_badge(place.stage) }}
-      {% if place.score.fit != 'doesnt_fit' %}{{ score_pill(place.score_total, place.band) }}{% endif %}
+      {% if place.score.fit != 'doesnt_fit' %}{{ score_pill(place.score_total, place.band, place.check_first) }}{% endif %}
       {{ fit_badge(place) }} {{ score_note(place) }}
       <strong>{% if place.cost_total is not none %}{{ place.cost.headline_each }}, true cost{% else %}True cost unknown{% endif %}</strong>
       {% if place.archived_at %}<span class="badge">Archived</span>{% endif %}
@@ -135,7 +135,7 @@
 
 <aside>
   <section class="card" id="score">
-    <h2>Fit score {% if place.score.fit != 'doesnt_fit' %}{{ score_pill(place.score_total, place.band) }}{% endif %} {{ fit_badge(place) }}</h2>
+    <h2>Fit score {% if place.score.fit != 'doesnt_fit' %}{{ score_pill(place.score_total, place.band, place.check_first) }}{% endif %} {{ fit_badge(place) }}</h2>
     {% if place.score.raw_total is not none and place.score.raw_total != place.score_total %}<p class="fine">What matters to you alone gives {{ place.score.raw_total }}, but the score is held at {{ place.score_total }} because of the note above.</p>{% endif %}
     {{ score_note(place) }}
     {% if place.score.late_note %}<p class="flag">{{ place.score.late_note }}, so the score is {{ place.score.late_penalty }} points lower.</p>{% endif %}

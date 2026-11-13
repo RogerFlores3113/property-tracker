@@ -111,6 +111,6 @@
 {%- endmacro %}
 
 {# The 0 to 100 fit score as a small pill; "no score" when nothing is known. #}
-{% macro score_pill(score, band) -%}
-{% if score is none %}<span class="score score-none" title="Nothing to score yet">&ndash;</span>{% else %}<span class="score score-{{ band }}" title="Fit score out of 100">{{ score|round|int }}</span>{% endif %}
+{% macro score_pill(score, band, check_first=false) -%}
+{% if score is none %}<span class="score score-none" title="Nothing to score yet">&ndash;</span>{% else %}<span class="score score-{{ 'low' if check_first else band }}" title="Fit score out of 100">{{ score|round|int }}</span>{% if check_first %} <span class="badge fit-scam" role="note">check first</span>{% endif %}{% endif %}
 {%- endmacro %}

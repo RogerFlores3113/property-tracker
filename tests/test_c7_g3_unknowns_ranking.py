@@ -70,7 +70,7 @@ def test_today_moves_no_rent_place_out_of_best_fits(store):
     page = local_client(store).get("/today").text
     assert "Needs a price" in page and "No Rent" in page
     new_line = [l for l in out.split("\n") if "No Rent" in l and l.startswith("  - ")]
-    assert new_line and "(no price yet)" in new_line[0]
+    assert not new_line  # cycle 9: a place with no price shows under "Needs a price" only
 
 
 def test_buy_place_with_no_price_cannot_win(store):

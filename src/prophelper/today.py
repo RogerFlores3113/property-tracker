@@ -137,6 +137,23 @@ def near_misses(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
     return out[:limit]
 
 
+def closest(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
+    """When no place is a best fit: the open places that come closest, up to ``limit``: [{"place", "text"}]. Each missed
+    a must-have (by a little or a lot) but is no possible scam and has no text aimed at AI tools; they are ranked by the
+    shared score (which already falls the further a place misses) and ``text`` is the plain one-line reason."""
+    out = []
+    for p in rows:
+        score = p.get("score") or {}
+        if not _open(p) or p.get("score_total") is None or possible_scam(p) or ai_text_only(p):
+            continue
+        if score.get("fit") not in ("near_miss", "doesnt_fit"):
+            continue
+        reasons = [str(r) for r in score.get("fit_reasons") or [] if r]
+        out.append({"place": p, "text": "; ".join(reasons) or "Misses a must-have."})
+    out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
+    return out[:limit]
+
+
 def month_day(value: str | date) -> str:
     d = value if isinstance(value, date) else date.fromisoformat(str(value)[:10])
     return f"{_MONTHS[d.month - 1]} {d.day}" + (f", {d.year}" if d.year != helpers.today().year else "")
@@ -336,7 +353,11 @@ def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> d
     """Everything the Today page and the MCP todays_list need for one search: the one place both read from, so every
     section holds the same places on the page and in Claude's list."""
     rows = enrich.enrich_places(store, search)
-    return {"fits": best_fits(rows), "needs_price": needs_price(rows), "check_first": check_first(rows, search.get("mode", "rent")),
-            "near_miss": near_misses(rows), "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
-            "new": new_places(store, search), "late": late_availability(rows, search),
+    top = best_fits(rows)
+    needs = needs_price(rows)
+    priceless = {p["id"] for p in needs}  # a place with no price shows under "Needs a price" only
+    near_closest = [] if top else closest(rows)
+    return {"fits": top, "needs_price": needs, "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
+            "near_miss": [n for n in near_misses(rows) if n["place"]["id"] not in {c["place"]["id"] for c in near_closest}], "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
+            "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late_availability(rows, search),
             "tours": store.upcoming_tours(days, search_id=search["id"])}
