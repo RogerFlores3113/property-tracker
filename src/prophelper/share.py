@@ -29,7 +29,7 @@ MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_PLACES, MAX_CRITERIA, MAX_ANCHORS = 500, 60, 60
 
 # What a shared file never carries: what the person wrote, what an AI wrote, and where they are in their search.
-LEFT_OUT_PLACE_FIELDS = {"notes", "ai_notes", "fit_notes", "red_flags", "rating", "fit_score"}
+LEFT_OUT_PLACE_FIELDS = {"notes", "ai_notes", "fit_notes", "red_flags", "rating", "fit_score", "reader_notes"}
 SHARED_TEXT = tuple(f for f in PLACE_TEXT if f not in LEFT_OUT_PLACE_FIELDS)
 SHARED_REAL = PLACE_REAL
 SHARED_INT = tuple(f for f in PLACE_INT if f not in LEFT_OUT_PLACE_FIELDS)

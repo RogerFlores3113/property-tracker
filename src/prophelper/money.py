@@ -445,6 +445,9 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     n = int(a) if explicit else n
     out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets, n)
     noun = "adults" if explicit and mode != "buy" else "people"
+    if re.search(r"not counted anywhere|could not tell|not used anywhere|no amount is saved", str(place.get("reader_notes") or "")):
+        out["uncounted"] = list(out.get("uncounted") or []) + ["things in the listing notes"]  # see the place page: "From the listing when it was added"
+        out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
     out["people"] = n
     out["split_noun"] = noun
     out["per_person"] = _r(out["total"] / n) if out["total"] is not None and n > 1 else None

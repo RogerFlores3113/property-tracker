@@ -79,6 +79,7 @@ def test_migration_adds_place_dates_to_an_old_database(tmp_path):
     con.execute("DROP INDEX idx_anchors_search")  # nor the per-search anchors and down payment of cycle 6
     con.execute("ALTER TABLE anchors DROP COLUMN search_id")
     con.execute("ALTER TABLE searches DROP COLUMN down_payment_pct")
+    con.execute("ALTER TABLE places DROP COLUMN reader_notes")  # nor the saved reader notes of cycle 10
     con.execute("PRAGMA user_version = 1")
     con.commit()
     con.close()

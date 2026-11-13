@@ -67,6 +67,14 @@
     {% if c.deposit and not c.cash_at_move_in %}<p class="fine">Deposit: {{ c.deposit|money }} (comes back, so it is not in the monthly number).</p>{% endif %}
   </section>
 
+  {% if place.reader_notes %}
+  <section class="card sub-card" id="listing-notes">
+    <h3>From the listing when it was added</h3>
+    <p>{{ place.reader_notes }}</p>
+    <p class="fine">These quote the listing text. They were noted when you added the place and do not change if you edit the facts.</p>
+  </section>
+  {% endif %}
+
   <section class="card" id="facts">
     <h2>Facts</h2>
     <form method="post" action="/places/{{ place.id }}" class="stack">

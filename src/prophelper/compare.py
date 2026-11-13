@@ -307,6 +307,16 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     return cell
 
 
+def listing_notes_text(p: dict[str, Any], limit: int = 110) -> str:
+    """The reader's saved notes from the listing, cut short. Empty when there are none."""
+    text = " ".join(str(p.get("reader_notes") or "").split())
+    if not text:
+        return ""
+    if len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:") + "... See the place page."
+    return text
+
+
 def _pet_charges_unknown(p: dict[str, Any]) -> bool:
     """True when the search has pets, the place allows them, and neither a pet fee nor a pet deposit is filled in."""
     if not p["cost"].get("pets_counted", True) or str(p.get("pets") or "") == "none":
@@ -710,6 +720,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row("pet_limits", "Pet limits (kinds, weight, how many)", [_pet_limits_cell(p) for p in places]) if shows_pet_limits(places) else None,
         row("fenced_yard", "Fenced yard", [_fenced_yard_cell(p) for p in places], "high") if shows_fenced_yard(places) else None,
         row("utilities", "Utilities included", [_utilities_cell(p) for p in places], only_if_any=True),
+        row("listing_notes", "Listing notes", [_plain(listing_notes_text(p)) for p in places], only_if_any=True),
     ])
     section("Dates and money up front", [
         row("available", "Available from", [_plain(helpers.day_text(p["available_from"]) if p.get("available_from") else "") for p in places], only_if_any=True),
