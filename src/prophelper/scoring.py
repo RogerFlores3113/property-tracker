@@ -378,6 +378,31 @@ def _score_dishwasher(c: dict[str, Any], place: dict[str, Any]) -> dict[str, Any
     return _score_yes(d is not None, bool(d), "has one", "yes" if d else "no", "Dishwasher")
 
 
+PARKING_ANY_WARNING = ("This parking rule accepts any off-street parking. Say garage or covered if that's what you need.")
+
+
+def infer_parking_want(label: Any) -> str:
+    """'garage' or 'covered' when a parking rule's label names it, else ''."""
+    text = str(label or "").lower()
+    if "garage" in text:
+        return "garage"
+    if "covered" in text or "carport" in text:
+        return "covered"
+    return ""
+
+
+def settle_parking_target(label: Any, target: Any) -> tuple[Any, str]:
+    """(target, warning) for a parking rule. With no ``want`` the rule would pass any off-street lot, so take garage or
+    covered from the label; if the label says neither, keep it and return the warning to show the person."""
+    t = dict(target) if isinstance(target, dict) else {}
+    if str(t.get("want") or "").strip():
+        return t, ""
+    want = infer_parking_want(label)
+    if want:
+        return {**t, "want": want}, ""
+    return t, PARKING_ANY_WARNING
+
+
 def _score_parking(c: dict[str, Any], place: dict[str, Any]) -> dict[str, Any]:
     want = c["target"].get("want") or "lot"
     have = str(place.get("parking") or "")

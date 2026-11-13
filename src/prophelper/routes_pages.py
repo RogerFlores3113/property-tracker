@@ -515,7 +515,13 @@ async def add_criterion(request: Request, search_id: int):
                 return redirect(f"/search?id={search_id}#anchors", error="A commute needs a place to travel to. Add an important place first, like Work or Campus, then add the commute.")
             target = _commute_target(store, target, search_id)
             label = label or _commute_label(store, target)
+        parking_warning = ""
+        if kind == "parking":
+            target, parking_warning = scoring.settle_parking_target(label, target)
         existing = store.list_criteria(search_id)
+        if kind == "pets" and any(c["kind"] == "pets" for c in existing):
+            return redirect(f"/search?id={search_id}#criteria",
+                            error="This search already has a pets rule. Change that one instead of adding a second.")
         for old in existing:  # their own rule replaces the one made for them at the start, so nothing counts twice
             if old["kind"] == kind and kind in ("price", "beds") and old["target"].get("auto"):
                 store.delete_criterion(old["id"])
@@ -528,6 +534,8 @@ async def add_criterion(request: Request, search_id: int):
     except ValueError as exc:
         return redirect(f"/search?id={search_id}#criteria", error=str(exc))
     note = "Added."
+    if parking_warning:
+        note += " " + parking_warning
     if dupe:
         note += " Heads up: you already have one just like it, so it will count twice. Remove one if that was not what you meant."
     return redirect(f"/search?id={search_id}#criteria", notice=note)
@@ -546,13 +554,16 @@ async def update_criterion(request: Request, criterion_id: int):
             auto_before = _commute_label(store, c["target"]) or c["label"]
             if not label or label == auto_before:  # a name they never changed follows the new place, way and minutes
                 label = _commute_label(store, target)
+        warning = ""
+        if c["kind"] == "parking":
+            target, warning = scoring.settle_parking_target(label or c["label"], target)
         store.update_criterion(criterion_id, label=label, weight=form.get("weight") or 0,
                                dealbreaker=_yes(form.get("dealbreaker")), target=target)
     except NotFound:
         raise HTTPException(404, "That item doesn't exist.") from None
     except ValueError as exc:
         return redirect(f"/search?id={c['search_id']}#criteria", error=str(exc))
-    return redirect(f"/search?id={c['search_id']}#criteria", notice="Saved.")
+    return redirect(f"/search?id={c['search_id']}#criteria", notice="Saved." + (" " + warning if warning else ""))
 
 
 @router.post("/criteria/{criterion_id}/delete", include_in_schema=False)

@@ -1635,6 +1635,17 @@ def build_server(store: Store) -> FastMCP:
             except ValueError as exc:
                 problems.append(f"{at}: {exc}")
                 bad = True
+            if not bad and kind == "parking":
+                settled, warn = scoring.settle_parking_target(c.get("label"), target)
+                c["target"] = settled
+                if warn:
+                    notes.append(f"{at}: {warn}")
+            if not bad and kind == "pets":
+                had = any(x["kind"] == "pets" for x in clean) or (
+                    search_id is not None and any(x["kind"] == "pets" for x in store.list_criteria(search_id)))
+                if had:
+                    problems.append(f"{at}: there is already a pets rule. A search has one pets rule, and it follows the search's pets setting (pet_kind). Change that one with reweight instead")
+                    bad = True
             if not bad:
                 clean.append(c)
         return clean, problems, notes
