@@ -171,7 +171,7 @@ def test_migration_from_version_8_keeps_anchors(tmp_path):
     con.close()
     s = Store(path)
     try:
-        assert s.schema_version == 9
+        assert s.schema_version == 10
         row = s.list_anchors(1)
         assert [a["name"] for a in row] == ["Old anchor"] and row[0]["search_id"] is None
         assert s.get_search(1)["down_payment_pct"] is None

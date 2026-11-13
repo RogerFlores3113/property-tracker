@@ -97,7 +97,7 @@ def _build_synonyms() -> dict[str, str]:
         table[_norm_header(heading)] = field
     for field in PLACE_FIELDS:
         table.setdefault(_norm_header(field), field)
-    for dropped in ("listing_text", "photo_urls", "hidden", "is_sample", "ai_notes", "fit_notes", "lease_start", "lease_end"):
+    for dropped in ("listing_text", "photo_urls", "hidden", "is_sample", "ai_notes", "reader_notes", "fit_notes", "lease_start", "lease_end"):
         table.pop(_norm_header(dropped), None)
     table["pet deposit"] = "pet_deposit"  # a plain "Pet deposit" is money that comes back, like the listing reader reads it ("Pet fee" is the one-time fee)
     return table

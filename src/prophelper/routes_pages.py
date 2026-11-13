@@ -689,6 +689,26 @@ def add_page(request: Request, manual: int = 0):
     return _add_page(request, parsed=bool(manual))
 
 
+def _read_pasted(store: Store, text: str, url: str, sid: Any) -> dict[str, Any]:
+    """What the reader finds in pasted text (and a link), worded for the chosen search. The Add preview and the save use it."""
+    values = parsers.parse_listing(text, url)
+    if url:
+        values["url"] = url
+    if text.strip():
+        values["listing_text"] = text
+    if not values.get("title") and values.get("address"):
+        values["title"] = str(values["address"]).split(",")[0]
+    try:
+        chosen = store.get_search(int(sid)) if str(sid or "").isdigit() else store.current_search()
+    except NotFound:
+        chosen = store.current_search()
+    if chosen and int(chosen.get("adults") or chosen.get("people") or 1) > 1:
+        parsers.app_fee_note_for_people(values, int(chosen.get("adults") or chosen["people"]))
+    if chosen and chosen.get("mode") == "buy" and values.get("found_in_listing"):
+        values["found_in_listing"] = compare.for_buyer(values["found_in_listing"])  # no landlord wording on a purchase
+    return values
+
+
 @router.post("/add/parse", include_in_schema=False)
 async def add_parse(request: Request):
     form = await request.form()
@@ -698,23 +718,9 @@ async def add_parse(request: Request):
     if url and has_userinfo(url):
         return _add_page(request, status=400, text=text, url="",
                          error="That link has a user name or password in it, so I won't use it. Paste the plain listing address without it.")
-    values = parsers.parse_listing(text, url)
-    if url:
-        values["url"] = url
-    if text.strip():
-        values["listing_text"] = text
-    if not values.get("title") and values.get("address"):
-        values["title"] = str(values["address"]).split(",")[0]
     sid = form.get("search_id")
     store = get_store(request)
-    try:
-        chosen = store.get_search(int(sid)) if str(sid or "").isdigit() else store.current_search()
-    except NotFound:
-        chosen = store.current_search()
-    if chosen and int(chosen.get("adults") or chosen.get("people") or 1) > 1:
-        parsers.app_fee_note_for_people(values, int(chosen.get("adults") or chosen["people"]))
-    if chosen and chosen.get("mode") == "buy" and values.get("found_in_listing"):
-        values["found_in_listing"] = compare.for_buyer(values["found_in_listing"])  # no landlord wording on a purchase
+    values = _read_pasted(store, text, url, sid)
     return _add_page(request, values=values, parsed=True, text=text, url=url, search_id=int(sid) if str(sid or "").isdigit() else None)
 
 
@@ -724,6 +730,12 @@ async def add_save(request: Request):
     form = await request.form()
     values = _form_fields(form)
     sid = form.get("search_id")
+    if values.get("listing_text", "").strip():
+        # The reader's "Also in the listing" notes are kept with the place (made again here, never taken from the form).
+        try:
+            values["reader_notes"] = str(_read_pasted(store, values["listing_text"], "", sid).get("found_in_listing") or "")
+        except Exception:  # noqa: BLE001 - a reader failure must not stop the save
+            pass
     try:
         place, created = store.add_place(by="you", search_id=int(sid) if str(sid or "").isdigit() else None, **values)
     except ValueError as exc:

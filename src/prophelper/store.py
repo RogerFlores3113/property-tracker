@@ -87,7 +87,7 @@ OPINION_NOTE_MAX = 500
 
 PLACE_TEXT = ("title", "address", "unit", "city", "state", "zip", "url", "source", "listing_text", "laundry", "parking",
               "pets", "utilities_included", "available_from", "lease_start", "lease_end", "notes", "ai_notes",
-              "fit_notes", "red_flags", "pet_breed_note", "special_assessment_payer", "listing_agent", "tenant_pays")
+              "fit_notes", "red_flags", "pet_breed_note", "special_assessment_payer", "listing_agent", "tenant_pays", "reader_notes")
 PLACE_REAL = ("lat", "lng", "price", "beds", "baths", "parking_cost", "pet_rent", "pet_fee", "utilities_estimate", "pet_weight_limit", "pet_deposit",
               "deposit", "application_fee", "other_monthly_fees", "move_in_fees", "broker_fee", "hoa", "property_tax",
               "insurance", "special_assessment", "closing_costs", "seller_credit")
@@ -99,7 +99,7 @@ PLACE_FIELDS: tuple[str, ...] = (PLACE_TEXT + PLACE_REAL + PLACE_INT + ("photo_u
 PLACE_EDITABLE: tuple[str, ...] = tuple(f for f in PLACE_FIELDS if f not in ("is_sample",))
 TEXT_LIMITS = {"title": 300, "address": 300, "unit": 40, "city": 120, "state": 60, "zip": 20, "url": 2000, "source": 120,
                "listing_text": 200_000, "utilities_included": 300, "notes": 50_000, "ai_notes": 50_000,
-               "fit_notes": 20_000, "red_flags": 5_000, "laundry": 20, "parking": 20, "pets": 20, "pet_breed_note": 300, "tenant_pays": 80}
+               "fit_notes": 20_000, "red_flags": 5_000, "laundry": 20, "parking": 20, "pets": 20, "pet_breed_note": 300, "tenant_pays": 80, "reader_notes": 3_000}
 PHOTOS_MAX = 30
 AI_PROTECTED = ("notes", "rating", "hidden", "is_sample")  # fields an AI update never writes
 AI_EVENT_TEXT_MAX = 2000
@@ -377,8 +377,14 @@ CREATE INDEX idx_anchors_search ON anchors(search_id);
 ALTER TABLE searches ADD COLUMN down_payment_pct REAL;
 """
 
+# The "Also in the listing" notes the reader made when a place was added from pasted text, kept on the place. One
+# self-contained step so it can be renumbered at merge time.
+_MIGRATION_READER_NOTES = """
+ALTER TABLE places ADD COLUMN reader_notes TEXT NOT NULL DEFAULT '';
+"""
+
 _MIGRATIONS: list[str] = [_SCHEMA_V1, _SCHEMA_V2_PLACE_DATES, _MIGRATION_PEOPLE, _MIGRATION_PETS_APPLY, _MIGRATION_OPINIONS, _MIGRATION_BUYER_FIELDS, _MIGRATION_RENT_UPFRONT, _MIGRATION_CREDIT_ADULTS,
-                          _MIGRATION_SEARCH_ANCHORS]
+                          _MIGRATION_SEARCH_ANCHORS, _MIGRATION_READER_NOTES]
 
 
 class NotFound(LookupError):

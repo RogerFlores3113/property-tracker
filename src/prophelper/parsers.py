@@ -2403,9 +2403,139 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     title = _try(lambda: _title(text, out))
     if title:
         out["title"] = title
+    facts += _try(lambda: _safety_net(text, out, facts)) or []
     if facts:
         out["found_in_listing"] = " ".join(facts)
     return out
+
+
+# --------------------------------------------------------------------------- safety net (cycle 10)
+# A last pass over the pasted text. Whatever money amount, weight limit, free-rent offer, laundry, parking or utility
+# wording no reader placed in a field or a note gets one short plain line, so nothing is silently dropped.
+_NET_DOLLARS = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(\s?[kK]\b)?|\b(\d{1,3}(?:,\d{3})+|\d+)\s*(?:dollars?|bucks)\b", re.I)
+_NET_WEIGHT = re.compile(r"\b(\d{1,3})\s*[- ]?(?:lbs?\b\.?|pounds?\b)", re.I)
+_NET_SKIP_NEAR = re.compile(
+    r"assessed (?:value|at)|assessment value|zestimate|apprais|estimated value|home value|sold for|last sold|price history|"
+    r"original price|list(?:ing|ed)? price|asking|reduced from|income|earn|salary|\b\d(?:\.\d)?\s*x\b|times (?:the )?(?:monthly )?rent|"
+    r"per sq|/\s*sq|psf|price per|mortgage|(?:monthly|est\.?|estimated) payment|/\s*bed\b|per bed\b", re.I)
+_NET_UNIT_BEFORE = re.compile(r"(?:studio|\b\d\s*(?:br|bd|bed(?:room)?s?)\b|\b(?:one|two|three)[- ]bed(?:room)?s?)[^.\n;$]{0,12}$", re.I)
+_NET_FREE_RENT = re.compile(r"\b(?:(?:\d+|one|two|three|a|1\.5)\s+(?:months?|weeks?)(?:'s)?(?:\s+of\s+rent)?\s+free|free\s+rent|(?:months?|weeks?)\s+free|rent[- ]free\s+(?:month|period)|concessions?)\b", re.I)
+_NET_BROKER_MONTH = re.compile(r"\b(?:broker|agent|finder|realtor|leasing)(?:'s|s')?\s+fee\b[^.\n;$]{0,30}?\b(?:(?:one|two|a|\d+(?:\.\d+)?)\s*(?:months?|mo)\b|\d+\s*%)|\b(?:one|two|\d+)\s+months?\s+(?:broker|agent|finder)(?:'s)?\s+fee", re.I)
+_NET_UTIL_WORD = re.compile(r"\b(?:water|sewer|trash|garbage|electric(?:ity)?|gas|heat(?:ing)?|internet|wifi|cable|utilit(?:y|ies))\b", re.I)
+_NET_UTIL_CUE = re.compile(r"\b(?:utilit(?:y|ies)|included|tenant|resident|renter|you pay|pay for|paid by|owner pays|landlord|extra|separate|billed|flat|metered|submeter|responsible|set up)\b", re.I)
+_NET_UTIL_NOT = re.compile(r"\b(?:gas|electric)\s+(?:stove|range|oven|fireplace|grill|cooktop|appliances?|logs?)\b|\bheat\s*pump\b|\bgas station\b", re.I)
+_NET_REAL_FIELDS = ("price", "parking_cost", "pet_rent", "pet_fee", "utilities_estimate", "pet_weight_limit", "pet_deposit", "deposit",
+                    "application_fee", "other_monthly_fees", "move_in_fees", "broker_fee", "hoa", "property_tax", "insurance",
+                    "special_assessment", "closing_costs", "seller_credit")
+_NET_ENDS = ".;!?\n|•"
+
+
+def _net_clause(text: str, start: int, end: int, limit: int = 80) -> str:
+    """The short phrase around text[start:end]: the clause it sits in, cut to about ``limit`` characters at word edges."""
+    left = max(text.rfind(c, 0, start) for c in _NET_ENDS) + 1
+    rights = [i for i in (text.find(c, end) for c in _NET_ENDS) if i >= 0]
+    right = min(rights) if rights else len(text)
+    lo, hi = left, right
+    if hi - lo > limit:
+        lo = max(lo, start - 28)
+        hi = min(hi, max(end + 45, lo + limit))
+        if lo > left:
+            nxt = text.find(" ", lo, start)
+            lo = nxt + 1 if nxt >= 0 else lo
+        if hi < right:
+            prev = text.rfind(" ", end, hi)
+            hi = prev if prev > end else hi
+    phrase = " ".join(text[lo:hi].split()).strip(" ,:-–—")
+    return phrase.replace('"', "'")
+
+
+def _net_used_numbers(out: dict[str, Any], facts: list[str]) -> set[float]:
+    """Every number a field or a note already carries."""
+    used: set[float] = set()
+    for key in _NET_REAL_FIELDS:
+        v = out.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v:
+            used.add(float(v))
+            if key in ("hoa", "property_tax", "insurance", "other_monthly_fees", "parking_cost", "utilities_estimate", "pet_rent"):
+                used.update({round(float(v) * 12, 2), round(float(v) / 12, 2)})  # a yearly figure written beside the monthly one
+    price = out.get("price")
+    if isinstance(price, (int, float)) and price:
+        used.update({float(price) * 2, float(price) * 3})  # first and last month, three months up front
+    for line in facts:
+        for m in re.finditer(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?", line):
+            try:
+                used.add(float(m.group(0).replace(",", "")))
+            except ValueError:
+                pass
+    return used
+
+
+def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
+    """Plain lines for what the reader saw but did not place anywhere. Never changes a field."""
+    notes: list[str] = []
+    used = _net_used_numbers(out, facts)
+    done: set[float] = set()
+    # two or more "1 bed $1,200" style amounts is a floor plan list: those are rents, not extra costs
+    floor_plans = len(re.findall(r"(?:studio|\b\d\s*(?:br|bd|bed(?:room)?s?)\b|\b(?:one|two|three)[- ]bed(?:room)?s?)[^.\n;$]{0,12}\$\s?\d", text, re.I)) >= 2
+    for m in _NET_DOLLARS.finditer(text):
+        raw, dec, kay = (m.group(1), m.group(2), m.group(3)) if m.group(1) is not None else (m.group(4), None, None)
+        try:
+            amount = float(raw.replace(",", "") + (dec or "")) * (1000 if kay else 1)
+        except ValueError:
+            continue
+        if amount <= 0 or amount >= 20000 or amount in used or amount in done:
+            continue
+        before = text[max(0, m.start() - 45):m.start()]
+        after = text[m.end():m.end() + 45]
+        near = before[-30:] + " " + after[:25]
+        rent_read = isinstance(out.get("price"), (int, float))  # with no rent read, a rent-looking amount is still worth a line
+        if _NET_SKIP_NEAR.search(near):
+            continue
+        if rent_read and amount >= 500 and ((floor_plans and _NET_UNIT_BEFORE.search(before)) or re.search(r"\$\s?[\d,]+\s*(?:-|–|to)\s*$", before)
+                              or re.match(r"\s*(?:-|–|to)\s*\$\s?\d", after)):
+            continue  # a floor plan or a rent range, not an extra cost
+        phrase = _net_clause(text, m.start(), m.end())
+        if not phrase:
+            continue
+        done.add(amount)
+        if re.search(r"\b(?:per|a|each)\s+load\b|/\s*load\b", near, re.I):
+            notes.append(f'The listing says laundry costs "{phrase}". It is not counted anywhere.')
+        else:
+            notes.append(f'The listing also says "{phrase}". It is not counted anywhere. Check what it is for.')
+    low_facts = " ".join(facts).lower()
+    limit = out.get("pet_weight_limit")
+    seen_w: set[int] = set()
+    for m in _NET_WEIGHT.finditer(text):
+        w = int(m.group(1))
+        if w in seen_w or (isinstance(limit, (int, float)) and float(limit) == w) or re.search(rf"\b{w}\s*[- ]?(?:lbs?|pounds?)\b", low_facts):
+            continue
+        seen_w.add(w)
+        notes.append(f'The listing says "{_net_clause(text, m.start(), m.end())}". I could not tell what this limit is for, so it is not used anywhere. Check it.')
+    m = _NET_FREE_RENT.search(text)
+    if m and not re.search(r"free rent|months? free|weeks? free|concession", low_facts):
+        notes.append(f'The listing mentions a free-rent offer ("{_net_clause(text, m.start(), m.end())}"). It is not counted anywhere. Check the terms.')
+    m = _NET_BROKER_MONTH.search(text)
+    if m and not out.get("broker_fee") and not re.search(r"broker|agent fee|finder", low_facts):
+        notes.append(f'The listing says "{_net_clause(text, m.start(), m.end())}". The fee is given in months of rent, so no amount is saved. Ask what it comes to.')
+    m = re.search(r"\b(?:laundry|washer|dryer|w\s*/\s*d|washing machines?|coin[- ]op)\b", text, re.I)
+    if m and not out.get("laundry") and not re.search(r"laundry|washer|dryer|hookup", low_facts) and not any("laundry" in n for n in notes):
+        notes.append(f'The listing mentions laundry ("{_net_clause(text, m.start(), m.end())}"), but I could not tell what kind. Ask if it is in the unit, in the building or off site.')
+    m = re.search(r"\b(?:parking|garage|carport|driveway|off[- ]street)\b", text, re.I)
+    if m and not out.get("parking") and out.get("parking_cost") is None and not re.search(r"parking|garage|carport|driveway", low_facts) \
+            and not any(re.search(r"parking|garage", n, re.I) for n in notes):
+        notes.append(f'The listing mentions parking ("{_net_clause(text, m.start(), m.end())}"), but I could not tell what it is or what it costs. Ask.')
+    if not (out.get("utilities_included") or out.get("tenant_pays") or out.get("utilities_estimate") is not None) and "utilit" not in low_facts:
+        for u in _NET_UTIL_WORD.finditer(text):
+            clause = _net_clause(text, u.start(), u.end(), 400)
+            if _NET_UTIL_NOT.search(clause) or re.search(r"\bnot\s+(?:included|incl)|\bexcluded\b", clause, re.I) or not _NET_UTIL_CUE.search(clause) or u.group(0).lower() in low_facts:
+                continue
+            if any(_net_clause(text, u.start(), u.end()) in n for n in notes):
+                break  # an amount line already quotes this very phrase
+            notes.append(f'The listing mentions utilities ("{_net_clause(text, u.start(), u.end())}"), but I could not tell who pays. Ask which ones you pay for.')
+            break
+    if len(notes) > 6:
+        notes = notes[:5] + [f"The listing has {len(notes) - 5} more things that are not counted. Read it again for the rest."]
+    return notes
 
 
 def _money_monthly_fees(text: str) -> list[float]:
