@@ -45,7 +45,7 @@ def test_partly_priced_utilities():
 def test_partly_priced_marks_rest_unknown():
     r = parse_listing(LISTING)
     place = {**r, "price": 1000, "listing_text": LISTING}
-    assert "utilities estimate" not in cost["missing"] and cost["missing"] == ["electric, gas and internet"]  # c10: names only what is missing
+    cost = money.rent_cost(place)
     assert "utilities estimate" in cost["missing"]
     assert any("electric, gas and internet" in u for u in cost["uncounted"])
     assert "not counted yet" in money.headline_text(cost) if hasattr(money, "headline_text") else True
