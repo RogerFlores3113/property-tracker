@@ -111,7 +111,7 @@
         return resp.json();
       }).then(function (info) {
         var days = card.querySelector("[data-days]");
-        if (days) { days.textContent = info.days === 0 ? "Moved today" : info.days + " day" + (info.days === 1 ? "" : "s") + " in stage"; }
+        if (days) { days.textContent = info.days === 0 ? "Moved today" : (info.days === 1 ? "Moved yesterday" : "Moved " + info.days + " days ago"); }
         say("Moved " + company + " to " + stage + "." + (info.note ? " " + info.note : ""));
       }).catch(function (err) {
         fromBody.insertBefore(card, next && next.parentNode === fromBody ? next : fromBody.querySelector(".col-empty"));

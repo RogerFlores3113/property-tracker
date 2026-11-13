@@ -21,7 +21,7 @@
   }
 
   function pinIcon(p) {
-    var wrap = el("span", "ph-pin pin-" + (/^(good|ok|low|none)$/.test(p.band) ? p.band : "none"));
+    var wrap = el("span", "ph-pin pin-" + (/^(good|ok|low|none)$/.test(p.band) ? p.band : "none") + (p.passed ? " pin-passed" : ""));
     wrap.appendChild(el("span", "ph-pin-label", p.label));
     return window.L.divIcon({ className: "ph-pin-host", html: wrap, iconSize: null });
   }
@@ -38,7 +38,7 @@
     link.setAttribute("href", p.url);
     box.appendChild(link);
     box.appendChild(el("div", "fine", p.stage + (p.score === null ? ", no score yet" : ", score " + Math.round(p.score))));
-    box.appendChild(el("div", "fine", "True monthly cost: " + p.label));
+    box.appendChild(el("div", "fine", "True monthly cost: " + (p.cost || p.label)));
     return box;
   }
 

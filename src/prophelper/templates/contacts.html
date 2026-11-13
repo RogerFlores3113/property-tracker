@@ -2,7 +2,7 @@
 {% from "_macros.html" import page_head, button, field, select %}
 {% block title %}Contacts &middot; Property Helper{% endblock %}
 {% block body %}
-{% call page_head("Contacts", "Landlords, agents and leasing offices, and what you said to each.") %}
+{% call page_head("Contacts", ("Agents, lenders, inspectors and title companies, and what you said to each." if buy else "Landlords, agents and leasing offices, and what you said to each.")) %}
   <a class="btn small" href="#add-contact">Add a contact</a>
 {% endcall %}
 
@@ -31,7 +31,7 @@
     {% endfor %}
   </ul>
   {% elif q %}<p class="fine">Nobody matches that.</p>
-  {% else %}<p class="fine">No contacts yet. Add the leasing office or landlord below, or from a place's page.</p>{% endif %}
+  {% else %}<p class="fine">No contacts yet. Add {{ 'your agent or the listing agent' if buy else 'the leasing office or landlord' }} below, or from a place's page.</p>{% endif %}
 </section>
 
 <section class="card" id="add-contact" aria-labelledby="add-h">
@@ -39,7 +39,7 @@
   <form method="post" action="/contacts" class="stack">
     <div class="form-grid">
       {{ field("Name", "name", required=True, id="ac-name") }}
-      {{ select("Role", "role", CONTACT_ROLES, value="other", id="ac-role") }}
+      {{ select("Role", "role", roles, value=(roles[0] if buy else "other"), id="ac-role") }}
       {{ field("Company", "company", id="ac-company") }}
       {{ field("Email", "email", kind="email", id="ac-email") }}
       {{ field("Phone", "phone", id="ac-phone") }}

@@ -1,4 +1,4 @@
-"""Contacts: landlords, agents and leasing offices, who you talked to, and who still owes you a reply.
+"""Contacts: landlords, agents, lenders and leasing offices, who you talked to, and who still owes you a reply.
 
     GET  /contacts                              the list (?q= searches), with "waiting on a reply" marked; POST /contacts adds one
     GET  /contacts/{id}                         one contact: details, places, conversation log
@@ -22,9 +22,25 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from .deps import back, get_store, redirect, render
-from .store import NotFound, Store
+from .store import CONTACT_ROLES, NotFound, Store
 
 router = APIRouter()
+
+
+_BUY_ROLE_FIRST = ("buyer's agent", "seller's agent", "lender", "inspector", "title or closing", "seller")
+_RENT_ROLE_FIRST = ("landlord", "property manager", "leasing agent")
+
+
+def roles_for(store: Store) -> list[str]:
+    """Every contact role, with the ones that fit the active search (rent or buy) first."""
+    search = store.current_search()
+    first = _BUY_ROLE_FIRST if search and search.get("mode") == "buy" else _RENT_ROLE_FIRST
+    return [r for r in first if r in CONTACT_ROLES] + [r for r in CONTACT_ROLES if r not in first]
+
+
+def _is_buy(store: Store) -> bool:
+    search = store.current_search()
+    return bool(search and search.get("mode") == "buy")
 
 
 def _contact_or_404(store: Store, contact_id: int) -> dict[str, Any]:
@@ -63,7 +79,7 @@ def contacts_page(request: Request, q: str = ""):
         rows.append({"contact": c, "last": log[0] if log else None, "waiting": waiting.get(c["id"]),
                      "places": store.places_for_contact(c["id"])})
     rows.sort(key=lambda r: (r["waiting"] is None, r["contact"]["name"].lower()))
-    return render(request, "contacts.html", rows=rows, q=q, waiting_count=len(waiting), total=len(store.list_contacts()),
+    return render(request, "contacts.html", roles=roles_for(store), buy=_is_buy(store), rows=rows, q=q, waiting_count=len(waiting), total=len(store.list_contacts()),
                   follow_up_days=store.get_setting_int("follow_up_days", 3))
 
 
@@ -102,7 +118,7 @@ def contact_page(request: Request, contact_id: int):
                 titles[entry["place_id"]] = store.get_place(entry["place_id"])["title"]
             except NotFound:
                 pass
-    return render(request, "contact.html", contact=contact, places=linked, options=options, log=log, titles=titles,
+    return render(request, "contact.html", roles=roles_for(store), contact=contact, places=linked, options=options, log=log, titles=titles,
                   waiting=waiting_by_contact(store).get(contact_id), follow_up_days=store.get_setting_int("follow_up_days", 3))
 
 

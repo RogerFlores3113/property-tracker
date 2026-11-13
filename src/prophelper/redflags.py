@@ -40,6 +40,19 @@ _OFF_PLATFORM = re.compile(r"\b(?:contact|reach|text|message) (?:me|us)?\s*(?:on
 _ADDRESS_HIDDEN = re.compile(r"\b(?:address|location) (?:upon|on|by) (?:request|inquiry|approval|contact)|\b(?:message|contact|email|inquire) (?:me |us )?(?:for|to get) (?:the )?(?:exact )?address\b|"
                              r"\baddress (?:will be|is) (?:given|provided|shared|sent) (?:after|upon|once|when)\b", re.I)
 _NO_CHECKS = re.compile(r"\bno (?:credit|background|reference|income|application)s? (?:check|verification|needed|required)", re.I)
+# Buyer-side signs (earnest money, inspection pressure, cash only, same-day pressure).
+_BUY_PAYMENT = re.compile(
+    r"\b(?:earnest money|good faith deposit|deposit|down ?payment|closing (?:costs?|funds))\b[^.\n]{0,80}\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b|"
+    r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b[^.\n]{0,80}\b(?:earnest money|good faith deposit|deposit|down ?payment)\b|"
+    r"\bwire\b[^.\n]{0,60}\b(?:escrow|earnest)\b", re.I)
+_BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waive|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b", re.I)
+_BUY_CASH_ONLY = re.compile(r"\bcash[ -]only\b|\bcash (?:buyers?|offers?) only\b|\bonly (?:accept|take)s? cash\b", re.I)
+_BUY_SAME_DAY = re.compile(r"\b(?:today|tonight|same[- ]day|within 24 hours|right away|immediately|asap)\b[^.\n]{0,40}\b(?:wire|send|pay|deposit|earnest|close|sign|offer)|"
+                           r"\b(?:wire|send|pay|deposit|earnest|sign|offer)\b[^.\n]{0,40}\b(?:today|tonight|same[- ]day|within 24 hours|right away|immediately|asap)\b", re.I)
+# Text written to steer an AI tool, not a person.
+_AI_TARGETED = re.compile(r"\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the\s+|your\s+)?(?:previous|prior|above|earlier)\s+(?:instructions?|prompts?|rules?)\b|"
+                          r"\b(?:delete|remove|erase|wipe)\s+(?:all|every|my)\s+(?:the\s+)?(?:places?|listings?|data|notes|searches)\b|"
+                          r"\b(?:system prompt|you are now|new instructions?:|as an ai (?:assistant|agent)|assistant,? (?:please |you must ))", re.I)
 PRICE_FLOOR_RATIO = 0.55  # under this share of the typical price in the same search is "far under"
 
 
@@ -70,19 +83,42 @@ def is_serious(place: dict[str, Any], peer_prices: Iterable[float] = ()) -> bool
     before a showing, an owner who is abroad, keys by mail, or private info (like a Social Security number) asked for
     before a tour. Scoring, Today and the Board all use this. ``peer_prices`` is kept for callers that pass it."""
     text = _text(place)
-    return any(p.search(text) for p in (_PAYMENT, _ZELLE_ONLY, _PAY_APP, _BEFORE_SHOWING, _ABROAD, _KEYS_MAIL, _PRIVATE_INFO))
+    return any(p.search(text) for p in (_PAYMENT, _ZELLE_ONLY, _PAY_APP, _BEFORE_SHOWING, _ABROAD, _KEYS_MAIL, _PRIVATE_INFO, _BUY_PAYMENT, _BUY_NO_INSPECTION))
 
 
-def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = ()) -> list[str]:
+_BUY_RULES = [
+    (_BUY_PAYMENT, "It asks for earnest money or a deposit by wire, Zelle, Venmo, Cash App, gift card or crypto, to a person or an account you can't verify. "
+                   "Earnest money normally goes to an escrow or title company you have checked yourself, through its published phone number."),
+    (_BUY_NO_INSPECTION, "It pushes you to skip or waive the inspection. A real seller lets you inspect. Get a home inspection before you commit."),
+    (_BUY_CASH_ONLY, "It says cash only. Real sales close through an escrow or title company, so ask how the closing will be handled."),
+    (_BUY_SAME_DAY, "It pressures you to send money or sign today. A real sale can wait while an escrow or title company and your agent check it."),
+]
+
+
+def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: str = "rent") -> list[str]:
     """Plain-words signs to check on this place. ``peer_prices``: prices of the other places in the same search."""
     text = " ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes"))
     flags: list[str] = []
+    buy = mode == "buy"
+    if buy:
+        for pattern, message in _BUY_RULES:
+            if pattern.search(text):
+                flags.append(message)
     for pattern, message in _rules():
+        if buy and pattern in (_PAYMENT, _NO_CHECKS):
+            # landlord wording does not fit a purchase; the payment rule gets seller wording, the screening rule is dropped
+            if pattern is _PAYMENT and pattern.search(text):
+                flags.append("It asks for payment in a way that is hard to undo (wire, gift card, crypto or a payment app). "
+                             "Pay only through an escrow or title company you have checked yourself.")
+            continue
         if pattern.search(text):
-            flags.append(message)
-    if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text):
+            flags.append(message.replace("lease", "contract") if buy else message)
+    if _AI_TARGETED.search(text):
+        flags.append("This listing has text aimed at AI tools; treat it with care.")
+    if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and _BUY_PAYMENT.search(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
-                     "Don't pay anything before you have toured the place and read the lease.")
+                     + ("Don't send money before you have toured the place and an escrow or title company is involved." if buy else
+                        "Don't pay anything before you have toured the place and read the lease."))
     price = place.get("price")
     peers = [float(p) for p in peer_prices if p]
     try:

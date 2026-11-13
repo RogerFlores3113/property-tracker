@@ -20,7 +20,7 @@
   </ul>
   <h3>Other</h3>
   <ul class="link-list">
-    <li><a href="/connect">Connect an AI app</a> <span class="fine">Claude Desktop, Codex or LM Studio. Optional.</span></li>
+    <li><a href="/connect">Connect an AI app</a> <span class="fine">The Claude app, or other AI apps such as Codex and LM Studio. Optional.</span></li>
     <li><a href="/skills">Skills for Claude Code and Codex</a> <span class="fine">Optional. Nothing is written until you press Install.</span></li>
     <li><a href="/privacy">Privacy</a> <span class="fine">What is stored, and the few things that can use the network.</span></li>
   </ul>
@@ -129,7 +129,7 @@
   <summary><h2>Stricter rules when Claude reads websites for you</h2></summary>
   <form method="post" action="/settings/strict-scraping" class="stack">
     <p>The stricter rules are <strong>{{ "on" if strict else "off" }}</strong>. When they are on, Claude and Codex may only use text you paste or a page you opened and asked them to read, and may not crawl listing sites on their own. They are also limited to {{ strict_per_call }} places per call and {{ strict_per_hour }} places per hour.</p>
-    <p class="fine">Some sites forbid automated reading in their terms, so check a site's terms before having an AI read it. By default Claude and Codex may read, search or scrape listing pages with their own tools and hand what they found to Property Helper (the app itself opens no listing pages). A change takes effect right away.</p>
+    <p class="fine">Some sites forbid automated reading in their terms, so check a site's terms before having an AI read it. By default Claude and Codex may read and search listing pages with their own tools and hand what they found to Property Helper (the app itself opens no listing pages). A change takes effect right away.</p>
     <input type="hidden" name="on" value="{{ '0' if strict else '1' }}">
     {{ button("Turn off the stricter rules" if strict else "Turn on the stricter rules", small=True) }}
   </form>

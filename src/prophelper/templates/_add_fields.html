@@ -14,7 +14,7 @@
   {{ field("Lease length (months)", "lease_months", v.get('lease_months', ''), kind="number") }}
   {% endif %}
   {% if not buy %}
-  {{ field("Utilities you pay", "tenant_pays", v.get('tenant_pays', ''), hint="Pick from electric, gas, water, trash, internet, heat. Separate with commas.") }}
+  {{ field("Utilities you pay", "tenant_pays", v.get('tenant_pays', ''), hint="Which of these you pay: electric, gas, water, trash, internet, heat. Separate with commas.") }}
   {% endif %}
   {% if not buy %}
   {{ field("Utilities included", "utilities_included", v.get('utilities_included', ''), hint="For example: water, trash, internet. Say 'all' if everything is.") }}

@@ -44,7 +44,7 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     settings = store.buy_settings() if settings is None else settings
     people = int(search.get("people") or 1)
     cost = money.true_monthly_cost(place, search["mode"], settings, people, pets=money.has_pets(search.get("pet_kind")))
-    flags = redflags.local_flags(place, peer_prices or [])
+    flags = redflags.local_flags(place, peer_prices or [], mode=search.get("mode") or "rent")
     serious = redflags.is_serious(place, peer_prices or [])
     score = scoring.score_place(place, criteria, mode=search["mode"], anchors=anchors, commutes=commutes,
                                 custom_scores=store.custom_scores(place["id"]), budget_max=search.get("budget_max"),

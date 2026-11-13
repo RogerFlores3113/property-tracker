@@ -583,7 +583,8 @@ def _add_page(request: Request, *, values: dict[str, Any] | None = None, parsed:
     store = get_store(request)
     searches = store.list_searches()
     current = store.current_search()
-    flags = redflags.local_flags(values) if parsed and values else []  # the same hints the place page shows, before you save
+    chosen_search = next((x for x in searches if x["id"] == search_id), None) or current or {}
+    flags = redflags.local_flags(values, mode=chosen_search.get("mode") or "rent") if parsed and values else []  # the same hints the place page shows, before you save
     return render(request, "add.html", status_code=status, values=values or {}, parsed=parsed, text=text, url=url, flags=flags,
                   searches=searches, search_options=[(s["id"], s["name"]) for s in searches], chosen=search_id or (current["id"] if current else None), form_error=error,
                   found=sorted((values or {}).keys()) if parsed else [])

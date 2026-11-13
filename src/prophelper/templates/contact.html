@@ -64,7 +64,7 @@
     <h2 id="det-h">Details</h2>
     <form method="post" action="/contacts/{{ contact.id }}" class="stack">
       {{ field("Name", "name", contact.name, required=True, id="ct-name") }}
-      {{ select("Role", "role", CONTACT_ROLES, value=contact.role, id="ct-role") }}
+      {{ select("Role", "role", roles, value=contact.role, id="ct-role") }}
       {{ field("Company", "company", contact.company, id="ct-company") }}
       {{ field("Email", "email", contact.email, kind="email", id="ct-email") }}
       {{ field("Phone", "phone", contact.phone, id="ct-phone") }}

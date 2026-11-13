@@ -18,8 +18,9 @@
   </h2>
   <p class="web-warning"><strong>Use the Claude app on this computer. Claude on the web (claude.ai in your browser) can't reach apps on your computer, so it won't work for this.</strong></p>
   <p>{{ claude.blurb }}</p>
-  <p class="fine">Claude's tools can read your notes and ratings on places when you ask Claude about them. Nothing is sent anywhere until you use Claude.</p>
+  <p class="fine">Once connected, Claude can read your notes and ratings on places when you ask Claude about them. Nothing is sent anywhere until you use Claude.</p>
   <p class="fine"><strong>The short way:</strong> press the button below, then in Claude type <em>Add this listing to Property Helper</em>.</p>
+  <p class="fine">This window stays unlocked for 12 hours after you last used it. If you come back later and it says the window is locked, open Property Helper again from its icon. Claude keeps working either way.</p>
   {% set missing = not claude.installed and not claude.connected %}
   {% if missing %}
   <p class="notice-line">We don't see the Claude app on this computer. Get the Claude app at claude.ai/download, then come back and press the button.</p>
@@ -61,7 +62,7 @@
 
 <details class="card" id="other-apps">
 <summary><h2 class="inline-h">Other apps and details</h2></summary>
-<p class="fine">ChatGPT, Claude Code, Codex and LM Studio, what your AI app can do, things to try asking, and the advanced setup. Only if you need them.</p>
+<p class="fine">ChatGPT, Claude Code, Codex and LM Studio, what your AI app can do, things to try asking, and the advanced setup. Only if you need them. (Claude Code, Codex and LM Studio are other AI apps; skip them if you only use the Claude app.)</p>
 <section class="card app-picker-card" id="app-picker">
   <h2>Which AI app do you use?</h2>
   <div class="app-picker" role="group" aria-label="Which AI app do you use?">
