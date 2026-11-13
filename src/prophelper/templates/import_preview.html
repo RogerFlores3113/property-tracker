@@ -6,12 +6,12 @@
 {% call page_head("Check the import", "Nothing is saved yet. Look it over, change any column match, then press Import.") %}{% endcall %}
 {% if form_error %}<p class="flash warn" role="alert" tabindex="-1">{{ form_error }}</p>{% endif %}
 <section class="card">
-  <p><strong>{{ filename }}</strong> has {{ total_rows|num }} row{{ 's' if total_rows != 1 }}. They would go into <strong>{{ search.name }}</strong>.</p>
+  <p><strong>{{ filename }}</strong> lists {{ total_rows|num }} place{{ 's' if total_rows != 1 }}{% if blank_rows %} (and {{ blank_rows|num }} empty row{{ 's' if blank_rows != 1 }}, left out){% endif %}. They would go into <strong>{{ search.name }}</strong>.</p>
   <div class="count-line">
     <span><strong>{{ counts.new|num }}</strong> new</span>
     <span><strong>{{ counts.match|num }}</strong> already saved</span>
     <span><strong>{{ counts.repeat|num }}</strong> repeated in the file</span>
-    <span><strong>{{ counts.skip|num }}</strong> skipped</span>
+    <span><strong>{{ counts.skip|num }}</strong> skipped (reasons listed below)</span>
   </div>
   <p class="fine">"Already saved" places only get their empty details filled in. Your notes and stages are not changed. You can <a href="/backup">download a backup</a> first if you want one.</p>
 </section>
@@ -28,7 +28,7 @@
       <tr>
         <td>{{ h or '(no heading)' }}</td>
         <td class="fine">{{ examples[i] }}</td>
-        <td><select name="col_{{ i }}" aria-label="Where the column {{ h or (i + 1) }} goes">
+        <td>{% if i in computed and i not in mapping %}<span class="fine">Worked out by the app, so it is not imported.</span>{% endif %}<select name="col_{{ i }}" aria-label="Where the column {{ h or (i + 1) }} goes">
           <option value="">Don't use</option>
           {% for key, label in field_options %}<option value="{{ key }}"{% if mapping.get(i) == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select></td>
