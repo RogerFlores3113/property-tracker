@@ -163,7 +163,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
             # The listing prices only part of what the tenant pays (for example trash billed back), so the rest is not counted yet.
             names = _join_words(unpriced)
             line["note"] = f"{note}. It covers only what the listing prices; you also pay {names}, not counted yet"
-            missing.append("utilities estimate")
+            missing.append(names)  # name only what is really missing ("electric and gas"), not the whole estimate
             uncounted.append(f"utilities ({names})")
             notes.append(f"You also pay {names}; not counted yet. Add them to your utilities estimate under Facts.")
         lines.append(line)
