@@ -46,7 +46,7 @@ def _line(key: str, label: str, amount: float | None, note: str = "") -> dict[st
 
 def utilities_covered(place: dict[str, Any]) -> bool:
     text = str(place.get("utilities_included") or "").lower()
-    return any(w in text for w in ("all utilities", "everything", "all included", "all inclusive", "all-inclusive"))
+    return text.strip() == "all" or any(w in text for w in ("all utilities", "everything", "all included", "all inclusive", "all-inclusive"))
 
 
 NO_PETS_NOTE = "not counted: you have no pets"
@@ -72,6 +72,20 @@ def tenant_pays_list(place: dict[str, Any]) -> list[str]:
     """The utilities the tenant pays, from ``tenant_pays`` (a comma list such as "gas, electric"). Empty when unset."""
     raw = str(place.get("tenant_pays") or "")
     return [w.strip().lower() for w in raw.replace(";", ",").replace(" and ", ",").split(",") if w.strip()]
+
+
+def _estimate_from_listing(place: dict[str, Any], util: float) -> bool:
+    """True when the utilities estimate is the monthly bill the saved listing text itself gives (read by the parser), so it
+    is not a guess. No stored flag is needed: the listing text is kept, so the same reading is repeated here."""
+    text = str(place.get("listing_text") or "")
+    if not text:
+        return False
+    try:
+        from .parsers import listing_billed_amount
+        amount = listing_billed_amount(text)
+    except Exception:
+        return False
+    return amount is not None and abs(amount - util) < 0.5
 
 
 def has_pets(pet_kind: Any) -> bool:
@@ -113,10 +127,11 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
             uncounted.append("utilities")
             lines.append(_line("utilities", "Utilities", None, "not filled in"))
     else:
-        note = "A guess, not from the listing"
+        from_listing = _estimate_from_listing(place, util)
+        note = "From the listing" if from_listing else "A guess, not from the listing"
         if place.get("utilities_included"):
             note += f". The listing includes: {place['utilities_included']}"
-        line = _line("utilities", "Utilities (a guess)", util, note)
+        line = _line("utilities", "Utilities" if from_listing else "Utilities (a guess)", util, note)
         line["estimated"] = True
         lines.append(line)
 

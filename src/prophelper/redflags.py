@@ -45,7 +45,8 @@ _BUY_PAYMENT = re.compile(
     r"\b(?:earnest money|good faith deposit|deposit|down ?payment|closing (?:costs?|funds))\b[^.\n]{0,80}\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b|"
     r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b[^.\n]{0,80}\b(?:earnest money|good faith deposit|deposit|down ?payment)\b|"
     r"\bwire\b[^.\n]{0,60}\b(?:escrow|earnest)\b", re.I)
-_BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waive|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b", re.I)
+_BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waives?|waived|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b", re.I)
+_BUY_AS_IS = re.compile(r"\bas[- ]is\b", re.I)
 _BUY_CASH_ONLY = re.compile(r"\bcash[ -]only\b|\bcash (?:buyers?|offers?) only\b|\bonly (?:accept|take)s? cash\b", re.I)
 _BUY_SAME_DAY = re.compile(r"\b(?:today|tonight|same[- ]day|within 24 hours|right away|immediately|asap)\b[^.\n]{0,40}\b(?:wire|send|pay|deposit|earnest|close|sign|offer)|"
                            r"\b(?:wire|send|pay|deposit|earnest|sign|offer)\b[^.\n]{0,40}\b(?:today|tonight|same[- ]day|within 24 hours|right away|immediately|asap)\b", re.I)
@@ -90,6 +91,7 @@ _BUY_RULES = [
     (_BUY_PAYMENT, "It asks for earnest money or a deposit by wire, Zelle, Venmo, Cash App, gift card or crypto, to a person or an account you can't verify. "
                    "Earnest money normally goes to an escrow or title company you have checked yourself, through its published phone number."),
     (_BUY_NO_INSPECTION, "It pushes you to skip or waive the inspection. A real seller lets you inspect. Get a home inspection before you commit."),
+    (_BUY_AS_IS, "It is sold as-is, so the seller may not fix anything that turns up. Get an inspection and ask what the seller will repair before you commit."),
     (_BUY_CASH_ONLY, "It says cash only. Real sales close through an escrow or title company, so ask how the closing will be handled."),
     (_BUY_SAME_DAY, "It pressures you to send money or sign today. A real sale can wait while an escrow or title company and your agent check it."),
 ]
