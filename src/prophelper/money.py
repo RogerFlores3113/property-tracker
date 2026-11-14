@@ -319,13 +319,16 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
     sa = num(place.get("special_assessment"))
     if sa and str(place.get("special_assessment_payer") or "") == "buyer":
         parts.append({"label": "Special assessment (you pay it)", "amount": _r(sa), "estimated": False})
+    left_out: list[str] = []
+    if sa and str(place.get("special_assessment_payer") or "") not in ("buyer", "seller"):
+        left_out.append(f"a {_dollars(sa)} special assessment isn't counted because who pays it isn't known")
     credit = num(place.get("seller_credit"))
     if credit and credit > 0:
         # The seller pays part of the closing costs, so it lowers the cash you bring (never below zero overall).
         credit = min(credit, sum(p["amount"] for p in parts))
         parts.append({"label": "Seller credit toward closing (comes off)", "amount": _r(-credit), "estimated": False})
     return {"total": _r(sum(p["amount"] for p in parts)), "parts": parts,
-            "has_estimate": any(p["estimated"] for p in parts)}
+            "has_estimate": any(p["estimated"] for p in parts), "left_out": left_out}
 
 
 def monthly_payment(principal: float, annual_rate_pct: float, years: float) -> float:

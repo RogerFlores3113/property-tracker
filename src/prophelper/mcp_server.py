@@ -400,7 +400,8 @@ def _cash_lines(e: dict[str, Any]) -> list[str]:
         head = f"at least {_money(cash['total'])}; {', '.join(unknown)} not known yet" if unknown else _money(cash["total"])
         out.append(f"{label}: {head} (" + ", ".join(f"{pt['label']} {_money(pt['amount'])}" for pt in cash["parts"]) + ")"
                    + (" (security deposit not filled in, so this is at least that much)" if cost.get("mode") != "buy" and compare_mod._deposit_unknown(e, cash) else "")
-                   + ". Not part of the monthly cost.")
+                   + ". Not part of the monthly cost."
+                   + "".join(f" Left out: {w}." for w in cash.get("left_out") or []))
     if cost.get("listing_estimate_note"):
         out.append("The listing's own estimate: " + _t(cost["listing_estimate_note"], "listing estimate", 300))
     return out
@@ -783,7 +784,11 @@ def build_server(store: Store) -> FastMCP:
             return
         from . import parsers
         try:
-            found = parsers.parse_listing(text, str(fields.get("url") or ""))
+            try:
+                buying = _search_for(store, fields.get("search_id")).get("mode") == "buy"
+            except Exception:  # noqa: BLE001 - no search yet: read it as the default
+                buying = False
+            found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying)
         except Exception:  # noqa: BLE001 - a reader failure must not lose the place
             fields["_text_notes"] = ["The listing text was saved but not read (the reader could not make sense of it), so no facts were filled from it. "
                                      "Send the facts you can read yourself."]

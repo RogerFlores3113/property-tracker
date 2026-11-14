@@ -47,7 +47,8 @@ _BUY_PAYMENT = re.compile(
     r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b[^.\n]{0,80}\b(?:earnest money|good faith deposit|deposit|down ?payment)\b|"
     r"\bwire\b[^.\n]{0,60}\b(?:escrow|earnest)\b", re.I)
 _BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waives?|waived|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b(?!\s+fees?)|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b|"
-                             r"\b(?:do not|don'?t|never)\s+(?:try to |need to |bother to )?inspect\b|\bno need (?:to|for) (?:an? )?inspect(?:ion)?\b", re.I)
+                             r"\b(?:do not|don'?t|never)\s+(?:try to |need to |bother to )?inspect\b|\bno need (?:to|for) (?:an? )?inspect(?:ion)?\b|"
+                             r"\b(?:do not|don'?t|never)\s+(?:do|get|have|order|schedule|book)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b", re.I)
 _BUY_AS_IS = re.compile(r"\bas[- ]is\b", re.I)
 _BUY_CASH_ONLY = re.compile(r"\bcash[ -]only\b|\bcash (?:buyers?|offers?) only\b|\bonly (?:accept|take)s? cash\b", re.I)
 _BUY_SAME_DAY = re.compile(r"\b(?:today|tonight|same[- ]day|within 24 hours|right away|immediately|asap)\b[^.\n]{0,40}\b(?:wire|send|pay|deposit|earnest|close|sign|offer)|"

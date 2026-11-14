@@ -76,15 +76,6 @@
   {{ field("Move-in fees", "move_in_fees", v.get('move_in_fees', ''), kind="number", step="any") }}
   {{ field("Broker fee", "broker_fee", v.get('broker_fee', ''), kind="number", step="any") }}
   {% if buy %}
-  {{ field("HOA per month", "hoa", v.get('hoa', ''), kind="number", step="any") }}
-  {% endif %}
-  {% if buy %}
-  {{ field("Property tax per year", "property_tax", v.get('property_tax', ''), kind="number", step="any") }}
-  {% endif %}
-  {% if buy %}
-  {{ field("Insurance per year", "insurance", v.get('insurance', ''), kind="number", step="any") }}
-  {% endif %}
-  {% if buy %}
   {{ field("Days on the market", "days_on_market", v.get('days_on_market', ''), kind="number") }}
   {{ field("Closing costs", "closing_costs", v.get('closing_costs', ''), kind="number", step="any", hint="Left empty, a guess of about " ~ setting('closing_cost_pct', '3') ~ "% of the price is used.") }}
   {{ field("Seller credit toward closing", "seller_credit", v.get('seller_credit', ''), kind="number", step="any", hint="Money the seller pays toward your closing costs. It comes off the cash you need to close.") }}

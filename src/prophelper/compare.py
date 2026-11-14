@@ -295,6 +295,7 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     notes = []
     if c.get("has_estimate"):
         notes.append("closing costs are a guess")
+    notes.extend(c.get("left_out") or [])
     sa = next((x for x in c.get("parts") or [] if str(x.get("label", "")).startswith("Special assessment")), None)
     if sa:
         notes.append(f"includes a {helpers.money(sa['amount'])} special assessment you pay")
