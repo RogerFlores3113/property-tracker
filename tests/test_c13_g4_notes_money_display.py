@@ -72,8 +72,8 @@ def test_a_saved_buyer_pays_note_is_dropped_when_the_payer_becomes_seller(store)
 
 def test_renters_insurance_sentence_is_said_once():
     notes = parsers.parse_listing("Rogers Park 1 bed $1,900/mo. Renter's insurance required $15/mo.\n")["found_in_listing"]
-    assert notes == ("The listing says renter's insurance is required ($15/month). No cost is counted for it. "
-                     "Ask what coverage you need and what it costs.")
+    assert notes == ("Renter's insurance is required and counted in the monthly cost ($15 a month, saved as $180 a year). "
+                     "Ask what coverage you need and whether a plan you already have is accepted.")
 
 
 # ---- 3. a value that was read and counted is not said again
