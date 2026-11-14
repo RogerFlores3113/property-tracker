@@ -115,7 +115,7 @@ def test_pipe_move_in_fees_are_counted_and_not_noted():
 def test_hoa_included_in_rent_is_not_a_cost_to_add():
     r = found("Brookside 2bd $1,800/mo. HOA dues of $120 per quarter included in your rent.")
     n = r["found_in_listing"]
-    assert n == 'The listing says "HOA dues of $120 per quarter included in your rent". It is included in the rent, so it is not added on top.'
+    assert n == "The listing says the HOA dues ($120) are included in the rent, so nothing is added for them."
     assert not money.listing_notes_uncounted(n)
     cost = money.true_monthly_cost({"price": 1800, "reader_notes": n}, "rent")
     assert money.LISTING_NOTES_UNCOUNTED not in cost["uncounted"]
@@ -125,8 +125,8 @@ def test_hoa_included_in_rent_is_not_a_cost_to_add():
 def test_move_in_total_and_holding_fee_are_one_time_and_do_not_fire_the_monthly_tag():
     n = notes("Move-in total $3,000. Holding fee $200 to reserve. Rent $1,500.")
     assert ("so it is not in the monthly cost, and the cash due at move-in may be more than shown. Ask what it includes.") in n
-    assert 'The listing says "Holding fee $200 to reserve". It is a one-time amount, so it is not in the monthly cost.' in n
-    assert "not counted" not in n
+    assert "The listing asks for a $200 holding fee to reserve the place. It is one-time money and is not counted in the monthly cost." in n
+    assert n.count("$200") == 1  # one note for the holding fee, not two
     assert not money.listing_notes_uncounted(n)
     assert money.LISTING_NOTES_UNCOUNTED not in money.true_monthly_cost({"price": 1500, "reader_notes": n}, "rent")["uncounted"]
 
