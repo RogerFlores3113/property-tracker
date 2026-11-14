@@ -31,7 +31,7 @@ import re
 
 from . import commute as commute_mod
 from . import compare as compare_mod
-from . import guards, helpers, scoring
+from . import guards, helpers, redflags, scoring
 from . import stages as st
 from . import movein
 from . import today as today_view
@@ -576,7 +576,7 @@ def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
     if e.get("next"):
         lines.append(f"Next: {e['next']['text']} ({e['next']['rel']})")
     if e["flags"]:
-        lines.append("Things to check: " + " ".join(e["flags"][:3]))
+        lines.append("Things to check: " + " ".join(redflags.without_quote(f) for f in e["flags"][:3]))
     return lines
 
 

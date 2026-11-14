@@ -582,24 +582,32 @@ _TRACKING = re.compile(r"^(utm_.*|fbclid|gclid|mc_cid|mc_eid|ref|ref_src|referre
 
 def normalize_url(url: Any) -> str:
     """A listing link in one shape: https, lower-case host without www, no #fragment, no tracking parameters, no
-    trailing slash. '' for blank or something that is not a web address. Never fetches anything."""
+    trailing slash. '' for blank or something that is not a web address. Never fetches anything and never raises."""
+    try:
+        return _normalize_url(url)
+    except Exception:  # noqa: BLE001 - any odd text simply is not a web address
+        return ""
+
+
+def _normalize_url(url: Any) -> str:
     text = _text(url, 2000)
-    if not text:
+    if not text or re.search(r"[\x00-\x1f\x7f-\x9f]", text):
         return ""
     if not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I):
-        if " " in text or "." not in text.split("/")[0]:
+        # "javascript:alert(document.domain)" has a dot but is a script, not "host:port".
+        if re.match(r"^[a-z][a-z0-9+.-]*:", text, re.I) and not re.match(r"^[^/:?#@\s]+:\d{1,5}(?:[/?#]|$)", text):
+            return ""
+        if " " in text or "." not in re.split(r"[/?#]", text)[0]:
             return ""
         text = "https://" + text
-    try:
-        parts = urlsplit(text)
-    except ValueError:
-        return ""
+    parts = urlsplit(text)
     if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
         return ""
     host = parts.hostname.lower()
     host = host[4:] if host.startswith("www.") else host
-    if parts.port and parts.port not in (80, 443):
-        host = f"{host}:{parts.port}"
+    port = parts.port  # ValueError for a port that isn't a number (caught by normalize_url)
+    if port and port not in (80, 443):
+        host = f"{host}:{port}"
     query = urlencode(sorted((k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _TRACKING.match(k)))
     path = parts.path.rstrip("/") or ""
     return urlunsplit(("https", host, path, query, ""))
@@ -662,7 +670,7 @@ def photo_list(value: Any) -> list[str]:
     out: list[str] = []
     for item in value if isinstance(value, (list, tuple)) else []:
         link = str(item or "").strip()
-        if re.match(r"^https?://[^\s]+$", link, re.I) and not has_userinfo(link) and link not in out:
+        if re.match(r"^https?://[^\s]+$", link, re.I) and not has_userinfo(link) and normalize_url(link) and link not in out:
             out.append(link[:2000])
     return out[:PHOTOS_MAX]
 
@@ -912,6 +920,34 @@ class Store:
                 self._conn.backup(target)
             finally:
                 target.close()
+
+    def clean_stored_links(self) -> dict[str, int]:
+        """After a restore: blank every place link that isn't a safe http(s) address and drop every photo link that
+        isn't one. Returns ``{"links": n, "photos": n}``, the counts of what was dropped. Never raises on odd values."""
+        links = photos = 0
+        with self._write():
+            for row in self._rows("SELECT id, url, photo_urls FROM places"):
+                sets: dict[str, Any] = {}
+                url = row["url"]
+                if url and not safe_link(url):
+                    sets["url"] = ""
+                    links += 1
+                raw = row["photo_urls"]
+                try:
+                    items = json.loads(raw) if isinstance(raw, str) and raw.strip().startswith("[") else (re.split(r"[\s,]+", raw.strip()) if isinstance(raw, str) and raw.strip() else [])
+                except ValueError:
+                    items = []
+                if not isinstance(items, list):
+                    items = []
+                kept = photo_list(items)
+                bad = len([i for i in items if str(i or "").strip()]) - len(kept)
+                if bad > 0 or (isinstance(raw, str) and raw.strip() and not raw.strip().startswith("[")) or (raw is not None and not isinstance(raw, str)):
+                    sets["photo_urls"] = json.dumps(kept)
+                    photos += max(bad, 0)
+                if sets:
+                    cols = ", ".join(f"{k} = ?" for k in sets)
+                    self._conn.execute(f"UPDATE places SET {cols} WHERE id = ?", (*sets.values(), row["id"]))
+        return {"links": links, "photos": photos}
 
     def restore_from(self, source: str | Path) -> None:
         """Put a backup file's data in place of this database's (the file itself stays put), then reopen."""
