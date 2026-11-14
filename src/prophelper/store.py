@@ -640,13 +640,14 @@ def has_userinfo(link: str) -> bool:
     return "@" in re.split(r"[/?#]", rest, 1)[0]
 
 
-_LINK_RAW = re.compile(r"[<>\"'`\s]")
+# Also the backslash and every bidi control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F, U+061C): they change how a link reads on screen
+_LINK_RAW = re.compile("[<>\"'`\\\\\\s\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
 
 
 def encode_link(link: str) -> str:
     """A web link with the characters that break out of an attribute or a quote (< > " ' ` and spaces) written as %XX, so the link
     is kept and works instead of being stored raw. Everything else is left as it was."""
-    return _LINK_RAW.sub(lambda m: "%{:02X}".format(ord(m.group(0))), link)
+    return _LINK_RAW.sub(lambda m: "".join("%{:02X}".format(b) for b in m.group(0).encode("utf-8")), link)
 
 
 def safe_link(value: Any) -> str:
@@ -944,6 +945,8 @@ class Store:
                 if url and not safe_link(url):
                     sets["url"] = ""
                     links += 1
+                elif url and encode_link(url) != url:
+                    sets["url"] = encode_link(url)  # a restored link gets the same cleaning as a typed one
                 raw = row["photo_urls"]
                 try:
                     items = json.loads(raw) if isinstance(raw, str) and raw.strip().startswith("[") else (re.split(r"[\s,]+", raw.strip()) if isinstance(raw, str) and raw.strip() else [])

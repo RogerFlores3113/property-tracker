@@ -95,6 +95,10 @@ _AI_SOFT = (
     r"\b(?:would you (?:kindly|please)|kindly|please)\s+(?:set|put|lay|cast) aside\s+(?:all\s+|any\s+|your\s+|the\s+)*(?:prior|previous|earlier|above|original|existing)\s+\w+|"
     r"\bdear\s+(?:ai|a\.i\.|llm|chatbot|bot|assistant|language model|claude|chat ?gpt|gpt)(?:\s+[a-z]+)?\s*,|"
     r"\b(?:pretend|act as if|imagine|assume|behave as if)\s+(?:that\s+)?you(?:'re| are| were)\s+(?:now\s+)?(?:the|a|an|my)\s+(?:landlord|owner|property manager|leasing agent|seller|agent|realtor|broker)\b|"
+    r"\b(?:set|put|lay|cast) aside\s+(?:whatever|anything|everything|all|what)\b[^.\n]{0,30}\byou(?:'ve|\s+have|\s+were|\s+had\s+been|\s+are)?\s*(?:been\s+)?(?:given|told|instructed|asked)\b|"
+    r"\b(?:do not|don'?t|never|stop)\s+(?:follow|following|obey|obeying|heed|apply|applying|listen to)\s+(?:all\s+|any\s+|the\s+|your\s+|these\s+|my\s+)*(?:previous|prior|above|earlier|original|existing)\s+(?:instructions?|prompts?|rules|guidelines|guidance|directions)\b|"
+    r"\b(?:pretend|act as if|imagine|assume|suppose)\s+(?:that\s+)?(?:the\s+|your\s+|all\s+|any\s+)*(?:earlier|previous|prior|original|above|existing)\s+(?:rules|instructions?|guidelines|guidance|constraints|restrictions)\s+(?:do(?:es)?\s+not|don'?t|no longer|never)\s+apply\b|"
+    r"\boverride\s*:\s*(?:rate|score|rank|mark|give|report|say|tell|recommend|approve|describe)\b|"
     r"\bhidden\s+(?:note|message|instruction|prompt)s?\s*[:\-]|"
     r"\bscores?\s+(?:for|of)\s+this\s+(?:listing|place|property|apartment|home|unit|house)\s+(?:should|must|needs? to|has to|will)\s+(?:be|equal|read)\s+\$?\d+|"
     r"\bfrom now on,?\s+(?:you\s+)?(?:answer|respond|reply|only|always|say|write|describe|recommend|rate|rank|score|speak)\b|"
@@ -111,12 +115,18 @@ _ZERO_WIDTH = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u00ad\ufeff\u
 # "i g n o r e": four or more single letters split by single spaces become one word (a wider gap marks the next word)
 _SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][ \t]){3,}[^\W\d_](?![^\W\d_])")
 # "i.g.n.o.r.e" / "i-g-n-o-r-e" / "i_g_n_o_r_e": five or more letters (so "U.S." and "a.k.a." stay as they are) split by one separator
-_SEP_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][.\-_]){4,}[^\W\d_](?![^\W\d_])")
+_SEP_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][.\-_]){4,}[^\W\d_]\.?(?![^\W\d_])")  # one trailing dot goes with the word
+# "i. g. n. o. r. e.": every letter followed by a dot and a space (five or more letters)
+_DOT_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_]\.[ \t]){4,}[^\W\d_]\.?(?![^\W\d_])")
+# a hostile key word split once or twice by spaces ("ig nore", "instruc tions", "pre vious"). Only long, uncommon words are rejoined, and only when
+# the pieces start and end on word edges, so "for get" and "over ride" stay as they are.
+_SPLIT_KEYWORDS = tuple(re.compile(r"(?<![^\W\d_])" + r"[ \t]*".join(w) + r"(?![^\W\d_])", re.I)
+                        for w in ("ignore", "previous", "instructions", "instruction", "disregard", "guidance", "guidelines"))
 # "i  g  n  o  r  e": letters split by the same run of two spaces
 _WIDE_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_] {2}){3,}[^\W\d_](?![^\W\d_])")
 # a whole phrase written with dots between every letter ("i.g.n.o.r.e a.l.l p.r.e.v.i.o.u.s"): short words of three letters or more are
 # joined too, but only next to a dotted word of five letters or more, so "U.S.A" or "a.k.a" on their own stay as they are
-_DOT_WORD = r"[^\W\d_](?:[.\-_][^\W\d_]){2,}"
+_DOT_WORD = r"[^\W\d_](?:[.\-_][^\W\d_]){2,}\.?"
 _DOT_PHRASE = re.compile(r"(?<![^\W\d_.\-_])" + _DOT_WORD + r"(?:[ \t]+" + _DOT_WORD + r")+(?![^\W\d_])")
 _COMMENT = re.compile(r"<!--(.*?)(?:-->|$)", re.S)
 _LETTERS = re.compile(r"[^\W\d_]+")
@@ -245,6 +255,9 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     out = _SPACED.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
     out = _SEP_SPACED.sub(lambda m: re.sub(r"[.\-_]", "", m.group(0)), out)
     out = _WIDE_SPACED.sub(lambda m: m.group(0).replace(" ", ""), out)
+    out = _DOT_SPACED.sub(lambda m: re.sub(r"[.\s]", "", m.group(0)), out)
+    for _split in _SPLIT_KEYWORDS:
+        out = _split.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
     out = _fold_mixed(out)
     comments = [" ".join(c.split()) for c in _COMMENT.findall(out)]
     out = _COMMENT.sub(" ", out)

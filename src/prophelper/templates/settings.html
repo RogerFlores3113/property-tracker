@@ -6,7 +6,7 @@
 <div class="data-page">
 {% call page_head("Settings", "Your data and backups, the map, optional AI help, and how the app looks.") %}{% endcall %}
 
-{% if request.query_params.get('restored') %}<p class="flash" role="status" id="restored-banner">Backup restored. Map pictures, address lookup and photos are off until you turn them on again, and any link that was not a plain web address was dropped.</p>{% endif %}
+{% if ((request.state.flash or {}).get('notice') or '').startswith('Restored') %}<p class="flash" role="status" id="restored-banner">Backup restored. Map pictures, address lookup and photos are off until you turn them on again, and any link that was not a plain web address was dropped.</p>{% endif %}
 <details class="card" id="data" open>
   <summary><h2>Your data</h2></summary>
   <p>Everything lives in one folder on this computer: <span class="path">{{ data_folder }}</span> ({{ places|num }} place{{ 's' if places != 1 }}{% if archived_count %}, {{ archived_count|num }} archived{% endif %}, {{ searches_count|num }} search{{ 'es' if searches_count != 1 }}{% if files_count %}, {{ files_count|num }} document{{ 's' if files_count != 1 }}{% endif %}).</p>

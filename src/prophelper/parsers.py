@@ -4404,6 +4404,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
     if facts:
         out["found_in_listing"] = " ".join(facts)
+        if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
+            out["found_in_listing"] = re.sub(r"\b([Aa]sk|[Cc]heck with) the landlord\b", r"\1 the seller or listing agent", out["found_in_listing"])
     return out
 
 
@@ -4411,7 +4413,25 @@ def reader_notes_for(place: dict[str, Any], buying: bool = False, pet_kind: str 
     """The "Also in the listing" notes for a saved place: its listing text read again, with what is filled on the place
     counted as placed. One rule for add, edit and update: a note about something that is filled in now is not kept."""
     found = parse_listing(str(place.get("listing_text") or ""), str(place.get("url") or ""), current=place, buying=buying, pet_kind=pet_kind)
-    return str(found.get("found_in_listing") or "")
+    return reconcile_insurance_note(str(found.get("found_in_listing") or ""), place.get("insurance"))
+
+
+_INSURANCE_COUNTED = re.compile(r"Renter's insurance is required and counted in the monthly cost \(\$([\d,]+) a month, saved as \$([\d,]+) a year\)\.")
+
+
+def reconcile_insurance_note(notes: str, saved: Any) -> str:
+    """The renter's insurance note says what the reader counted. When the place holds a different yearly amount (Claude or the
+    user sent it), the saved amount is what the cost uses, so the note says that instead of the reader's numbers."""
+    m = _INSURANCE_COUNTED.search(notes or "")
+    try:
+        mine = float(saved)
+    except (TypeError, ValueError):
+        return notes
+    if not m or abs(mine - float(m.group(2).replace(",", ""))) < 0.5:
+        return notes
+    return _INSURANCE_COUNTED.sub(
+        f"Renter's insurance is required. The listing says ${m.group(1)} a month (${m.group(2)} a year), but the insurance saved on this place "
+        f"is ${mine:,.0f} a year, so ${mine / 12:,.0f} a month is what is counted.", notes, count=1)
 
 
 # --------------------------------------------------------------------------- notes that agree with the fields (cycle 11)
