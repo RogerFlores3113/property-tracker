@@ -213,4 +213,4 @@ def test_add_place_moves_the_unit_out_of_the_address(store):
     b = structured(call(srv, "add_place", title="Spruce", address="12 SPRUCE LANE | APT B"))["place_id"]
     pa, pb = store.get_place(a), store.get_place(b)
     assert (pa["address"], pa["unit"]) == ("210 Beck St", "2")
-    assert (pb["address"], pb["unit"]) == ("12 SPRUCE LANE", "B")
+    assert (pb["address"], pb["unit"]) == ("12 SPRUCE LANE", "Apt B")

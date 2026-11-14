@@ -33,7 +33,7 @@ from . import commute as commute_mod
 from . import compare as compare_mod
 from . import guards, helpers, redflags, scoring
 from . import stages as st
-from .parsers import split_address_unit
+from .parsers import split_address_unit, split_full_address
 from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
@@ -822,7 +822,7 @@ def build_server(store: Store) -> FastMCP:
                 pet_kind = str(_search_for(store, fields.get("search_id")).get("pet_kind") or "")
             except Exception:  # noqa: BLE001
                 pet_kind = ""
-            known = {k: fields[k] for k in ("price", "seller_credit") if not _is_blank(fields.get(k))}
+            known = {k: fields[k] for k in ("price", "seller_credit", "beds", "baths") if not _is_blank(fields.get(k))}
             found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying, pet_kind=pet_kind, current=known or None)
         except Exception:  # noqa: BLE001 - a reader failure must not lose the place
             fields["_text_notes"] = ["The listing text was saved but not read (the reader could not make sense of it), so no facts were filled from it. "
@@ -877,9 +877,11 @@ def build_server(store: Store) -> FastMCP:
         if isinstance(fields.get("address"), str) and fields["address"].strip():
             known = {k: fields.get(k) if not _is_blank(fields.get(k)) else (existing or {}).get(k) for k in ("city", "state", "zip")}
             fields["address"] = _street_only(fields["address"], known["city"], known["state"], known["zip"])  # the city, state and ZIP have their own fields
-            fields["address"], unit_now = split_address_unit(fields["address"], fields.get("unit"))  # "12 SPRUCE LANE | APT B": the unit has its own field
-            if unit_now:
-                fields["unit"] = unit_now
+            parts = split_full_address(fields["address"], fields.get("unit"), known["city"], known["state"], known["zip"])  # "88 N Mattis Ave, Champaign, IL 61821", "#5", "Ohio"
+            fields["address"] = parts["address"]
+            for k in ("unit", "city", "state", "zip"):
+                if parts.get(k):
+                    fields[k] = parts[k]
         return {k: v for k, v in fields.items() if v is not None}
 
     def set_commutes(place: dict[str, Any], commutes: list[dict[str, Any]] | None) -> list[str]:
