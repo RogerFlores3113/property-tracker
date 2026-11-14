@@ -4386,6 +4386,24 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                          + ("" if has_period else " The listing does not say how often, so it is counted as monthly. Ask if that is right."))
         if monthly:
             put("other_monthly_fees", monthly)
+            est = out.get("utilities_estimate")
+            pays = [w.strip() for w in str(out.get("tenant_pays") or "").split(",") if w.strip()]
+            if isinstance(est, (int, float)) and "internet" in pays:
+                for nm in re.finditer(r"\b(?:internet|wi-?fi)\b(?:[ \t]*\([^)\n$]{1,25}\))?[ \t:\-=]{0,4}\$\s?(\d{1,4})(?![\d,])", text, re.I):
+                    v = float(nm.group(1))
+                    if v in _money_monthly_fees(text) and float(est) >= v:
+                        # cycle 15 join: a required internet fee is counted once, as a monthly fee, not again in utilities
+                        rest = float(est) - v
+                        facts[:] = [f for f in facts if not re.search(r"\binternet\b[^.]*\$[\d,]+ a month from the listing, counted as your utilities estimate", f, re.I)]
+                        if rest > 0:
+                            out["utilities_estimate"] = int(rest) if rest == int(rest) else rest
+                            others = [w for w in pays if w != "internet"]
+                            names = ", ".join(others[:-1]) + " and " + others[-1] if len(others) > 1 else (others[0] if others else "utilities")
+                            facts.append(f"{names[:1].upper() + names[1:]} {'are' if len(others) > 1 else 'is'} about ${rest:,.0f} a month from the listing, counted as your utilities estimate.")
+                        else:
+                            out.pop("utilities_estimate", None)
+                        facts.append(f"Internet is ${v:,.0f}/month and the listing says you pay it, so it is counted once in other monthly fees.")
+                        break
         months, with_deposit = _try(lambda: _move_in_months(text)) or (0, False)
         rent = out.get("price")
         first_last = months
