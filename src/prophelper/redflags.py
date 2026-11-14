@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import re
+import unicodedata
 from statistics import median
 from typing import Any, Iterable
 
@@ -85,12 +86,28 @@ _AI_EXTRA = re.compile(
     r"\bnew (?:rules|instructions) (?:now )?apply\b|"
     r"\b(?:send|forward|share|email|reveal|disclose|leak)\s+(?:the\s+|your\s+)?(?:user|renter|buyer)(?:'s|s'|’s)?\s+(?:contact|contacts|data|notes|personal|private|address book|files?|messages?)\b|"
     r"\b(?:mention|say|state|report|tell|inform|remind|assure)\s+(?:to\s+)?(?:your|the)\s+(?:user|human|operator)s?\b", re.I)
+# cycle 12: polite and indirect ways of steering an AI reader. Each needs an AI-only tell (what you were told, prior guidance,
+# an AI addressee, a score, "when summarising"), so ordinary sentences like "Please forget about street parking" stay clear.
+_AI_SOFT = (
+    r"\b(?:forget|ignore|disregard|set aside|put aside|put away|drop|override)\s+(?:everything|what|all that)\s+you(?:'ve| have| were| had been|'d been)?\s*(?:been\s+)?(?:told|instructed|given|asked|said)\b|"
+    r"\b(?:would you (?:kindly|please)|kindly|please)\s+(?:set|put|lay|cast) aside\s+(?:all\s+|any\s+|your\s+|the\s+)*(?:prior|previous|earlier|above|original|existing)\s+\w+|"
+    r"\bdear\s+(?:ai|a\.i\.|llm|chatbot|bot|assistant|language model|claude|chat ?gpt|gpt)(?:\s+[a-z]+)?\s*,|"
+    r"\b(?:pretend|act as if|imagine|assume|behave as if)\s+(?:that\s+)?you(?:'re| are| were)\s+(?:now\s+)?(?:the|a|an|my)\s+(?:landlord|owner|property manager|leasing agent|seller|agent|realtor|broker)\b|"
+    r"\bhidden\s+(?:note|message|instruction|prompt)s?\s*[:\-]|"
+    r"\bscores?\s+(?:for|of)\s+this\s+(?:listing|place|property|apartment|home|unit|house)\s+(?:should|must|needs? to|has to|will)\s+(?:be|equal|read)\s+\$?\d+|"
+    r"\bfrom now on,?\s+(?:you\s+)?(?:answer|respond|reply|only|always|say|write|describe|recommend|rate|rank|score|speak)\b|"
+    r"\b(?:kindly|please)\s+(?:rank|rate|score|list|put|place|recommend)\s+(?:this|it)(?:\s+(?:property|listing|place|unit|apartment|home|house|one))?\s+(?:as\s+)?(?:first|top|highest|#1|number one|the best|best)\b|"
+    r"\b(?:please|kindly|you (?:should|must|need to))\s+(?:overlook|omit|skip|leave out|don'?t mention|do not mention|ignore|hide|play down|downplay)\s+(?:the\s+|any\s+|that\s+)?[^.\n]{0,40}\bwhen\s+(?:you\s+)?(?:summari[sz]\w*|reporting|writing (?:up )?(?:a |the )?summary|reviewing|rating|ranking)\b"
+)
+_AI_EXTRA = re.compile(_AI_EXTRA.pattern + "|" + _AI_SOFT, re.I)
 _SYSTEM_IN_COMMENT = re.compile(r"\b(?:system|assistant|developer)\s*:", re.I)
 # "Payment plan for the deposit" plus a request to talk only through messages is a soft sign worth a look.
 _PAY_PLAN = re.compile(r"\bpayment plans?\b[^.\n]{0,30}\b(?:deposit|rent|move[- ]in)\b|\b(?:deposit|rent|move[- ]in)\b[^.\n]{0,30}\bpayment plans?\b", re.I)
 _PM_ONLY = re.compile(r"\b(?:pm|dm) me\b|\bmessage me (?:on|via|through) (?:facebook|fb|messenger|instagram|whatsapp|telegram)(?: only)?\b|\b(?:facebook|fb|messenger) only\b", re.I)
 
 _ZERO_WIDTH = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u00ad\ufeff\u180e]")
+# "i g n o r e": four or more single letters split by single spaces become one word (a wider gap marks the next word)
+_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][ \t]){3,}[^\W\d_](?![^\W\d_])")
 _COMMENT = re.compile(r"<!--(.*?)(?:-->|$)", re.S)
 
 
@@ -103,29 +120,43 @@ def without_quote(flag: str) -> str:
     return flag.split(AI_QUOTE_MARK, 1)[0]
 
 
-def _quote(snippet: str, limit: int = 100) -> str:
-    """A short, plain copy of a line for a hint: no markup characters, quotes softened, shortened with '...'."""
-    clean = re.sub(r"[\x00-\x1f\x7f<>`{}\\]", " ", snippet).replace('"', "'")
+_TAG = re.compile(r"</?[A-Za-z!?][^>]*(?:>|$)|<\s*/\s*[A-Za-z][^>]*(?:>|$)")
+
+
+def _quote(snippet: str, limit: int = 160) -> str:
+    """A short, plain copy of a line for a hint: whole tags removed, no markup characters, quotes softened, cut at a word
+    boundary with '...'."""
+    clean = _TAG.sub(" ", snippet)
+    clean = re.sub(r"[\x00-\x1f\x7f<>`{}\\]", " ", clean).replace('"', "'")
     clean = " ".join(clean.split())
-    return clean if len(clean) <= limit else clean[:limit].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
+    if len(clean) <= limit:
+        return clean
+    cut = clean[:limit]
+    if clean[limit] != " " and " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:.-(") + "..."
+
+
+def quote_of(flag: str) -> str:
+    """The quoted listing line of an AI-text hint, or ''. It is listing text: show it only inside an untrusted fence."""
+    if AI_QUOTE_MARK not in flag:
+        return ""
+    q = flag.split(AI_QUOTE_MARK, 1)[1]
+    return q[:-1] if q.endswith('"') else q
 
 
 def _ai_line(text: str, comments: list[str]) -> str | None:
     """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable."""
+    text = " ".join(_TAG.sub(" ", text).split())
     hit = None
     for pattern in (_AI_TARGETED, _AI_EXTRA):
         m = pattern.search(text)
         if m and (hit is None or m.start() < hit.start()):
             hit = m
     if hit is not None:
-        start = max((text.rfind(sep, 0, hit.start()) for sep in (". ", "! ", "? ")), default=-1) + 1
-        starts = [i for i in (start,) if i > 0]
-        begin = (starts[0] + 1) if starts else 0
+        begin = max((text.rfind(sep, 0, hit.start()) + len(sep) for sep in (". ", "! ", "? ") if text.rfind(sep, 0, hit.start()) != -1), default=0)
         ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
         end = min(ends) + 1 if ends else len(text)
-        # keep the quote centred on the match when the sentence is long
-        if end - begin > 100:
-            begin = max(begin, hit.start() - 20)
         return _quote(text[begin:end])
     for c in comments:
         if _SYSTEM_IN_COMMENT.search(c):
@@ -143,7 +174,10 @@ def normalise_text(text: str) -> tuple[str, list[str]]:
         if decoded == out:
             break
         out = decoded
+    out = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", out))
     out = _ZERO_WIDTH.sub("", out)
+    out = "".join(ch for ch in out if unicodedata.category(ch) != "Mn")
+    out = _SPACED.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
     comments = [" ".join(c.split()) for c in _COMMENT.findall(out)]
     out = _COMMENT.sub(" ", out)
     out = " ".join([out, *comments]).split()
