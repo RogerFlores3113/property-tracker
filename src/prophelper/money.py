@@ -1,6 +1,6 @@
 """True monthly cost for rent and for buying (DESIGN section 5). Pure: no database, no web.
 
-Rent: price + utilities_estimate + parking_cost + pet_rent + other_monthly_fees
+Rent: price + utilities_estimate + parking_cost + pet_rent + other_monthly_fees + hoa (a tenant-paid HOA, unless it is in the rent)
       + (application_fee + move_in_fees + broker_fee + pet_fee) / lease_months (12 when empty).
 The deposit is shown but not spread (it comes back).
 Buy:  monthly principal and interest + PMI (when the down payment is under 20%) + property_tax / 12 + insurance / 12 + hoa.
@@ -154,6 +154,12 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
         if from_listing and (re.search(r"Utilities estimate \$[\d,.]+/month: billed back, from the listing", str(place.get("ai_notes") or ""))
                              or _billed_names(place)):
             note = "Billed back, from the listing"
+            try:
+                from .parsers import listing_utilities_flat_fee
+                if listing_utilities_flat_fee(str(place.get("listing_text") or "")):
+                    note = "Flat fee, from the listing"
+            except Exception:
+                pass
         if place.get("utilities_included"):
             note += f". The listing includes: {place['utilities_included']}"
         line = _line("utilities", "Utilities" if from_listing else "Utilities (a guess)", util, note)
@@ -195,6 +201,18 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
     if place.get("other_monthly_fees") in (None, ""):
         other_line["unset"] = True  # shown as "Not known", never as $0
     lines.append(other_line)
+    hoa = num(place.get("hoa"))
+    if hoa:
+        # A rental HOA the tenant pays is part of what they pay each month. Dues the listing says are in the rent are not added twice.
+        try:
+            from .parsers import listing_hoa_in_rent
+            in_rent = listing_hoa_in_rent(str(place.get("listing_text") or ""))
+        except Exception:
+            in_rent = False
+        if in_rent:
+            lines.append(_line("hoa", "HOA", 0, "included in the rent"))
+        else:
+            lines.append(_line("hoa", "HOA", hoa, "paid by the tenant, counted each month"))
 
     months = place.get("lease_months")
     try:
