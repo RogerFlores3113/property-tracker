@@ -148,7 +148,19 @@ def _missing_names(p: dict[str, Any]) -> list[str]:
     names = partial_utilities(p)
     if names:
         out.append(_join_and(names))
+    paid = _tenant_paid_unpriced(p)
+    if paid and not any(w in " ".join(out).lower() for w in paid):
+        out.append(f"utilities you pay ({_join_and(paid)})")  # named, so the row never says "Nothing unknown" for them
+    if money_mod.LISTING_NOTES_UNCOUNTED in ((p.get("cost") or {}).get("uncounted") or []):
+        out.append("amounts in the listing notes")
     return list(dict.fromkeys(out))
+
+
+def _tenant_paid_unpriced(p: dict[str, Any]) -> list[str]:
+    """Utilities the listing says the tenant pays when no utilities amount is filled in (rent only), whatever else the cost math decided."""
+    if (p.get("cost") or {}).get("mode") in (None, "buy") or money_mod.num(p.get("utilities_estimate")) is not None:
+        return []
+    return [w for w in money_mod.tenant_pays_list(p) if w not in money_mod.NOTHING_WORDS]
 
 
 def cost_unknowns(p: dict[str, Any]) -> list[str]:
@@ -823,13 +835,49 @@ def summary_lines(places: list[dict[str, Any]], sections: list[dict[str, Any]]) 
     return out
 
 
+def hoa_conversion(p: dict[str, Any]) -> str:
+    """"$210 per quarter" when the place's monthly HOA was worked out from a quarterly or yearly figure in its saved listing text, else ""."""
+    hoa = money_mod.num(p.get("hoa"))
+    text = " ".join(str(p.get("listing_text") or "").split())
+    if not hoa or not text:
+        return ""
+    amt = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)"
+    for m in re.finditer(r"(?:hoa|association|condo)(?:\s+(?:fees?|dues))?[^.;$]{0,20}" + amt + r"\s*(?:/|per\s+|a\s+|each\s+)?\s*(quarter\w*|year\w*|yr|annual\w*)"
+                         r"|(quarterly|annual\w*|yearly)\s+(?:hoa|association|condo)(?:\s+(?:fees?|dues))?[^.;$]{0,12}" + amt, text, re.I):
+        value = float((m.group(1) or m.group(4)).replace(",", ""))
+        word = (m.group(2) or m.group(3)).lower()
+        div, label = (3, "quarter") if word.startswith("quarter") else (12, "year")
+        if abs(value / div - hoa) < 0.51:
+            return f"${value:,.0f} per {label}"
+    return ""
+
+
+def _winner_caveats(winners: list[dict[str, Any]]) -> str:
+    """What the lowest-cost sentence must say about the place it names: a fit that needs a check, an HOA worked out from a quarterly figure."""
+    out = ""
+    checks = [p for p in winners if p["score"].get("fit_label") == "Fits, but check"]
+    if checks:
+        if len(winners) == 1:
+            out += ", though it only fits with a check"  # the reasons are on the fit line (they hold the user's own words, so not repeated here)
+        else:
+            out += ", though some of them only fit with a check"
+    conv = [(p, hoa_conversion(p)) for p in winners]
+    conv = [(p, c) for p, c in conv if c]
+    if conv:
+        p, c = conv[0]
+        out += f", counting its HOA as ${money_mod.num(p.get('hoa')):,.0f} a month (worked out from {c})" if len(winners) == 1 \
+            else ", counting an HOA that was worked out from a quarterly or yearly figure"
+    return out
+
+
 def lowest_note(r: dict[str, Any]) -> str:
     """The plain tail of the lowest-cost sentence, never nested brackets: ' of the places that fit', and, when every place
     leaves a cost part out, ', though every place leaves a cost part out'."""
     note = " of the places that fit" if r["of_fit"] else ""
+    w = r.get("winners") or []
+    note += _winner_caveats(w)
     if not r["all_unknown"]:
         return note
-    w = r.get("winners") or []
     if len(w) == 1:  # name what the winner leaves out: "..., but its electric isn't counted"
         left = _join_and([("utilities" if u == "utilities estimate" else u) for u in cost_unknowns(w[0])] or [_short_parts(w[0])])
         return note + f", but {_its(left)}{left} {'aren' if _aren_t(left) == 'are' else 'isn'}'t counted"

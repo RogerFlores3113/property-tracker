@@ -703,6 +703,26 @@ def _named_error(who: str, fields: dict[str, Any], exc: Exception) -> str:
     return f"{who}{_title_part(fields)}: {text}{'' if text.endswith('.') else '.'} Nothing was saved."
 
 
+def _street_only(address: str, city: Any, state: Any, zip_code: Any) -> str:
+    """"10 Buttles Ave Apt 4, Columbus, OH 43215" with city, state and ZIP of their own: the street part only, so the page
+    does not show the city, state and ZIP twice. Only a tail that matches the saved fields is cut; anything else is left alone."""
+    street = " ".join(str(address).split())
+    c, st, z = (str(x or "").strip().lower() for x in (city, state, zip_code))
+    if not (c or st or z):
+        return street
+    parts = [x.strip() for x in street.split(",")]
+    while len(parts) > 1:
+        low = parts[-1].lower().replace(".", "")
+        zip_re = re.escape(z) + r"(?:-\d{4})?" if z else None
+        if (c and low == c) or (st and low == st) or (zip_re and re.fullmatch(zip_re, low)) \
+                or (st and zip_re and re.fullmatch(re.escape(st) + r"\s+" + zip_re, low)) \
+                or (c and st and low == f"{c} {st}"):
+            parts.pop()
+            continue
+        break
+    return ", ".join(parts)
+
+
 def build_server(store: Store) -> FastMCP:
     """A FastMCP server bound to this store. The store is put in no-delete mode: nothing the AI calls can delete."""
     store.enable_no_delete()
@@ -822,7 +842,7 @@ def build_server(store: Store) -> FastMCP:
         elif not already_sent:  # said only when the reader really found nothing; if the caller sent every field itself, nothing to say
             fields["_text_notes"] = ["The listing text was saved and read, but I found no facts in it to fill in. Send the facts you can read yourself."]
 
-    def check_fields(fields: dict[str, Any], where: str = "") -> dict[str, Any]:
+    def check_fields(fields: dict[str, Any], where: str = "", existing: dict[str, Any] | None = None) -> dict[str, Any]:
         apply_utilities_source(fields, where)
         word = " ".join(str(fields.get("parking") or "").replace("_", " ").lower().split())
         if word and re.search(r"\b(reserved|assigned)\b", word):
@@ -851,6 +871,8 @@ def build_server(store: Store) -> FastMCP:
         if isinstance(fields.get("utilities_included"), bool):  # a yes or no, not words: say it in words
             fields["utilities_included"] = "all utilities" if fields["utilities_included"] else "none"
         if isinstance(fields.get("address"), str) and fields["address"].strip():
+            known = {k: fields.get(k) if not _is_blank(fields.get(k)) else (existing or {}).get(k) for k in ("city", "state", "zip")}
+            fields["address"] = _street_only(fields["address"], known["city"], known["state"], known["zip"])  # the city, state and ZIP have their own fields
             fields["address"], unit_now = split_address_unit(fields["address"], fields.get("unit"))  # "12 SPRUCE LANE | APT B": the unit has its own field
             if unit_now:
                 fields["unit"] = unit_now
@@ -1160,7 +1182,11 @@ def build_server(store: Store) -> FastMCP:
         return reply("\n".join(lines), places=out)
 
     def update_place(place_id: int, **kw: Any) -> CallToolResult:
-        fields = check_fields(kw)
+        try:
+            current = _find_place(store, place_id)
+        except Exception:  # noqa: BLE001 - the not-found message comes from the lookup below
+            current = None
+        fields = check_fields(kw, existing=current)
         photo_notes = fields.pop("_photo_notes", [])
         fields.pop("stage", None)
         fields.pop("search_id", None)
