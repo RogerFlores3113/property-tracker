@@ -19,13 +19,13 @@ def test_tools_take_and_show_the_pet_and_buyer_fields(store):
     store.add_search("Rent", "rent")
     out = text(call(srv, "add_place", title="Dog Flats", address="1 Bark St", price=1500, pet_weight_limit=40, pet_count_limit=2,
                     pet_breed_note="no pit bulls", pet_deposit=300, fenced_yard=True))
-    assert "dogs up to 40 lb" in out and "up to 2 pets" in out and "pet deposit $300" in out and "fenced yard" in out
+    assert "pets up to 40 lb" in out and "up to 2 pets" in out and "pet deposit $300" in out and "fenced yard" in out
     assert "no pit bulls" in out and 'source="pet breed note"' in out
     pid = store.list_places(store.current_search()["id"])[0]["id"]
     got = store.get_place(pid)
     assert (got["pet_weight_limit"], got["pet_count_limit"], got["pet_deposit"], got["fenced_yard"]) == (40, 2, 300, 1)
     out = text(call(srv, "update_place", place_id=pid, fenced_yard=False, pet_weight_limit=25))
-    assert "no fenced yard" in out and "dogs up to 25 lb" in out
+    assert "no fenced yard" in out and "pets up to 25 lb" in out
 
     b = structured(call(srv, "create_search", name="Buy", mode="buy"))["search_id"]
     out = text(call(srv, "add_places", search_id=b, places=[
