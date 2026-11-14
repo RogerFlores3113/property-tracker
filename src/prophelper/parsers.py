@@ -809,6 +809,8 @@ def _in_pet_sentence(text: str, pos: int) -> bool:
     start = max(_sentence_break(text, pos, c) for c in ".!?;\n|") + 1
     sent = text[start:pos]
     line_start = text.rfind("\n", 0, pos) + 1
+    if start > 0 and text[start - 1] == "|":  # the pet line may sit mid-paragraph: it starts at the last sentence break before the pipe
+        line_start = max(line_start, max(_sentence_break(text, start - 1, c) for c in ".!?;") + 1)
     if start > line_start and text[start - 1] == "|" and _PET_LEAD.match(text[line_start:pos]) \
             and not re.search(r"\bsecurity\b|\bdamage\b|\blease\b|\brent\b(?!\s*:)", text[line_start:pos], re.I) \
             and not sent.strip() and text[pos:pos + 1] == "$":
