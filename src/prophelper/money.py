@@ -471,6 +471,9 @@ _NOTE_OPEN = re.compile(r"not counted|not saved|not used|no amount is saved|coul
 _NOTE_MONEY = re.compile(r"\$\s?\d|\b(?:fee|fees|deposit|assessment|parking|garage|utilit\w*|rent|cost|costs|free|credit|hoa|tax|insurance)\b", re.I)
 
 
+_NOTE_PLACED = re.compile(r"\bis saved as the\b|\bso it is counted\b|\bcounted as your\b|\bcounted in (?:other monthly fees|the monthly cost)\b", re.I)
+
+
 _NOTE_CONTINUES = re.compile(r"(?:It|No|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
 
 
@@ -497,6 +500,8 @@ def listing_notes_uncounted(reader_notes: Any) -> bool:
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
+        if _NOTE_PLACED.search(note) and not re.search(r"not counted|no amount|not saved", note, re.I):
+            continue  # "The $25 credit check fee is saved as the application fee. Ask if each adult pays it.": the amount is placed
         if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(note):
             return True
     return False

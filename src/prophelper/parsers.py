@@ -1083,6 +1083,10 @@ def _pet_fees(text: str) -> dict[str, float]:
                 continue
             out.setdefault("pet_rent" if m.group(2).strip() else "pet_fee", float(m.group(1)))
             break
+    if "pet_fee" not in out and "pet_rent" not in out:  # "Cat fee $150" / "Dog fee: $200": a fee named for one animal is the pet fee
+        m = re.search(r"\b(?:cat|dog)s?[ \t]+fee[ \t:\-=]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])([ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month))?", text, re.I)
+        if m:
+            out["pet_rent" if m.group(2) else "pet_fee"] = float(m.group(1))
     if "pet_fee" not in out:  # "Pets ok. One time fee $200.": the fee sentence right after the pet sentence
         m = re.search(_PET_THEN_ONE_TIME.pattern + r"[ \t]+fee[ \t:\-]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])", text, re.I)
         if m:
