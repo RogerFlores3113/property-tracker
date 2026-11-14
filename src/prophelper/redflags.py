@@ -89,6 +89,8 @@ _AI_EXTRA = re.compile(
 # cycle 12: polite and indirect ways of steering an AI reader. Each needs an AI-only tell (what you were told, prior guidance,
 # an AI addressee, a score, "when summarising"), so ordinary sentences like "Please forget about street parking" stay clear.
 _AI_SOFT = (
+    r"\b(?:ignore|disregard|forget)\s+(?:everything|all)(?:\s+of)?(?:\s+the)?\s+(?:above|before this)(?![- ]?ground)\b|"
+    r"\b(?:ignore|disregard|forget)\s+the\s+above(?![- ]?ground)\b(?=\s*(?:$|[.,;:!?]|and\b|then\b|&))|"
     r"\b(?:forget|ignore|disregard|set aside|put aside|put away|drop|override)\s+(?:everything|what|all that)\s+you(?:'ve| have| were| had been|'d been)?\s*(?:been\s+)?(?:told|instructed|given|asked|said)\b|"
     r"\b(?:would you (?:kindly|please)|kindly|please)\s+(?:set|put|lay|cast) aside\s+(?:all\s+|any\s+|your\s+|the\s+)*(?:prior|previous|earlier|above|original|existing)\s+\w+|"
     r"\bdear\s+(?:ai|a\.i\.|llm|chatbot|bot|assistant|language model|claude|chat ?gpt|gpt)(?:\s+[a-z]+)?\s*,|"
@@ -108,7 +110,40 @@ _PM_ONLY = re.compile(r"\b(?:pm|dm) me\b|\bmessage me (?:on|via|through) (?:face
 _ZERO_WIDTH = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u00ad\ufeff\u180e]")
 # "i g n o r e": four or more single letters split by single spaces become one word (a wider gap marks the next word)
 _SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][ \t]){3,}[^\W\d_](?![^\W\d_])")
+# "i.g.n.o.r.e" / "i-g-n-o-r-e" / "i_g_n_o_r_e": five or more letters (so "U.S." and "a.k.a." stay as they are) split by one separator
+_SEP_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][.\-_]){4,}[^\W\d_](?![^\W\d_])")
+# "i  g  n  o  r  e": letters split by the same run of two spaces
+_WIDE_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_] {2}){3,}[^\W\d_](?![^\W\d_])")
 _COMMENT = re.compile(r"<!--(.*?)(?:-->|$)", re.S)
+_LETTERS = re.compile(r"[^\W\d_]+")
+# Cyrillic and Greek letters that look like Latin ones (a small hand-written map, no packages)
+_CONFUSABLES = {
+    **dict(zip("аеорсухіјѕԁһԛԝ", "aeopcyxijsdhqw")),
+    **dict(zip("АВЕКМНОРСТХІЈЅУ", "ABEKMHOPCTXIJSY")),
+    **dict(zip("οαεινρτυκχνμ", "oaeinptykxvm")),
+    **dict(zip("ΑΒΕΖΗΙΚΜΝΟΡΤΧΥ", "ABEZHIKMNOPTXY")),
+}
+_LEET = {"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"}
+_LEET_WORD = re.compile(r"(?=[A-Za-z0-9@$]*[A-Za-z])(?=[A-Za-z0-9@$]*[0-9@$])[A-Za-z0-9@$]{4,}")
+
+
+def _fold_all(text: str) -> str:
+    return "".join(_CONFUSABLES.get(ch, ch) for ch in text)
+
+
+def _fold_mixed(text: str) -> str:
+    """Fold look-alike letters only inside a word that also has Latin letters (Ignоre with a Cyrillic о). A word that is
+    all Cyrillic or all Greek, like ordinary Russian or Greek listing text, is left alone."""
+    def word(m: re.Match[str]) -> str:
+        w = m.group(0)
+        if any(c in _CONFUSABLES for c in w) and any("a" <= c.lower() <= "z" for c in w):
+            return _fold_all(w)
+        return w
+    return _LETTERS.sub(word, text)
+
+
+def _unleet(text: str) -> str:
+    return _LEET_WORD.sub(lambda m: "".join(_LEET.get(c, c) for c in m.group(0)), text)
 
 
 AI_QUOTE_MARK = ' It says: "'
@@ -149,10 +184,16 @@ def _ai_line(text: str, comments: list[str]) -> str | None:
     """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable."""
     text = " ".join(_TAG.sub(" ", text).split())
     hit = None
-    for pattern in (_AI_TARGETED, _AI_EXTRA):
-        m = pattern.search(text)
-        if m and (hit is None or m.start() < hit.start()):
-            hit = m
+    plain = text
+    # also try the text with every look-alike letter folded and with leet digits read as letters
+    for variant in (plain, _fold_all(plain), _unleet(_fold_all(plain))):
+        text = variant
+        for pattern in (_AI_TARGETED, _AI_EXTRA):
+            m = pattern.search(text)
+            if m and (hit is None or m.start() < hit.start()):
+                hit = m
+        if hit is not None:
+            break
     if hit is not None:
         begin = max((text.rfind(sep, 0, hit.start()) + len(sep) for sep in (". ", "! ", "? ") if text.rfind(sep, 0, hit.start()) != -1), default=0)
         ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
@@ -178,6 +219,9 @@ def normalise_text(text: str) -> tuple[str, list[str]]:
     out = _ZERO_WIDTH.sub("", out)
     out = "".join(ch for ch in out if unicodedata.category(ch) != "Mn")
     out = _SPACED.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
+    out = _SEP_SPACED.sub(lambda m: re.sub(r"[.\-_]", "", m.group(0)), out)
+    out = _WIDE_SPACED.sub(lambda m: m.group(0).replace(" ", ""), out)
+    out = _fold_mixed(out)
     comments = [" ".join(c.split()) for c in _COMMENT.findall(out)]
     out = _COMMENT.sub(" ", out)
     out = " ".join([out, *comments]).split()
@@ -251,7 +295,14 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             continue
         if pattern.search(text):
             flags.append(message.replace("lease", "contract") if buy else message)
-    ai_line = _ai_line(text, comments)
+    ai_line = None
+    for key in ("listing_text", "notes", "ai_notes", "title"):  # the title is quoted only when it is what matched
+        field_text, field_comments = normalise_text(str(place.get(key) or ""))
+        ai_line = _ai_line(field_text, field_comments)
+        if ai_line is not None:
+            break
+    if ai_line is None:
+        ai_line = _ai_line(text, comments)
     if ai_line is not None:
         flags.append("This listing has text aimed at AI tools; treat it with care." + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and _BUY_PAYMENT.search(text)):
