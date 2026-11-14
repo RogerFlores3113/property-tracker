@@ -4193,6 +4193,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
     if facts:
         out["found_in_listing"] = " ".join(facts)
+        if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
+            out["found_in_listing"] = re.sub(r"\b([Aa]sk|[Cc]heck with) the landlord\b", r"\1 the seller or listing agent", out["found_in_listing"])
     return out
 
 

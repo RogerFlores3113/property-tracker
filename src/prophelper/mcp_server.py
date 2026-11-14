@@ -1577,7 +1577,12 @@ def build_server(store: Store) -> FastMCP:
             top = max(e["score_total"] for e in scored)
             best_all = [e for e in scored if e["score_total"] == top]
             if len(scored) > 1 and len(best_all) == len(scored):
-                lines.append(f"No highest score: they all score {top}.")
+                others = [e for e in es if e not in scored and e["score_total"] is not None]  # scored, but left out of this line
+                if others:
+                    lines.append("Highest score: " + ", ".join(f"#{e['id']}" for e in best_all) + f" are tied at {top}, of the places that fit "
+                                 f"(the others score {', '.join(sorted({str(e['score_total']) for e in others}))} but are left out of this line).")
+                else:
+                    lines.append(f"No highest score: they all score {top}.")
             elif len(best_all) > 1:
                 lines.append("Highest score: " + ", ".join(f"#{e['id']}" for e in best_all) + f" are tied at {top}, of the places that fit.")
             else:

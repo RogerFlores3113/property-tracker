@@ -33,6 +33,8 @@ def fails_dealbreakers(place: dict[str, Any]) -> bool:
     return bool(score.get("fails_dealbreaker") or place.get("hidden_by_dealbreaker"))
 
 
+# A place that is passed, won or already under contract is not a pick any more: Today never suggests it.
+OFF_THE_MARKET = ("Passed", "Lease signed", "Closed", "Under contract", "Inspection", "Closing")
 MIN_FIT_SCORE = 60  # "Best fits" needs a reasonable score as well as every must-have
 
 
@@ -57,7 +59,7 @@ def is_best_fit(place: dict[str, Any]) -> bool:
 
 def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
     """The top places by score that fit. ``rows`` are enriched places. Passed, won and hidden places are skipped."""
-    open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and is_best_fit(p)
+    open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in OFF_THE_MARKET and is_best_fit(p)
                  and not no_price(p)]
     open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), -p["score_total"], p["title"].lower()))
     if open_rows and _no_address(open_rows[0]):  # a place with no address is never the top pick when another full fit has one
@@ -84,7 +86,7 @@ def no_price(place: dict[str, Any]) -> bool:
 
 
 def _open(p: dict[str, Any]) -> bool:
-    return not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed")
+    return not p["hidden"] and p["stage"] not in OFF_THE_MARKET
 
 
 def needs_price(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -145,7 +147,7 @@ def near_misses(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
     """Open places that fail only on cost, by under 3 percent: [{"place", "text"}], best score first."""
     out = []
     for p in rows:
-        if p["hidden"] or p["stage"] in ("Passed", "Lease signed", "Closed"):
+        if p["hidden"] or p["stage"] in OFF_THE_MARKET:
             continue
         text = near_miss_text(p)
         if text:
@@ -376,7 +378,7 @@ def new_places(store: Store, search: dict[str, Any]) -> list[dict[str, Any]]:
 def late_availability(rows: list[dict[str, Any]], search: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
     out = []
     for p in rows:
-        if p["hidden"] or p["stage"] in ("Passed", "Lease signed", "Closed") or fails_dealbreakers(p) or possible_scam(p):
+        if p["hidden"] or p["stage"] in OFF_THE_MARKET or fails_dealbreakers(p) or possible_scam(p):
             continue
         msg = availability_warning(p, search)
         if msg:
