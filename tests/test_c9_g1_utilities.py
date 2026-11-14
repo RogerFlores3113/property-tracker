@@ -26,7 +26,7 @@ CASES = [
     ("one-line-full-and-included", "Utilities: gas, water   Included: water", "water", "gas", (), ("unclear",)),
     ("heat-is-gas", "Heat is gas, tenant pays", None, "gas, heat", (), ()),
     ("all-other", "Utilities included: water, trash. Tenant pays all other utilities.",
-     "water, trash", "electric, gas, sewer, internet", (), ()),
+     "water, trash", "electric, gas, sewer", (), ()),
     ("cable-internet-sets-up", "Cable/Internet: Comcast, tenant sets up", None, "internet", (), ()),
     ("incl-utilities-but-electric-tenant", "Sunny 1BR from $1,560 incl. utilities\nElectric (Ameren) tenant pays",
      None, "electric", ("utilities are included", "electric"), ("unclear",)),
