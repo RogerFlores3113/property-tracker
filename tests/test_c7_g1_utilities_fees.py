@@ -118,7 +118,8 @@ def srv(store):
 def test_add_place_names_unseen_fee(srv):
     body = "Westgate Flats\n123 Main St, Columbus, OH 43215\n2 bed 1 bath $1,400/mo. Storage locker $40/mo."
     out = text(call(srv, "add_place", listing_text=body))
-    assert "Seen but not counted: storage locker $40/mo" in out
+    # c12: the note already says it, so the "Seen but not counted" line does not repeat it
+    assert "Storage locker is $40/month" in out and "Seen but not counted" not in out
 
 
 def test_get_place_says_billed_back(srv, store):

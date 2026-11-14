@@ -1630,11 +1630,12 @@ class Store:
                 raise ValueError(f"Another place already has that link ({other['title']}).")
         changed = {k: v for k, v in values.items() if self._differs(existing, k, v)}
         with self._write():
+            if "reader_notes" not in values and set(values) - {"notes", "ai_notes", "photo_urls", "rating", "hidden", "updated_at"}:
+                # any call that names a fact makes the notes again, even with the same value sent back
+                fresh = self._fresh_reader_notes({**existing, **values})
+                if fresh is not None and fresh != (existing.get("reader_notes") or ""):
+                    changed["reader_notes"] = fresh
             if changed:
-                if "reader_notes" not in values and set(changed) - {"notes", "ai_notes", "photo_urls", "rating", "hidden"}:
-                    fresh = self._fresh_reader_notes({**existing, **values})
-                    if fresh is not None and fresh != (existing.get("reader_notes") or ""):
-                        changed["reader_notes"] = fresh
                 changed["updated_at"] = now_iso()
                 self._exec(f"UPDATE places SET {', '.join(f'{k} = ?' for k in changed)} WHERE id = ?",
                            (*changed.values(), place_id))
@@ -1647,8 +1648,14 @@ class Store:
     def _fresh_reader_notes(self, place: dict[str, Any]) -> str | None:
         """The "Also in the listing" notes made again from the saved listing text and the place's current facts, so a note
         about something that is filled in now goes away. None when the place has no notes or no listing text to read."""
-        if not str(place.get("reader_notes") or "").strip() or not str(place.get("listing_text") or "").strip():
+        if not str(place.get("reader_notes") or "").strip():
             return None
+        if not str(place.get("listing_text") or "").strip():
+            try:  # no listing text to read again: the saved notes lose what is filled in now
+                from . import parsers
+                return parsers.drop_filled_notes(str(place["reader_notes"]), place)[:READER_NOTES_MAX]
+            except Exception:  # noqa: BLE001
+                return None
         try:
             from . import parsers
             buying = False

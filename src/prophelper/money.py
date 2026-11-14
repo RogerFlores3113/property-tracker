@@ -436,7 +436,7 @@ _NOTE_OPEN = re.compile(r"not counted|not saved|not used|no amount is saved|coul
 _NOTE_MONEY = re.compile(r"\$\s?\d|\b(?:fee|fees|deposit|assessment|parking|garage|utilit\w*|rent|cost|costs|free|credit|hoa|tax|insurance)\b", re.I)
 
 
-_NOTE_CONTINUES = re.compile(r"(?:It|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This)\b")
+_NOTE_CONTINUES = re.compile(r"(?:It|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
 
 
 def note_units(text: str) -> list[str]:
@@ -450,10 +450,18 @@ def note_units(text: str) -> list[str]:
     return units
 
 
+# One-time amounts (a move-in total, a holding fee, a price cut, a one-time deal) are not in the monthly cost, so they never
+# set the monthly "not counted yet" tag: they only matter for the cash due at move-in.
+ONE_TIME_NOTE = re.compile(r"not in the monthly cost|in total to move in|\bholding fee|\breservation (?:fee|deposit)|one-time (?:deal|amount)|"
+                           r"price was cut|price reduced|rent concession|\bdiscount\b", re.I)
+
+
 def listing_notes_uncounted(reader_notes: Any) -> bool:
     """True when the saved reader notes still hold a money note that is open: an amount, fee or cost the reader saw and did
     not count or could not place. The one test behind the "some amounts in the listing notes aren't counted" tag."""
     for note in note_units(reader_notes):
+        if ONE_TIME_NOTE.search(note):
+            continue
         if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(note):
             return True
     return False

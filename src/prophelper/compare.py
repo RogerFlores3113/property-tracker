@@ -312,10 +312,13 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
 
 
 def _note_rank(unit: str) -> int:
-    """0 for a money note (an amount or cost still open), 2 for offer boilerplate (free rent, concessions), 1 for the rest."""
-    if re.search(r"free[- ]rent|concession|months? free|weeks? free|move-in special", unit, re.I) and not re.search(r"\$\s?\d", unit):
-        return 2
-    return 0 if (money_mod.listing_notes_uncounted(unit) or re.search(r"\$\s?\d", unit)) else 1
+    """0 for a per-adult or required fee, 1 for other money still open (an amount or cost not counted), 2 for the rest, 3 for
+    one-time deals and price cuts (free rent, discounts, a move-in total, a holding fee)."""
+    if money_mod.ONE_TIME_NOTE.search(unit) or re.search(r"free[- ]rent|concession|months? free|weeks? free|move-in special", unit, re.I):
+        return 3
+    if re.search(r"per (?:adult|applicant|person)|each adult|\brequired\b|is required", unit, re.I):
+        return 0
+    return 1 if (money_mod.listing_notes_uncounted(unit) or re.search(r"\$\s?\d", unit)) else 2
 
 
 def listing_notes_text(p: dict[str, Any], limit: int = 110) -> str:
