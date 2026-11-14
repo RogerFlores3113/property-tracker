@@ -1245,9 +1245,9 @@ def build_server(store: Store) -> FastMCP:
             raise ValueError(problem)
         after = store.move_stage(p["id"], new, by_ai=True, note=guards.inline(note, 300) if note else "")
         if new == st.PASSED:
-            tail = f"It was {old}. Passed can be undone by the user in the app; I can't move it back."
+            tail = f"It was {old}. The user can undo Passed in the app."
         else:
-            tail = f"It was {old}. I can't move it back; only the user can, in the app."
+            tail = f"It was {old}. The change is on the timeline."
         return reply(f"Moved {_title(after)} (id {after['id']}) from {old} to {after['stage']}. {tail}", place_id=after["id"], stage=after["stage"], was=old)
 
     @mcp.tool(annotations=WRITE)
@@ -1498,7 +1498,7 @@ def build_server(store: Store) -> FastMCP:
         elif w:
             lines.append(f"Lowest true monthly cost: #{w[0]['id']} at {_money(w[0]['cost_total'])}{note}{tail}.")
         elif lc["no_fit"]:
-            lines.append("No place here fits, so I am not naming a lowest-cost place.")
+            lines.append(compare_mod.no_fit_sentence(es))
         for e, why in lc["over_limit"]:
             lines.append(f"#{e['id']} is cheapest, but {why}.")
         if not tail:

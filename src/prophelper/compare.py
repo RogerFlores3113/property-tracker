@@ -428,6 +428,16 @@ def over_limit_text(p: dict[str, Any]) -> str:
     return ""
 
 
+def no_fit_sentence(places: list[dict[str, Any]]) -> str:
+    """The line for "no place can win the lowest cost": when some places pass the deal-breakers and are only held back by a
+    flag, it says they fit but need checking first, instead of saying nothing fits."""
+    held = [p for p in places if p["cost_total"] is not None and p["score"].get("fit", "fits") == "fits"
+            and (p.get("possible_scam") or ai_text_only(p))]
+    if held:
+        return "These places fit your deal-breakers but have something to check first, so I am not naming a lowest-cost place until you have checked them."
+    return "No place here fits, so I am not naming a lowest-cost place."
+
+
 def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
     """THE rule for "lowest true monthly cost", used by the Compare page, the shared page and Claude's compare_places.
     Returns ``winners`` (places; several when tied), ``amount``, ``same`` (every candidate costs the same, so no lowest),

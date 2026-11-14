@@ -640,6 +640,15 @@ def has_userinfo(link: str) -> bool:
     return "@" in re.split(r"[/?#]", rest, 1)[0]
 
 
+_LINK_RAW = re.compile(r"[<>\"'`\s]")
+
+
+def encode_link(link: str) -> str:
+    """A web link with the characters that break out of an attribute or a quote (< > " ' ` and spaces) written as %XX, so the link
+    is kept and works instead of being stored raw. Everything else is left as it was."""
+    return _LINK_RAW.sub(lambda m: "%{:02X}".format(ord(m.group(0))), link)
+
+
 def safe_link(value: Any) -> str:
     """A listing link that is safe to show as a clickable link, or '' when it isn't: only http or https, a real host,
     no spaces, no user name or password (the same rules the save paths use). A link typed without a scheme gets https://."""
@@ -671,8 +680,10 @@ def photo_list(value: Any) -> list[str]:
     out: list[str] = []
     for item in value if isinstance(value, (list, tuple)) else []:
         link = str(item or "").strip()
-        if re.match(r"^https?://[^\s]+$", link, re.I) and not has_userinfo(link) and normalize_url(link) and link not in out:
-            out.append(link[:2000])
+        if re.match(r"^https?://\S", link, re.I) and not has_userinfo(link) and normalize_url(link):
+            link = encode_link(link)[:2000]
+            if link not in out:
+                out.append(link)
     return out[:PHOTOS_MAX]
 
 
@@ -1413,7 +1424,7 @@ class Store:
                     raise ValueError("That link has a user name or password in it, so I won't save it. Use the plain listing address without it.")
                 if text and not normalize_url(text):
                     raise ValueError("That link doesn't look like a web address (it should start with https://).")
-                out[key] = text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text
+                out[key] = encode_link(text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text)
             else:
                 out[key] = _text(raw, TEXT_LIMITS.get(key, 500))
         for key in PLACE_REAL:

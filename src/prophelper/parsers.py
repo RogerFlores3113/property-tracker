@@ -1323,6 +1323,9 @@ def _pet_limit_is_in_fields(clause: str, out: dict[str, Any]) -> bool:
     pets = out.get("pets")
     if pets in ("cats", "dogs"):
         low = re.sub(r"\b" + pets[:-1] + r"s? only\b", " ", low, flags=re.I)  # "Cats only" is what the pets field says
+    low = re.sub(r"\bno\s+(?:pets?|dogs?|cats?|animals?)\s+(?=(?:over|above|heavier than|more than)\b)", " ", low, flags=re.I)  # "no pets over 70 lbs" is the weight limit
+    if re.search(r"\b\d{1,3}\s*-?\s*(?:lbs?\b|pounds?\b)", low, re.I):
+        low = re.sub(r"\b(?:small|medium|large|big|little)\b", " ", low, flags=re.I)  # "small dogs (35 lb limit)": the weight is the size
     if re.search(r"breed|restrict|approv|\bsize\b|case[- ]by[- ]case|negotiab|consider|\bonly\b|aggress|spay|neuter|vaccin|licen[sc]e|not allowed|prohibit|except|service animal|emotional|depend|unless|\bif\b|\bnot\b|\bno\b(?! more than)", low, re.I):
         return False
     low = re.sub(r"\bweight[ \t]+(?:limit|max(?:imum)?)\b", "limit", low, flags=re.I)
@@ -3848,7 +3851,7 @@ _NET_REAL_FIELDS = ("price", "parking_cost", "pet_rent", "pet_fee", "utilities_e
 _NET_ENDS = ".;!?\n|•"
 
 
-_ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|\bonce\b|non[- ]?refundable|\bflat fee\b|\bat move[- ]in\b", re.I)
+_ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|non[- ]?refundable", re.I)
 _MONTHLY_WORDS = re.compile(r"/\s*(?:mo|month)\b|\bper month\b|\ba month\b|\bmonthly\b|\bmo\.", re.I)
 
 
@@ -3997,6 +4000,8 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
             if any(abs(c * k - amount) < 0.01 for c in used if c):
                 continue  # "For 2 adults that is $110 together": the sum of a per-adult fee that is already placed
         done.add(amount)
+        if any(f'"{phrase}"' in n for n in notes):
+            continue  # a second amount in the same quoted line: the line is already there
         if re.search(r"\b(?:per|a|each)\s+load\b|/\s*load\b", near, re.I):
             notes.append(f'The listing says laundry costs "{phrase}". It is not counted anywhere.')
         elif re.search(r"\bincluded\s+in\s+(?:your|the)\s+(?:monthly\s+)?rent\b", phrase, re.I) and not re.search(r"\bnot\s+included\b", phrase, re.I):
