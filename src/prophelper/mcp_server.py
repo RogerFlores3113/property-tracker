@@ -902,7 +902,9 @@ def build_server(store: Store) -> FastMCP:
     def seen_not_counted(place: dict[str, Any]) -> list[str]:
         """A fee the reader saw in the listing text but left out of the cost because it looks optional (a storage locker)."""
         from .parsers import listing_uncounted_fees
-        seen = listing_uncounted_fees(str(place.get("listing_text") or ""))
+        notes = " ".join(str(place.get("reader_notes") or "").lower().split())
+        seen = [x for x in listing_uncounted_fees(str(place.get("listing_text") or ""))
+                if not (x.split(" $")[0].lower() in notes and x.split(" ")[-1].split("/")[0].lower() in notes)]  # not again what a note already says
         return [f"Seen but not counted: {', '.join(seen)} (looks optional; add it to other monthly fees if you need it)."] if seen else []
 
     def finish_add(place: dict[str, Any], created: bool, notes: list[str], photos: bool = False) -> list[str]:

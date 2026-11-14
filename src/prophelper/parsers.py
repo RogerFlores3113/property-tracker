@@ -2832,8 +2832,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         out["title"] = title
     if current:
         _apply_current(out, current)
-    facts = _drop_placed_facts(facts, out)
+    facts = _drop_placed_facts(facts, out, follow=bool(current))
     facts += _try(lambda: _safety_net(text, out, facts)) or []
+    facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
+    facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
     if facts:
         out["found_in_listing"] = " ".join(facts)
     return out
@@ -2847,7 +2849,7 @@ def reader_notes_for(place: dict[str, Any], buying: bool = False) -> str:
 
 
 # --------------------------------------------------------------------------- notes that agree with the fields (cycle 11)
-_CURRENT_EXTRA = ("parking", "laundry", "pets", "utilities_included", "tenant_pays", "pet_count_limit", "pet_breed_note")
+_CURRENT_EXTRA = ("parking", "laundry", "pets", "utilities_included", "tenant_pays", "pet_count_limit", "pet_breed_note", "special_assessment_payer")
 
 
 def _apply_current(out: dict[str, Any], current: dict[str, Any]) -> None:
@@ -2858,7 +2860,7 @@ def _apply_current(out: dict[str, Any], current: dict[str, Any]) -> None:
             out[key] = v
 
 
-def _drop_placed_facts(facts: list[str], out: dict[str, Any]) -> list[str]:
+def _drop_placed_facts(facts: list[str], out: dict[str, Any], follow: bool = False) -> list[str]:
     """Notes only hold what was not placed: a line that repeats what a field now says is dropped, and a line that says a
     field is left blank is fixed when that field is filled."""
     kept: list[str] = []
@@ -2876,24 +2878,152 @@ def _drop_placed_facts(facts: list[str], out: dict[str, Any]) -> list[str]:
                     continue
             if broker and re.search(r"broker fee is left empty", f):
                 continue
-        if re.match(r"[A-Z][^.]*(?:cats?|dogs?|pets?|animals?)", f) and _pet_line_placed(f, out):
+        if re.match(r"(?=[A-Z])[^.]*?\b(?:cats?|dogs?|pets?|animals?)", f, re.I) and _pet_line_placed(f, out):
             continue
-        kept.append(f)
+        if follow:  # a saved place: every note follows what is filled on it now
+            f = _follow_fields(f, out)
+            if not f:
+                continue
+        kept.append(_one_time_wording(f))
     return kept
 
 
+def _filled(out: dict[str, Any], key: str) -> bool:
+    v = out.get(key)
+    return v is not None and v != "" and not isinstance(v, bool)
+
+
+# A note that is about one field goes away (or is rewritten) once that field is filled. (pattern, field or fields that settle it)
+_FIELD_NOTES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple((re.compile(pat, re.I), keys) for pat, keys in (
+    (r"so the rent is left empty|rent range of \$|that looks like a monthly amount, not an asking price|Check the asking price", ("price",)),
+    (r"billed-back average of \$|billed back to you, but the listing gives no amount|Add a utilities estimate once you know", ("utilities_estimate",)),
+    (r"seller credit is blank", ("seller_credit",)),
+    (r"broker fee is left empty|so no amount is saved\. Ask what it comes to", ("broker_fee",)),
+    (r"\bPets is left empty", ("pets",)),
+    (r"Washer and dryer hookups only", ("laundry",)),
+    (r"property tax is not filled in", ("property_tax",)),
+    (r"(?:parking|garage|carport)[^.]*\b(?:gives no price|no price)\b", ("parking_cost",)),
+    (r"\binternet is left blank", ("utilities_included",)),
+))
+
+
+def _follow_fields(note: str, out: dict[str, Any]) -> str:
+    """The note made again so it agrees with the fields: "" when everything it is about is filled, else the note (reworded when
+    only part of it is settled). Special assessment notes depend on both the amount and who pays."""
+    for pat, keys in _FIELD_NOTES:
+        if pat.search(note) and all(_filled(out, k) for k in keys):
+            if keys == ("utilities_estimate",) and "internet" in note.lower():
+                continue
+            return ""
+    if re.search(r"special assessment", note, re.I) and not re.search(r"paid by the seller|monthly", note, re.I):
+        amount = out.get("special_assessment")
+        has_amount = isinstance(amount, (int, float)) and not isinstance(amount, bool) and amount > 0
+        has_payer = _filled(out, "special_assessment_payer")
+        if re.match(r"A special assessment is mentioned but no amount is given", note):
+            if has_amount and has_payer:
+                return ""
+            if has_amount:
+                return f"Special assessment ${float(amount):,.0f}: the listing doesn't say who pays it, so ask."
+            if has_payer:
+                return "A special assessment is mentioned but no amount is given. Ask what it is for and how much it is."
+        elif re.match(r"Special assessment \$[\d,]+: the listing doesn't say who pays", note) and has_payer:
+            return ""
+    return note
+
+
+_ONE_TIME_ITEM = re.compile(r"in total to move in|holding fee|reservation (?:fee|deposit)", re.I)
+
+
+def _one_time_wording(note: str) -> str:
+    """A one-time amount (a move-in total, a holding fee) is not in the monthly cost, and it says so in those words."""
+    if re.search(r"in total to move in", note):
+        return note.replace("so it is not counted. Ask what it includes.",
+                            "so it is not in the monthly cost, and the cash due at move-in may be more than shown. Ask what it includes.")
+    if re.search(r"holding fee equal to", note):
+        return note.replace("It is not counted in the cost, because", "It is not in the monthly cost, because")
+    return note
+
+
+def _fix_quotes(facts: list[str], text: str, out: dict[str, Any]) -> list[str]:
+    """Quotes in a note end on a whole word: a quote the reader cut in the middle of a word loses that piece and ends with "..."."""
+    flat = " ".join(text.split())
+    fixed: list[str] = []
+    for f in facts:
+        def cut(m: re.Match[str]) -> str:
+            q = m.group(2)
+            if q.endswith("..."):
+                return m.group(0)
+            at = flat.find(q)
+            if at < 0:
+                return m.group(0)
+            nxt = flat[at + len(q):at + len(q) + 1]
+            if nxt.isalnum() and q[-1:].isalnum():
+                head = q.rsplit(" ", 1)[0] if " " in q else ""
+                if head:
+                    return f"{m.group(1)}{head.rstrip(' ,;:-')}...{m.group(3)}"
+            return m.group(0)
+        f = re.sub(r'(\(?")([^"]{3,240})("\)?)', cut, f)
+        fixed.append(f)
+    return fixed
+
+
+def drop_filled_notes(notes: str, place: dict[str, Any]) -> str:
+    """Saved "Also in the listing" notes with every note dropped (or reworded) that is about a field the place has filled in now.
+    For a place that has notes but no listing text to read again."""
+    from .money import note_units
+    out = {k: v for k, v in place.items() if k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
+    kept = []
+    for unit in note_units(notes):
+        unit = _follow_fields(unit, out)
+        if unit:
+            kept.append(unit)
+    return " ".join(kept)
+
+
+_PET_LINE_WORDS = frozenset("""pets pet cats cat dogs dog allowed allow ok okay welcome accepted max maximum limit limits lbs lb pound pounds per mo month
+monthly non refundable nonrefundable fee rent deposit only and no weight a the one two three each up to under""".split())
+
+
 def _pet_line_placed(line: str, out: dict[str, Any]) -> bool:
-    """True for a pet-rule line such as "Pets: cats and dogs allowed, max 2 pets, 50 lb limit." when the pets field and the
-    count and weight fields hold everything it says (no breed or size rule, no number that is not in a field)."""
-    if re.search(r"breed|restrict|size|approval|case[- ]by|\$", line, re.I) or not out.get("pets"):
+    """True for a pet-rule line such as "Pets: cats and dogs allowed, max 2 pets, 50 lb limit." or "Pets allowed, 2 pet max, $350
+    non-refundable pet fee, $30/mo pet rent." when the fields hold everything it says: every word is a plain pet word (no breed,
+    size or approval rule), every number is the count, weight, fee, rent or deposit field it sits beside, and the pets field
+    agrees with the kinds of pet it names. "no weight limit" is only dropped when no weight limit is filled."""
+    if not out.get("pets"):
         return False
-    nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", line)]
-    if not nums:
+    body = re.sub(r"^\s*pets?\s*:\s*", "", line.strip()).rstrip(". ")
+    if not body or re.search(r"\b(?:breed|restrict|size|approv|case|negotiab|except|service|emotional|depend|unless|if)", body, re.I):
         return False
-    held = {float(out[k]) for k in ("pet_count_limit", "pet_weight_limit") if isinstance(out.get(k), (int, float))}
-    if not all(n in held for n in nums):
+    if re.search(r"\bno\b|\bnot\b", body, re.I) and not re.search(r"\bno\s+(?:weight\s+)?limit\b", body, re.I):
         return False
-    return bool(re.search(r"\b(?:pets?|cats?|dogs?)\b", line, re.I)) and len(line) <= 140 and not re.search(r"\bnot\b|\bno\b", line, re.I)
+    if re.search(r"\bno\s+(?:weight\s+)?limit\b", body, re.I) and (_filled(out, "pet_weight_limit")):
+        return False
+    pets = str(out.get("pets"))
+    kinds = set(re.findall(r"\b(cats?|dogs?)\b", body, re.I))
+    kinds = {k.lower().rstrip("s") for k in kinds}
+    if kinds == {"cat"} and pets != "cats" or kinds == {"dog"} and pets != "dogs" or kinds == {"cat", "dog"} and pets != "both":
+        return False
+    if not kinds and not re.search(r"\bpets?\b", body, re.I):
+        return False
+    pieces = [x for x in re.split(r"[,;]", body) if x.strip()]
+    seen_number = False
+    for piece in pieces:
+        words = re.findall(r"[A-Za-z]+", piece)
+        if any(w.lower() not in _PET_LINE_WORDS for w in words):
+            return False
+        for m in re.finditer(r"(\$)?\s?(\d+(?:,\d{3})*(?:\.\d+)?)", piece):
+            seen_number = True
+            n = float(m.group(2).replace(",", ""))
+            if m.group(1):
+                key = "pet_rent" if re.search(r"rent|/\s*mo|per month|monthly", piece, re.I) else "pet_deposit" if re.search(r"deposit", piece, re.I) else "pet_fee"
+            elif re.search(r"\blbs?\b|pounds?", piece[m.end():m.end() + 8], re.I):
+                key = "pet_weight_limit"
+            else:
+                key = "pet_count_limit"
+            held = out.get(key)
+            if not isinstance(held, (int, float)) or isinstance(held, bool) or float(held) != n:
+                return False
+    return (seen_number or bool(re.search(r"\bno\s+(?:weight\s+)?limit\b|\ballowed\b|\bok(?:ay)?\b|\bonly\b", body, re.I))) and len(line) <= 160
 
 
 # --------------------------------------------------------------------------- safety net (cycle 10)
@@ -2943,6 +3073,18 @@ def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
     return phrase.replace('"', "'")
 
 
+def _quotes_title(phrase: str, title: Any) -> bool:
+    """True when a quoted phrase is just the listing's title (or a piece of it)."""
+    if not title or not isinstance(title, str):
+        return False
+    a = " ".join(phrase.replace("...", " ").split()).lower().strip(" ()")
+    b = " ".join(title.replace("...", " ").split()).lower().strip(" ()")
+    if len(a) >= 8 and len(b) >= 8 and (a.startswith(b) or b.startswith(a) or a in b):
+        return True
+    a0 = a.split("$")[0].strip(" (-:")
+    return len(a0) >= 6 and len(b) >= 8 and a0 in b  # the words in front of the amount are the title's own words
+
+
 def _dollar_values(text: str) -> set[float]:
     """Every dollar amount written in ``text``."""
     vals: set[float] = set()
@@ -2975,6 +3117,8 @@ def _net_component_numbers(text: str) -> set[float]:
     clean, _n = _try(lambda: _cleaning_fee(text)) or (None, [])
     if clean:
         nums.add(float(clean))
+    for v in _try(lambda: _money_after(text, r"(?:admin(?:istrative|istration)?|move[- ]in|lease[- ](?:signing|initiation|admin)|processing|community|one[- ]time) fees?", hi=5000)) or []:
+        nums.add(float(v))  # "Move-in fee $400 | Admin fee $200" are added into move-in fees
     return nums
 
 
@@ -3026,9 +3170,20 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         phrase = _net_clause(text, m.start(), m.end())
         if not phrase:
             continue
+        if _quotes_title(phrase, out.get("title")):
+            continue  # the title line itself is not a note
+        n_adults = re.search(r"\bfor\s+(\d|two|three|four)\s+(?:adults?|applicants?|people|persons?)\b[^.]{0,30}\b(?:together|total|combined|in all|altogether)\b", phrase, re.I)
+        if n_adults:
+            k = {"two": 2, "three": 3, "four": 4}.get(n_adults.group(1).lower()) or int(n_adults.group(1))
+            if any(abs(c * k - amount) < 0.01 for c in used if c):
+                continue  # "For 2 adults that is $110 together": the sum of a per-adult fee that is already placed
         done.add(amount)
         if re.search(r"\b(?:per|a|each)\s+load\b|/\s*load\b", near, re.I):
             notes.append(f'The listing says laundry costs "{phrase}". It is not counted anywhere.')
+        elif re.search(r"\bincluded\s+in\s+(?:your|the)\s+(?:monthly\s+)?rent\b", phrase, re.I) and not re.search(r"\bnot\s+included\b", phrase, re.I):
+            notes.append(f'The listing says "{phrase}". It is included in the rent, so it is not added on top.')
+        elif re.search(r"\b(?:holding|reservation|reserve|move[- ]in total|total to move)\b", phrase, re.I):
+            notes.append(f'The listing says "{phrase}". It is a one-time amount, so it is not in the monthly cost. Ask if it is taken off what you owe at move-in.')
         else:
             notes.append(f'The listing also says "{phrase}". It is not counted anywhere. Check what it is for.')
     low_facts = " ".join(facts).lower()
