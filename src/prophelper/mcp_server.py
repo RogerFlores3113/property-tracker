@@ -386,7 +386,8 @@ def _extra_facts(p: dict[str, Any]) -> list[str]:
     if p.get("listing_agent"):
         buy.append("listing agent " + _t(p["listing_agent"], "listing agent", 120))
     if buy:
-        out.append("Buyer details: " + ", ".join(buy))
+        renting = (p.get("cost") or {}).get("mode") != "buy"
+        out.append(("Listing details: " if renting else "Buyer details: ") + ", ".join(buy))  # a rental never gets the buyer heading
     return out
 
 
