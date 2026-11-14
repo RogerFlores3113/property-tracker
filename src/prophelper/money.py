@@ -104,7 +104,12 @@ def _billed_names(place: dict[str, Any]) -> list[str]:
 def _unpriced_tenant_utilities(place: dict[str, Any]) -> list[str]:
     """What the tenant pays that the listing's billed-back amount does not cover ("electric, gas, internet" when only trash
     is billed back). Empty when the amount covers everything the tenant pays, or the listing text does not say what it covers."""
-    priced = {"water" if w == "hot water" else w for w in _billed_names(place)}
+    try:
+        from .parsers import listing_estimate_names
+        rough = listing_estimate_names(str(place.get("listing_text") or ""))  # "Electric about $110": covers electric only
+    except Exception:
+        rough = []
+    priced = {"water" if w == "hot water" else w for w in _billed_names(place) + rough}
     if not priced:
         return []
     return [w for w in tenant_pays_list(place) if w not in priced and w not in NOTHING_WORDS]
