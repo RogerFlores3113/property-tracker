@@ -33,6 +33,7 @@ from . import commute as commute_mod
 from . import compare as compare_mod
 from . import guards, helpers, redflags, scoring
 from . import stages as st
+from .parsers import split_address_unit
 from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
@@ -840,6 +841,10 @@ def build_server(store: Store) -> FastMCP:
                 fields["utilities_included"] = "all utilities"
         if isinstance(fields.get("utilities_included"), bool):  # a yes or no, not words: say it in words
             fields["utilities_included"] = "all utilities" if fields["utilities_included"] else "none"
+        if isinstance(fields.get("address"), str) and fields["address"].strip():
+            fields["address"], unit_now = split_address_unit(fields["address"], fields.get("unit"))  # "12 SPRUCE LANE | APT B": the unit has its own field
+            if unit_now:
+                fields["unit"] = unit_now
         return {k: v for k, v in fields.items() if v is not None}
 
     def set_commutes(place: dict[str, Any], commutes: list[dict[str, Any]] | None) -> list[str]:

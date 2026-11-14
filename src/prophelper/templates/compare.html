@@ -18,7 +18,7 @@
 <table class="cmp" aria-label="Places side by side">
   <thead>
     <tr><th scope="col"><span class="sr">What is compared</span></th>
-      {% for p in places %}<th scope="col"><a href="/places/{{ p.id }}">{{ p.title }}</a><div class="fine">{{ p.address }}{% if p.unit %} #{{ p.unit }}{% endif %}</div>{{ stage_badge(p.stage) }}{% if p.score.fit != 'fits' or p.score.fit_label == 'Fits, but check' %}<div>{{ fit_badge(p, False) }}</div>{% endif %}</th>{% endfor %}</tr>
+      {% for p in places %}<th scope="col"><a href="/places/{{ p.id }}">{{ p.title }}</a><div class="fine">{{ p.address|street_unit(p.unit) }}</div>{{ stage_badge(p.stage) }}{% if p.score.fit != 'fits' or p.score.fit_label == 'Fits, but check' %}<div>{{ fit_badge(p, False) }}</div>{% endif %}</th>{% endfor %}</tr>
   </thead>
   {% for sec in sections %}
   <tbody>

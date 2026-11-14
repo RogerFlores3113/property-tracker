@@ -6,7 +6,7 @@
 <div class="page-head">
   <div>
     <h1>{{ place.title }} {{ sample_badge(place.is_sample) }}</h1>
-    {% set _street = (place.address ~ (' #' ~ place.unit if place.unit else ''))|trim if place.address else (('#' ~ place.unit) if place.unit else '') %}
+    {% set _street = (place.address|street_unit(place.unit)) if place.address else (('#' ~ place.unit) if place.unit else '') %}
     {% set _locality = ((place.city or '') ~ ' ' ~ (place.state or ''))|trim %}
     <p class="sub">{{ [_street, _locality]|select|join(', ') }}
       {% if place.url %} &middot; <a href="{{ place.url }}" rel="noopener noreferrer" target="_blank">{{ place.source or (place.url|host) }}</a>{% endif %}{% if place.url_unsafe %} &middot; <span class="muted">Saved link not shown: {{ place.url_unsafe[:80] }} (it isn't a plain web address)</span>{% endif %}</p>
