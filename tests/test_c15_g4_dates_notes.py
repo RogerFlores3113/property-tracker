@@ -161,7 +161,8 @@ def test_optional_pool_and_carport_fees_never_set_the_tag():
 def test_pet_line_not_quoted_again_once_read():
     r = parse_listing("Willow Court\n1 bed 1 bath $1,500/mo\nSecurity deposit $1,500.\nCats and dogs welcome: $350 deposit, $35/mo pet rent per pet, max 2, 50 lb limit.", pet_kind="both")
     assert (r["pets"], r["pet_rent"], r["pet_deposit"], r["pet_count_limit"], r["pet_weight_limit"], r["deposit"]) == ("both", 35, 350, 2, 50, 1500)
-    assert "found_in_listing" not in r
+    # cycle 15 join: G3 adds a per-pet note for "per pet"; the pet line itself is not quoted again
+    assert r.get("found_in_listing", "") in ("", "Pet rent is $35 a month for each pet, so with more than one pet it adds up.")
 
 
 # ---- rentals never say "Buyer details"
