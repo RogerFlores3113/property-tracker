@@ -591,6 +591,31 @@ def _beds_corrected(text: str) -> tuple[float, float] | None:
     return nums[0], nums[1]
 
 
+def _same_num(a: Any, b: float) -> bool:
+    try:
+        return abs(float(a) - b) < 0.01
+    except (TypeError, ValueError):
+        return False
+
+
+_BEDS_SLASH_PAIR = re.compile(r"(?<![\d.,$/])\b(\d)[ \t]*(?:bed(?:room)?s?|bds?|brs?)[ \t]*/[ \t]*(\d)[ \t]*(?:bed(?:room)?s?|bds?|brs?)\b", re.I)
+
+
+def _beds_conflict(text: str) -> str:
+    """"1BR/2BR convertible" in the title and "3 bedrooms" in the body: the listing does not say how many bedrooms it has. Returns
+    a plain note (and the bedroom count stays empty), or "" when there is no such pair."""
+    if _beds_converted(text) or _beds_corrected(text):
+        return ""
+    m = _BEDS_SLASH_PAIR.search(text)
+    if not m or m.group(1) == m.group(2):
+        return ""
+    pair = {float(m.group(1)), float(m.group(2))}
+    rest = text[:m.start()] + " " + text[m.end():]
+    others = sorted({float(x) for x in re.findall(r"(?<![\d.,$/])\b(\d{1,2})[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b", rest, re.I)} - pair)
+    said = f'"{m.group(0)}"' + (f' and also "{others[0]:g} bedroom{"" if others[0] == 1 else "s"}"' if others else "")
+    return f"The listing says {said}, so I could not tell how many bedrooms it has. The bedroom count is left empty. Ask which layout you would get."
+
+
 def _beds(text: str) -> float | None:
     conv = _beds_converted(text)
     if conv:
@@ -598,6 +623,8 @@ def _beds(text: str) -> float | None:
     corrected = _beds_corrected(text)
     if corrected:
         return corrected[1]
+    if _beds_conflict(text):
+        return None
     low = text.lower()
     hits: list[tuple[int, float]] = []
     for m in re.finditer(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)[ \t]*(?:-[ \t]*\d{1,2}(?:\.\d)?[ \t]*)?(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b(?!\s*(?:and breakfast|room only))", low):
@@ -617,7 +644,27 @@ def _beds(text: str) -> float | None:
     return min(hits)[1] if hits else None
 
 
+_BATH_NUM = r"(\d{1,2}(?:\.\d)?|one|two|three|four|five)"
+_BATH_WORD = r"[- ]?(?:bath(?:room)?s?|bths?|ba)\b"
+_BATHS_CORRECTED = re.compile(r"\b" + _BATH_NUM + _BATH_WORD + r"[ \t]*\?[ \t]*(?:no|nope|actually|wait|sorry)\b[ \t,.:;-]*(?:it'?s[ \t]+|its[ \t]+|a[ \t]+)?(?:[a-z]+[ \t]+)?" + _BATH_NUM + _BATH_WORD
+                             + r"|\b" + _BATH_NUM + _BATH_WORD + r"[ \t]*[(,;:.\-\u2013\u2014]?[ \t]*(?:actually|correction|corrected(?:[ \t]+to)?|really|in fact)[ \t,:\-]*(?:it'?s[ \t]+|its[ \t]+|a[ \t]+|only[ \t]+|just[ \t]+)?" + _BATH_NUM + _BATH_WORD, re.I)
+_BATH_WORDS = {"one": 1.0, "two": 2.0, "three": 3.0, "four": 4.0, "five": 5.0}
+
+
+def _baths_corrected(text: str) -> tuple[float, float] | None:
+    """("two bath? no, 1 bath") -> (2, 1): the listing corrects itself, so the later count is the one it means (up or down)."""
+    m = _BATHS_CORRECTED.search(text)
+    if not m:
+        return None
+    g = [x for x in m.groups() if x]
+    vals = [_BATH_WORDS[x.lower()] if x.lower() in _BATH_WORDS else float(x) for x in g[:2]]
+    return vals[0], vals[1]
+
+
 def _baths(text: str) -> float | None:
+    corrected = _baths_corrected(text)
+    if corrected:
+        return corrected[1]
     low = text.lower()
     m = re.search(r"(\d{1,2})\s*full\s*(?:bath(?:room)?s?|ba)\b[^.\n]{0,25}?(\d)\s*(?:half|1/2|partial)\s*(?:bath(?:room)?s?|ba)", low)
     if m:
@@ -1758,6 +1805,13 @@ def _days_on_market(text: str) -> int | None:
         m = re.search(pat, text, re.I)
         if m:
             return int(m.group(1))
+    # "Listed 2 weeks ago", "3 weeks ago" alone on a line: weeks and days ago
+    for m in re.finditer(r"^[ \t*#|-]*(?:(?:listed|posted|on[ \t]+(?:the[ \t]+)?market|new[ \t]+listing)[ \t:]*)?(\d{1,3})[ \t]+(days?|weeks?)[ \t]+ago[ \t.]*$|"
+                         r"\b(?:listed|posted|on[ \t]+(?:the[ \t]+)?market)[ \t:]+(\d{1,3})[ \t]+(weeks?)[ \t]+ago\b", text, re.I | re.M):
+        n, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        days = int(n) * (7 if unit.lower().startswith("week") else 1)
+        if 0 < days <= 3650:
+            return days
     return None
 
 
@@ -1775,6 +1829,8 @@ def _listing_agent(text: str) -> str:
     line = re.sub(r"\b(?:DRE|license|lic|BRE|MLS)\b[ \t#:.]*[\w-]*", " ", line, flags=re.I)
     line = re.sub(r"\s*[\u2022\u00b7|]\s*", ", ", line)
     line = " ".join(line.split()).strip(" ,;:-")
+    if line.endswith(".") and not re.search(r"\b(?:Inc|Co|Jr|Sr|Ltd|Corp|LLC|[A-Z])\.$", line):
+        line = line[:-1].rstrip(" ,;:-")  # "Priya Natarajan, Buckeye Realty." has no trailing period
     if len(line) < 3 or _NOT_AN_AGENT.match(line) or re.search(r"https?://|@", line):
         return ""
     return line[:120]
@@ -2583,9 +2639,27 @@ def _lease_dates(text: str) -> tuple[str | None, int | None, str]:
         months = (nxt.year - d1.year) * 12 + nxt.month - d1.month
         if months >= 1 and nxt.day == d1.day and 1 <= months <= 36:
             return start, months, ""
+        if d1.day == 1 and d2.month == 2 and d2.day == 28 and nxt.day == 29:
+            m2 = (d2.year - d1.year) * 12 + d2.month - d1.month + 1  # "3/1/2027 - 2/28/2028": the Feb 28 end is month-end (leap year typo or not)
+            if 1 <= m2 <= 36:
+                return start, m2, ""
         return start, None, (f"The listing gives lease dates ({start} to {end}) that are not a whole number of months, so the lease length is left empty. "
                              "Ask how long the lease is.")
     return None, None, ""
+
+
+_LEASE_OR_LEASE = re.compile(r"\d{1,2}[- ]?(?:months?|mos?)\b[- ]?(?:leases?|terms?|contracts?)?[ \t]*(?:,|/|or|and)[ \t]*(?:or[ \t]+|and[ \t]+|a[ \t]+)?\d{1,2}[- ]?(?:months?|mos?)\b")
+_LEASE_PAIR = re.compile(r"(?<![\d,$/-])(\d{1,2})[- ]?(?:months?|mos?)\b[- ]?(?:leases?|terms?|contracts?)?[ \t]*(?:,|/|or|and)[ \t]*(?:or[ \t]+|and[ \t]+|a[ \t]+)?(\d{1,2})[- ]?(?:months?|mos?)\b(?![ \t]*(?:free|off|discount|of[ \t]+rent|rent\b|concession))[- ]?(?:leases?|terms?|contracts?)?")
+
+
+def _lease_pair_at(low: str, pos: int) -> bool:
+    """True when the lease length written at pos is one of two lengths side by side ("9 month lease or 12 month lease")."""
+    for m in _LEASE_PAIR.finditer(low):
+        a, b = int(m.group(1)), int(m.group(2))
+        if a != b and 3 <= a <= 60 and 3 <= b <= 60 and (m.start(1) <= pos <= m.start(2) + 3 or m.start() - 1 <= pos <= m.end()) \
+                and re.search(r"leases?|terms?|contracts?", m.group(0)):
+            return True
+    return False
 
 
 def _lease_months(text: str) -> int | None:
@@ -2599,6 +2673,9 @@ def _lease_months(text: str) -> int | None:
                 continue  # "One month free on a 13-month lease" is the length the deal needs, not the lease on offer
             if re.search(r"\b(?:or|instead)[ \t]+(?:sign|choose|take|pick|get|go)\w*[ \t]+(?:a[ \t]+|an[ \t]+)?$", low[max(0, m.start() - 20):m.start()]):
                 continue  # "Lease 12 months, or sign a 18 month lease and get $100 off": the longer lease is a deal, not the lease on offer
+            if _LEASE_OR_LEASE.search(low[max(0, m.start() - 24):m.end() + 34].replace("\n", " ")) and not _OFFER_LEASE.search(low[max(0, m.start() - 45):m.start()]):
+                if _lease_pair_at(low, m.start()):
+                    continue  # "9 month lease or 12 month lease": two lengths on offer, so neither is the lease
             g = m.group(1)
             n = 12 if g in ("one", "1") and "year" in m.group(0) else int(g)
             if 1 <= n <= 60 and not re.search(r"\d\s*(?:,|-|to|or)\s*$", low[max(0, m.start() - 6):m.start()]):
@@ -2614,6 +2691,15 @@ _LEASE_CHOICES = (
 
 
 def _lease_choices(text: str) -> str:
+    low = text.lower()
+    for m in _LEASE_PAIR.finditer(low):
+        a, b = int(m.group(1)), int(m.group(2))
+        if a != b and 3 <= a <= 60 and 3 <= b <= 60 and re.search(r"leases?|terms?|contracts?", m.group(0)):
+            return f"{a} or {b} months"
+    return _lease_choices_list(text)
+
+
+def _lease_choices_list(text: str) -> str:
     """The lease lengths when the listing gives several ("12 or 15 month lease", "Lease terms 6, 12 or 15 months"), written for a note
     ("12 or 15 months"). Empty when there is one length or the numbers are a deal ("12 months, 1 month free")."""
     for rx in _LEASE_CHOICES:
@@ -3077,6 +3163,12 @@ _TITLE_SUFFIX = re.compile(r"\s*[-|:,]\s*(?:\$\s?[\d,.]+[kK]?(?:\s*/\s*mo\w*)?|(
 def _clean_title(title: str) -> str:
     """Drop a trailing " - 2 bed 1 bath" or " | $1,500/mo" (facts, not part of the name). Never leaves it empty."""
     out = title
+    # "Studio-1BR Prairie Commons from $1,299 - $1,420": a plan range in front of the name and a "from" price after it are facts, not the name
+    lead = re.match(r"(?:studio|\d{1,2}[ \t]*(?:br|bd|bed(?:room)?s?))[ \t]*[-/\u2013][ \t]*(?:studio|\d{1,2}[ \t]*(?:br|bd|bed(?:room)?s?))[ \t]+(?=[A-Z])", out, re.I)
+    if lead:
+        rest = re.sub(r"[ \t]+(?:from|starting[ \t]+at|starts[ \t]+at|as[ \t]+low[ \t]+as)[ \t]*\$[^\n]*$", "", out[lead.end():], flags=re.I).strip(" -|:,")
+        if len(rest) >= 3 and re.search(r"[A-Za-z]{3}", rest) and not _is_fact_line(rest):
+            out = rest
     for _ in range(3):
         cut = _TITLE_SUFFIX.sub("", out).strip(" -|:,")
         if cut == out or len(cut) < 3:
@@ -3305,10 +3397,24 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         now = "studio" if conv[1] == 0 else f"{conv[1]:g} bedroom"
         facts.append(f"The listing says this was a {was} that was converted to a {now}, so it is saved as {now}. Ask how the rooms are laid out.")
     corrected = None if conv else _try(lambda: _beds_corrected(text))
+    caller_beds = (current or {}).get("beds")
+    caller_baths = (current or {}).get("baths")
     if corrected:
         was = "studio" if corrected[0] == 0 else f"{corrected[0]:g} bedroom"
         now = "studio" if corrected[1] == 0 else f"{corrected[1]:g} bedroom"
-        facts.append("The listing gives two different bedroom counts and corrects itself. The later count is saved, so check the bedroom count.")
+        if caller_beds not in (None, "") and not _same_num(caller_beds, corrected[1]):
+            facts.append(f"The listing gives two different bedroom counts ({was}, then {now}) and corrects itself. The bedroom count that was already saved was kept, so check it.")
+        else:
+            facts.append("The listing gives two different bedroom counts and corrects itself. The later count is saved, so check the bedroom count.")
+    beds_conflict = _try(lambda: _beds_conflict(text)) or ""
+    if beds_conflict:
+        facts.append(beds_conflict)
+    bath_fix = _try(lambda: _baths_corrected(text))
+    if bath_fix:
+        if caller_baths not in (None, "") and not _same_num(caller_baths, bath_fix[1]):
+            facts.append(f"The listing gives two different bathroom counts ({bath_fix[0]:g}, then {bath_fix[1]:g}) and corrects itself. The bathroom count that was already saved was kept, so check it.")
+        else:
+            facts.append("The listing gives two different bathroom counts and corrects itself. The later count is saved, so check the bathroom count.")
     facts += _try(lambda: _price_notes(text, price_read)) or []
     put("baths", _try(lambda: _baths(text)))
     put("sqft", _try(lambda: _sqft(text)))
