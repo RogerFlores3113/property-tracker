@@ -45,7 +45,7 @@ def test_tag_still_fires_for_a_real_uncounted_amount():
 def test_pet_line_whose_facts_are_all_in_fields_is_not_quoted(line):
     r = parsers.parse_listing("Alder 1 bed $1,900. " + line)
     assert r["pet_weight_limit"] == 60
-    assert "lb" not in r.get("found_in_listing", "").lower() and "pet" not in r.get("found_in_listing", "").lower().replace("pet rent is $35", "")
+    assert "lb" not in r.get("found_in_listing", "").lower() and "pet" not in r.get("found_in_listing", "").lower().replace("pet rent is $35 a month for each pet, so with more than one pet it adds up.", "")  # cycle 15: "pet rent per pet" now gets this note
 
 
 def test_pet_line_with_a_fact_not_in_fields_is_still_quoted():
