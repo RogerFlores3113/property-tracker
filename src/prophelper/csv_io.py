@@ -38,9 +38,9 @@ EXPORT_COLUMNS: list[tuple[str, str]] = [
     ("Special assessment", "special_assessment"), ("Who pays the special assessment", "special_assessment_payer"),
     ("Closing costs", "closing_costs"), ("Seller credit", "seller_credit"),
     ("Application fee charged per adult", "application_fee_per_adult"), ("Listing agent", "listing_agent"), ("Latitude", "lat"), ("Longitude", "lng"),
-    ("Rating", "rating"), ("Fit score", "fit_score"), ("Fit", "fit"), ("Red flags", "red_flags"), ("Notes", "notes"),
+    ("Rating", "rating"), ("Fit score", "fit_score"), ("Fit", "fit"), ("Red flags", "red_flags"), ("Listing notes", "reader_notes"), ("Notes", "notes"),
 ]
-EXPORT_ONLY = {"fit_score", "fit", "red_flags"}  # written on export, never read back (the AI and the local check own them)
+EXPORT_ONLY = {"fit_score", "fit", "red_flags", "reader_notes"}  # written on export, never read back (the AI and the local check own them)
 
 _COMPUTED_HEADS = {"true monthly cost", "cost per person per month", "score out of 100"}
 
@@ -49,7 +49,7 @@ def is_computed_header(heading: Any) -> bool:
     """A column our own export adds that the app works out itself (fit score, red flags, costs, commutes, each person's
     rating). Reading it back would only copy stale numbers, so import ignores it, quietly."""
     n = _norm_header(heading)
-    return (n in _COMPUTED_HEADS or SYNONYMS.get(n) in EXPORT_ONLY or n in ("fit score", "fit", "red flags")
+    return (n in _COMPUTED_HEADS or SYNONYMS.get(n) in EXPORT_ONLY or n in ("fit score", "fit", "red flags", "listing notes")
             or bool(re.match(r"^commute to .+ (minutes|way)( fastest way)?$", n)) or bool(re.search(r" s rating$", n)))
 
 

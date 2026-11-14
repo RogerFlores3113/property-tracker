@@ -27,7 +27,7 @@ def test_building_name_after_at_becomes_title():
 def test_tenant_pays_gas_and_electric_is_recorded_and_nothing_included():
     found = parsers.parse_listing("2BR apartment. $1200/mo. Tenant pays gas and electric.")
     assert "utilities_included" not in found
-    assert "Tenant pays gas, electric" in found["found_in_listing"]
+    assert found["tenant_pays"] == "electric, gas" and "found_in_listing" not in found  # c11: a line fully placed in a field is not quoted again
     cost = money.rent_cost({"price": 1200, "utilities_estimate": 90})
     line = next(l for l in cost["lines"] if l["key"] == "utilities")
     assert "guess" in line["label"].lower()

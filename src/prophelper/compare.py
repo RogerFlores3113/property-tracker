@@ -307,14 +307,38 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     return cell
 
 
+def _note_rank(unit: str) -> int:
+    """0 for a money note (an amount or cost still open), 2 for offer boilerplate (free rent, concessions), 1 for the rest."""
+    if re.search(r"free[- ]rent|concession|months? free|weeks? free|move-in special", unit, re.I) and not re.search(r"\$\s?\d", unit):
+        return 2
+    return 0 if (money_mod.listing_notes_uncounted(unit) or re.search(r"\$\s?\d", unit)) else 1
+
+
 def listing_notes_text(p: dict[str, Any], limit: int = 110) -> str:
-    """The reader's saved notes from the listing, cut short. Empty when there are none."""
+    """The reader's saved notes from the listing, short. Money notes come first and the offer boilerplate last. Whole notes
+    only: when they do not all fit, it ends after the last whole note with "and N more on the place page"."""
     text = " ".join(str(p.get("reader_notes") or "").split())
     if not text:
         return ""
-    if len(text) > limit:
-        text = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:") + "... See the place page."
-    return text
+    units = sorted(money_mod.note_units(text), key=_note_rank)  # stable: the order they were written inside each group
+    shown: list[str] = []
+    used = 0
+    for u in units:
+        if used + len(u) + 1 > limit and shown:
+            break
+        shown.append(u)
+        used += len(u) + 1
+    rest = len(units) - len(shown)
+    first = shown[0] if shown else ""
+    if len(first) > limit and len(shown) == 1:
+        sentences = re.split(r"(?<=[.!?])\s+", first)  # one long note: keep whole sentences, never cut inside one
+        first = sentences[0]
+        if len(first) > limit * 2:
+            first = first[:limit * 2].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
+        shown = [first]
+        rest = len(units) - 1 + (1 if len(sentences) > 1 else 0)
+    out = " ".join(shown)
+    return out + (f" and {rest} more on the place page." if rest > 0 else "")
 
 
 def _pet_charges_unknown(p: dict[str, Any]) -> bool:
@@ -794,7 +818,7 @@ def lowest_note(r: dict[str, Any]) -> str:
     w = r.get("winners") or []
     if len(w) == 1:  # name what the winner leaves out: "..., but its electric isn't counted"
         left = _join_and([("utilities" if u == "utilities estimate" else u) for u in cost_unknowns(w[0])] or [_short_parts(w[0])])
-        return note + f", but its {left} {'aren' if _aren_t(left) == 'are' else 'isn'}'t counted"
+        return note + f", but {_its(left)}{left} {'aren' if _aren_t(left) == 'are' else 'isn'}'t counted"
     return note + ", though every place leaves a cost part out"
 
 
@@ -802,6 +826,11 @@ def _short_parts(p: dict[str, Any]) -> str:
     """'utilities' or 'parking and utilities': the cost parts of this place that are not counted."""
     parts = [u.split(" (")[0] for u in _uncounted(p)]
     return _join_and(list(dict.fromkeys(parts))) if parts else "costs"
+
+
+def _its(parts: str) -> str:
+    """"its utilities", but plain "some amounts in the listing notes" (no "its")."""
+    return "" if parts.startswith("some ") else "its "
 
 
 def _aren_t(text: str) -> str:
@@ -814,7 +843,7 @@ def skipped_unknown_sentences(r: dict[str, Any], name, merged: bool = False) -> 
     out = []
     for p in r["skipped_unknown"]:
         parts = _short_parts(p)
-        out.append(f"{name(p)} looks cheaper, but its {parts} {_aren_t(parts)} not counted" + ("" if merged else "."))
+        out.append(f"{name(p)} looks cheaper, but {_its(parts)}{parts} {_aren_t(parts)} not counted" + ("" if merged else "."))
     return out
 
 

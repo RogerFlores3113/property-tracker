@@ -2195,8 +2195,9 @@ def _try(fn: Callable[[], Any]) -> Any:
         return None
 
 
-def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
-    """Pull what a pasted listing says. Returns only the fields found."""
+def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
+    refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open."""
     text = _tidy(text or "")
     out: dict[str, Any] = {}
     src = site_name(url)
@@ -2397,7 +2398,7 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
                 out["application_fee_per_adult"] = 1
                 if not _try(lambda: _app_fee_per_person(text)):
                     facts.append(f"The ${per_applicant[0]:,.0f} admin fee is charged per applicant, so it is counted as the application fee for each adult who applies.")
-            else:
+            elif float(out["application_fee"]) != per_applicant[0]:
                 facts.append(f"The listing also has a ${per_applicant[0]:,.0f} admin fee per applicant. It is not counted, because an application fee is already filled in. Ask whether they are two fees.")
         mi = _money_after(mi_text, r"(?:admin(?:istrative|istration)?|move[- ]in|lease[- ](?:signing|initiation|admin)|processing|community|one[- ]time) fees?", hi=5000)
         clean_in, clean_notes = _try(lambda: _cleaning_fee(text)) or (None, [])
@@ -2512,10 +2513,70 @@ def parse_listing(text: str = "", url: str = "") -> dict[str, Any]:
     title = _try(lambda: _title(text, out))
     if title:
         out["title"] = title
+    if current:
+        _apply_current(out, current)
+    facts = _drop_placed_facts(facts, out)
     facts += _try(lambda: _safety_net(text, out, facts)) or []
     if facts:
         out["found_in_listing"] = " ".join(facts)
     return out
+
+
+def reader_notes_for(place: dict[str, Any]) -> str:
+    """The "Also in the listing" notes for a saved place: its listing text read again, with what is filled on the place
+    counted as placed. One rule for add, edit and update: a note about something that is filled in now is not kept."""
+    found = parse_listing(str(place.get("listing_text") or ""), str(place.get("url") or ""), current=place)
+    return str(found.get("found_in_listing") or "")
+
+
+# --------------------------------------------------------------------------- notes that agree with the fields (cycle 11)
+_CURRENT_EXTRA = ("parking", "laundry", "pets", "utilities_included", "tenant_pays", "pet_count_limit", "pet_breed_note")
+
+
+def _apply_current(out: dict[str, Any], current: dict[str, Any]) -> None:
+    """What is filled on the saved place counts as placed (only for the notes pass; ``out`` is not returned as fields to save)."""
+    for key in _NET_REAL_FIELDS + _CURRENT_EXTRA:
+        v = current.get(key)
+        if v is not None and v != "" and not isinstance(v, bool):
+            out[key] = v
+
+
+def _drop_placed_facts(facts: list[str], out: dict[str, Any]) -> list[str]:
+    """Notes only hold what was not placed: a line that repeats what a field now says is dropped, and a line that says a
+    field is left blank is fixed when that field is filled."""
+    kept: list[str] = []
+    deposit = out.get("deposit") is not None
+    broker = out.get("broker_fee") is not None
+    for f in facts:
+        if re.fullmatch(r"Tenant pays [a-z, ]+\.", f) and out.get("tenant_pays"):
+            continue  # the "Utilities you pay" field holds exactly this
+        if re.search(r"parking", f) and re.search(r"gives no price\. It looks optional", f) and out.get("parking_cost") is not None:
+            continue  # the amount was read as the parking cost
+        if re.search(r"deposit|broker fee", f):
+            if deposit:
+                f = f.replace(", so the deposit is left blank.", ".").replace(" The deposit is not saved, because it may be more for you, so ask what the deposit will be.", " Ask what your deposit will be.")
+                if re.search(r"deposit is left empty|Fill it in once you know the rent", f) and "security deposit" in f:
+                    continue
+            if broker and re.search(r"broker fee is left empty", f):
+                continue
+        if re.match(r"[A-Z][^.]*(?:cats?|dogs?|pets?|animals?)", f) and _pet_line_placed(f, out):
+            continue
+        kept.append(f)
+    return kept
+
+
+def _pet_line_placed(line: str, out: dict[str, Any]) -> bool:
+    """True for a pet-rule line such as "Pets: cats and dogs allowed, max 2 pets, 50 lb limit." when the pets field and the
+    count and weight fields hold everything it says (no breed or size rule, no number that is not in a field)."""
+    if re.search(r"breed|restrict|size|approval|case[- ]by|\$", line, re.I) or not out.get("pets"):
+        return False
+    nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", line)]
+    if not nums:
+        return False
+    held = {float(out[k]) for k in ("pet_count_limit", "pet_weight_limit") if isinstance(out.get(k), (int, float))}
+    if not all(n in held for n in nums):
+        return False
+    return bool(re.search(r"\b(?:pets?|cats?|dogs?)\b", line, re.I)) and len(line) <= 140 and not re.search(r"\bnot\b|\bno\b", line, re.I)
 
 
 # --------------------------------------------------------------------------- safety net (cycle 10)
@@ -2539,12 +2600,19 @@ _NET_REAL_FIELDS = ("price", "parking_cost", "pet_rent", "pet_fee", "utilities_e
 _NET_ENDS = ".;!?\n|•"
 
 
-def _net_clause(text: str, start: int, end: int, limit: int = 80) -> str:
-    """The short phrase around text[start:end]: the clause it sits in, cut to about ``limit`` characters at word edges."""
+def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
+    """The short phrase around text[start:end]: the clause it sits in. A clause that fits ``limit`` is quoted whole, never
+    cut in the middle; a longer one is narrowed to the comma-separated piece that holds the match, and only a piece that is
+    still too long is cut at a word edge."""
     left = max(text.rfind(c, 0, start) for c in _NET_ENDS) + 1
     rights = [i for i in (text.find(c, end) for c in _NET_ENDS) if i >= 0]
     right = min(rights) if rights else len(text)
     lo, hi = left, right
+    if hi - lo > limit:
+        lo = max(lo, text.rfind(",", lo, start) + 1)
+        comma = text.find(",", end, hi)
+        if comma >= 0:
+            hi = comma
     if hi - lo > limit:
         lo = max(lo, start - 28)
         hi = min(hi, max(end + 45, lo + limit))
@@ -2558,15 +2626,50 @@ def _net_clause(text: str, start: int, end: int, limit: int = 80) -> str:
     return phrase.replace('"', "'")
 
 
-def _net_used_numbers(out: dict[str, Any], facts: list[str]) -> set[float]:
-    """Every number a field or a note already carries."""
-    used: set[float] = set()
+def _dollar_values(text: str) -> set[float]:
+    """Every dollar amount written in ``text``."""
+    vals: set[float] = set()
+    for m in _NET_DOLLARS.finditer(text):
+        raw = m.group(1) if m.group(1) is not None else m.group(4)
+        try:
+            vals.add(float(raw.replace(",", "") + (m.group(2) or "" if m.group(1) is not None else "")))
+        except ValueError:
+            pass
+    return vals
+
+
+def _net_component_numbers(text: str) -> set[float]:
+    """The single amounts the readers added up or converted into fields (each monthly fee inside other monthly fees, a
+    required storage fee, a per-applicant fee, a cleaning fee), so a sum in a field never leaves its parts "not counted"."""
+    nums: set[float] = set()
+    for v in _try(lambda: _money_monthly_fees(text)) or []:
+        nums.add(float(v))
+    counted, _listed = _try(lambda: _extra_monthly(text)) or ([], [])
+    nums.update(float(v) for _l, v in counted)
+    for _l, v, required in _try(lambda: _storage_fees(text)) or []:
+        if required:
+            nums.add(float(v))
+    pa = _try(lambda: _admin_fee_per_applicant(text))
+    if pa:
+        nums.add(float(pa[0]))
+    fee = _try(lambda: app_fee_per_adult(text))
+    if fee:
+        nums.add(float(fee))
+    clean, _n = _try(lambda: _cleaning_fee(text)) or (None, [])
+    if clean:
+        nums.add(float(clean))
+    return nums
+
+
+def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> set[float]:
+    """Every number a field or a note already carries, and the parts and conversions behind a field."""
+    used: set[float] = _net_component_numbers(text) if text else set()
     for key in _NET_REAL_FIELDS:
         v = out.get(key)
         if isinstance(v, (int, float)) and not isinstance(v, bool) and v:
             used.add(float(v))
             if key in ("hoa", "property_tax", "insurance", "other_monthly_fees", "parking_cost", "utilities_estimate", "pet_rent"):
-                used.update({round(float(v) * 12, 2), round(float(v) / 12, 2)})  # a yearly figure written beside the monthly one
+                used.update({round(float(v) * 12, 2), round(float(v) / 12, 2), round(float(v) * 3, 2), round(float(v) * 6, 2)})  # a yearly, quarterly or half-year figure written beside the monthly one
     price = out.get("price")
     if isinstance(price, (int, float)) and price:
         used.update({float(price) * 2, float(price) * 3})  # first and last month, three months up front
@@ -2582,7 +2685,7 @@ def _net_used_numbers(out: dict[str, Any], facts: list[str]) -> set[float]:
 def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
     """Plain lines for what the reader saw but did not place anywhere. Never changes a field."""
     notes: list[str] = []
-    used = _net_used_numbers(out, facts)
+    used = _net_used_numbers(out, facts, text)
     done: set[float] = set()
     # two or more "1 bed $1,200" style amounts is a floor plan list: those are rents, not extra costs
     floor_plans = len(re.findall(r"(?:studio|\b\d\s*(?:br|bd|bed(?:room)?s?)\b|\b(?:one|two|three)[- ]bed(?:room)?s?)[^.\n;$]{0,12}\$\s?\d", text, re.I)) >= 2
@@ -2633,11 +2736,14 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
     if m and not out.get("parking") and out.get("parking_cost") is None and not re.search(r"parking|garage|carport|driveway", low_facts) \
             and not any(re.search(r"parking|garage", n, re.I) for n in notes):
         notes.append(f'The listing mentions parking ("{_net_clause(text, m.start(), m.end())}"), but I could not tell what it is or what it costs. Ask.')
+    counted_here = _net_component_numbers(text) | {float(out[k]) for k in ("utilities_estimate", "other_monthly_fees", "parking_cost") if isinstance(out.get(k), (int, float)) and out[k]}
     if not (out.get("utilities_included") or out.get("tenant_pays") or out.get("utilities_estimate") is not None) and "utilit" not in low_facts:
         for u in _NET_UTIL_WORD.finditer(text):
             clause = _net_clause(text, u.start(), u.end(), 400)
             if _NET_UTIL_NOT.search(clause) or re.search(r"\bnot\s+(?:included|incl)|\bexcluded\b", clause, re.I) or not _NET_UTIL_CUE.search(clause) or u.group(0).lower() in low_facts:
                 continue
+            if counted_here and any(_dollar_values(clause) & counted_here):
+                continue  # "Water & trash $60/mo flat" is already counted in a field
             if any(_net_clause(text, u.start(), u.end()) in n for n in notes):
                 break  # an amount line already quotes this very phrase
             notes.append(f'The listing mentions utilities ("{_net_clause(text, u.start(), u.end())}"), but I could not tell who pays. Ask which ones you pay for.')

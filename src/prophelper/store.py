@@ -100,6 +100,7 @@ PLACE_EDITABLE: tuple[str, ...] = tuple(f for f in PLACE_FIELDS if f not in ("is
 TEXT_LIMITS = {"title": 300, "address": 300, "unit": 40, "city": 120, "state": 60, "zip": 20, "url": 2000, "source": 120,
                "listing_text": 200_000, "utilities_included": 300, "notes": 50_000, "ai_notes": 50_000,
                "fit_notes": 20_000, "red_flags": 5_000, "laundry": 20, "parking": 20, "pets": 20, "pet_breed_note": 300, "tenant_pays": 80, "reader_notes": 3_000}
+READER_NOTES_MAX = 3_000
 PHOTOS_MAX = 30
 AI_PROTECTED = ("notes", "rating", "hidden", "is_sample")  # fields an AI update never writes
 AI_EVENT_TEXT_MAX = 2000
@@ -1499,6 +1500,10 @@ class Store:
                 return self._merge_into(existing, values, by), False
             if not values.get("title"):
                 values["title"] = self._fallback_title(values)
+            if values.get("reader_notes") and values.get("listing_text"):
+                fresh = self._fresh_reader_notes(values)  # the notes agree with the facts saved with the place
+                if fresh is not None:
+                    values["reader_notes"] = fresh
             new_stage = st.FIRST_STAGE
             if stage:
                 norm = st.normalize_stage(mode, stage)
@@ -1590,6 +1595,10 @@ class Store:
         changed = {k: v for k, v in values.items() if self._differs(existing, k, v)}
         with self._write():
             if changed:
+                if "reader_notes" not in values and set(changed) - {"notes", "ai_notes", "photo_urls", "rating", "hidden"}:
+                    fresh = self._fresh_reader_notes({**existing, **values})
+                    if fresh is not None and fresh != (existing.get("reader_notes") or ""):
+                        changed["reader_notes"] = fresh
                 changed["updated_at"] = now_iso()
                 self._exec(f"UPDATE places SET {', '.join(f'{k} = ?' for k in changed)} WHERE id = ?",
                            (*changed.values(), place_id))
@@ -1598,6 +1607,18 @@ class Store:
             if stage is not None and stage != "" and stage != existing["stage"]:
                 self.move_stage(place_id, stage, by_ai=(by == "ai"))
         return self.get_place(place_id)
+
+    @staticmethod
+    def _fresh_reader_notes(place: dict[str, Any]) -> str | None:
+        """The "Also in the listing" notes made again from the saved listing text and the place's current facts, so a note
+        about something that is filled in now goes away. None when the place has no notes or no listing text to read."""
+        if not str(place.get("reader_notes") or "").strip() or not str(place.get("listing_text") or "").strip():
+            return None
+        try:
+            from . import parsers
+            return parsers.reader_notes_for(place)[:READER_NOTES_MAX]
+        except Exception:  # noqa: BLE001 - a reader failure must not stop a save
+            return None
 
     @staticmethod
     def _differs(existing: dict[str, Any], key: str, new: Any) -> bool:
@@ -1620,7 +1641,7 @@ class Store:
         """Write the old values an AI update replaced to the timeline, so they can be put back by hand."""
         parts = []
         for key, new in changed.items():
-            if key in ("updated_at", "ai_notes", "photo_urls", "listing_text"):
+            if key in ("updated_at", "ai_notes", "photo_urls", "listing_text", "reader_notes"):
                 continue
             old = existing.get(key)
             if old in (None, ""):

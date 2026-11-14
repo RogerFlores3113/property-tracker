@@ -428,6 +428,34 @@ def headline(cost: dict[str, Any], people: int = 1, noun: str = "people") -> str
     return text
 
 
+LISTING_NOTES_UNCOUNTED = "some amounts in the listing notes"
+_NOTE_OPEN = re.compile(r"not counted|not saved|not used|no amount is saved|could not tell|couldn't tell|left (?:blank|empty)|add it to|fill it in|ask (?:what|if|who|whether|which)|is not filled", re.I)
+_NOTE_MONEY = re.compile(r"\$\s?\d|\b(?:fee|fees|deposit|assessment|parking|garage|utilit\w*|rent|cost|costs|free|credit|hoa|tax|insurance)\b", re.I)
+
+
+_NOTE_CONTINUES = re.compile(r"(?:It|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This)\b")
+
+
+def note_units(text: str) -> list[str]:
+    """The saved reader notes as whole notes: a sentence plus the sentences that carry on from it ("It is not counted.")."""
+    units: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", " ".join(str(text or "").split())):
+        if units and _NOTE_CONTINUES.match(sentence):
+            units[-1] += " " + sentence
+        elif sentence:
+            units.append(sentence)
+    return units
+
+
+def listing_notes_uncounted(reader_notes: Any) -> bool:
+    """True when the saved reader notes still hold a money note that is open: an amount, fee or cost the reader saw and did
+    not count or could not place. The one test behind the "some amounts in the listing notes aren't counted" tag."""
+    for note in note_units(reader_notes):
+        if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(note):
+            return True
+    return False
+
+
 def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[str, Any] | None = None,
                       people: Any = 1, pets: bool = True, adults: Any = None) -> dict[str, Any]:
     """Rent or buy breakdown depending on the search's mode. ``people`` (people sharing the cost) adds
@@ -445,8 +473,8 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     n = int(a) if explicit else n
     out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets, n)
     noun = "adults" if explicit and mode != "buy" else "people"
-    if re.search(r"not counted anywhere|could not tell|not used anywhere|no amount is saved", str(place.get("reader_notes") or "")):
-        out["uncounted"] = list(out.get("uncounted") or []) + ["things in the listing notes"]  # see the place page: "From the listing when it was added"
+    if listing_notes_uncounted(place.get("reader_notes")):
+        out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
         out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
     out["people"] = n
     out["split_noun"] = noun
