@@ -352,7 +352,7 @@ def _extra_facts(p: dict[str, Any]) -> list[str]:
     out: list[str] = []
     pet = []
     if p.get("pet_weight_limit") is not None:
-        pet.append(("cats" if p.get("pets") == "cats" else "pets" if p.get("pets") == "both" else "dogs") + f" up to {p['pet_weight_limit']:g} lb")
+        pet.append((p["pets"] if p.get("pets") in ("cats", "dogs") else "pets") + f" up to {p['pet_weight_limit']:g} lb")
     if p.get("pet_count_limit") is not None:
         pet.append(f"up to {p['pet_count_limit']} pet" + ("" if p["pet_count_limit"] == 1 else "s"))
     if p.get("pet_rent") is not None:
