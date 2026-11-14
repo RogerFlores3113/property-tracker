@@ -107,7 +107,7 @@ def test_pets_negotiable_with_extra_charge():
 def test_pet_limits_stay_visible():
     out = parse("Pet friendly: cats and dogs under 50 lbs. No aggressive breeds. $35/mo pet rent. $1,300/mo 2 bed")
     assert out["pets"] == "both" and out["pet_rent"] == 35
-    assert "50 lbs" in out["found_in_listing"] and "breeds" in out["found_in_listing"]
+    assert out["pet_weight_limit"] == 50 and "breeds" in out["found_in_listing"]  # c11: the 50 lb limit is a field, only the breed rule is quoted
 
 
 # 6 -------------------------------------------------------------------- laundry

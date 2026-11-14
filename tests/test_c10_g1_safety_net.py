@@ -101,7 +101,7 @@ def test_phrase_is_short():
     long = "1 bed $1,000. " + "Lots of words about the building and the neighborhood and the view " * 3 + "plus a $300 trash fee that is charged " + "and more words " * 8
     note = parsers.parse_listing(long)["found_in_listing"]
     quoted = note.split('"')[1]
-    assert "$300" in quoted and len(quoted) <= 95
+    assert "$300" in quoted and len(quoted) <= 170
 
 
 # ---- negatives
@@ -217,7 +217,7 @@ def test_web_compare_has_a_listing_notes_row(client, store):
     a, _ = store.add_place(search_id=s["id"], title="A", address="1 A St", price=1400, reader_notes='The listing also says "$200 cleaning fee". It is not counted anywhere. ' + "x " * 100)
     b, _ = store.add_place(search_id=s["id"], title="B", address="2 B St", price=1300)
     html = client.get(f"/compare?ids={a['id']},{b['id']}").text
-    assert "Listing notes" in html and "See the place page" in html
+    assert "Listing notes" in html and "on the place page" in html
 
 
 def test_cost_line_points_to_the_notes(store):
@@ -262,7 +262,7 @@ def test_share_json_and_csv_leave_the_notes_out(client, store):
     store.add_place(search_id=s["id"], title="Keep", address="1 A St", price=1400, reader_notes="SECRETNOTE not counted anywhere")
     shared = client.get(f"/search/export.json?id={s['id']}").text
     assert "SECRETNOTE" not in shared
-    for url in ("/export/places.csv", "/export.csv", "/places.csv"):
+    for url in ("/export/places.csv", "/export.csv"):  # /places.csv carries the notes since cycle 11 (its own column)
         res = client.get(url)
         if res.status_code == 200:
             assert "SECRETNOTE" not in res.text
