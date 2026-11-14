@@ -151,6 +151,12 @@ def _safe_cell(value: Any) -> Any:
     return value
 
 
+def _no_tags(value: Any) -> Any:
+    """Listing text in a note column can hold a fence-like tag ("</untrusted>"). The CSV has no fence, so the angle brackets are
+    written as &lt; and &gt;, and a tag can't close or open a block if the file is handed to an AI tool."""
+    return value.replace("<", "&lt;").replace(">", "&gt;") if isinstance(value, str) else value
+
+
 def _plain(value: Any) -> Any:
     if value is None:
         return ""
@@ -222,7 +228,9 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
             elif field == "fit":
                 v = str((p.get("score") or {}).get("fit_label") or "").split(":")[0]  # "Check first: possible scam" -> "Check first"
             elif field == "red_flags":
-                v = _red_flags_text(p)
+                v = _no_tags(_red_flags_text(p))
+            elif field == "reader_notes":
+                v = _no_tags(v)
             elif field == "rating":
                 v = _combined_rating(p, mine)
             row.append(_safe_cell(_plain(v)))

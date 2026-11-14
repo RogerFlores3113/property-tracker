@@ -143,7 +143,10 @@ def test_saved_place_link_is_encoded_not_raw(store):
         store.add_place(title="L3", address="6 L St", url="https://user:pw@x.com/a")
 
 
-def test_restore_banner_shows_on_the_page_after_the_redirect(client):
-    r = client.get("/settings?restored=1")
-    assert r.status_code == 200 and "Backup restored." in r.text
+def test_restore_banner_shows_on_the_page_after_the_redirect(client, store, tmp_path):
+    # cycle 15: the banner follows the real restore redirect (a one-time message), never ?restored=1 on its own
+    store.checkpoint()
+    r = client.post("/backups/restore-file", files={"file": ("b.db", open(store.path, "rb").read())}, follow_redirects=False)
+    page = client.get(r.headers["location"]).text
+    assert "Backup restored." in page
     assert "Backup restored." not in client.get("/settings").text
