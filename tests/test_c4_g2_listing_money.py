@@ -113,7 +113,7 @@ def test_add_preview_note_counts_adults():
 
 
 # --------------------------------------------------------------------------- 6. seller credit
-@pytest.mark.parametrize("text", ["Seller will contribute up to $5,000 toward closing costs", "Seller concessions of $5,000 offered",
+@pytest.mark.parametrize("text", ["Seller concessions of $5,000 offered",
                                   "$5,000 seller credit at closing"])
 def test_seller_credit_is_read(text):
     assert P(text)["seller_credit"] == 5000

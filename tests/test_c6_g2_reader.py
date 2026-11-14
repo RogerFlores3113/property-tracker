@@ -83,4 +83,6 @@ def test_listing_name_stays_the_title():
 
 
 def test_seller_pays_closing_up_to():
-    assert parse_listing("List price $300,000. Closing costs paid by seller up to $5,000.")["seller_credit"] == 5000
+    # c12: "up to" is a cap, never a sure credit (it gets a note instead)
+    got = parse_listing("List price $300,000. Closing costs paid by seller up to $5,000.")
+    assert "seller_credit" not in got and "closing_costs" not in got

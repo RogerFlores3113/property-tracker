@@ -225,7 +225,7 @@ def place_page(request: Request, place_id: int, fresh: int = 0):
 @router.post("/places/{place_id}", include_in_schema=False)
 async def save_place(request: Request, place_id: int):
     store = get_store(request)
-    _place_or_404(store, place_id)
+    before = _place_or_404(store, place_id)
     form = await request.form()
     values = _form_fields(form)
     try:
@@ -233,7 +233,13 @@ async def save_place(request: Request, place_id: int):
     except ValueError as exc:
         return _place_page(request, place_id, status=400, form_values=values, error=str(exc))
     store.mark_seen(place_id)
-    return redirect(f"/places/{place_id}", notice="Saved.")
+    notice = "Saved."
+    if store.place_mode(place_id) == "buy":  # the buy cost does not use these two rent-side fields: say so, once, plainly
+        unused = [label for key, label in (("parking_cost", "parking cost"), ("move_in_fees", "move-in fees"))
+                  if values.get(key) not in (None, "") and values.get(key) != before.get(key)]
+        if unused:
+            notice += f" The cost of buying does not use {' or '.join(unused)}, so {'it is' if len(unused) == 1 else 'they are'} not counted. Add it to your own budget."
+    return redirect(f"/places/{place_id}", notice=notice)
 
 
 @router.post("/places/{place_id}/note", include_in_schema=False)
