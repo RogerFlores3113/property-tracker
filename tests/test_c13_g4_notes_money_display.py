@@ -27,7 +27,7 @@ def test_renters_insurance_note_goes_when_a_cost_field_is_filled(store, keep_tex
     assert "renter's insurance is required" in p["reader_notes"] or "No cost is counted for it" in p["reader_notes"]
     p = store.update_place(p["id"], **{field: value})
     assert "insurance" not in p["reader_notes"].lower() and "No cost is counted" not in p["reader_notes"]
-    assert "Credit check $25" in p["reader_notes"]  # an unrelated open note stays
+    assert "credit check" in p["reader_notes"].lower()  # an unrelated open note stays (cycle 13 G3 reads it as the application fee)
 
 
 def test_listing_notes_tag_goes_with_its_last_open_note(store):
