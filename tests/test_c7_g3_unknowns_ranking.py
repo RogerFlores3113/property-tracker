@@ -90,7 +90,7 @@ def test_partial_utilities_listed_are_unknown(store):
     es = _es(store, s, a, b)
     secs = compare.build_rows(es)
     r = _rows(secs)
-    assert r["missing"]["cells"][0]["text"] == "Unknown: electric, gas and internet"
+    assert r["missing"]["cells"][0]["text"] == "Unknown: electric, gas and internet (not listed)"
     assert r["unknown"]["cells"][0]["text"] == "Unknown: electric, gas and internet"
     assert r["missing"]["cells"][1]["text"] == "Nothing unknown"
     assert "not counted yet" in r["cost"]["cells"][0]["text"]

@@ -78,8 +78,8 @@ def test_ai_text_flag_goes_to_check_first_not_best_fits_and_scams_too(store):
     assert today.best_fits(rows) == []
     assert sorted(c["place"]["title"] for c in today.check_first(rows)) == ["Ai", "Scam"]
     out = text(call(server(store), "todays_list"))
-    assert "Check first: #1 " in out and "text aimed at AI tools in the listing" in out
-    assert "Text aimed at AI tools in the listing" in local_client(store).get("/").text
+    assert "Check first: #1 " in out and "text aimed at AI tools" in out
+    assert "text aimed at AI tools" in local_client(store).get("/").text
     assert "Ai" not in out.split("Best fits right now:")[1].split("Check first: #")[0]
     assert "Check first: #2" in out
 

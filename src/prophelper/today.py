@@ -60,10 +60,18 @@ def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[st
     open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in ("Passed", "Lease signed", "Closed") and is_best_fit(p)
                  and not no_price(p)]
     open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), -p["score_total"], p["title"].lower()))
+    if open_rows and _no_address(open_rows[0]):  # a place with no address is never the top pick when another full fit has one
+        i = next((i for i, p in enumerate(open_rows) if not _no_address(p)), None)
+        if i is not None:
+            open_rows.insert(0, open_rows.pop(i))
     top = open_rows[:limit]
     for p in top:
         p["caution"] = caution(p)
     return top
+
+
+def _no_address(place: dict[str, Any]) -> bool:
+    return not str(place.get("address") or "").strip()
 
 
 AI_TEXT_CAUTION = "Check first: text aimed at AI tools in the listing. Read it yourself before you rely on this score."
@@ -99,10 +107,19 @@ def check_first(rows: list[dict[str, Any]], mode: str = "rent") -> list[dict[str
         if not _open(p):
             continue
         if possible_scam(p):
-            out.append({"place": p, "text": scam_text})
+            out.append({"place": p, "text": _own_reason(p, scam_text), "scam": True})
         elif ai_text_only(p):
-            out.append({"place": p, "text": AI_TEXT_CHECK_TEXT})
+            first = next((str(f) for f in p.get("flags") or [] if f), "")
+            generic = "Read it yourself before you rely on this score." if "aimed at AI tools" in first else AI_TEXT_CHECK_TEXT
+            out.append({"place": p, "text": _own_reason(p, generic), "scam": False})
+    out.sort(key=lambda r: (not r["scam"], r["place"]["title"].lower()))  # possible scams first, then by name
     return out
+
+
+def _own_reason(place: dict[str, Any], generic: str, first: str = "") -> str:
+    """The place's own first flag (so check-first places can be told apart), then the plain advice."""
+    flag = first or next((str(f) for f in place.get("flags") or [] if f), "")
+    return f"{flag} {generic}" if flag else generic
 
 
 def caution(place: dict[str, Any]) -> str:

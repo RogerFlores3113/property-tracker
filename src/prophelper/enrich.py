@@ -71,7 +71,7 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
         "commute_tops": commute_tops,
         "next": _next_date(place, tours),
         "flags": flags, "possible_scam": serious,
-        "check_first": bool(serious or (flags and all("aimed at AI tools" in f for f in flags))),  # scam sign or AI-aimed text: never a plain score
+        "check_first": bool(serious or any("aimed at AI tools" in str(f) for f in flags)),  # scam sign or AI-aimed text: never a plain score
         "hidden_by_dealbreaker": bool(search.get("hide_dealbreakers") and score["fails_dealbreaker"] and not protected),
         "cash_unknown": None,
         "people": cost["people"], "split_noun": cost.get("split_noun", "people"), "per_person": cost.get("per_person"),  # people = who the cost is split between (adults, when the search says)

@@ -205,7 +205,10 @@ def unknown_text(unknown: list[str], guessed: list[str]) -> str:
 
 
 def _not_counted_text(p: dict[str, Any]) -> str:
-    return unknown_text(cost_unknowns(p), _guessed_names(p))
+    names = partial_utilities(p)
+    plain = _join_and(names) if names else ""
+    unknown = [u + " (not listed)" if plain and u == plain else u for u in cost_unknowns(p)]  # the listing never named them
+    return unknown_text(unknown, _guessed_names(p))
 
 
 def still_unknown_text(p: dict[str, Any], label=lambda x: x) -> str:
@@ -368,9 +371,13 @@ def _ineligible(p: dict[str, Any], best_of: bool = False) -> bool:
             or (best_of and ai_text_only(p)))
 
 def ai_text_only(p: dict[str, Any]) -> bool:
-    """True when the only thing to check in the listing is text aimed at AI tools (no scam sign)."""
-    flags = [str(f) for f in p.get("flags") or []]
-    return bool(flags) and not p.get("possible_scam") and all("aimed at AI tools" in f for f in flags)
+    """True when the listing has text aimed at AI tools and no scam sign. Other small flags (such as no address yet) don't
+    make it any less check first: a place with AI-aimed text is never a plain fit, whatever else is flagged."""
+    return has_ai_text(p) and not p.get("possible_scam")
+
+
+def has_ai_text(p: dict[str, Any]) -> bool:
+    return any("aimed at AI tools" in str(f) for f in p.get("flags") or [])
 
 
 AI_TEXT_FIT = "Check first: text aimed at AI tools in the listing"
@@ -718,7 +725,10 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             cell = _money(amount)
             if key == "utilities" and amount == 0 and not _utilities_fully_included(p):
-                cell["incomplete"] = True  # a $0 guess for a place that only includes some utilities can't tie a fully included one
+                # Only some utilities are listed as included: never a plain $0, and it never wins the row.
+                left = partial_utilities(p)
+                cell = _cell("$0 for what is listed, " + (_join_and(left) + " not known" if left else "the rest not known"), None)
+                cell["incomplete"] = True
             if key == "pet_rent" and amount == 0:
                 cell["text"] = "$0 (none)"
             cells.append(cell)
