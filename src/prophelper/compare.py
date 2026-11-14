@@ -871,6 +871,12 @@ def lowest_cost_sentences(places: list[dict[str, Any]], name) -> list[str]:
     """The At a glance sentences for the lowest cost. ``name(place)`` is how a place is called (its title on the web)."""
     r = lowest_cost(places)
     out: list[str] = []
+    priced = [p for p in places if p["cost_total"] is not None]
+    if priced and all(p["score"].get("fit") == "check_first" or p.get("possible_scam") or has_ai_text(p) for p in priced):
+        # every priced place has a check-first flag: none is "cheapest", and the price is not a fair comparison yet
+        out.append("Every place has something to check first, so none of them can be compared on price until you have checked them.")
+        out.extend(unpriced_sentences(places, name))
+        return out
     w = r["winners"]
     if w and not r["same"]:
         note = lowest_note(r)

@@ -450,7 +450,9 @@ def _fit_text(e: dict[str, Any]) -> str:
     s = e["score"]
     fit = s.get("fit", "fits")
     if fit == "fits" and not s.get("concerns"):
-        return "Fit: Yes"
+        notes = s.get("notes") or []
+        # a nice-to-have a little over its limit (a commute of 24 min against 20) is named here, not only in the score reason
+        return "Fit: Yes" + (f" (with a note: {'; '.join(_t(n, 'fit note', 160) for n in notes)})" if notes else "")
     label = s.get("fit_label") or scoring.FIT_LABELS.get(fit, "Yes")
     if fit == "near_miss" and s.get("near_parts"):
         return f"Fit: {label} ({_near_line(e)})"
@@ -536,7 +538,7 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
     elif e["score"].get("fit_label") == "Fits, but check":
         bits.append("Fits, but check: " + "; ".join(_t(c, "fit reason", 120) for c in e["score"]["concerns"]))
     if e["score"].get("fit") == "fits" and e["score"].get("fit_label") != "Fits, but check" and e["score"].get("notes"):
-        bits.append("Note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
+        bits.append("Fits, with a note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
     if compare_mod.ai_text_only(e):
         bits.append(compare_mod.AI_TEXT_FIT)
     elif e["flags"] and e["score"].get("fit") != "check_first":
@@ -544,6 +546,13 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
     if e.get("is_sample"):
         bits.append("sample")
     return ", ".join(bits)
+
+
+def _flag_with_quote(flag: str) -> str:
+    """A hint for the reply. The quoted listing line, if any, comes back inside the untrusted fence, never bare."""
+    quote = redflags.quote_of(flag)
+    base = redflags.without_quote(flag)
+    return base + (f" It says: {guards.tag(quote, 'listing text', 200)}" if quote else "")
 
 
 def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
@@ -577,7 +586,7 @@ def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
     if e.get("next"):
         lines.append(f"Next: {e['next']['text']} ({e['next']['rel']})")
     if e["flags"]:
-        lines.append("Things to check: " + " ".join(redflags.without_quote(f) for f in e["flags"][:3]))
+        lines.append("Things to check: " + " ".join(_flag_with_quote(f) for f in e["flags"][:3]))
     return lines
 
 
@@ -1455,7 +1464,10 @@ def build_server(store: Store) -> FastMCP:
             lines.append(f"#{e['id']} is cheapest, but {why}.")
         if not tail:
             lines.extend(compare_mod.skipped_unknown_sentences(lc, ref))
-        if lc["blocked"]:
+        priced_ = [e for e in es if e["cost_total"] is not None]
+        if priced_ and all(e["score"].get("fit") == "check_first" or e.get("possible_scam") or compare_mod.has_ai_text(e) for e in priced_):
+            lines.append("Every place has something to check first, so none of them can be compared on price until you have checked them.")
+        elif lc["blocked"]:
             lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({why})" for e, why in lc["blocked"]) + ".")
         if scored:
             top = max(e["score_total"] for e in scored)
