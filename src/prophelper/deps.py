@@ -36,6 +36,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from . import __version__, helpers, stages
+from .parsers import street_with_unit
 from .paths import resource_dir
 from .scoring import KIND_LABELS
 from .store import (COMMUTE_MODES, CONTACT_LOG_KINDS, CONTACT_ROLES, CRITERION_KINDS, DOCUMENT_KINDS, DRAFT_KINDS,
@@ -57,7 +58,7 @@ def make_templates(store: Store) -> Jinja2Templates:
         "local": helpers.local_time, "clock": helpers.clock_text, "day": helpers.day_text, "date": helpers.local_date,
         "num": helpers.number_text, "ago": helpers.ago, "until": helpers.until, "money": helpers.money,
         "stage_slug": helpers.stage_slug, "beds": helpers.beds_text, "host": helpers.host_of,
-        "dt_input": helpers.input_datetime,
+        "dt_input": helpers.input_datetime, "street_unit": street_with_unit,
     })
     env.globals.update({
         "STAGES_BY_MODE": stages.STAGES_BY_MODE, "stages_for": stages.stages_for, "CLOSED_STAGES": stages.CLOSED_STAGES,

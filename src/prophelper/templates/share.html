@@ -35,7 +35,7 @@
 <table>
   <thead>
     <tr><th scope="col">What is compared</th>
-      {% for p in places %}<th scope="col">{{ p.title }}<div class="fine">{{ p.address }}{% if p.unit %} #{{ p.unit }}{% endif %}</div></th>{% endfor %}</tr>
+      {% for p in places %}<th scope="col">{{ p.title }}<div class="fine">{{ p.address|street_unit(p.unit) }}</div></th>{% endfor %}</tr>
   </thead>
   {% for sec in sections %}
   <tbody>
