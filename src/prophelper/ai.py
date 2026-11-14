@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 import httpx
 
-from . import enrich, guards
+from . import enrich, guards, redflags
 from .ai_key import ENV_KEY, get_key, key_status  # noqa: F401  (re-exported for the routes)
 from .store import Store
 
@@ -307,7 +307,7 @@ def _place_block(store: Store, place: dict[str, Any], search: dict[str, Any], fu
         parts.append(f"TRUE MONTHLY COST (an estimate by this app): {_money(cost['total'])}"
                      + (f". Missing numbers: {', '.join(cost['missing'])}" if cost.get("missing") else ""))
     if full.get("flags"):
-        parts.append("THINGS THIS APP ALREADY NOTICED:\n" + "\n".join(f"- {f}" for f in full["flags"]))
+        parts.append("THINGS THIS APP ALREADY NOTICED:\n" + "\n".join(f"- {redflags.without_quote(f)}" for f in full["flags"]))
     if place.get("notes"):
         parts.append("MY NOTES:\n" + _clip(place["notes"], 2500))
     events = [e for e in store.list_events(place["id"], newest_first=False) if e["kind"] != "ai"][-10:]

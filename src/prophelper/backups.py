@@ -114,6 +114,17 @@ def reset_network_settings(store: Store) -> None:
         store.set_setting(key, "0")
 
 
+def dropped_links_note(dropped: dict[str, int]) -> str:
+    """Plain words for links removed after a restore ('' when none)."""
+    n, k = dropped.get("links", 0), dropped.get("photos", 0)
+    parts = []
+    if n:
+        parts.append(f"{n} place link{' was' if n == 1 else 's were'} not a normal web address, so {'it was' if n == 1 else 'they were'} removed")
+    if k:
+        parts.append(f"{k} photo link{' was' if k == 1 else 's were'} not a normal web address, so {'it was' if k == 1 else 'they were'} removed")
+    return (" " + "; ".join(parts) + ". The places are kept.") if parts else ""
+
+
 def restore(store: Store, name: str) -> dict[str, Any]:
     """Back up the data as it is now, then put the named backup in its place.
 
@@ -131,7 +142,7 @@ def restore(store: Store, name: str) -> dict[str, Any]:
     except sqlite3.Error as exc:
         raise ValueError(f"Couldn't restore that backup, so your data wasn't changed ({exc}).") from exc
     reset_network_settings(store)
-    return {"restored": info, "saved": saved}
+    return {"restored": info, "saved": saved, "links_dropped": store.clean_stored_links()}
 
 
 # ------------------------------------------------------------------ restoring from a file the user picked
@@ -352,6 +363,6 @@ def restore_from_upload(store: Store, data: bytes) -> dict[str, Any]:
         except sqlite3.Error as exc:
             raise ValueError(f"Couldn't restore that file, so your data wasn't changed ({exc}).") from exc
         reset_network_settings(store)
-        return {"counts": counts, "saved": saved}
+        return {"counts": counts, "saved": saved, "links_dropped": store.clean_stored_links()}
     finally:
         tmp.unlink(missing_ok=True)

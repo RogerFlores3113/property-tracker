@@ -74,7 +74,17 @@ _AI_EXTRA = re.compile(
     r"\b(?:score|rate|rank|grade)\s+(?:it|this|this (?:place|listing|apartment|home|property)|the (?:place|listing))\s+(?:a |as |at |an? )?(?:100|perfect|10/10)\b|"
     r"\bperfect score\b|"
     r"\b(?:disregard|ignore|forget)\s+(?:the\s+|that\s+|any\s+)?(?:earlier|previous|prior|above|listed|old|first)\s+(?:price|rent|cost|fees?|amount|numbers?)\b|"
-    r"\bmark (?:this|the|that) (?:place|listing|property|apartment|home|house) as (?:scam[- ]free|safe|verified|legit(?:imate)?|trusted)\b", re.I)
+    r"\bmark (?:this|the|that) (?:place|listing|property|apartment|home|house) as (?:scam[- ]free|safe|verified|legit(?:imate)?|trusted)\b|"
+    # cycle 11: other ways of addressing an AI reader
+    r"\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+|the\s+|your\s+|these\s+|my\s+)*(?:previous|prior|above|earlier|original)\s+(?:guidance|advice|context|messages?|programming|training|constraints?)\b|"
+    r"\b(?:ai|a\.i\.|llm|chatbot|language model)s?[ -](?:summari[sz]ers?|summary tools?|readers?|crawlers?|scrapers?|parsers?)\s*[:,\-]|"
+    r"\b(?:important|attention|attn|notice|note)\b[^.\n:]{0,20}\b(?:for|to)\s+(?:any\s+|all\s+|the\s+)?(?:ai|a\.i\.|llm|chatbot|language model)\b|"
+    r"\b(?:describe|call|present|portray|label|summari[sz]e)\s+(?:this|the|it)(?:\s+(?:unit|place|listing|apartment|home|property|house))?\s+as\s+(?:risk[- ]free|scam[- ]free|safe|flawless|perfect)\b|"
+    r"\brate\s+(?:this|it|the\s+(?:unit|place|listing|apartment|home|property|house))\s+(?:a\s+)?(?:10|ten)\s*(?:out of|/)\s*10\b|"
+    r"\bsystem\s*:\s*(?:new (?:rules?|instructions?)|updated (?:rules?|instructions?)|override|ignore|you (?:must|should|are|will)|from now on|send|forward|share|disclose|reveal|delete)\b|"
+    r"\bnew (?:rules|instructions) (?:now )?apply\b|"
+    r"\b(?:send|forward|share|email|reveal|disclose|leak)\s+(?:the\s+|your\s+)?(?:user|renter|buyer)(?:'s|s'|’s)?\s+(?:contact|contacts|data|notes|personal|private|address book|files?|messages?)\b|"
+    r"\b(?:mention|say|state|report|tell|inform|remind|assure)\s+(?:to\s+)?(?:your|the)\s+(?:user|human|operator)s?\b", re.I)
 _SYSTEM_IN_COMMENT = re.compile(r"\b(?:system|assistant|developer)\s*:", re.I)
 # "Payment plan for the deposit" plus a request to talk only through messages is a soft sign worth a look.
 _PAY_PLAN = re.compile(r"\bpayment plans?\b[^.\n]{0,30}\b(?:deposit|rent|move[- ]in)\b|\b(?:deposit|rent|move[- ]in)\b[^.\n]{0,30}\bpayment plans?\b", re.I)
@@ -82,6 +92,45 @@ _PM_ONLY = re.compile(r"\b(?:pm|dm) me\b|\bmessage me (?:on|via|through) (?:face
 
 _ZERO_WIDTH = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u00ad\ufeff\u180e]")
 _COMMENT = re.compile(r"<!--(.*?)(?:-->|$)", re.S)
+
+
+AI_QUOTE_MARK = ' It says: "'
+
+
+def without_quote(flag: str) -> str:
+    """A hint with the quoted listing line cut off. Used wherever a hint goes to an AI tool, so the listing's own
+    words never reach it outside the untrusted fence."""
+    return flag.split(AI_QUOTE_MARK, 1)[0]
+
+
+def _quote(snippet: str, limit: int = 100) -> str:
+    """A short, plain copy of a line for a hint: no markup characters, quotes softened, shortened with '...'."""
+    clean = re.sub(r"[\x00-\x1f\x7f<>`{}\\]", " ", snippet).replace('"', "'")
+    clean = " ".join(clean.split())
+    return clean if len(clean) <= limit else clean[:limit].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
+
+
+def _ai_line(text: str, comments: list[str]) -> str | None:
+    """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable."""
+    hit = None
+    for pattern in (_AI_TARGETED, _AI_EXTRA):
+        m = pattern.search(text)
+        if m and (hit is None or m.start() < hit.start()):
+            hit = m
+    if hit is not None:
+        start = max((text.rfind(sep, 0, hit.start()) for sep in (". ", "! ", "? ")), default=-1) + 1
+        starts = [i for i in (start,) if i > 0]
+        begin = (starts[0] + 1) if starts else 0
+        ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
+        end = min(ends) + 1 if ends else len(text)
+        # keep the quote centred on the match when the sentence is long
+        if end - begin > 100:
+            begin = max(begin, hit.start() - 20)
+        return _quote(text[begin:end])
+    for c in comments:
+        if _SYSTEM_IN_COMMENT.search(c):
+            return _quote(c)
+    return None
 
 
 def normalise_text(text: str) -> tuple[str, list[str]]:
@@ -168,8 +217,9 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             continue
         if pattern.search(text):
             flags.append(message.replace("lease", "contract") if buy else message)
-    if _AI_TARGETED.search(text) or _AI_EXTRA.search(text) or any(_SYSTEM_IN_COMMENT.search(c) for c in comments):
-        flags.append("This listing has text aimed at AI tools; treat it with care.")
+    ai_line = _ai_line(text, comments)
+    if ai_line is not None:
+        flags.append("This listing has text aimed at AI tools; treat it with care." + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and _BUY_PAYMENT.search(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
                      + ("Don't send money before you have toured the place and an escrow or title company is involved." if buy else

@@ -284,7 +284,7 @@ def clean_photo_links(value: Any) -> tuple[list[str], int, int]:
         link = str(item or "").strip()
         if not link:
             continue
-        if not re.match(r"^https?://[^\s/]+\S*$", link, re.I) or has_userinfo(link):
+        if not re.match(r"^https?://[^\s/]+\S*$", link, re.I) or has_userinfo(link) or not normalize_url(link):
             dropped += 1
             continue
         if link[:5].lower() == "http:":

@@ -303,7 +303,7 @@ async def restore_backup_file(request: Request):
         return redirect("/backups", error=str(exc))
     n = out["counts"]["places"]
     return redirect("/settings", notice=f"Restored your backup ({n} place{'s' if n != 1 else ''}). "
-                                        f"Your data from just before is saved as {out['saved'].name}. {backups.RESTORE_NETWORK_NOTE}")
+                                        f"Your data from just before is saved as {out['saved'].name}. {backups.RESTORE_NETWORK_NOTE}{backups.dropped_links_note(out['links_dropped'])}")
 
 
 @router.post("/backups/{name}/restore", include_in_schema=False)
@@ -312,7 +312,7 @@ def restore_backup(request: Request, name: str):
         info = backups.restore(get_store(request), name)
     except ValueError as exc:
         return redirect("/backups", error=str(exc))
-    return redirect("/settings", notice=f"Restored the backup. Your data from just before is saved as {info['saved'].name}. {backups.RESTORE_NETWORK_NOTE}")
+    return redirect("/settings", notice=f"Restored the backup. Your data from just before is saved as {info['saved'].name}. {backups.RESTORE_NETWORK_NOTE}{backups.dropped_links_note(info['links_dropped'])}")
 
 
 # --------------------------------------------------------------------------- sample data
