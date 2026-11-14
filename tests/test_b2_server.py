@@ -169,7 +169,7 @@ def test_move_place_forward_and_to_passed_only(srv, store):
     call(srv, "move_place", place_id=pid, stage="Tour booked")
     r = call(srv, "move_place", place_id=pid, stage="Toured", note="user said they went")
     assert store.get_place(pid)["stage"] == "Toured" and "from Tour booked to Toured" in text(r)
-    assert "can't move it back" in text(r)
+    assert "The change is on the timeline" in text(r) and "can't move it back" not in text(r)
     assert "forward or to Passed" in err(srv, "move_place", place_id=pid, stage="Saved")
     assert "forward or to Passed" in err(srv, "move_place", place_id=pid, stage="Contacted")
     assert store.get_place(pid)["stage"] == "Toured"

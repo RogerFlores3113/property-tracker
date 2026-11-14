@@ -1310,26 +1310,52 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
     return out
 
 
+_PET_FILLER = re.compile(r"\b(?:deposits?|monthly|fees?|rent|ok|okay|allowed|permitted|accepted|welcomed?|fine|friendly|policy|rules?|with|and|or|per|a|an|the|is|are|we|love|both|each|every|total|combined|in|of|on|at|to|for|your|any|all|up|unit|apartment|home|place|building|month|mo|pet|pets|non|refundable|nonrefundable|one[- ]time|plus|extra|only|have|has|can|may)\b", re.I)
+
+
 def _pet_limit_is_in_fields(clause: str, out: dict[str, Any]) -> bool:
-    """True when a pet clause only says a weight or a count that is already saved in its own field, so a note would repeat it."""
-    if out.get("pet_weight_limit") is None and out.get("pet_count_limit") is None:
+    """True when a pet clause only says things the fields already hold, so a note would repeat it: every weight, count and
+    dollar amount in the line is the value of its own field (weight limit, count limit, pet rent, fee or deposit), the kinds
+    of pet it names agree with the pets field, and nothing else is in it (no breed, size or approval rule)."""
+    if all(out.get(k) is None for k in ("pet_weight_limit", "pet_count_limit", "pet_rent", "pet_fee", "pet_deposit")):
         return False
-    if out.get("pets") in ("cats", "dogs"):
-        clause = re.sub(r"\b" + out["pets"][:-1] + r"s? only\b", " ", clause, flags=re.I)  # "Cats only" is what the pets field says
-    clause = re.sub(r"\bweight[ \t]+(?:limit|max(?:imum)?)\b", "limit", clause, flags=re.I)  # "Dog weight limit 60 lbs" is just the weight field
-    if out.get("pet_weight_limit") is not None:
-        lbs = [float(x) for x in re.findall(r"\b(\d{1,3})\s*(?:lbs?\b|pounds?\b)", clause, re.I)]
-        if any(x != float(out["pet_weight_limit"]) for x in lbs):
-            return False  # a different weight in the clause is not what the field holds
-        if lbs:
-            clause = re.sub(r"\b(?:small|medium|large|big|little)\b", " ", clause, flags=re.I)
-    if re.search(r"\bbreeds?\b|restrict|approv|\bsize\b|case[- ]by[- ]case|negotiab|consider|\bonly\b|aggress|spay|neuter|vaccin|licen[sc]e|not allowed|prohibit|\bweigh", clause, re.I):
+    low = clause
+    pets = out.get("pets")
+    if pets in ("cats", "dogs"):
+        low = re.sub(r"\b" + pets[:-1] + r"s? only\b", " ", low, flags=re.I)  # "Cats only" is what the pets field says
+    low = re.sub(r"\bno\s+(?:pets?|dogs?|cats?|animals?)\s+(?=(?:over|above|heavier than|more than)\b)", " ", low, flags=re.I)  # "no pets over 70 lbs" is the weight limit
+    if re.search(r"\b\d{1,3}\s*-?\s*(?:lbs?\b|pounds?\b)", low, re.I):
+        low = re.sub(r"\b(?:small|medium|large|big|little)\b", " ", low, flags=re.I)  # "small dogs (35 lb limit)": the weight is the size
+    if re.search(r"breed|restrict|approv|\bsize\b|case[- ]by[- ]case|negotiab|consider|\bonly\b|aggress|spay|neuter|vaccin|licen[sc]e|not allowed|prohibit|except|service animal|emotional|depend|unless|\bif\b|\bnot\b|\bno\b(?! more than)", low, re.I):
         return False
-    if re.search(r"\bbreed|restrict", clause, re.I):
-        return False
-    rest = re.sub(r"\b\d{1,3}\s*(?:lbs?\b\.?|pounds?\b)|\bmax(?:imum)?\b|\bup to\b|\bunder\b|\bover\b|\bno more than\b|\blimit\b|\bweight\b|\bno\b|\b(?:\d|one|two|three|four)\s+(?:pets?|cats?|dogs?|animals?)\b|\b(?:pets?|cats?|dogs?|animals?)\b", " ", clause, flags=re.I)
-    rest = re.sub(r"\$\s?\d[\d,]*(?:\.\d\d)?|\b(?:deposit|monthly|fee|rent|ok|okay|allowed|fine|with|and|per|a|month|mo|each|welcome|pet)\b", " ", rest, flags=re.I)
-    return not re.search(r"[A-Za-z]{3,}", rest)
+    low = re.sub(r"\bweight[ \t]+(?:limit|max(?:imum)?)\b", "limit", low, flags=re.I)
+    # kinds of pet: the pets field must agree
+    kinds = {k.lower().rstrip("s") for k in re.findall(r"\b(cats?|dogs?)\b", low, re.I)}
+    if kinds:
+        allowed = {"cats": {"cat"}, "dogs": {"dog"}, "both": {"cat", "dog"}}.get(str(pets))
+        if allowed is None or not kinds <= allowed:
+            return False
+    # weights
+    for w in re.findall(r"\b(\d{1,3})\s*-?\s*(?:lbs?\b|pounds?\b)", low, re.I):
+        if out.get("pet_weight_limit") is None or float(w) != float(out["pet_weight_limit"]):
+            return False
+    low = re.sub(r"\b\d{1,3}\s*-?\s*(?:lbs?\b\.?|pounds?\b)", " ", low, flags=re.I)
+    # counts: "2 pets", "two pet", "max 2", "limit: 2"
+    for m in re.finditer(r"\b(\d|one|two|three|four)\b(?!\s*(?:/|%))", low, re.I):
+        v = m.group(1).lower()
+        n = int(v) if v.isdigit() else _NUM_WORDS[v]
+        if out.get("pet_count_limit") is None or float(n) != float(out["pet_count_limit"]):
+            return False
+    low = re.sub(r"\b(?:\d|one|two|three|four)\b", " ", low, flags=re.I)
+    # money
+    money_fields = [out.get(k) for k in ("pet_rent", "pet_fee", "pet_deposit") if out.get(k) is not None]
+    for m in re.finditer(r"\$\s?(\d[\d,]*)(?:\.\d\d)?", low):
+        if float(m.group(1).replace(",", "")) not in [float(x) for x in money_fields]:
+            return False
+    low = re.sub(r"\$\s?\d[\d,]*(?:\.\d\d)?(?:\s*/\s*(?:mo|month)\b)?", " ", low)
+    low = _PET_FILLER.sub(" ", low)
+    low = re.sub(r"\b(?:cats?|dogs?|animals?|max(?:imum)?|limit|weight|up|under|over|more|than|pets?|lbs?|pounds?)\b", " ", low, flags=re.I)
+    return not re.search(r"[A-Za-z]{2,}", low)
 
 
 def _pet_limits(text: str) -> list[str]:
@@ -3657,7 +3683,7 @@ def _restates_field(note: str, out: dict[str, Any]) -> bool:
         return _filled(out, "special_assessment") and _filled(out, "special_assessment_payer")
     if re.match(r"The listing says renter's insurance is required", note):
         return _filled(out, "insurance") or _filled(out, "other_monthly_fees")
-    m = re.fullmatch(r'The listing also says "([^"]*)"\. It is not counted anywhere\. Check what it is for\.', note)
+    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It is not counted anywhere\. Check what it is for\.|It is a one-time cost, so it is not in the monthly cost\. Check what it is for\.|It is a monthly fee and it is not counted anywhere\. Check what it is for\.)', note)
     if m:
         amounts = _dollar_values(m.group(1))
         return bool(amounts) and amounts <= _net_used_numbers(out, [])
@@ -3825,6 +3851,21 @@ _NET_REAL_FIELDS = ("price", "parking_cost", "pet_rent", "pet_fee", "utilities_e
 _NET_ENDS = ".;!?\n|•"
 
 
+_ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|non[- ]?refundable", re.I)
+_MONTHLY_WORDS = re.compile(r"/\s*(?:mo|month)\b|\bper month\b|\ba month\b|\bmonthly\b|\bmo\.", re.I)
+
+
+def _uncounted_kind_sentence(phrase: str) -> str:
+    """What the safety-net note says about a quoted amount that no field holds: a one-time cost is not in the monthly cost, a
+    monthly fee is not counted, and when the line does not say, the generic sentence."""
+    one, monthly = bool(_ONE_TIME_WORDS.search(phrase)), bool(_MONTHLY_WORDS.search(phrase))
+    if one and not monthly:
+        return "It is a one-time cost, so it is not in the monthly cost."
+    if monthly and not one:
+        return "It is a monthly fee and it is not counted anywhere."
+    return "It is not counted anywhere."
+
+
 def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
     """The short phrase around text[start:end]: the clause it sits in. A clause that fits ``limit`` is quoted whole, never
     cut in the middle; a longer one is narrowed to the comma-separated piece that holds the match, and only a piece that is
@@ -3959,6 +4000,8 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
             if any(abs(c * k - amount) < 0.01 for c in used if c):
                 continue  # "For 2 adults that is $110 together": the sum of a per-adult fee that is already placed
         done.add(amount)
+        if any(f'"{phrase}"' in n for n in notes):
+            continue  # a second amount in the same quoted line: the line is already there
         if re.search(r"\b(?:per|a|each)\s+load\b|/\s*load\b", near, re.I):
             notes.append(f'The listing says laundry costs "{phrase}". It is not counted anywhere.')
         elif re.search(r"\bincluded\s+in\s+(?:your|the)\s+(?:monthly\s+)?rent\b", phrase, re.I) and not re.search(r"\bnot\s+included\b", phrase, re.I):
@@ -3966,7 +4009,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         elif re.search(r"\b(?:holding|reservation|reserve|move[- ]in total|total to move)\b", phrase, re.I):
             notes.append(f'The listing says "{phrase}". It is a one-time amount, so it is not in the monthly cost. Ask if it is taken off what you owe at move-in.')
         else:
-            notes.append(f'The listing also says "{phrase}". It is not counted anywhere. Check what it is for.')
+            notes.append(f'The listing also says "{phrase}". {_uncounted_kind_sentence(phrase)} Check what it is for.')
     low_facts = " ".join(facts).lower()
     limit = out.get("pet_weight_limit")
     seen_w: set[int] = set()

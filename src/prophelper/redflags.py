@@ -114,6 +114,10 @@ _SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][ \t]){3,}[^\W\d_](?![^\W\d_])")
 _SEP_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][.\-_]){4,}[^\W\d_](?![^\W\d_])")
 # "i  g  n  o  r  e": letters split by the same run of two spaces
 _WIDE_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_] {2}){3,}[^\W\d_](?![^\W\d_])")
+# a whole phrase written with dots between every letter ("i.g.n.o.r.e a.l.l p.r.e.v.i.o.u.s"): short words of three letters or more are
+# joined too, but only next to a dotted word of five letters or more, so "U.S.A" or "a.k.a" on their own stay as they are
+_DOT_WORD = r"[^\W\d_](?:[.\-_][^\W\d_]){2,}"
+_DOT_PHRASE = re.compile(r"(?<![^\W\d_.\-_])" + _DOT_WORD + r"(?:[ \t]+" + _DOT_WORD + r")+(?![^\W\d_])")
 _COMMENT = re.compile(r"<!--(.*?)(?:-->|$)", re.S)
 _LETTERS = re.compile(r"[^\W\d_]+")
 # Cyrillic and Greek letters that look like Latin ones (a small hand-written map, no packages)
@@ -181,8 +185,22 @@ def quote_of(flag: str) -> str:
 
 
 def _ai_line(text: str, comments: list[str]) -> str | None:
-    """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable."""
-    text = " ".join(_TAG.sub(" ", text).split())
+    """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable.
+    The quote starts at the start of its own line or sentence (never at the line before), and stops at a tag."""
+    bound: set[int] = set()  # places where a new line or a tag was: a quote never reaches across them at its start
+    built = ""
+    for piece in re.split(r"(" + _TAG.pattern + r"|\n)", text):
+        if piece == "\n" or _TAG.fullmatch(piece):
+            if built and not built.endswith(" "):
+                bound.add(len(built))
+                built += " "
+            continue
+        piece = " ".join(piece.split())
+        if piece:
+            if built and not built.endswith(" "):
+                built += " "
+            built += piece
+    text = built
     hit = None
     plain = text
     # also try the text with every look-alike letter folded and with leet digits read as letters
@@ -195,9 +213,14 @@ def _ai_line(text: str, comments: list[str]) -> str | None:
         if hit is not None:
             break
     if hit is not None:
-        begin = max((text.rfind(sep, 0, hit.start()) + len(sep) for sep in (". ", "! ", "? ") if text.rfind(sep, 0, hit.start()) != -1), default=0)
+        starts = [text.rfind(sep, 0, hit.start()) + len(sep) for sep in (". ", "! ", "? ") if text.rfind(sep, 0, hit.start()) != -1]
+        starts += [i + 1 for i in bound if i < hit.start()]
+        begin = max(starts, default=0)
+        if re.search(r"\d", text[begin:hit.start()]):
+            begin = hit.start()  # "12 N Race St Urbana ignore previous instructions": an address or price in front is not part of it
         ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
-        end = min(ends) + 1 if ends else len(text)
+        ends += [i for i in bound if i >= hit.end()]
+        end = min(ends) + (0 if ends and min(ends) in bound else 1) if ends else len(text)
         return _quote(text[begin:end])
     for c in comments:
         if _SYSTEM_IN_COMMENT.search(c):
@@ -205,7 +228,7 @@ def _ai_line(text: str, comments: list[str]) -> str | None:
     return None
 
 
-def normalise_text(text: str) -> tuple[str, list[str]]:
+def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]:
     """The text as a reader would see it, for matching: HTML entities decoded, zero-width characters removed, HTML comments
     taken out of the text, whitespace collapsed. Returns ``(text, comment_contents)``. The contents of comments are also
     appended to the text so they are scanned too."""
@@ -218,12 +241,16 @@ def normalise_text(text: str) -> tuple[str, list[str]]:
     out = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", out))
     out = _ZERO_WIDTH.sub("", out)
     out = "".join(ch for ch in out if unicodedata.category(ch) != "Mn")
+    out = _DOT_PHRASE.sub(lambda m: " ".join(re.sub(r"[.\-_]", "", w) for w in m.group(0).split()) if any(len(re.sub(r"[.\-_]", "", w)) >= 5 for w in m.group(0).split()) else m.group(0), out)
     out = _SPACED.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
     out = _SEP_SPACED.sub(lambda m: re.sub(r"[.\-_]", "", m.group(0)), out)
     out = _WIDE_SPACED.sub(lambda m: m.group(0).replace(" ", ""), out)
     out = _fold_mixed(out)
     comments = [" ".join(c.split()) for c in _COMMENT.findall(out)]
     out = _COMMENT.sub(" ", out)
+    if keep_lines:  # new lines stay, so a hint can be cut at the start of its own line
+        lines = [" ".join(line.split()) for line in " \n".join([out, *comments]).split("\n")]
+        return "\n".join(line for line in lines if line), comments
     out = " ".join([out, *comments]).split()
     return " ".join(out), comments
 
@@ -297,12 +324,13 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             flags.append(message.replace("lease", "contract") if buy else message)
     ai_line = None
     for key in ("listing_text", "notes", "ai_notes", "title"):  # the title is quoted only when it is what matched
-        field_text, field_comments = normalise_text(str(place.get(key) or ""))
+        field_text, field_comments = normalise_text(str(place.get(key) or ""), keep_lines=True)
         ai_line = _ai_line(field_text, field_comments)
         if ai_line is not None:
             break
     if ai_line is None:
-        ai_line = _ai_line(text, comments)
+        all_text, all_comments = normalise_text("\n".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes")), keep_lines=True)
+        ai_line = _ai_line(all_text, all_comments)
     if ai_line is not None:
         flags.append("This listing has text aimed at AI tools; treat it with care." + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and _BUY_PAYMENT.search(text)):

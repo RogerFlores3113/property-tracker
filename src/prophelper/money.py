@@ -491,7 +491,9 @@ def note_units(text: str) -> list[str]:
 # One-time amounts (a move-in total, a holding fee, a price cut, a one-time deal) are not in the monthly cost, so they never
 # set the monthly "not counted yet" tag: they only matter for the cash due at move-in.
 ONE_TIME_NOTE = re.compile(r"not in the monthly cost|in total to move in|\bholding fee|\breservation (?:fee|deposit)|one-time (?:deal|amount)|"
-                           r"price was cut|price reduced|rent concession|\bdiscount\b", re.I)
+                           r"price was cut|price (?:cut|drop|reduc\w*|lowered)|(?:cut|reduced|lowered|dropped) (?:by|to|from)\s+\$|\$\s?[\d,]+\s+off\b|rent concession|\bdiscount\b", re.I)
+# A note about an optional extra with no price ("A carport is available but the listing gives no price. It looks optional") holds no amount.
+_NO_AMOUNT_OPTIONAL = re.compile(r"gives no price|no price is given|looks optional|is optional|\boptional\b", re.I)
 
 
 def listing_notes_uncounted(reader_notes: Any) -> bool:
@@ -502,6 +504,8 @@ def listing_notes_uncounted(reader_notes: Any) -> bool:
             continue
         if _NOTE_PLACED.search(note) and not re.search(r"not counted|no amount|not saved", note, re.I):
             continue  # "The $25 credit check fee is saved as the application fee. Ask if each adult pays it.": the amount is placed
+        if _NO_AMOUNT_OPTIONAL.search(note) and not re.search(r"\$\s?\d", note):
+            continue  # an optional carport with no price: nothing to add up
         if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(note):
             return True
     return False
