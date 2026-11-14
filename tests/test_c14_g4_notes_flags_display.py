@@ -57,7 +57,7 @@ def test_pet_line_with_a_fact_not_in_fields_is_still_quoted():
 
 # ---- 3. what kind of amount the safety net says it is
 @pytest.mark.parametrize("listing, tail", [
-    ("Oak 1 bed $1,900. Move-out cleaning fee $150.", "It is a one-time cost, so it is not in the monthly cost. Check what it is for."),
+    ("Oak 1 bed $1,900. Move-out cleaning fee $150.", "It is a one-time cost at the end of the lease, so it is not counted in the monthly cost."),  # G3's own note
     ("Oak 1 bed $1,900. Courtesy patrol $60 per month.", "It is a monthly fee and it is not counted anywhere. Check what it is for."),
     ("Oak 1 bed $1,900. Courtesy patrol $60.", "It is not counted anywhere. Check what it is for."),
 ])

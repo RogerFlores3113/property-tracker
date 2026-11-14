@@ -173,4 +173,4 @@ def test_water_flat_fee_really_listed_as_included_keeps_the_note():
 def test_renters_insurance_is_not_utilities(text, pays):
     out, r = cost(text)
     assert keys(out) == (None, pays, None, None)
-    assert r["util"]["amount"] is None and r["total"] == 1500
+    assert r["util"]["amount"] is None and r["total"] == 1515  # the $15 counts once, as insurance (cycle 14 G3), never as utilities

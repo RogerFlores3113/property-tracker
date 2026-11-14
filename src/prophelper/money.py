@@ -495,7 +495,7 @@ def note_units(text: str) -> list[str]:
 
 # One-time amounts (a move-in total, a holding fee, a price cut, a one-time deal) are not in the monthly cost, so they never
 # set the monthly "not counted yet" tag: they only matter for the cash due at move-in.
-ONE_TIME_NOTE = re.compile(r"not in the monthly cost|in total to move in|\bholding fee|\breservation (?:fee|deposit)|one-time (?:deal|amount)|"
+ONE_TIME_NOTE = re.compile(r"not in the monthly cost|not counted in the monthly cost|one-time cost|in total to move in|\bholding fee|\breservation (?:fee|deposit)|one-time (?:deal|amount)|"
                            r"price was cut|price (?:cut|drop|reduc\w*|lowered)|(?:cut|reduced|lowered|dropped) (?:by|to|from)\s+\$|\$\s?[\d,]+\s+off\b|rent concession|\bdiscount\b", re.I)
 # A note about an optional extra with no price ("A carport is available but the listing gives no price. It looks optional") holds no amount.
 _NO_AMOUNT_OPTIONAL = re.compile(r"gives no price|no price is given|looks optional|is optional|\boptional\b", re.I)
