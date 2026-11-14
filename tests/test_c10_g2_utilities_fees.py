@@ -90,7 +90,7 @@ def test_broker_fee_one_month():
 def test_everything_included_except_cable():
     r = parse_listing("Everything included except cable")
     assert r["utilities_included"] == "all"
-    assert r["tenant_pays"] == "internet"
+    assert "tenant_pays" not in r  # cycle 11: cable is TV, so internet stays unknown
 
 
 def test_everything_included_except_electric_is_not_all():
