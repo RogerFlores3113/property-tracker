@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>Places compared</title>
+<style>
+  :root { color-scheme: light dark; --ink: #1d2733; --bg: #fff; --muted: #5b6772; --line: #cfd6dc; --head: #eef2f5; --best: #e3f4e6; --warn: #fff3d6; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #e8edf1; --bg: #161b20; --muted: #a2adb7; --line: #3a444d; --head: #222a31; --best: #1f3a25; --warn: #4a3a12; } }
+  body { font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); margin: 0; padding: 1rem; }
+  main { max-width: 70rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.1rem; margin: 1.5rem 0 .5rem; }
+  .fine { color: var(--muted); font-size: .9rem; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 36rem; }
+  th, td { border: 1px solid var(--line); padding: .4rem .55rem; text-align: left; vertical-align: top; overflow-wrap: anywhere; white-space: pre-wrap; }
+  thead th { background: var(--head); }
+  tr.sec th { background: var(--head); font-size: 1rem; }
+  tbody th { font-weight: 600; width: 14rem; }
+  td.best { background: var(--best); font-weight: 600; }
+  td.unknown { color: var(--muted); }
+  .scam { background: var(--warn); }
+  @media print { body { padding: 0; } .wrap { overflow: visible; } table { min-width: 0; font-size: 10pt; } }
+</style>
+</head>
+<body>
+<main>
+<h1>Places compared</h1>
+<p class="fine">Saved on {{ made_on }} from Property Helper. These are the numbers and facts from the listings and the person's own estimates. They can be out of date, so check them before you decide or pay anything.{% if not include_notes %} Private notes, contacts and documents are not included.{% endif %}</p>
+{% if summary %}<ul>{% for s in summary %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+<div class="wrap">
+<table>
+  <thead>
+    <tr><th scope="col">What is compared</th>
+      {% for p in places %}<th scope="col">{{ p.title }}<div class="fine">{{ p.address|street_unit(p.unit) }}</div></th>{% endfor %}</tr>
+  </thead>
+  {% for sec in sections %}
+  <tbody>
+    <tr class="sec"><th scope="colgroup" colspan="{{ places|length + 1 }}">{{ sec.title }}</th></tr>
+    {% for r in sec.rows %}
+    <tr>
+      <th scope="row">{{ r.label }}</th>
+      {% for c in r.cells %}<td class="{{ 'best' if c.best }}{{ ' unknown' if c.unknown }}{{ ' scam' if r.key == 'scam' and 'possible scam' in c.text }}">{{ c.text }}{% if c.best %} {{ c.marker }}{% endif %}</td>{% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+</table>
+</div>
+<p class="fine">"(best)" marks the best value in a row, "(tied best)" when places share it. "Unknown" and "Not known" mean the listing did not say, so that place can't win the row. "None listed" on a special assessment means none was entered. A cost that leaves something out can't be best.</p>
+</main>
+</body>
+</html>

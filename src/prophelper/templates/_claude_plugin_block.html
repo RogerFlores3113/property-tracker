@@ -1,0 +1,9 @@
+<div class="plugin-block" id="claude-plugin">
+  <h3>Get the Claude add-on file</h3>
+  <p>One add-on file (Claude calls it a plugin) that adds the skills to the Claude app. It adds skills only. It does not connect anything by itself, so do the connection first.</p>
+  <p><button class="btn primary" type="button" hx-post="/skills/plugin/save" hx-target="#plugin-result" hx-swap="innerHTML">Get the add-on file</button>
+    {% if can_open_claude %}<button class="btn" type="button" hx-post="/skills/claude-app/open" hx-target="#claude-open-result" hx-swap="innerHTML">Open Claude</button> <span id="claude-open-result" aria-live="polite"></span>{% endif %}
+    <a href="/skills/property-helper.plugin" download>Or download {{ plugin_file }} here</a></p>
+  <div id="plugin-result" aria-live="polite"></div>
+  <ol class="plain">{% for s in plugin_steps %}<li>{{ s }}</li>{% endfor %}</ol>
+</div>

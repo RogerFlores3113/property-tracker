@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button %}
+{% block title %}Calendar &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head("Calendar", (("Tours, key dates and your target close date for " if search.mode == 'buy' else "Tours, key dates, move-in dates and lease dates for ") ~ search.name) if search else "Tours, move-in dates and lease dates.") %}
+  {{ button("Add to my calendar (file)", href="/calendar.ics", title="Works with Apple Calendar, Google Calendar and Outlook. Notes, ratings and contact details are left out.") }}
+{% endcall %}
+{% if search is none %}
+<section class="card"><h2>No search yet</h2><p>Make a search and add places, and their tours and dates show up here. <a href="/search">Start a search</a>.</p></section>
+{% else %}
+<div class="cal-nav">
+  <a class="btn small" href="/calendar?month={{ prev_month }}" aria-label="Previous month">&larr; Prev</a>
+  <h2 class="cal-title">{{ month_label }}</h2>
+  <a class="btn small" href="/calendar?month={{ next_month }}" aria-label="Next month">Next &rarr;</a>
+  {% if not is_current %}<a class="btn small ghost" href="/calendar">This month</a>{% endif %}
+</div>
+<p class="legend fine" aria-label="Key"><span class="chip tour">Tour</span> {% if not (search and search.mode == 'buy') %}<span class="chip available">Available</span> <span class="chip lease_start">Lease starts</span> <span class="chip lease_end">Lease ends</span> {% endif %}<span class="chip key_date">Key date</span> <span class="chip target">{{ 'Target close date' if search and search.mode == 'buy' else 'Your move-in date' }}</span></p>
+
+<section class="card" aria-labelledby="agenda-h">
+  <h2 id="agenda-h">{{ month_label }} in a list <span class="count">{{ count }}</span></h2>
+  {% if agenda %}
+  <ul class="plain agenda-list">
+    {% for day in agenda %}
+    <li>
+      <h3>{{ day.date|day }}{% if day.date == today %} (today){% endif %}</h3>
+      <ul class="plain">
+        {% for it in day.entries %}
+        <li><span class="chip {{ it.kind }}">{{ it.kind_label }}</span> {% if it.time %}<span class="fine">{{ it.time }}</span> {% endif %}<a href="{{ it.href }}">{{ it.title }}</a>{% if it.kind == 'tour' and it.tour.with_whom %} <span class="fine">with {{ it.tour.with_whom }}</span>{% endif %}{% if it.warn %} <span class="fine">&middot; {{ it.warn }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="fine">Nothing is dated this month. {% if search and search.mode == 'buy' %}Book a tour on a place's page, or add a key date, and they show up here.{% else %}Book a tour on a place's page, or fill in its available, lease start and lease end dates, and they show up here.{% endif %}</p>
+  {% endif %}
+</section>
+
+<div class="cal-wrap">
+<table class="cal" aria-label="{{ month_label }}">
+  <thead><tr>{% for d in weekdays %}<th scope="col">{{ d }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    {% for week in weeks %}
+    <tr>
+      {% for c in week %}
+      <td class="{{ 'out' if not c.in_month }}{{ ' today' if c.today }}">
+        <div class="cal-day">{{ c.date.day }}{% if c.today %} <span class="sr">(today)</span>{% endif %}</div>
+        {% for it in c.entries[:3] %}
+        <a class="chip {{ it.kind }}" href="{{ it.href }}" title="{{ it.kind_label }}: {{ it.title }}">{% if it.time %}<span class="chip-time">{{ it.time }}</span> {% endif %}{{ it.title }}</a>
+        {% endfor %}
+        {% if c.entries|length > 3 %}<span class="fine">+{{ c.entries|length - 3 }} more (see the list above)</span>{% endif %}
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="fine">The file has one entry for each tour and each date. It is a copy: after a date changes here, download the file again.</p>
+{% endif %}
+{% endblock %}

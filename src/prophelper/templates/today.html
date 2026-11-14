@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, sample_notice, sample_badge, score_pill %}
+{% block title %}Today &middot; Property Helper{% endblock %}
+{% block body %}
+{% if search is none %}
+<section class="welcome">
+  <h1>Welcome to Property Helper</h1>
+  <p class="lead">Keep every apartment or house you are looking at in one calm place: what it really costs, how well it fits, and what to do next. Everything stays on this computer.</p>
+  <div class="big-actions">
+    <form method="post" action="/sample-data" class="big-action-form">
+      <button class="big-action primary" type="submit"><strong>Try it with sample data</strong><span>A made-up search with 10 places, so you can look around. Remove it any time in Settings.</span></button>
+    </form>
+    <a class="big-action" href="/search"><strong>{% if first_run %}Start your own search{% else %}Pick or start a search{% endif %}</strong><span>Say what you want and what you can spend. It takes a minute.</span></a>
+  </div>
+  <section class="next-steps" aria-labelledby="next-steps-h">
+    <h2 id="next-steps-h">Next steps</h2>
+    <ol>
+      <li><strong>Make a search.</strong> Name it, choose rent or buy, and say what matters to you (budget, commute, laundry, pets).</li>
+      <li><strong>Add places.</strong> Paste a link or the listing text. The price, bedrooms and more are filled in for you.</li>
+      <li><strong>Check Today.</strong> It lists tours coming up, people who haven't replied and dates to watch.</li>
+    </ol>
+  </section>
+  <p class="fine welcome-more">Already use Claude or Codex? <a href="/connect">Connect an AI app</a> and add places by chatting.</p>
+</section>
+{% else %}
+{% call page_head("Today", search.name ~ (" (buying)" if search.mode == "buy" else " (renting)")) %}
+  {{ button("Add a place", href="/add", kind="primary") }}
+{% endcall %}
+{{ sample_notice() }}
+{% include "_today_closing.html" %}
+{% if place_count == 0 %}
+<section class="card">
+  <h2>No places in this search yet</h2>
+  <p>Paste a link or the listing text and the details are filled in for you.</p>
+  <p>{{ button("Add your first place", href="/add", kind="primary") }}</p>
+</section>
+{% endif %}
+{% if no_criteria and place_count %}
+<section class="card"><h2>Tell me what you want</h2><p>This search doesn't say what matters to you yet, so places can't be scored. <a href="/search#criteria">Add a few things that matter</a>.</p></section>
+{% endif %}
+
+{% if fits %}
+<section class="card" aria-labelledby="fits-h">
+  <h2 id="fits-h">Best fits right now <span class="count">{{ fits|length|num }}</span></h2>
+  <ol class="items">
+    {% for p in fits %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ score_pill(p.score_total, p.band) }}
+      <span class="item-sub">{{ p.stage }}{% if not p.address %} &middot; <span class="flag">no address yet</span>{% endif %}{% if p.cost_total %} &middot; about {{ p.cost_total|money }} a month{% endif %}{% if p.score.unknown %} &middot; {{ p.score.unknown|length }} thing{{ 's' if p.score.unknown|length != 1 }} still to check: {{ p.score.unknown|join('; ') }}{% endif %}</span>
+      {% if p.score.concerns %}<div class="fine">Check: {{ p.score.concerns|join('; ') }}</div>{% endif %}
+      {% if p.score.notes %}<div class="fine">{{ p.score.notes|join('; ') }}</div>{% endif %}
+      {% if p.caution %}<div class="fine flag">{{ p.caution }}</div>{% endif %}</div></li>
+    {% endfor %}
+  </ol>
+  <p class="fine">The highest scores among places that have every must have. <a href="/board">See the whole board</a>.</p>
+</section>
+{% elif unconfirmed %}
+<section class="card" aria-labelledby="fits-h">
+  <h2 id="fits-h">Best fits right now</h2>
+  <p class="fine">Nothing is confirmed yet. These fit if the unknowns check out:</p>
+  <ul class="items">
+    {% for n in unconfirmed %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a> {{ score_pill(n.place.score_total, n.place.band) }}
+      <span class="item-sub">Fits, but check: {{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+</section>
+{% elif place_count and not no_criteria %}
+<section class="card" aria-labelledby="fits-h">
+  <h2 id="fits-h">Best fits right now</h2>
+  <p class="fine">No place fits yet. Places that miss a must have or look risky stay on the <a href="/board">board</a>, not here.</p>
+</section>
+{% endif %}
+
+{% if closest %}
+<section class="card" aria-labelledby="closest-h">
+  <h2 id="closest-h">Closest so far <span class="count">{{ closest|length|num }}</span></h2>
+  <ul class="items">
+    {% for n in closest %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a> {{ score_pill(n.place.score_total, n.place.band) }}
+      <span class="item-sub">{{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">None of these has every must have, so they are not best fits. These come closest. <a href="/board">See the whole board</a>.</p>
+</section>
+{% endif %}
+
+{% if needs_price %}
+<section class="card" aria-labelledby="needs-price-h">
+  <h2 id="needs-price-h">Needs a price <span class="count">{{ needs_price|length|num }}</span></h2>
+  <ul class="items">
+    {% for p in needs_price %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ score_pill(p.score_total, p.band) }}
+      <span class="item-sub">No price yet. It can't be ranked until you add one.</span></div></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if check_first %}
+<section class="card" aria-labelledby="check-first-h">
+  <h2 id="check-first-h">Check first <span class="count">{{ check_first|length|num }}</span></h2>
+  <ul class="items">
+    {% for n in check_first %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a>
+      <span class="item-sub flag">{{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">These are not in Best fits or New places. They stay on the <a href="/board">board</a>.</p>
+</section>
+{% endif %}
+
+{% if near_miss %}
+<section class="card" aria-labelledby="near-h">
+  <h2 id="near-h">Near miss <span class="count">{{ near_miss|length|num }}</span></h2>
+  <ul class="items">
+    {% for n in near_miss %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a>
+      <span class="item-sub">{{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">These miss your budget by under 3 percent and nothing else. They are not in Best fits.</p>
+</section>
+{% endif %}
+
+{% if late %}
+<section class="card" aria-labelledby="late-h">
+  <h2 id="late-h">Heads up on move-in <span class="count">{{ late|length|num }}</span></h2>
+  <ul class="items">
+    {% for l in late %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ l.place.id }}">{{ l.place.title }}</a>
+      <span class="item-sub">{{ l.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<div class="grid">
+<section class="card" aria-labelledby="coming-h">
+  <h2 id="coming-h">Coming up <span class="count">{{ coming|length|num }}</span></h2>
+  {% if coming %}
+  <ul class="items">
+    {% for c in coming %}
+    <li class="item"><div class="item-main"><span class="badge">{{ c.label }}</span> <a class="item-title" href="{{ c.href }}">{{ c.title }}</a>
+      <span class="item-sub">{% if c.text %}{{ c.text }}{% if c.time %}, {{ c.time }}{% endif %}{% else %}{{ c.date|day }}{% if c.time %}, {{ c.time }}{% endif %} ({{ c.date|until }}){% endif %}{% if c.note %} &middot; {{ c.note }}{% endif %}</span>
+      {% if c.prep %}<span class="item-sub">{{ c.prep }}</span>{% endif %}
+      {% if c.warn %}<span class="item-sub">{{ c.warn }}</span>{% endif %}</div></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="fine">No tours or dates in the next {{ coming_days }} days.</p>{% endif %}
+</section>
+
+<section class="card" aria-labelledby="wait-h">
+  <h2 id="wait-h">Waiting on a reply <span class="count">{{ waiting|length|num }}</span></h2>
+  {% if waiting %}
+  <ul class="items">
+    {% for w in waiting %}
+    <li class="item"><div class="item-main">
+      <a class="item-title" href="/contacts/{{ w.contact.id }}">{{ w.contact.name }}</a>{% if w.contact.company %} <span class="fine">({{ w.contact.company }})</span>{% endif %}
+      <span class="item-sub">You wrote {{ w.days }} day{{ 's' if w.days != 1 }} ago{% if w.place %} about <a href="/places/{{ w.place.id }}">{{ w.place.title }}</a>{% endif %}. A nudge may help.</span></div></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="fine">Nobody is overdue to reply (after {{ follow_up_days }} days).</p>{% endif %}
+</section>
+
+<section class="card" aria-labelledby="new-h">
+  <h2 id="new-h">New places <span class="count">{{ new|length|num }}</span></h2>
+  {% if new %}
+  <ul class="items">
+    {% for p in new %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ sample_badge(p.is_sample) }}
+      <span class="item-sub">{% if p.price %}{{ p.price|money }}{% else %}No price yet{% endif %}{% if p.beds is not none %} &middot; {{ p.beds|beds }}{% endif %}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">Places you haven't opened yet. Ones that miss a must have or look risky are left out here and stay on the board.</p>
+  {% else %}<p class="fine">Nothing new. Places you or an AI app add show up here until you open them.</p>{% endif %}
+</section>
+</div>
+{% endif %}
+{% endblock %}

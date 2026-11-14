@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}AI help &middot; {{ place.title }} &middot; Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/ai.css">
+<script src="/static/ai.js" defer></script>
+<div class="page-head"><div><h1>AI help</h1><p class="sub">For <a href="/places/{{ place.id }}">{{ place.title }}</a></p></div>
+  <div class="page-actions"><a class="btn small" href="/places/{{ place.id }}">Back to the place</a></div></div>
+{% include "_place_ai_panel.html" %}
+{% endblock %}

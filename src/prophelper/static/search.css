@@ -1,0 +1,5 @@
+/* Search page */
+[data-kinds][hidden] { display: none; }
+details.coords { flex-basis: 100%; }
+details.coords summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+details.coords .field { display: inline-block; margin-right: .75rem; }

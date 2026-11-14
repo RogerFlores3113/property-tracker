@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, post_button, field, select, check, sample_notice, sample_badge, empty_state %}
+{% block title %}Search &middot; Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/search.css">
+{% call page_head("Search", "What you are looking for. Every place is checked against it.") %}{% endcall %}
+{{ sample_notice() }}
+
+<section class="card" id="searches">
+  <h2>Your searches</h2>
+  {% if searches %}
+  <ul class="items">
+    {% for s in searches %}
+    <li class="item">
+      <div class="item-main">
+        <a class="item-title" href="/search?id={{ s.id }}">{{ s.name }}</a> {{ sample_badge(s.is_sample) }}
+        {% if current and current.id == s.id %}<span class="badge stage-offer">Showing now</span>{% endif %}
+        {% if s.archived_at %}<span class="badge">Archived</span>{% endif %}
+        <span class="item-sub">{{ 'Buying' if s.mode == 'buy' else 'Renting' }}{% if s.area %} in {{ s.area }}{% endif %} &middot; {{ place_counts[s.id] }} place{{ 's' if place_counts[s.id] != 1 }}</span>
+      </div>
+      <div class="item-actions">
+        {% if not s.archived_at and not (current and current.id == s.id) %}
+        <form method="post" action="/search/{{ s.id }}/switch" class="inline">{{ button("Switch to this", small=True) }}</form>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p>No searches yet. Make your first one below.</p>{% endif %}
+
+  <details{% if not searches %} open{% endif %}>
+    <summary><strong>Start a new search</strong></summary>
+    <form method="post" action="/search" class="stack">
+      <div class="form-grid">
+        {{ field("Name", "name", "", required=True, placeholder="1-bed near campus, fall 2027") }}
+        {{ select("Renting or buying?", "mode", [("rent", "Renting"), ("buy", "Buying")], "rent") }}
+        {{ field("Area", "area", "", placeholder="Champaign, IL") }}
+        {{ field("Most you can spend per month, or the most you'd pay for the home when buying", "budget_max", "", kind="number", step="any", hint="Pick Renting or Buying first. For buying, this is the most you would pay for the home.", id="new-budget") }}
+        {{ field("Bedrooms you need", "bedrooms", "", kind="number", step="1", hint="Optional. A place with fewer bedrooms then shows as not fitting. Leave empty if any size is fine.", id="new-bedrooms") }}
+        {{ field("Move in by (renting)", "move_in", "", kind="date") }}
+        {{ field("Target close date (buying)", "target_close", "", kind="date") }}
+        <div data-buy-only>{{ field("Down payment (percent of the price, buying)", "down_payment_pct", "", kind="number", step="any", hint="Only for buying. From 0 to 100. Leave empty to use the one in Settings.", id="new-down") }}</div>
+      </div>
+      {{ field("Notes", "notes", "", kind="textarea", rows=2) }}
+      <p>{{ button("Make this search", kind="primary") }}</p>
+    </form>
+  </details>
+
+  <details>
+    <summary><strong>Import a search</strong></summary>
+    <p class="fine">Got a search file from a housemate (made with "Export this search")? Choose it here. You see what it adds before anything is saved, and it always becomes a new search.</p>
+    <form method="post" action="/searches/import" enctype="multipart/form-data" class="stack">
+      <div class="field"><label for="imp-file">Search file</label><input id="imp-file" type="file" name="file" accept=".json,application/json" required></div>
+      <p>{{ button("Look at it", small=True) }}</p>
+    </form>
+  </details>
+</section>
+
+{% if shown %}
+<section class="card" id="edit">
+  <h2>{{ shown.name }}</h2>
+  <form method="post" action="/search/{{ shown.id }}" class="stack">
+    <div class="form-grid">
+      {{ field("Name", "name", shown.name, required=True) }}
+      {{ select("Renting or buying?", "mode", [("rent", "Renting"), ("buy", "Buying")], shown.mode) }}
+      {{ field("Area", "area", shown.area) }}
+      {{ field("Most you'd pay for the home" if shown.mode == 'buy' else "Most you can spend per month", "budget_max", shown.budget_max if shown.budget_max is not none else '', kind="number", step="any") }}
+      {% if shown.mode == 'buy' %}{{ field("Down payment (percent of the price)", "down_payment_pct", shown.down_payment_pct if shown.down_payment_pct is not none else '', kind="number", step="any", hint="From 0 to 100. Leave empty to use the one in Settings. Monthly costs for this search use it.") }}{% endif %}
+      {% if shown.mode != 'buy' %}{{ field("Move in by", "move_in", shown.move_in or '', kind="date") }}{% endif %}
+      {% if shown.mode == 'buy' %}{{ field("Target close date", "target_close", shown.target_close or '', kind="date") }}{% endif %}
+      {{ field("People splitting the cost (leave at 1 for a family or couple sharing one budget)", "people", shown.people or 1, kind="number", step="1", hint=(("Payment" if shown.mode == "buy" else "Rent") ~ " split between this many people. Place pages, the board and Compare then show a per-person cost.")) }}
+      {{ field("Adults who will sign the lease", "adults", shown.adults if shown.adults is not none else '', kind="number", step="1", hint="Kids don't count. Leave empty when it is the same as the people above. A per-adult application fee and the 'each' cost use this number.") if shown.mode != 'buy' }}
+      {{ select("Your pets", "pet_kind", [("cat", "A cat"), ("dog", "A dog"), ("both", "Cats and dogs")], shown.pet_kind or '', blank="No pets") }}
+      {{ field("How heavy your dog is (lb)", "pet_weight", shown.pet_weight if shown.pet_weight is not none else '', kind="number", step="any", hint="A place that only allows smaller dogs then shows as not fitting your pets.") }}
+      {{ field("How many pets", "pet_count", shown.pet_count if shown.pet_count is not none else '', kind="number", step="1") }}
+    </div>
+    {{ field("Names of the people sharing", "people_names", shown.people_names|join(', '), hint="Only when more than one person shares the cost. Separate the names with commas, like Sam, Priya. Each person can then rate every place and add a short note on its page.") }}
+    {{ field("Notes", "notes", shown.notes, kind="textarea", rows=3) }}
+    <input type="hidden" name="hide_dealbreakers" value="0">
+    {{ check("Hide places that fail a must have from the board (never hides a place with a tour, a contact, or a stage past Saved)", "hide_dealbreakers", shown.hide_dealbreakers) }}
+    <p>{{ button("Save search", kind="primary") }}</p>
+  </form>
+  <p class="fine"><a class="btn small" href="/places.csv?search_id={{ shown.id }}" download id="csv-link">Download spreadsheet (CSV)</a> All the places in this search in one file you can open in Excel or Google Sheets.</p>
+  <p class="fine"><a class="btn small" href="/search/export.json?id={{ shown.id }}" download>Export this search</a> Saves a file with this search, what matters, the important places and the places with their listing text, to send to a housemate. It never holds your contacts, documents, notes or ratings.</p>
+  {% set _shown_places = request.app.state.store.list_places(shown.id) %}
+  <div id="share-links">
+    <h3>Share and opinions</h3>
+    <ul>
+      <li><a href="/compare">Save a comparison to share</a>: pick 2 to 4 places, then press "Save a copy to share" (a page you can send to someone).</li>
+      <li><a href="/search/export.json?id={{ shown.id }}" download>Export this search</a>: a file for a housemate, who can bring it in with "Import a search" above.</li>
+      <li>What each person thinks: open a place and look under "What each of you thinks".{% if shown.people_names|length > 1 %} Your people: {{ shown.people_names|join(', ') }}.{% else %} Add names in "Names of the people sharing" above first.{% endif %}
+        {% if shown.people_names|length > 1 and _shown_places %}<br>{% for p in _shown_places[:6] %}<a href="/places/{{ p.id }}#opinions">{{ p.title }}</a>{{ ', ' if not loop.last }}{% endfor %}{% endif %}</li>
+    </ul>
+  </div>
+  {% if shown.mode == 'buy' %}<p class="fine">Buying estimates use the down payment, rate and loan length in <a href="/settings#map">Settings</a>.</p>{% endif %}
+</section>
+
+<section class="card" id="criteria">
+  <h2>What matters to you</h2>
+  <p class="fine">Each item has "How much it matters" (0 to 100, higher counts more). Tick "Must have" when a place that fails it just doesn't fit: those places stay on your list, marked "Doesn't fit" with how far off they are, and sort last.</p>
+  {% if criteria %}
+  {% for c in criteria %}
+  <form method="post" action="/criteria/{{ c.id }}" class="crit-form">
+    <div class="field"><label for="cl-{{ c.id }}">Name ({{ KIND_LABELS.get(c.kind, c.kind) }})</label><input id="cl-{{ c.id }}" name="label" type="text" value="{{ c.label }}" placeholder="{{ crit_labels.get(c.id, '') }}"></div>
+    {% set kind = c.kind %}{% set t = c.target %}{% set pre = 'c' ~ c.id %}{% set search_mode = shown.mode %}{% include "_criterion_target.html" %}
+    <div class="field"><label for="cw-{{ c.id }}">How much it matters</label><input id="cw-{{ c.id }}" name="weight" type="number" min="0" max="100" step="1" value="{{ c.weight|round|int }}" style="width:5rem"></div>
+    <div class="checks"><input id="cd-{{ c.id }}" type="checkbox" name="dealbreaker" value="1"{% if c.dealbreaker %} checked{% endif %}><label for="cd-{{ c.id }}">Must have</label></div>
+    {{ button("Save", small=True) }}
+    <button class="btn danger small" type="submit" formaction="/criteria/{{ c.id }}/delete" formnovalidate>Remove</button>
+  </form>
+  {% endfor %}
+  <p class="fine">Leave a name empty and a plain one is made for you.</p>
+  {% else %}<p>Nothing here yet. Add a few things below, such as {{ 'a most-you-would-pay price' if shown.mode == 'buy' else 'a most-per-month price' }} and a commute.</p>{% endif %}
+
+  <h3>Add something that matters</h3>
+  <form method="post" action="/search/{{ shown.id }}/criteria" class="stack" data-kind-form>
+    <div class="field"><label for="nc-kind">What kind</label>
+      <select id="nc-kind" name="kind" data-kind-select>{% for k in CRITERION_KINDS %}<option value="{{ k }}">{{ "Price" if k == 'price' and shown.mode == 'buy' else ("Your own rule (you score each place 0 to 5)" if k == 'custom' else KIND_LABELS.get(k, k)) }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="nc-label">Name (optional)</label><input id="nc-label" name="label" type="text" placeholder="Left empty, a plain name is made for you"></div>
+    <div class="crit-form">
+      <div class="field" data-kinds="price"><label for="nc-max">{{ "Price: most you'd pay for the home" if shown.mode == 'buy' else 'Price: most per month, all in' }}</label><input id="nc-max" name="t_max" type="number" step="any"></div>
+      <div class="field" data-kinds="beds baths sqft"><label for="nc-min">Bedrooms, bathrooms or size: at least</label><input id="nc-min" name="t_min" type="number" step="any"></div>
+      <div class="field" data-kinds="commute"><label for="nc-anchor">Commute: to</label><select id="nc-anchor" name="t_anchor_id"><option value="">The first important place</option>{% if anchors|length > 1 %}<option value="all">Everyone's places (each one is checked)</option>{% endif %}{% for a in anchors %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}</select></div>
+      {% if shown.mode != 'buy' %}<div class="field" data-kinds="price"><label for="nc-count">Price: what is compared</label><select id="nc-count" name="t_count"><option value="">All in (rent plus utilities and fees)</option><option value="rent">Rent only</option></select></div>{% endif %}
+      <div class="field" data-kinds="commute"><label for="nc-mode">Commute: by</label><select id="nc-mode" name="t_mode">{% for m in COMMUTE_MODES %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
+      <div class="field" data-kinds="commute"><label for="nc-minutes">Commute: minutes or less</label><input id="nc-minutes" name="t_minutes" type="number" step="1"></div>
+      <div class="field" data-kinds="laundry"><label for="nc-want-laundry">Laundry: you want</label>
+        <select id="nc-want-laundry" name="t_want_laundry"><option value="in_unit">In the unit</option><option value="in_building">In the building is fine</option></select></div>
+      <div class="field" data-kinds="parking"><label for="nc-want-parking">Parking: you want</label>
+        <select id="nc-want-parking" name="t_want_parking">{% for p in ('garage', 'covered', 'lot', 'street') %}<option value="{{ p }}">{{ p|capitalize }} or better</option>{% endfor %}</select></div>
+      <div class="field" data-kinds="pets"><label for="nc-want-pets">Pets: you have</label>
+        <select id="nc-want-pets" name="t_want_pets"><option value="">Any pets</option><option value="cats">Cats</option><option value="dogs">Dogs</option><option value="both">Cats and dogs</option></select></div>
+      <div class="field" data-kinds="newer"><label for="nc-year">Newer: built in or after</label><input id="nc-year" name="t_year" type="number" step="1"></div>
+      <p class="fine" data-kinds="dishwasher fenced_yard custom">Nothing more to choose for this one. (Your own rule: you give each place a score from 0 to 5 on its page.)</p>
+    </div>
+    <div class="crit-form">
+      <div class="field"><label for="nc-weight">How much it matters (0 to 100)</label><input id="nc-weight" name="weight" type="number" min="0" max="100" value="10" style="width:5rem"></div>
+      <div class="checks"><input id="nc-deal" type="checkbox" name="dealbreaker" value="1"><label for="nc-deal">Must have (a place that fails it doesn't fit)</label></div>
+    </div>
+    <p>{{ button("Add this", kind="primary") }}</p>
+  </form>
+</section>
+
+<section class="card" id="anchors">
+  <h2>Important places</h2>
+  <p class="fine">Work, school, a gym: the places you go often. Commute times are worked out to these. A commute needs a location, so press "Find on map from address" (it sends only the address to OpenStreetMap's free lookup service, and asks you first if lookup is off). You can also type your own minutes on any place.</p>
+  {% for a in anchors %}
+  <form method="post" action="/anchors/{{ a.id }}" class="crit-form" id="anchor-{{ a.id }}">
+    <input type="hidden" name="search_id" value="{{ shown.id }}">
+    <div class="field"><label for="an-{{ a.id }}">Name</label><input id="an-{{ a.id }}" name="name" type="text" value="{{ a.name }}"></div>
+    <div class="field"><label for="aa-{{ a.id }}">Address</label><input id="aa-{{ a.id }}" name="address" type="text" value="{{ a.address }}"></div>
+    <div class="field"><span class="fine">{% if a.lat is not none and a.lng is not none %}Location saved ({{ a.lat }}, {{ a.lng }}){% else %}<strong>No location yet</strong>, so no commute can be worked out{% endif %}</span>
+      <button class="btn small" type="submit" formaction="/anchors/{{ a.id }}/geocode" formnovalidate>Find on map from address</button></div>
+    <details class="coords"{% if a.lat is none or a.lng is none %} data-closed{% endif %}><summary>Enter coordinates yourself</summary>
+      <div class="field"><label for="al-{{ a.id }}">Latitude</label><input id="al-{{ a.id }}" name="lat" type="number" step="any" value="{{ a.lat if a.lat is not none else '' }}" style="width:8rem"></div>
+      <div class="field"><label for="ag-{{ a.id }}">Longitude</label><input id="ag-{{ a.id }}" name="lng" type="number" step="any" value="{{ a.lng if a.lng is not none else '' }}" style="width:8rem"></div>
+    </details>
+    {{ button("Save", small=True) }}
+    <button class="btn danger small" type="submit" formaction="/anchors/{{ a.id }}/delete" formnovalidate>Remove</button>
+  </form>
+  {% else %}<p>None yet.</p>{% endfor %}
+  <h3>Add one</h3>
+  <form method="post" action="/anchors" class="crit-form">
+    <input type="hidden" name="search_id" value="{{ shown.id }}">
+    <div class="field"><label for="na-name">Name</label><input id="na-name" name="name" type="text" required placeholder="Work"></div>
+    <div class="field"><label for="na-addr">Address</label><input id="na-addr" name="address" type="text"></div>
+    <details class="coords"><summary>Enter coordinates yourself</summary>
+      <div class="field"><label for="na-lat">Latitude</label><input id="na-lat" name="lat" type="number" step="any" style="width:8rem"></div>
+      <div class="field"><label for="na-lng">Longitude</label><input id="na-lng" name="lng" type="number" step="any" style="width:8rem"></div>
+    </details>
+    {{ button("Add", kind="primary", small=True) }}
+    <button class="btn small" type="submit" name="find" value="1">Add and find on map from address</button>
+  </form>
+</section>
+
+<section class="card danger-zone" id="danger">
+  <h2>Archive or delete this search</h2>
+  <div class="actions-inline">
+    {% if shown.archived_at %}{{ post_button("/search/%d/unarchive"|format(shown.id), "Bring back") }}
+    {% else %}{{ post_button("/search/%d/archive"|format(shown.id), "Archive", title="Out of the way, places kept") }}{% endif %}
+  </div>
+  <form method="post" action="/search/{{ shown.id }}/delete" class="stack" data-confirm="Delete this search and all its places for good?">
+    <div class="checks"><input id="sdel-ok" type="checkbox" name="confirm" value="yes"><label for="sdel-ok">Yes, delete this search and every place in it ({{ place_counts[shown.id] }}). A backup copy is saved first.</label></div>
+    <p>{{ button("Delete this search", kind="danger", small=True) }}</p>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/search.js" defer></script>{% endblock %}

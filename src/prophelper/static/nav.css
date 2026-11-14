@@ -1,0 +1,24 @@
+/* Top bar: the main links, then a "More" menu and the Add button. Works without scripts (a <details> menu) and on a narrow window. */
+.top nav.right { display: flex; align-items: center; gap: .4rem; flex-wrap: nowrap; }
+.top details.more { position: relative; }
+.top details.more > summary {
+  list-style: none; cursor: pointer; color: var(--header-text); padding: .4rem .8rem; border-radius: var(--radius-pill); font-weight: 500;
+}
+.top details.more > summary::-webkit-details-marker { display: none; }
+.top details.more > summary::after { content: " \25BE"; }
+.top details.more > summary:hover, .top details.more[open] > summary { background: var(--nav-hover); }
+.top details.more > summary.on { background: var(--nav-on); font-weight: 600; }
+.top .more-menu {
+  position: absolute; right: 0; top: calc(100% + .3rem); min-width: 13rem; z-index: 10; display: flex; flex-direction: column; gap: .1rem;
+  padding: .4rem; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(var(--shadow-rgb), .25);
+}
+.top .more-menu a:not(.btn) { color: var(--text); padding: .45rem .7rem; border-radius: var(--radius); text-decoration: none; font-weight: 500; }
+.top .more-menu a:not(.btn):hover { background: var(--surface-2); color: var(--text); box-shadow: none; }
+.top .more-menu a.on { background: var(--surface-2); font-weight: 600; }
+@media (max-width: 720px) {
+  .top { gap: .4rem; }
+  .top nav a:not(.btn), .top details.more > summary { padding: .35rem .55rem; }
+  .top nav.right { margin-left: auto; }
+  .top .more-menu { right: 0; left: auto; max-width: calc(100vw - 1.8rem); }
+}

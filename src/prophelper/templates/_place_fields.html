@@ -1,0 +1,103 @@
+{# The facts form fields on the place page. Needs `v` (a dict of values) and `mode` ("rent" or "buy"). A rent search hides the buyer
+   fields and a buy search hides the lease, deposit and pet rent fields. A hidden field is not posted, so its saved value stays. #}
+{% from "_macros.html" import field, select %}
+{% set buy = (mode == 'buy') %}
+<div class="form-grid">
+  <div class="wide">{{ field("Name", "title", v.get('title', ''), hint="Usually the building or the street address. Left empty, the address is used.") }}</div>
+  <div class="wide">{{ field("Street address", "address", v.get('address', '')) }}</div>
+  {{ field("Unit", "unit", v.get('unit', '')) }}
+  {{ field("City", "city", v.get('city', '')) }}
+  {{ field("State", "state", v.get('state', '')) }}
+  {{ field("ZIP", "zip", v.get('zip', '')) }}
+  {{ field("Link to the listing", "url", v.get('url', ''), kind="url") }}
+  {{ field("Where it was listed", "source", v.get('source', '')) }}
+  {{ field("Price per month" if mode != 'buy' else "Price", "price", v.get('price', ''), kind="number", step="any") }}
+  {{ field("Bedrooms (0 for a studio)", "beds", v.get('beds', ''), kind="number", step="0.5") }}
+  {{ field("Bathrooms", "baths", v.get('baths', ''), kind="number", step="0.5") }}
+  {{ field("Square feet", "sqft", v.get('sqft', ''), kind="number") }}
+  {{ select("Laundry", "laundry", [("in_unit", "In the unit"), ("in_building", "In the building"), ("hookups", "Hookups only (bring your own)"), ("none", "None")], v.get('laundry', ''), blank="Not sure") }}
+  {{ select("Dishwasher", "dishwasher", [("1", "Yes"), ("0", "No")], v.get('dishwasher', '')|string if v.get('dishwasher', '') is not none else '', blank="Not sure") }}
+  {{ select("Parking", "parking", [("garage", "Garage"), ("covered", "Covered"), ("lot", "Lot"), ("street", "Street"), ("none", "None")], v.get('parking', ''), blank="Not sure") }}
+  {% if not buy %}
+  {{ field("Parking cost per month", "parking_cost", v.get('parking_cost', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if not buy %}
+  {{ select("Pets", "pets", [("both", "Cats and dogs"), ("cats", "Cats only"), ("dogs", "Dogs only"), ("none", "No pets")], v.get('pets', ''), blank="Not sure") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Pet rent per month", "pet_rent", v.get('pet_rent', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("One-time pet fee", "pet_fee", v.get('pet_fee', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Heaviest pet allowed (lb)", "pet_weight_limit", v.get('pet_weight_limit', ''), kind="number", step="any", hint="For example 50 when pets must be under 50 lb.") }}
+  {{ field("Most pets allowed", "pet_count_limit", v.get('pet_count_limit', ''), kind="number", step="1") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Refundable pet deposit", "pet_deposit", v.get('pet_deposit', ''), kind="number", step="any", hint="Comes back when you move out, so it is counted in the cash you need at move-in, not in the monthly cost.") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Breed rules", "pet_breed_note", v.get('pet_breed_note', ''), hint="For example: no aggressive breeds.") }}
+  {% endif %}
+  {{ select("Fenced yard", "fenced_yard", [("1", "Yes"), ("0", "No")], v.get('fenced_yard', '')|string if v.get('fenced_yard', '') is not none else '', blank="Not sure") }}
+  {% if not buy %}
+  {{ field("Utilities you pay", "tenant_pays", v.get('tenant_pays', ''), hint="Which of these you pay: electric, gas, water, sewer, trash, internet, heat. Separate with commas.") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Utilities included", "utilities_included", v.get('utilities_included', ''), hint="For example: water, trash, internet. Say 'all' if everything is.") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Utilities estimate per month", "utilities_estimate", v.get('utilities_estimate', ''), kind="number", step="any", hint="What you would pay on top of the rent.") }}
+  {% endif %}
+  {{ field("Year built", "year_built", v.get('year_built', ''), kind="number") }}
+  {{ field("Available from", "available_from", v.get('available_from', ''), kind="date") }}
+  {% if not buy %}
+  {{ field("Lease starts", "lease_start", v.get('lease_start', ''), kind="date") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Lease ends", "lease_end", v.get('lease_end', ''), kind="date") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Lease length (months)", "lease_months", v.get('lease_months', ''), kind="number") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Security deposit", "deposit", v.get('deposit', ''), kind="number", step="any") }}
+  {{ field("Months of rent due before move-in", "months_up_front", v.get('months_up_front', ''), kind="number", step="1", hint="Usually 1. Say 2 for first and last month's rent.") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Application fee", "application_fee", v.get('application_fee', ''), kind="number", step="any") }}
+  {{ select("Application fee is charged", "application_fee_per_adult", [("1", "Per adult (each adult pays it)")], '1' if v.get('application_fee_per_adult') else '', blank="Once for everyone") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Other monthly fees", "other_monthly_fees", v.get('other_monthly_fees', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Move-in fees", "move_in_fees", v.get('move_in_fees', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if not buy %}
+  {{ field("Broker fee", "broker_fee", v.get('broker_fee', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if buy %}
+  {{ field("HOA per month", "hoa", v.get('hoa', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if buy %}
+  {{ field("Property tax per year", "property_tax", v.get('property_tax', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if buy %}
+  {{ field("Insurance per year", "insurance", v.get('insurance', ''), kind="number", step="any") }}
+  {% endif %}
+  {% if buy %}
+  {{ field("Days on the market", "days_on_market", v.get('days_on_market', ''), kind="number") }}
+  {{ field("Special assessment (one-time amount)", "special_assessment", v.get('special_assessment', ''), kind="number", step="any", hint="A one-time charge the HOA has voted on. Leave empty if there is none.") }}
+  {{ select("Who pays the special assessment", "special_assessment_payer", [("seller", "The seller"), ("buyer", "You, the buyer")], v.get('special_assessment_payer', ''), blank="Not sure") }}
+  {{ field("Closing costs", "closing_costs", v.get('closing_costs', ''), kind="number", step="any", hint="Left empty, a guess of about " ~ setting('closing_cost_pct', '3') ~ "% of the price is used.") }}
+  {{ field("Seller credit toward closing", "seller_credit", v.get('seller_credit', ''), kind="number", step="any", hint="Money the seller pays toward your closing costs. It comes off the cash you need to close.") }}
+  {{ field("Listing agent", "listing_agent", v.get('listing_agent', ''), hint="The agent who listed it, and their company.") }}
+  {% endif %}
+  {{ field("Latitude", "lat", v.get('lat', ''), kind="number", step="any", hint="Optional. Needed for map and commute estimates.") }}
+  {{ field("Longitude", "lng", v.get('lng', ''), kind="number", step="any") }}
+  {{ select("Your rating", "rating", [("1", "1"), ("2", "2"), ("3", "3"), ("4", "4"), ("5", "5")], v.get('rating', '')|string if v.get('rating', '') is not none else '', blank="Not rated") }}
+  <div class="wide">{{ field("Your notes", "notes", v.get('notes', ''), kind="textarea", rows=5, hint="Only you write here. An AI app never changes your notes.") }}</div>
+  <input type="hidden" name="listing_text" value="{{ v.get('listing_text', '') }}">
+</div>

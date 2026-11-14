@@ -1,0 +1,144 @@
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --all-groups
+      - run: uv run pytest -q --tb=short
+      - name: Check the Mac start file
+        if: runner.os == 'Linux'
+        run: bash -n "Start Property Helper.command"
+      - name: Check install.sh syntax
+        if: runner.os != 'Windows'
+        run: bash -n install.sh
+      - name: Check install.ps1 syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$null, [ref]$errors)
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            mcp_exe: "dist/Property Helper.app/Contents/MacOS/Property Helper"
+          - os: windows-latest
+            mcp_exe: "dist/Property Helper/prophelper-mcp.exe"
+          - os: ubuntu-latest
+            mcp_exe: "dist/Property Helper/property-helper"
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen --all-groups
+      - run: uv run pyinstaller packaging/property-helper.spec --noconfirm
+
+      - name: Smoke test the MCP server inside the build (skips until the server exists)
+        run: uv run python packaging/smoke_mcp.py "${{ matrix.mcp_exe }}"
+        shell: bash
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep -s - "dist/Property Helper.app"
+          cd dist && ditto -c -k --keepParent "Property Helper.app" ../PropertyHelper-mac.zip
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist\Property Helper" -DestinationPath PropertyHelper-windows.zip
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf PropertyHelper-linux.tar.gz -C dist "Property Helper"
+
+      - name: Test the install script against this build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$RUNNER_TEMP/rel" "$RUNNER_TEMP/inst"
+          cp PropertyHelper-mac.zip "$RUNNER_TEMP/rel/"
+          (cd "$RUNNER_TEMP/rel" && shasum -a 256 PropertyHelper-mac.zip > SHA256SUMS.txt)
+          PROPHELPER_INSTALL_FROM="$RUNNER_TEMP/rel" PROPHELPER_INSTALL_DIR="$RUNNER_TEMP/inst" sh install.sh --no-open
+          test -x "$RUNNER_TEMP/inst/Property Helper.app/Contents/MacOS/Property Helper"
+          uv run python packaging/smoke_mcp.py "$RUNNER_TEMP/inst/Property Helper.app/Contents/MacOS/Property Helper"
+          # a wrong checksum must be refused and install nothing
+          mkdir -p "$RUNNER_TEMP/bad" "$RUNNER_TEMP/inst-bad"
+          cp PropertyHelper-mac.zip "$RUNNER_TEMP/bad/"
+          echo "0000000000000000000000000000000000000000000000000000000000000000  PropertyHelper-mac.zip" > "$RUNNER_TEMP/bad/SHA256SUMS.txt"
+          if PROPHELPER_INSTALL_FROM="$RUNNER_TEMP/bad" PROPHELPER_INSTALL_DIR="$RUNNER_TEMP/inst-bad" sh install.sh --no-open; then echo "a bad checksum was accepted" >&2; exit 1; fi
+          test ! -e "$RUNNER_TEMP/inst-bad/Property Helper.app"
+      - name: Test the install script against this build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/rel" "$RUNNER_TEMP/inst"
+          cp PropertyHelper-linux.tar.gz "$RUNNER_TEMP/rel/"
+          (cd "$RUNNER_TEMP/rel" && sha256sum PropertyHelper-linux.tar.gz > SHA256SUMS.txt)
+          PROPHELPER_INSTALL_FROM="$RUNNER_TEMP/rel" PROPHELPER_INSTALL_DIR="$RUNNER_TEMP/inst" sh install.sh --no-open
+          test -x "$RUNNER_TEMP/inst/Property Helper/property-helper"
+          uv run python packaging/smoke_mcp.py "$RUNNER_TEMP/inst/Property Helper/property-helper"
+          # a wrong checksum must be refused and install nothing
+          mkdir -p "$RUNNER_TEMP/bad" "$RUNNER_TEMP/inst-bad"
+          cp PropertyHelper-linux.tar.gz "$RUNNER_TEMP/bad/"
+          echo "0000000000000000000000000000000000000000000000000000000000000000  PropertyHelper-linux.tar.gz" > "$RUNNER_TEMP/bad/SHA256SUMS.txt"
+          if PROPHELPER_INSTALL_FROM="$RUNNER_TEMP/bad" PROPHELPER_INSTALL_DIR="$RUNNER_TEMP/inst-bad" sh install.sh --no-open; then echo "a bad checksum was accepted" >&2; exit 1; fi
+          test ! -e "$RUNNER_TEMP/inst-bad/Property Helper"
+      - name: Test the install script against this build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $rel = Join-Path $env:RUNNER_TEMP 'rel'
+          $inst = Join-Path $env:RUNNER_TEMP 'inst'
+          New-Item -ItemType Directory -Path $rel -Force | Out-Null
+          Copy-Item PropertyHelper-windows.zip $rel
+          $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $rel 'PropertyHelper-windows.zip')).Hash.ToLower()
+          Set-Content -Path (Join-Path $rel 'SHA256SUMS.txt') -Value "$hash  PropertyHelper-windows.zip" -Encoding ascii
+          $env:PROPHELPER_INSTALL_FROM = $rel
+          $env:PROPHELPER_INSTALL_DIR = $inst
+          & .\install.ps1 -NoOpen
+          # with an override folder the app goes in a "Property Helper" folder inside it
+          $app = Join-Path $inst 'Property Helper'
+          if (-not (Test-Path (Join-Path $app 'prophelper-mcp.exe'))) { throw 'installed prophelper-mcp.exe is missing' }
+          uv run python packaging/smoke_mcp.py (Join-Path $app 'prophelper-mcp.exe')
+          # a wrong checksum must be refused and install nothing
+          $bad = Join-Path $env:RUNNER_TEMP 'bad'
+          $instBad = Join-Path $env:RUNNER_TEMP 'inst-bad'
+          New-Item -ItemType Directory -Path $bad -Force | Out-Null
+          Copy-Item PropertyHelper-windows.zip $bad
+          Set-Content -Path (Join-Path $bad 'SHA256SUMS.txt') -Value ('0' * 64 + '  PropertyHelper-windows.zip') -Encoding ascii
+          $env:PROPHELPER_INSTALL_FROM = $bad
+          $env:PROPHELPER_INSTALL_DIR = $instBad
+          & .\install.ps1 -NoOpen
+          if ($LASTEXITCODE -ne 1) { throw 'a bad checksum did not fail the install' }
+          if ((Test-Path (Join-Path $instBad 'prophelper-mcp.exe')) -or (Test-Path (Join-Path $instBad 'Property Helper'))) { throw 'a bad checksum was accepted' }
+          $global:LASTEXITCODE = 0  # the refusal above is the expected result, not a failed step
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PropertyHelper-${{ runner.os }}
+          path: |
+            PropertyHelper-*.zip
+            PropertyHelper-*.tar.gz

@@ -1,0 +1,25 @@
+{# Included on the place page (`place` and `setting()` are in scope). Shows what the AI red-flag check wrote, the map
+   location button, and a placeholder that loads the AI panel (GET /places/<id>/ai, see routes_ai.py). #}
+<link rel="stylesheet" href="/static/ai.css">
+<script src="/static/ai.js" defer></script>
+{% if place.red_flags %}
+<section class="card" id="ai-flags" aria-labelledby="ai-flags-h">
+  <h2 id="ai-flags-h">Red-flag notes</h2>
+  <p class="fine">Written by the red-flag check. They are things worth a second look, not proof of anything. You decide.</p>
+  <div class="ai-draft-body">{{ place.red_flags }}</div>
+</section>
+{% endif %}
+<section class="card" id="map-point" aria-labelledby="map-point-h">
+  <h2 id="map-point-h">Map location</h2>
+  {% if place.lat is not none and place.lng is not none %}<p>Saved: {{ place.lat }}, {{ place.lng }}.</p>
+  {% else %}<p>No map point yet, so this place has no commute estimate.</p>{% endif %}
+  {% if place.address %}
+  <form method="post" action="/places/{{ place.id }}/geocode" class="inline">
+    <button class="btn small" type="submit">Find on map from address</button>
+  </form>
+  <p class="fine">This sends only the street address, city, state and ZIP saved above to OpenStreetMap's free lookup service (at most one request a second){% if setting('geocode') != '1' %}. Lookup is off, so you are asked first{% endif %}. <a href="/privacy#network">What is sent</a>. Or type the latitude and longitude in Facts.</p>
+  {% else %}<p class="fine">Save a street address in Facts first, then press Find on map from address here. Or type the latitude and longitude in Facts.</p>{% endif %}
+</section>
+<div id="ai-panel" hx-get="/places/{{ place.id }}/ai" hx-trigger="load" hx-swap="outerHTML">
+  <p class="fine">AI help shows up here in a moment. <noscript><a href="/places/{{ place.id }}/ai">Open the AI help page</a></noscript></p>
+</div>

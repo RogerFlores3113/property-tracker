@@ -1,0 +1,58 @@
+{% from "_macros.html" import button, post_button %}
+{% set _tours = request.app.state.store.list_tours(place.id) %}
+<section class="card" id="tours">
+  <h2>Tours <span class="count">{{ _tours|length }}</span></h2>
+  <form method="post" action="/places/{{ place.id }}/tours" class="stack">
+    <div class="form-grid">
+      <div class="field"><label for="tour-day">Day</label><input id="tour-day" type="date" name="day" required></div>
+      <div class="field"><label for="tour-time">Time</label><input id="tour-time" type="time" name="time" value="10:00"></div>
+      <div class="field"><label for="tour-len">How long (minutes)</label><input id="tour-len" type="number" name="duration_minutes" min="5" max="600" value="30"></div>
+      <div class="field"><label for="tour-who">With whom</label><input id="tour-who" name="with_whom" maxlength="200" placeholder="Leasing office"></div>
+      <div class="field wide"><label for="tour-where">Where to meet</label><input id="tour-where" name="where_note" maxlength="300" placeholder="Front door of the leasing office"></div>
+    </div>
+    <p>{{ button("Book a tour", kind="primary", small=True) }}</p>
+  </form>
+  {% for t in _tours %}
+  <article class="tour tour-{{ t.status }}" id="tour-{{ t.id }}">
+    <h3>{{ t.starts_at|local }} <span class="badge">{{ t.status|capitalize }}</span></h3>
+    <p class="fine">{{ t.duration_minutes }} minutes{% if t.with_whom %} &middot; with {{ t.with_whom }}{% endif %}{% if t.where_note %} &middot; {{ t.where_note }}{% endif %}</p>
+    <div class="actions-inline">
+      {% if t.status != 'done' %}{{ post_button("/tours/%d/status"|format(t.id), "Mark done", name="status", value="done") }}{% endif %}
+      {% if t.status == 'booked' %}{{ post_button("/tours/%d/status"|format(t.id), "Cancel the tour", name="status", value="cancelled") }}{% endif %}
+      {% if t.status == 'cancelled' %}{{ post_button("/tours/%d/status"|format(t.id), "Book it again", name="status", value="booked") }}{% endif %}
+    </div>
+    <details{% if t.status == 'done' %} open{% endif %}>
+      <summary>Tour checklist, rating and notes</summary>
+      <form method="post" action="/tours/{{ t.id }}/details" class="stack">
+        <p class="fine">While you walk through, mark each thing OK or a problem, and add a few words.</p>
+        <table class="tour-check">
+          <thead><tr><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Note</th></tr></thead>
+          {% for name, _v in t.checklist.items() %}
+          <tr>
+            <td>{{ name|capitalize }}</td>
+            <td><label class="sr" for="st-{{ t.id }}-{{ loop.index0 }}">{{ name }}: result</label>
+              <select id="st-{{ t.id }}-{{ loop.index0 }}" name="state_{{ loop.index0 }}">
+                <option value=""{% if not _v.state %} selected{% endif %}>Not checked</option>
+                <option value="ok"{% if _v.state == 'ok' %} selected{% endif %}>OK</option>
+                <option value="issue"{% if _v.state == 'issue' %} selected{% endif %}>Problem</option>
+              </select></td>
+            <td><label class="sr" for="nt-{{ t.id }}-{{ loop.index0 }}">{{ name }}: note</label>
+              <input id="nt-{{ t.id }}-{{ loop.index0 }}" name="note_{{ loop.index0 }}" maxlength="500" value="{{ _v.note }}"></td>
+          </tr>
+          {% endfor %}
+        </table>
+        <div class="field"><label for="rt-{{ t.id }}">Your rating, 1 to 5</label>
+          <select id="rt-{{ t.id }}" name="rating"><option value="">No rating</option>{% for n in range(1, 6) %}<option value="{{ n }}"{% if t.rating == n %} selected{% endif %}>{{ n }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="tn-{{ t.id }}">Notes about the tour</label><textarea id="tn-{{ t.id }}" name="notes" rows="3">{{ t.notes }}</textarea></div>
+        <p>{{ button("Save tour notes", small=True) }}</p>
+      </form>
+    </details>
+    <form method="post" action="/tours/{{ t.id }}/delete" class="inline" data-confirm="Delete this tour?">
+      <span class="checks"><input id="td-{{ t.id }}" type="checkbox" name="confirm" value="yes"><label for="td-{{ t.id }}">Yes, delete this tour</label></span>
+      {{ button("Delete tour", kind="danger", small=True) }}
+    </form>
+  </article>
+  {% else %}
+  <p class="fine">No tours yet. Book one above and it shows on Today and the Calendar.{% if search.mode == 'buy' %} Booking a tour doesn't change the stage; move the place yourself.{% else %} Booking moves a Saved or Contacted place to Tour booked.{% endif %}</p>
+  {% endfor %}
+</section>

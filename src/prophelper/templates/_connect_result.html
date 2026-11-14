@@ -1,0 +1,56 @@
+{% if ok and result.installed is sameas false %}
+{% if app_key == 'claude' %}
+<p class="flash warn">We don't see the Claude app on this computer.</p>
+<p class="fine">Get the Claude app at claude.ai/download, then come back and press Connect. Nothing was changed.</p>
+{% else %}
+<p class="flash warn">{{ result.message }}</p>
+<p class="fine">Nothing was changed. If it is installed somewhere unusual, use "Set it up by hand" lower on this page.</p>
+{% endif %}
+{% elif ok and result.ok is sameas false %}
+<p class="flash warn">{{ result.problem }}</p>
+<p class="fine">Nothing was changed in {{ app_name }}'s settings.</p>
+{% elif ok and app_key == 'claude' and check and check.ok %}
+{# Connected and tested: one sentence. The numbers, paths and backup sit in the fold. #}
+<div id="connect-done" data-focus tabindex="-1" role="status">
+<p class="ok">{% if result.already_connected and not restart %}Already set up. Nothing was changed, your other apps in the settings file were kept, and the Claude app was not restarted. If it does not show Property Helper yet, {{ quit_text[0]|lower }}{{ quit_text[1:] }}{% elif restart and restart.supported %}{{ restart.message }}{% else %}{{ open_line }}{% endif %}</p>
+<p class="fine"><strong>Next:</strong> press <a href="#skills-panel">Step 2. Add skills</a> on this page.</p>
+{% if result.quarantine %}<p class="flash warn">{{ result.quarantine }}</p>{% endif %}
+<details class="fine"><summary>Technical details</summary>
+  <p>{{ healthy_line }} {{ check.line }}</p>
+  <p>The entry is in <code>{{ result.path }}</code>.{% if restart and restart.quit %} Claude was quit the normal way (not forced) and opened again so it loads Property Helper.{% endif %}</p>
+  {% if result.backup and not result.already_connected %}<p>Your previous settings were saved as a backup next to the original file ({{ result.backup.replace('\\', '/').rsplit('/', 1)[-1] }}).</p>{% endif %}
+  <p>{{ look_text }}</p>
+</details>
+</div>
+{% elif ok %}
+{% if result.already_connected %}
+<p class="flash">Done. Already set up: Property Helper's entry is in <code>{{ result.path }}</code>, so nothing was rewritten.</p>
+{% else %}
+<p class="flash">Done. Added to {{ app_name }}'s settings, in <code>{{ result.path }}</code>.</p>
+{% endif %}
+{% if result.read_back %}<p class="fine">We read the file back and checked that Property Helper's entry is what we meant to write.</p>{% endif %}
+{% if app_key == 'claude' %}
+{% if result.quarantine %}<p class="flash warn">{{ result.quarantine }}</p>{% endif %}
+<p class="flash warn"><strong>One more step:</strong> {{ quit_text }}</p>
+<p class="fine"><strong>Then:</strong> press <a href="#skills-panel">Step 2. Add skills</a> on this page.</p>
+{% if result.running %}<p class="fine">Claude is open right now, so it hasn't seen the change yet.</p>{% endif %}
+<p>{{ look_text }}</p>
+{% else %}
+<p>{{ result.next_step or ('Restart ' ~ app_name ~ ' to load Property Helper.') }}</p>
+{% endif %}
+{% if check %}
+  {% if check.ok %}
+  <p class="ok">{% if app_key == 'claude' %}{{ healthy_line }} {% endif %}{{ check.line }}</p>
+  {% else %}
+  <p class="flash warn">{% if result.already_connected %}The test failed.{% else %}Added, but the test failed.{% endif %} {{ check.line }}</p>
+  <details open class="fine"><summary>What the program said</summary>
+    <pre class="code">{{ check.stderr_tail|join('\n') or '(nothing)' }}</pre></details>
+  {% endif %}
+  {% if check.stray_stdout %}<p class="fine">It also printed text that isn't part of the protocol, which can get in the app's way: {{ check.stray_stdout[0][:160] }}</p>{% endif %}
+{% endif %}
+{% if result.backup and not result.already_connected %}<p class="fine">Your previous settings were saved as a backup next to the original file ({{ result.backup.replace('\\', '/').rsplit('/', 1)[-1] }}).</p>{% endif %}
+{% else %}
+<p class="flash warn">That didn't work: {{ error }}</p>
+{% if detail %}<details class="fine advanced-fold"><summary>For advanced users</summary><pre class="code">{{ detail }}</pre></details>{% endif %}
+<p class="fine">You can still set it up by hand with the settings under "Set it up by hand" lower on this page.</p>
+{% endif %}

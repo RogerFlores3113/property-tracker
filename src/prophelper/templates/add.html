@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, field, select %}
+{% block title %}Add a place &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head("Add a place", "Paste a link, the listing text, or both. The details are filled in for you to check.") %}{% endcall %}
+{% if form_error %}<p class="flash warn" role="alert" tabindex="-1">{{ form_error }}</p>{% endif %}
+{% if not searches %}
+<section class="card"><h2>Make a search first</h2><p>Places live inside a search. <a href="/search">Start one</a> (it takes a minute), then come back here.</p></section>
+{% else %}
+{% if not parsed %}
+<section class="card">
+  <form method="post" action="/add/parse" class="stack">
+    <div class="field"><label for="add-url">Link to the listing</label>
+      <input id="add-url" name="url" type="url" value="{{ url }}" placeholder="https://..." data-parse-on-enter autofocus>
+      <div class="hint">Property Helper never opens the link. It only reads the web address and the text you paste.</div></div>
+    <div class="field"><label for="add-text">Listing text</label>
+      <textarea id="add-text" name="text" rows="10" placeholder="Paste the description: price, bedrooms, laundry, pets, fees...">{{ text }}</textarea></div>
+    {{ select("Which search", "search_id", search_options, chosen) }}
+    <p>{{ button("Read the listing", kind="primary") }} <a class="btn" href="/add?manual=1">Type it in myself</a></p>
+  </form>
+  <p class="fine">Have a spreadsheet of places? <a href="/import">Import a spreadsheet (CSV)</a>. You see a preview first.</p>
+</section>
+{% else %}
+<section class="card">
+  {% set mode = (searches|selectattr('id', 'equalto', chosen)|list|first).mode if chosen else 'rent' %}
+  {% set labels = {"title": "title", "address": "address", "unit": "unit", "city": "city", "state": "state", "zip": "ZIP", "price": ("price" if mode == 'buy' else "rent"), "days_on_market": "days on the market", "special_assessment": "special assessment", "special_assessment_payer": "who pays it", "closing_costs": "closing costs", "seller_credit": "seller credit", "application_fee_per_adult": "fee charged per adult", "listing_agent": "listing agent", "insurance": "insurance", "beds": "bedrooms", "baths": "bathrooms", "sqft": "square feet", "laundry": "laundry", "parking": "parking", "pets": "pets", "dishwasher": "dishwasher", "utilities_included": "utilities included", "months_up_front": "months of rent due before move-in", "tenant_pays": "utilities you pay", "available_from": "available date", "lease_months": "lease length", "year_built": "year built", "deposit": "deposit", "application_fee": "application fee", "parking_cost": "parking cost", "pet_rent": "pet rent", "pet_fee": "pet fee", "pet_deposit": "pet deposit", "pet_weight_limit": "heaviest pet allowed", "pet_count_limit": "pet count limit", "pet_breed_note": "breed rules", "fenced_yard": "fenced yard", "other_monthly_fees": "other monthly fees", "hoa": "HOA", "property_tax": "property tax", "broker_fee": "broker fee", "move_in_fees": "move-in fees", "utilities_estimate": "utilities estimate", "source": "website"} %}
+  {% set got = [] %}{% for k in found %}{% if k in labels %}{% set _ = got.append(labels[k]) %}{% endif %}{% endfor %}
+  {% set missing = not_found %}
+  {% if found %}
+  <p>Filled in from what you pasted: {{ got|join(', ') or 'just the link' }}. Check it, fix anything that is wrong, and save.</p>
+  {% if text and missing %}<p class="fine">Not found in the text, so left empty: {{ missing|join(', ') }}. Add them below if you know them.</p>{% endif %}
+  {% else %}<p>Fill in what you know. You can add the rest later.</p>{% endif %}
+  <form method="post" action="/add/save" class="stack">
+    {{ select("Add to which search", "search_id", search_options, chosen) }}
+    {% set v = values %}
+    {% if flags %}<div class="card sub-card" id="redflags" role="region" aria-labelledby="flags-h"><h3 id="flags-h">Things to check <span class="count">{{ flags|length }}</span></h3>
+      <p class="fine">These are only hints from the text and numbers saved here. They are not proof of anything.</p>
+      <ul>{% for f in flags %}<li class="flag">{{ f }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if v.get('found_in_listing') %}<div class="card sub-card" id="found-in-listing"><h3>Also in the listing</h3><p>{{ v.get('found_in_listing') }}</p>
+      <p class="fine">Some of these have no box of their own below. They are only shown here, and the full listing text is saved with the place.</p></div>{% endif %}
+    {% set folded = ["unit", "city", "state", "zip", "url", "source", "dishwasher", "parking_cost", "pet_rent", "pet_fee", "pet_deposit", "pet_weight_limit", "pet_count_limit", "pet_breed_note", "fenced_yard", "utilities_estimate", "year_built", "lease_start", "lease_end", "application_fee", "other_monthly_fees", "move_in_fees", "broker_fee", "days_on_market", "closing_costs", "seller_credit", "application_fee_per_adult", "listing_agent", "lat", "lng", "rating", "notes"] %}
+    {% set filled = [] %}{% for k in folded %}{% if k in found %}{% set _ = filled.append(k) %}{% endif %}{% endfor %}
+    {% set open_more = form_error|length > 0 %}{% set more_filled = filled|length %}
+    {% include "_add_fields.html" %}
+    <p>{{ button("Save this place", kind="primary") }} <a class="btn" href="/add">Start over</a></p>
+  </form>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

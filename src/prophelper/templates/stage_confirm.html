@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Move to {{ target }}? &middot; Property Helper{% endblock %}
+{% block body %}
+<section class="card" id="stage-confirm">
+  <h1>Move {{ place.title }} to {{ target }}?</h1>
+  <p>{{ meaning }}</p>
+  <form method="post" action="/places/{{ place.id }}/stage" class="stack">
+    <input type="hidden" name="stage" value="{{ target }}">
+    <input type="hidden" name="note" value="{{ note }}">
+    <input type="hidden" name="confirm" value="yes">
+    <p><button class="btn primary" type="submit">Yes, move it to {{ target }}</button>
+      <a class="btn" href="/places/{{ place.id }}">No, leave it as {{ place.stage }}</a></p>
+  </form>
+</section>
+{% endblock %}

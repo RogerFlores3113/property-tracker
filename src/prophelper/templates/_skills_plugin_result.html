@@ -1,0 +1,9 @@
+<div class="plugin-result" data-focus tabindex="-1">
+  {% if error %}
+  <p class="flash warn">We couldn't save the add-on file ({{ error }}). You can download it here instead: <a href="/skills/property-helper.plugin" download>{{ plugin_file }}</a>.</p>
+  {% else %}
+  <p class="flash">Saved <code>{{ plugin_file }}</code> to <code>{{ saved }}</code>.{% if shown %} It is showing in your file manager now.{% else %} Open that folder to find it.{% endif %}</p>
+  {% endif %}
+  <ol class="plain">{% for s in plugin_steps %}<li>{{ s }}</li>{% endfor %}</ol>
+  <p class="fine">This add-on file adds skills only. The Claude app still needs the connection (step 1 on the Claude app card).</p>
+</div>

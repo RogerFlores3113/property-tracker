@@ -1,0 +1,24 @@
+{% if state.kind != 'found' or entry is none %}
+<p class="flash warn">{{ state.message }}</p>
+{% if state.detail %}<details class="fine advanced-fold"><summary>For advanced users</summary><pre class="code">{{ state.detail }}</pre></details>{% endif %}
+<p class="fine">Settings file: <code>{{ path }}</code>. This check changed nothing.</p>
+{% else %}
+  {% for p in problems %}<p class="flash warn">{{ p }}</p>{% endfor %}
+  {% if check.ok %}
+  {% if app_key == 'claude' and not problems %}<p class="ok">{{ set_up_line }}</p>
+  <details class="fine"><summary>Technical details</summary><p>{{ check.line }}</p>
+    <p>Checked in <code>{{ path }}</code>. Nothing was changed.</p>
+    <p>{{ look_text }}</p></details>
+  {% else %}<p class="ok">{{ check.line }}</p>{% endif %}
+  {% else %}
+  <p class="flash warn">{{ check.line }}</p>
+  <details open class="fine"><summary>What the program said</summary>
+    <pre class="code">{{ check.stderr_tail|join('\n') or '(nothing)' }}</pre></details>
+  {% endif %}
+  {% if check.stray_stdout %}<p class="fine">It also printed text that isn't part of the protocol, which can get in the app's way: {{ check.stray_stdout[0][:160] }}</p>{% endif %}
+  {% if not (app_key == 'claude' and check.ok and not problems) %}<p class="fine">Checked in <code>{{ path }}</code>. Nothing was changed.</p>{% endif %}
+  {% if app_key == 'claude' and check.ok and problems %}
+  <p class="fine">If Claude Desktop doesn't show it yet: {{ quit_text }}</p>
+  <p>{{ look_text }}</p>
+  {% endif %}
+{% endif %}
