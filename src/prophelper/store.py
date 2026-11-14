@@ -1501,7 +1501,7 @@ class Store:
             if not values.get("title"):
                 values["title"] = self._fallback_title(values)
             if values.get("reader_notes") and values.get("listing_text"):
-                fresh = self._fresh_reader_notes(values)  # the notes agree with the facts saved with the place
+                fresh = self._fresh_reader_notes({**values, "search_id": search_id})  # the notes agree with the facts saved with the place
                 if fresh is not None:
                     values["reader_notes"] = fresh
             new_stage = st.FIRST_STAGE
@@ -1608,15 +1608,18 @@ class Store:
                 self.move_stage(place_id, stage, by_ai=(by == "ai"))
         return self.get_place(place_id)
 
-    @staticmethod
-    def _fresh_reader_notes(place: dict[str, Any]) -> str | None:
+    def _fresh_reader_notes(self, place: dict[str, Any]) -> str | None:
         """The "Also in the listing" notes made again from the saved listing text and the place's current facts, so a note
         about something that is filled in now goes away. None when the place has no notes or no listing text to read."""
         if not str(place.get("reader_notes") or "").strip() or not str(place.get("listing_text") or "").strip():
             return None
         try:
             from . import parsers
-            return parsers.reader_notes_for(place)[:READER_NOTES_MAX]
+            buying = False
+            if place.get("search_id") is not None:
+                row = self._row("SELECT mode FROM searches WHERE id = ?", (place["search_id"],))
+                buying = bool(row) and str(row["mode"] or "") == "buy"
+            return parsers.reader_notes_for(place, buying=buying)[:READER_NOTES_MAX]
         except Exception:  # noqa: BLE001 - a reader failure must not stop a save
             return None
 

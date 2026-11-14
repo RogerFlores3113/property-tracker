@@ -691,17 +691,17 @@ def add_page(request: Request, manual: int = 0):
 
 def _read_pasted(store: Store, text: str, url: str, sid: Any) -> dict[str, Any]:
     """What the reader finds in pasted text (and a link), worded for the chosen search. The Add preview and the save use it."""
-    values = parsers.parse_listing(text, url)
+    try:
+        chosen = store.get_search(int(sid)) if str(sid or "").isdigit() else store.current_search()
+    except NotFound:
+        chosen = store.current_search()
+    values = parsers.parse_listing(text, url, buying=bool(chosen and chosen.get("mode") == "buy"))
     if url:
         values["url"] = url
     if text.strip():
         values["listing_text"] = text
     if not values.get("title") and values.get("address"):
         values["title"] = str(values["address"]).split(",")[0]
-    try:
-        chosen = store.get_search(int(sid)) if str(sid or "").isdigit() else store.current_search()
-    except NotFound:
-        chosen = store.current_search()
     if chosen and int(chosen.get("adults") or chosen.get("people") or 1) > 1:
         parsers.app_fee_note_for_people(values, int(chosen.get("adults") or chosen["people"]))
     if chosen and chosen.get("mode") == "buy" and values.get("found_in_listing"):
