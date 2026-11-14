@@ -382,7 +382,12 @@ def _without_pet_one_time(text: str) -> str:
         if re.search(r"\b(?:pets?|cats?|dogs?|animals?|kittens?|puppies)\b", sentence, re.I):
             return re.sub(r"\bone[- ]time\b", "pet-only", sentence, flags=re.I)
         return sentence
+    # "Pets ok. One time fee $200.": a bare one-time fee in the sentence right after a pet sentence is the pet fee
+    text = re.sub(_PET_THEN_ONE_TIME, lambda m: m.group(1) + "pet-only", text)
     return re.sub(r"[^.\n;]+", fix, text)
+
+
+_PET_THEN_ONE_TIME = re.compile(r"(\b(?:pets?|cats?|dogs?|animals?)\b[^.\n;$]{0,40}[.;][ \t]*)(one[- ]time)(?=[ \t]+fee[ \t:\-]*\$)", re.I)
 
 
 def _periodic_fee_notes(text: str) -> list[str]:
@@ -1006,6 +1011,10 @@ def _pet_fees(text: str) -> dict[str, float]:
                 continue
             out.setdefault("pet_rent" if m.group(2).strip() else "pet_fee", float(m.group(1)))
             break
+    if "pet_fee" not in out:  # "Pets ok. One time fee $200.": the fee sentence right after the pet sentence
+        m = re.search(_PET_THEN_ONE_TIME.pattern + r"[ \t]+fee[ \t:\-]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])", text, re.I)
+        if m:
+            out["pet_fee"] = float(m.group(3))
     if "pet_fee" not in out and "pet_rent" in out:  # "Dogs max 2. $300 fee, $35 pet rent": the fee sits beside the pet rent
         m = re.search(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b[ \t]*,?[ \t]*(?:and[ \t]+)?\$[ \t]?\d{1,4}(?:\.\d\d)?[^.\n;$]{0,15}pet[ \t]+rent", text, re.I) \
             or re.search(r"\bpet[ \t]+rent\b[^.\n;$]{0,25}\$[ \t]?\d{1,4}(?:\.\d\d)?[^.\n;$]{0,15}?,[ \t]*(?:and[ \t]+)?\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b(?![ \t]*(?:/|per month|monthly))", text, re.I)
@@ -1462,6 +1471,8 @@ def _price_cut(text: str) -> float | None:
     m = re.search(r"\b(?:price[ \t]+(?:reduced|cut|drop(?:ped)?|reduction)|reduced|price[ \t]+change)[ \t:\-]*(?:by[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", text, re.I)
     if not m or re.search(r"\bto\s*$", text[max(0, m.start(1) - 8):m.start(1)], re.I):
         return None
+    if re.match(r"(?:\.\d\d)?[ \t]*(?:off|from|on)\b[^.\n;)]{0,20}\b(?:deposit|fees?|application|admin)\b", text[m.end():], re.I):
+        return None  # "REDUCED $1,950 off the deposit": a smaller deposit, not a lower price
     return _num(m.group(1))
 
 
