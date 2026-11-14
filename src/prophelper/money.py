@@ -501,11 +501,28 @@ ONE_TIME_NOTE = re.compile(r"not in the monthly cost|not counted in the monthly 
 _NO_AMOUNT_OPTIONAL = re.compile(r"gives no price|no price is given|looks optional|is optional|\boptional\b", re.I)
 
 
-def listing_notes_uncounted(reader_notes: Any) -> bool:
+def _note_is_stale(note: str, place: dict[str, Any] | None) -> bool:
+    """True when every dollar amount in an "it is not counted" note is a value the place now holds in a field (or part of a sum a
+    field holds): the note repeats what was counted, so it must not set the tag."""
+    if not place or not re.search(r"\$\s?\d", note):
+        return False
+    try:
+        from .parsers import note_amounts_placed
+        return note_amounts_placed(note, place)
+    except Exception:
+        return False
+
+
+def listing_notes_uncounted(reader_notes: Any, place: dict[str, Any] | None = None) -> bool:
     """True when the saved reader notes still hold a money note that is open: an amount, fee or cost the reader saw and did
-    not count or could not place. The one test behind the "some amounts in the listing notes aren't counted" tag."""
+    not count or could not place. The one test behind the "some amounts in the listing notes aren't counted" tag. ``place``
+    (its saved fields) lets a note whose amounts are all counted in a field count as closed."""
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
+            continue
+        if re.search(r"\boptional\b", note, re.I) and not re.search(r"\b(?:required|mandatory)\b", note, re.I):
+            continue  # an optional carport, garage or pool fee is not a cost you have to pay
+        if _note_is_stale(note, place):
             continue
         if _NOTE_PLACED.search(note) and not re.search(r"not counted|no amount|not saved", note, re.I):
             continue  # "The $25 credit check fee is saved as the application fee. Ask if each adult pays it.": the amount is placed
@@ -533,7 +550,7 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     n = int(a) if explicit else n
     out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets, n)
     noun = "adults" if explicit and mode != "buy" else "people"
-    if listing_notes_uncounted(place.get("reader_notes")):
+    if listing_notes_uncounted(place.get("reader_notes"), place):
         out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
         out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
     out["people"] = n
