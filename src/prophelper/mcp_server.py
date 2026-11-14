@@ -145,6 +145,9 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
     ("ai_notes", str, "Your own note about this place (added under a dated line; the user's notes are never touched)"),
 ]
 PLACE_KEYS = {n for n, _, _ in PLACE_PARAMS}
+# Money fields an explicit null clears on update_place (the value goes back to unknown, and the old one stays on the timeline).
+CLEARABLE = ("hoa", "property_tax", "insurance", "other_monthly_fees", "move_in_fees", "broker_fee", "application_fee", "deposit",
+             "utilities_estimate", "special_assessment", "closing_costs", "seller_credit")
 UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: guess (default, shown as a guess), billed back or from the listing "
                          "(the listing itself gives that monthly amount, so it is shown as from the listing). Send it only together with a "
                          "utilities_estimate amount, for example utilities_estimate 120 with utilities_source \"from the listing\". "
@@ -807,6 +810,26 @@ def build_server(store: Store) -> FastMCP:
         fields["ai_notes"] = " ".join(filter(None, [str(fields.get("ai_notes") or ""),
                                                     f"Utilities estimate ${amount:,.0f}/month: {'billed back, ' if word == 'billed back' else ''}from the listing."]))
 
+    def hoa_period_note(sent: Any, read: Any, text: str) -> str:
+        """The HOA field is a MONTHLY amount. When the listing bills it per quarter or per year and the caller sent the billed amount
+        as if it were monthly, say what the monthly amount is (the value Claude sent is not changed)."""
+        try:
+            mine = float(str(sent).replace("$", "").replace(",", ""))
+        except (TypeError, ValueError):
+            return ""
+        for m in re.finditer(r"(?:hoa|h\.o\.a\.|association|condo)\b[^.\n;$]{0,40}\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[^.\n;]{0,25}?"
+                             r"\b(quarterly|per quarter|a quarter|each quarter|every (?:3|three) months|semi-?annual\w*|every (?:6|six) months|annual\w*|yearly|per year|a year|each year)\b",
+                             text, re.I):
+            billed = float(m.group(1).replace(",", ""))
+            word = m.group(2).lower()
+            months = 3 if re.search(r"quarter|3|three", word) else 6 if re.search(r"semi|6|six", word) else 12
+            if abs(billed - mine) < 0.5:
+                label = "every 3 months" if months == 3 else "every 6 months" if months == 6 else "each year"
+                return (f"Read from the listing text: the HOA is ${billed:,.0f} billed {label}, which is about ${billed / months:,.0f} a month. "
+                        f"You saved the HOA as ${mine:,.0f} a month, so the cost counts ${mine:,.0f} a month. I kept your value. If the listing's figure is right, "
+                        f"update_place hoa {billed / months:,.0f}.")
+        return ""
+
     def read_listing_text(fields: dict[str, Any]) -> None:
         """Read the pasted listing text with the same reader the web Add page uses, and fill only what the caller left empty."""
         text = str(fields.get("listing_text") or "")
@@ -830,6 +853,7 @@ def build_server(store: Store) -> FastMCP:
             return
         if found.get("found_in_listing"):
             fields["reader_notes"] = str(found["found_in_listing"])  # kept on the place so the notes outlive the add reply
+            fields["reader_notes"] = parsers.reconcile_insurance_note(fields["reader_notes"], fields.get("insurance"))  # Claude's own value is what counts
         filled: list[str] = []
         already_sent = 0
         for key, value in found.items():
@@ -840,11 +864,14 @@ def build_server(store: Store) -> FastMCP:
                 filled.append(key.replace("_", " "))
             elif key not in ("title", "source", "url"):
                 already_sent += 1  # a real fact the caller had already sent itself
+        hoa_note = hoa_period_note(fields.get("hoa"), found.get("hoa"), text)
         if filled:
             fields["_text_notes"] = [f"Read from the listing text and filled in: {', '.join(filled)}. Check them against the listing; "
                                      f"anything you sent yourself was kept as you sent it."]
         elif not already_sent:  # said only when the reader really found nothing; if the caller sent every field itself, nothing to say
             fields["_text_notes"] = ["The listing text was saved and read, but I found no facts in it to fill in. Send the facts you can read yourself."]
+        if hoa_note:
+            fields["_text_notes"] = [*fields.get("_text_notes", []), hoa_note]
 
     def check_fields(fields: dict[str, Any], where: str = "", existing: dict[str, Any] | None = None) -> dict[str, Any]:
         apply_utilities_source(fields, where)
@@ -956,7 +983,9 @@ def build_server(store: Store) -> FastMCP:
             value = float(place.get("insurance"))
         except (TypeError, ValueError):
             return []
-        if not 0 < value < 50 or store.place_mode(place["id"]) == "buy":
+        # Under $100 a YEAR is almost always a monthly price sent by mistake (renter's insurance is rarely under $100 a year,
+        # and $75 a month is a normal price), so warn at less than $100. Yearly amounts of $100 and up are believable.
+        if not 0 < value < 100 or store.place_mode(place["id"]) == "buy":
             return []
         return [f"Warning: insurance is saved as {_money(value)} a YEAR, which counts as only {_money(round(value / 12, 2))} a month. "
                 f"If {_money(value)} is the monthly price, send the yearly amount instead ({_money(value * 12)}) with update_place."]
@@ -1188,6 +1217,7 @@ def build_server(store: Store) -> FastMCP:
                 lines.append(("Added " if created else "Already saved, updated ") + _line(e) + ("" if created else " (filled only empty fields)"))
                 lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "Read from the listing text", "The listing text was saved", "Also in the listing"))]
                 lines += ["  " + n for n in seen_not_counted(place)]
+                lines += ["  " + n for n in insurance_warning(place)]
                 out.append({"id": place["id"], "created": created})
         added = sum(1 for o in out if o["created"])
         lines.insert(0, f"Added {added}, updated {len(out) - added}.")
@@ -1203,7 +1233,11 @@ def build_server(store: Store) -> FastMCP:
             current = _find_place(store, place_id)
         except Exception:  # noqa: BLE001 - the not-found message comes from the lookup below
             current = None
+        sent = kw.pop("_sent", None)  # names the caller really sent, so an explicit null can be told from a field left out
+        clear = [k for k in CLEARABLE if sent and k in sent and kw.get(k) is None]
         fields = check_fields(kw, existing=current)
+        for k in clear:
+            fields[k] = None  # the caller sent null: clear the value (it is logged on the timeline like any replaced value)
         photo_notes = fields.pop("_photo_notes", [])
         fields.pop("stage", None)
         fields.pop("search_id", None)
@@ -1243,6 +1277,17 @@ def build_server(store: Store) -> FastMCP:
         [("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor, mode, minutes}]", None),
          ("utilities_source", str | None, UTILITIES_SOURCE_HELP, None)])
     mcp.tool(annotations=SAME_AGAIN)(update_place)
+    try:  # tell "hoa: null" (clear it) from "hoa not sent": FastMCP fills every missing argument with None, so also pass the names that were sent
+        _model = mcp._tool_manager.get_tool("update_place").fn_metadata.arg_model
+        _plain_dump = _model.model_dump_one_level
+
+        def _dump_with_sent(self: Any) -> dict[str, Any]:
+            out = _plain_dump(self)
+            out["_sent"] = frozenset(self.model_fields_set)
+            return out
+        _model.model_dump_one_level = _dump_with_sent  # type: ignore[method-assign]
+    except Exception:  # noqa: BLE001 - without it a null is just ignored, as before
+        pass
 
     @mcp.tool(annotations=WRITE)
     def move_place(place_id: Annotated[int, Field(description="The place's id")],
