@@ -19,7 +19,7 @@ def notes(text):
 # ---- 1. never "not counted" about a counted amount
 @pytest.mark.parametrize("text,fees", [
     ("2 bed apartment $1,800/mo. Valet trash $25/mo. Smart home $30/mo.", 55),
-    ("2 bed apartment $1,800/mo. Amenity fee $75/month. Water & trash $60/mo flat.", 135),
+    ("2 bed apartment $1,800/mo. Amenity fee $75/month.", 75),  # c12: a flat water and trash fee is now the utilities estimate, not another monthly fee
     ("1 bed $1,495/mo\nTrash valet $25/mo mandatory\nInternet package $60/mo required", 85),
 ])
 def test_counted_monthly_fees_are_not_noted(text, fees):
