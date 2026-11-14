@@ -38,6 +38,25 @@ _TEXT_SITES = (
 _MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 _STATES = frozenset("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK "
                     "OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR".split())
+_STATE_NAMES = {"alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
+                "delaware": "DE", "district of columbia": "DC", "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL",
+                "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+                "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT",
+                "nebraska": "NE", "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+                "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA",
+                "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+                "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY"}
+_STATE_NAME_RE = "|".join(sorted((n.replace(" ", r"[ \t]+") for n in _STATE_NAMES), key=len, reverse=True))
+
+
+def state_code(value: Any) -> str:
+    """"Ohio" or "OH" or "oh" gives "OH"; anything that is not a US state gives an empty string."""
+    v = " ".join(str(value or "").replace(".", " ").split())
+    if v.upper() in _STATES:
+        return v.upper()
+    return _STATE_NAMES.get(v.lower(), "")
+
+
 _STREET = (r"(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|way|cir|circle|pkwy|parkway|"
            r"ter|terrace|trl|trail|hwy|highway|loop|plaza|pike|(?:row|walk|alley|path|mews)(?![ \t]+(?:ln|lane|st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ct|court|pl|place|way|cir|circle|ter|terrace|trl|trail|pkwy|parkway)\b)|sq(?=\.?,|\.?[ \t]+(?:unit|apt|apartment|suite|ste|#))|square(?=\b,))")
 _NOT_STREET_WORDS = {"bed", "beds", "bedroom", "bedrooms", "bath", "baths", "bathroom", "bathrooms", "br", "ba", "bd", "bds", "sq",
@@ -50,6 +69,7 @@ _ADDRESS = re.compile(
     r"(?:[ \t]+(?:NE|NW|SE|SW|N|S|E|W)\b\.?(?=[ \t]*(?:[,\n#\d]|$|(?:apt|apartment|unit|suite|ste|near|with|and|\$)\b|\$|(?-i:[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3},?[ \t]+[A-Z]{2}\b))))?)"
     r"(?:,?\s+" + _UNIT + r")?", re.I)
 _CITY_LINE = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),?\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b")
+_CITY_LINE_NAME = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),?[ \t]+(" + _STATE_NAME_RE + r")[ \t]+(\d{5})(?:-\d{4})?\b", re.I)
 _CITY_STATE = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),\s+([A-Z]{2})\b(?!\w)")
 
 _AMOUNT = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(\s?[kK]\b)?")
@@ -368,6 +388,37 @@ def _worded_price(text: str) -> tuple[float | None, str]:
     return None, ""
 
 
+_STARTING_AT = re.compile(r"(?<![\w$])(?:starting|starts|beginning|begins)[ \t]+(?:at|from|around)[ \t]+(?:only[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?|"
+                          r"(?<![\w$])as[ \t]+low[ \t]+as[ \t]+\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?|"
+                          r"(?<!reduced )(?<!dropped )(?<!lowered )(?<!cut )(?<!price )(?<!was )(?<!down )(?<!\w)from[ \t]+\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])(?![ \t]*(?:-|\u2013|to)[ \t]*\$)", re.I)
+
+
+def _starting_at(text: str, price: float | None) -> bool:
+    """True when the rent that was read is a "starting at $X" or "from $X" price, so it is the lowest unit and not the rent of the unit wanted."""
+    if price is None:
+        return False
+    return any(_num(g) == price for m in _STARTING_AT.finditer(text) for g in m.groups() if g)
+
+
+def _bare_starting_rent(text: str) -> float | None:
+    """"Starting at $3,250" with no other rent in the text: the lowest unit's rent. Small amounts and fee lines are not rents."""
+    for m in _STARTING_AT.finditer(text):
+        if m.group(0).lower().startswith("from"):
+            continue
+        g = next((x for x in m.groups() if x), None)
+        value = _num(g) if g else 0
+        if not 500 <= value <= 30000:
+            continue
+        before = text[max(0, m.start() - 40):m.start()]
+        after = text[m.end():m.end() + 30]
+        if _FEE_AFTER_STRICT.match(after) or _FEE_AFTER_MONTHLY.match(after) or re.search(_FEE, before[-25:], re.I):
+            continue
+        if re.match(r"[ \t]*(?:/[ \t]*)?(?:sq|sf|ft|acres?)", after, re.I):
+            continue
+        return value
+    return None
+
+
 def _rent_range(text: str, price: float | None) -> tuple[float, float] | None:
     """(low, high) when the rent that was read is only the low end of a written range ("$1,299 - $1,650 / mo")."""
     if price is None:
@@ -678,6 +729,8 @@ _PARKING_PRICE_RES = (
                r"\$\s?(\d{2,4})(?:\.\d\d)?(?=[ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month))(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
     re.compile(r"\$\s?(\d{2,4})\s*(?:/\s*mo(?:nth)?|per month|a month|monthly)?\s*(?:for |per )?(?:a |the )?(?:reserved |covered |garage |private )?(?:parking|garage|carport)\b(?!\s*deposit)"),
     # "1 spot $50/mo", "Parking: 1 spot, $50/month", "2 spaces at $40 a month"
+    # "Parking required for all residents $120/month", "Garage optional $100"
+    re.compile(r"\b(?:garage|carport|parking)s?[ \t:\-]+(?:is[ \t]+|are[ \t]+)?(?:required|mandatory|optional|additional|extra)\b[^.\n;$]{0,30}?\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
     re.compile(r"\b\d\s*(?:parking\s+)?(?:spots?|spaces?|stalls?)\s*[,:\-]?\s*(?:for |at |is |are |only )?\$\s?(\d{2,4})(?:\.\d\d)?(?=[ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month|\b))(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
 )
 _PARKING_OPTIONAL = re.compile(r"\boptional\b|\bavailable\b|\badditional\b|\bextra (?:parking|spaces?|spots?|cars?|vehicles?|garage)\b|\bupgrade\b|\bif (?:you )?(?:need|want)\b|\bwaitlist\b|\bon request\b|\bfor an? fee\b", re.I)
@@ -762,6 +815,8 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
         cost = required[0]
     if cost is None and any(o for _v, o, _c in prices) and _PARKING_FREE.search(low):
         cost = 0.0
+    if kind == "none" and re.search(r"\bparking\s*(?:is\s*)?(?:not\s+available|unavailable)\b|\bno\s+parking\s+available\b", low):
+        notes.append("The listing says there is no parking.")
     return kind, cost, notes
 
 
@@ -773,6 +828,8 @@ def _parking(text: str) -> tuple[str, float | None]:
 def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | None]:
     low = text.lower()
     kind = ""
+    if re.search(r"\bparking\s*(?:is\s*)?(?:not\s+available|unavailable)\b|\bno\s+parking\s+available\b", low) and not re.search(r"\bgarage\b", low):
+        return "none", None
     label = re.search(r"\bparking(?: features?| type)?\s*[:\-]\s*([^\n.;]{0,40})", low)
     if label and not re.search(r"\bgarage\b", low):
         v = label.group(1)
@@ -791,7 +848,7 @@ def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | No
         kind = "garage"
     elif re.search(r"\bcarports?\b|\bcovered\s+(?:parking|spaces?|spots?)\b", low):
         kind = "covered"
-    elif re.search(r"\b(?:off[- ]?street|surface|free|assigned|reserved|on[- ]?site|private|ample|plenty of|paved|resident)\s+parking\b|\b(?:surface|gravel|paved|resident|tenant)?\s*lot\s+parking\b|\bparking\s+(?:lot|included|available|space|spot|provided|on[- ]?site)|\bdriveway\b|\bparking\s*[:\-]\s*(?:lot|yes|included|free|assigned|surface)|\b\d\s*parking (?:spaces?|spots?)\b|\b(?:surface|gravel|paved)\s+lot\b", low):
+    elif re.search(r"\b(?:off[- ]?street|surface|free|assigned|reserved|on[- ]?site|private|ample|plenty of|paved|resident)\s+parking\b|\b(?:surface|gravel|paved|resident|tenant)?\s*lot\s+parking\b|\bparking\s+(?:lot|included|available|space|spot|provided|on[- ]?site)|\bdriveway\b|\bparking\s*[:\-]\s*(?:lot|yes|included|free|assigned|surface)|\b\d\s*parking (?:spaces?|spots?)\b|\b(?:surface|gravel|paved)\s+lot\b|\blot\s+(?:spots?|spaces?)\b", low):
         kind = "lot"
     elif re.search(r"\b(?:street|on[- ]street)\s+parking\b|\bparking\s*[:\-]\s*street\b", low):
         kind = "street"
@@ -2723,25 +2780,81 @@ def street_with_unit(address: Any, unit: Any) -> str:
     street, u = str(address or "").strip(), str(unit or "").strip().lstrip("#").strip()
     if not u:
         return street
+    wm = re.match(r"(?:apt|apartment|unit|suite|ste)\b\.?[ \t]*#?[ \t]*(\S.*)$", u, re.I)
+    if wm or str(unit).strip().startswith("#"):  # the unit kept its word: "Unit 12", "Apt 2", "#5"
+        bare = wm.group(1) if wm else u
+        if re.search(r"(?:\b(?:apt|apartment|unit|suite|ste|no)\b\.?[ \t]*#?[ \t]*|#[ \t]*)" + re.escape(bare) + r"(?![\w-])", street, re.I):
+            return street
+        return f"{street} {str(unit).strip()}".strip()
     if re.search(r"(?:\b(?:apt|apartment|unit|suite|ste|no)\b\.?[ \t]*#?[ \t]*|#[ \t]*)" + re.escape(u) + r"(?![\w-])", street, re.I):
         return street
     return f"{street} #{u}".strip()
 
 
-_TRAILING_UNIT = re.compile(r"[ \t]*(?:[|,][ \t]*)?\b(?:apt|apartment|unit|suite|ste)\b\.?[ \t]*#?[ \t]*([A-Za-z]?\d{1,5}[A-Za-z]?(?:-\d{1,3})?|[A-Za-z])[ \t]*$", re.I)
+_TRAILING_UNIT = re.compile(r"[ \t]*(?:[|,][ \t]*)?(?:\b(?P<word>apt|apartment|unit|suite|ste)\b\.?[ \t]*#?|(?P<hash>#))[ \t]*([A-Za-z]?\d{1,5}[A-Za-z]?(?:-\d{1,3})?|[A-Za-z])[ \t]*$", re.I)
+_UNIT_WORDS = {"apt": "Apt", "apartment": "Apt", "unit": "Unit", "suite": "Suite", "ste": "Suite"}
 
 
-def split_address_unit(address: Any, unit: Any = None) -> tuple[str, str]:
-    """An address passed with its unit in it ("12 SPRUCE LANE | APT B", "210 Beck St Apt 2") gives (street, unit): the unit moves to its own
-    field, and when the unit field already holds it, it is not said twice. A unit that differs from the one in the line is left alone."""
+def split_address_unit(address: Any, unit: Any = None, keep_word: bool = False) -> tuple[str, str]:
+    """An address passed with its unit in it ("12 SPRUCE LANE | APT B", "210 Beck St Apt 2", "88 E Lincoln St #5") gives (street, unit): the unit moves
+    to its own field, and when the unit field already holds it, it is not said twice. A unit that differs from the one in the line is left alone.
+    With keep_word, a unit taken from the line keeps its word ("Unit 12", "Apt 2", "#5"); a unit the caller passed is kept as they wrote it."""
     street, u = str(address or "").strip(), str(unit or "").strip().lstrip("#").strip()
+    given = str(unit or "").strip()
+    if keep_word:
+        u = re.sub(r"^(?:apt|apartment|unit|suite|ste)\b\.?[ \t]*#?[ \t]*", "", given, flags=re.I).lstrip("#").strip()
     m = _TRAILING_UNIT.search(street)
-    if not m or not _unit_ok(m.group(1)) or len(street[:m.start()].strip()) < 4:
-        return street, str(unit or "").strip()
-    inside = m.group(1)
+    if not m or not _unit_ok(m.group(3)) or len(street[:m.start()].strip()) < 4:
+        return street, given
+    inside = m.group(3)
     if u and u.lower() != inside.lower():
-        return street, str(unit or "").strip()
-    return street[:m.start()].strip(" ,|"), u or inside
+        return street, given
+    if given:
+        return street[:m.start()].strip(" ,|"), given if keep_word else u
+    if keep_word:
+        word = _UNIT_WORDS.get((m.group("word") or "").lower())
+        inside = f"{word} {inside}" if word else f"#{inside}"
+    return street[:m.start()].strip(" ,|"), inside
+
+
+def split_full_address(address: Any, unit: Any = None, city: Any = None, state: Any = None, zip_code: Any = None) -> dict[str, str]:
+    """A whole address line ("88 N Mattis Ave, Champaign, IL 61821", "88 E Lincoln St #5, Columbus, Ohio 43201") gives its parts:
+    address (street only), unit (with its word when the line had one), city, state (two letters) and zip. What the caller passed
+    on its own wins; a tail that names another city, state or ZIP than the caller's is left alone. Parts that are not found are
+    left out."""
+    street = " ".join(str(address or "").split())
+    out: dict[str, str] = {}
+    c0, s0, z0 = (str(x or "").strip() for x in (city, state, zip_code))
+    if s0 and state_code(s0):
+        out["state"] = state_code(s0)
+    elif s0:
+        out["state"] = s0
+    if c0:
+        out["city"] = c0
+    if z0:
+        out["zip"] = z0
+    if "," in street:
+        # the city, state and ZIP start after the first comma that is followed by something that is not a unit
+        pieces = [x.strip() for x in street.split(",")]
+        for i in range(1, len(pieces)):
+            rest = ", ".join(pieces[i:])
+            mt = re.fullmatch(r"(?P<city>[A-Za-z][A-Za-z.' -]*?)(?:,[ \t]*|[ \t]+)(?P<state>[A-Za-z]{2}|" + _STATE_NAME_RE + r")\.?(?:,?[ \t]*(?P<zip>\d{5})(?:-\d{4})?)?", rest, re.I)
+            if not mt or not state_code(mt.group("state")) or re.match(r"(?:apt|apartment|unit|suite|ste|#)", mt.group("city"), re.I):
+                continue
+            tc, ts, tz = mt.group("city").strip(), state_code(mt.group("state")), mt.group("zip") or ""
+            if (c0 and tc.lower() != c0.lower()) or (out.get("state") and ts != out["state"]) or (z0 and tz and tz != z0):
+                break  # it names another place than the caller did: leave the line alone
+            street = ", ".join(pieces[:i])
+            out.setdefault("city", tc)
+            out["state"] = ts
+            if tz:
+                out.setdefault("zip", tz)
+            break
+    street, u = split_address_unit(street, unit, keep_word=True)
+    out["address"] = street
+    if u:
+        out["unit"] = u
+    return out
 
 
 def _address(text: str) -> dict[str, str]:
@@ -2783,6 +2896,11 @@ def _address_raw(text: str) -> dict[str, str]:
         for m in _CITY_LINE.finditer(text):
             if m.group(2) in _STATES:
                 out["city"], out["state"], out["zip"] = m.group(1), m.group(2), m.group(3)
+                break
+    if "city" not in out:
+        for m in _CITY_LINE_NAME.finditer(text):  # "Columbus, Ohio 43201"
+            if m.group(1)[:1].isupper() and m.group(1) not in ("Ohio",):
+                out["city"], out["state"], out["zip"] = m.group(1), state_code(m.group(2)), m.group(3)
                 break
     if "city" not in out:
         label = re.search(r"\b(?:location|city|area|neighborhood)\s*[:\-]\s*", text, re.I)
@@ -3149,6 +3267,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
     facts: list[str] = []
     price_range = _try(lambda: _rent_range(text, price_read)) if price_read and not buying else None
+    saved_price = (current or {}).get("price")
+    if price_range and isinstance(saved_price, (int, float)) and not isinstance(saved_price, bool) and saved_price > 0:
+        # a rent the caller already saved: keep it, but say the listing gives a range (it must not look like the whole story)
+        facts.append(f"The listing shows a rent from ${price_range[0]:,.0f} up to ${price_range[1]:,.0f} a month, so the saved rent may be the low end. "
+                     "Ask which rent applies to the unit you want.")
+        price_range = None
     if price_range:
         # "Rent from $1,299 - $1,650 / mo": the listing gives a range, so no single rent is saved (unknown beats wrong).
         price_read = None
@@ -3160,6 +3284,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             price_read = worded
         elif worded_note:
             facts.append(worded_note)
+    if price_read is None and not price_range and not buying:
+        price_read = _try(lambda: _bare_starting_rent(text))  # "Starting at $3,250": the lowest unit, read with a note below
     if buying and isinstance(price_read, (int, float)) and price_read < 20000:
         # A monthly figure ("monthly cost about $1,988") is not the asking price of a home for sale.
         if not (current or {}).get("price"):  # a price the caller already has needs no "check the asking price" note
@@ -3168,6 +3294,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         price_read = None
     dash_price = _try(lambda: _dash_title_price(text)) if price_read is not None and not buying else None
     if dash_price and dash_price[1] and dash_price[0] == price_read:
+        facts.append(f"The listing says \"starting at\" ${price_read:,.0f}, so that is the lowest unit price. Ask what the rent is for the unit you want.")
+    elif price_read is not None and not buying and _try(lambda: _starting_at(text, price_read)):
         facts.append(f"The listing says \"starting at\" ${price_read:,.0f}, so that is the lowest unit price. Ask what the rent is for the unit you want.")
     put("price", price_read)
     put("beds", _try(lambda: _beds(text)))
