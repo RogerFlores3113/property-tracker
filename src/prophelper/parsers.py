@@ -277,7 +277,7 @@ _REDUCED_FROM = re.compile(r"\b(?:reduced|dropped|lowered|cut|marked down|price 
 _WAS_PRICE = re.compile(r"\b(?:was|previously|formerly|originally)[ \t:]+\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?", re.I)
 
 
-def _discount_notes(text: str, price: float | None) -> list[str]:
+def _discount_notes(text: str, price: float | None, buying: bool = False) -> list[str]:
     """One-time discounts ("$500 off first month's rent", "50% off first month") and a price cut ("Reduced from $2,750"). They are
     notes only: a one-time deal is not taken off the monthly rent, and an old price is never the rent."""
     notes: list[str] = []
@@ -300,15 +300,15 @@ def _discount_notes(text: str, price: float | None) -> list[str]:
     if m:
         old = f"${_num(m.group(1)):,.0f}"
         if price is not None:
-            notes.append(f"The listing says the price was cut from {old}. The old price is not used, only the current rent that was read.")
+            notes.append(f"The listing says the price was cut from {old}. The old price is not used, only the current {'price' if buying else 'rent'} that was read.")
         else:
-            notes.append(f"The listing says the price was cut from {old}. That is the old price, so it is not used as the rent. Ask what the rent is now.")
+            notes.append(f"The listing says the price was cut from {old}. That is the old price, so it is not used as the {'asking price' if buying else 'rent'}. Ask what the {'price' if buying else 'rent'} is now.")
     return notes
 
 
-def _price_notes(text: str, price: float | None = None) -> list[str]:
+def _price_notes(text: str, price: float | None = None, buying: bool = False) -> list[str]:
     """Plain notes about a rent that depends on something: "Reduced to $3,250 with 12 month lease", "1 month free". They never change the price."""
-    notes: list[str] = _discount_notes(text, price)
+    notes: list[str] = _discount_notes(text, price, buying)
     for a in _amounts(text):
         if a.get("conditional"):
             months = _LEASE_CONDITION.match(text[a["end"]:text.find("\n", a["end"]) if text.find("\n", a["end"]) >= 0 else len(text)])
@@ -468,14 +468,41 @@ def _credit_check_plain(text: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+_RENTERS = r"(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance"
+
+
+def _renters_insurance_yearly(text: str) -> tuple[float, float] | None:
+    """(yearly amount, monthly amount) for a required renter's insurance with a price written per month or per year:
+    "Renter's insurance required $15/mo" -> (180, 15). The insurance field is a yearly amount. A price with no period, or an
+    optional insurance, gives None (it stays a note)."""
+    if not _renters_insurance_required(text):
+        return None
+    per = r"(?:(/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)|(/[ \t]*(?:yr|year)\b|per[ \t]+year|a[ \t]+year|yearly|annually|annual\b))"
+    m = re.search(r"\b" + _RENTERS + r"\b[^.\n;$]{0,40}\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*" + per, text, re.I)
+    if not m:
+        return None
+    value = _num(m.group(1))
+    if m.group(2):
+        monthly, yearly = value, value * 12
+    else:
+        monthly, yearly = value / 12, value
+    return (round(yearly, 2), round(monthly, 2)) if 0 < yearly <= 5000 else None
+
+
+def _renters_insurance_required(text: str) -> bool:
+    return bool(re.search(r"\b" + _RENTERS + r"\b[^.\n;]{0,30}\b(?:required|mandatory|is[ \t]+a[ \t]+must|needed|must[ \t]+(?:be|have))\b|\b(?:requires?|required|must[ \t]+(?:have|carry|show))\b[^.\n;]{0,20}\b" + _RENTERS + r"\b", text, re.I)) \
+        and not re.search(r"\b" + _RENTERS + r"\b[^.\n;]{0,20}\b(?:not|isn'?t|optional)\b", text, re.I)
+
+
 def _renters_insurance_note(text: str) -> list[str]:
-    """"Renter's insurance required": a cost that has no amount, so it is a note."""
-    if re.search(r"\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b[^.\n;]{0,30}\b(?:required|mandatory|is[ \t]+a[ \t]+must|needed|must[ \t]+(?:be|have))\b|\b(?:requires?|required|must[ \t]+(?:have|carry|show))\b[^.\n;]{0,20}\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b", text, re.I) \
-            and not re.search(r"\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b[^.\n;]{0,20}\b(?:not|isn'?t|optional)\b", text, re.I):
-        amt = re.search(r"\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b[^.\n;$]{0,40}\$[ \t]?(\d[\d,]*(?:\.\d+)?)[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly)", text, re.I)
-        said = f" (${float(amt.group(1).replace(',', '')):,.0f}/month)" if amt else ""  # said once here, so the amount is not quoted again as a second note
-        return [f"The listing says renter's insurance is required{said}. No cost is counted for it. Ask what coverage you need and what it costs."]
-    return []
+    """"Renter's insurance required": with a price per month or year it is counted (the insurance field), and the note says so.
+    With no usable price it is a note only."""
+    if not _renters_insurance_required(text):
+        return []
+    got = _renters_insurance_yearly(text)
+    if got:
+        return [f"Renter's insurance is required and counted in the monthly cost (${got[1]:,.0f} a month, saved as ${got[0]:,.0f} a year). Ask what coverage you need and whether a plan you already have is accepted."]
+    return ["The listing says renter's insurance is required. No cost is counted for it. Ask what coverage you need and what it costs."]
 
 
 def _money_after(text: str, label: str, *, lo: float = 0, hi: float = 1_000_000, gap: int = 28, skip_before: str = "") -> list[float]:
@@ -975,6 +1002,8 @@ def _pets_doubt(text: str) -> str:
     said = _quoted_pieces(quoted)
     who = _ask_who(text)
     if negotiable:
+        if re.search(r"\bsmall\b", said, re.I):
+            return f"The listing says small pets may be allowed ({said}), but that is not a yes. Pets is left empty, so ask {who} which pets are allowed and what they cost."
         return f"The listing says pets are negotiable ({said}). Pets is left empty, so ask {who} which pets are allowed and what they cost."
     if clash:
         return f"The listing is not clear about pets. It says {said}. Pets is left empty, so ask {who} which pets are allowed before you count on it."
@@ -1087,6 +1116,10 @@ def _pet_fees(text: str) -> dict[str, float]:
         m = re.search(r"\b(?:cat|dog)s?[ \t]+fee[ \t:\-=]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])([ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month))?", text, re.I)
         if m:
             out["pet_rent" if m.group(2) else "pet_fee"] = float(m.group(1))
+    if "pet_rent" not in out:  # "cat rent $25", "Dog rent $40": rent named for one animal is the monthly pet rent
+        m = re.search(r"\b(?:cat|dog)s?[ \t]+rent[ \t:\-=]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:one[- ]time|deposit|fee))", text, re.I)
+        if m:
+            out["pet_rent"] = float(m.group(1))
     if "pet_fee" not in out:  # "Pets ok. One time fee $200.": the fee sentence right after the pet sentence
         m = re.search(_PET_THEN_ONE_TIME.pattern + r"[ \t]+fee[ \t:\-]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])", text, re.I)
         if m:
@@ -1136,6 +1169,50 @@ def _pet_deposit(text: str) -> tuple[float | None, str]:
 
 
 _PET_WORD = re.compile(r"\b(?:pets?|cats?|dogs?|animals?|kittens?|puppy|puppies)\b", re.I)
+
+
+def _pet_deposit_split(text: str) -> tuple[float | None, float | None, str, str] | None:
+    """"$350 pet deposit (non-refundable $150 of it)": part of the deposit comes back and part does not. Returns (refundable
+    deposit, non-refundable fee, text with that phrase blanked, plain note), or None. When the non-refundable part is not smaller
+    than the whole, both are None and the note says to ask."""
+    m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*pet[ \t]+deposit\b[ \t,:;\-]*\(?[ \t]*(?:of[ \t]+which[ \t]+)?"
+                  r"(?:(?:non[- ]?refundable)[ \t:\-]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?|\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:of[ \t]+(?:it|that|this|which)[ \t]+)?(?:is[ \t]+|are[ \t]+)?non[- ]?refundable)"
+                  r"(?:[ \t]*(?:of[ \t]+(?:it|that|this|which)|portion))?[ \t]*\)?(?![ \t]*(?:pet[ \t]+)?(?:fee|deposit|rent)\b)", text, re.I)
+    if not m:
+        return None
+    whole, part = _num(m.group(1)), _num(m.group(2) or m.group(3))
+    blanked = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    if 0 < part < whole:
+        return (whole - part, part, blanked,
+                f"The ${whole:,.0f} pet deposit is partly non-refundable: ${whole - part:,.0f} comes back (saved as the pet deposit) and ${part:,.0f} does not (saved as the pet fee).")
+    return (None, None, blanked,
+            f"The listing says a ${whole:,.0f} pet deposit with ${part:,.0f} non-refundable, which does not add up, so the pet deposit and pet fee are left empty. Ask how much comes back.")
+
+
+def _per_animal_charges(text: str) -> tuple[str, dict[str, float], str] | None:
+    """"Pet fee $250 cat, $400 dog", "Cat fee $250, dog fee $400": one kind of charge with a price for each animal. Returns
+    (kind "fee" / "rent" / "deposit", {"cat": amount, "dog": amount}, text with those phrases blanked), or None."""
+    amt = r"\$\s?(\d{1,4})(?:\.\d\d)?"
+    animal = r"(cat|dog)s?"
+    pats = (r"\bpet[ \t]+(fee|rent|deposit)s?[ \t:\-=]*(?:" + amt + r"[ \t]*(?:for[ \t]+(?:a[ \t]+|each[ \t]+)?)?" + animal + r"|" + animal + r"[ \t]*[:\-=]?[ \t]*" + amt + r")"
+            r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month|each)?[ \t]*(?:,|/|&|;|and|\|)[ \t]*(?:and[ \t]+)?(?:" + amt + r"[ \t]*(?:for[ \t]+(?:a[ \t]+|each[ \t]+)?)?" + animal + r"|" + animal + r"[ \t]*[:\-=]?[ \t]*" + amt + r"))",
+            r"\b" + animal + r"[ \t]+(fee|rent|deposit)s?[ \t:\-=]*" + amt + r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month))?[ \t]*(?:,|/|&|;|and|\|)[ \t]*(?:and[ \t]+)?" + animal + r"[ \t]+(?:fee|rent|deposit)s?[ \t:\-=]*" + amt)
+    m = re.search(pats[0], text, re.I)
+    if m:
+        g = m.groups()
+        kind = g[0].lower()
+        first = (g[2].lower(), float(g[1])) if g[1] else (g[3].lower(), float(g[4]))
+        second = (g[6].lower(), float(g[5])) if g[5] else (g[7].lower(), float(g[8]))
+    else:
+        m = re.search(pats[1], text, re.I)
+        if not m:
+            return None
+        g = m.groups()
+        kind = g[1].lower()
+        first, second = (g[0].lower(), float(g[2])), (g[3].lower(), float(g[4]))
+    if first[0] == second[0]:
+        return None
+    return kind, {first[0]: first[1], second[0]: second[1]}, text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
 
 
 def _pet_deposit_then_monthly(text: str) -> float | None:
@@ -1500,7 +1577,7 @@ def _seller_credit_detail(text: str, price: float | None) -> tuple[float | None,
         return dollars, []
     cap = _seller_cap(text)
     if cap:
-        return None, [f'The listing says the seller will give up to ${cap[0]:,.0f} toward closing ("{cap[1]}"). That is a limit, not a promise, so the closing costs and the seller credit are left empty. Ask what the seller will really give.']
+        return None, [f'The listing says the seller will give up to ${cap[0]:,.0f} toward closing ("{cap[1]}"). That is a limit, not a promise, so no seller credit is saved. Ask what the seller will really give.']
     pct, up_to = _seller_credit_percent(text)
     if pct is not None:  # a percent, and above all an "up to", is a maximum and not a promise, so no dollar amount is worked out
         words = f"{'up to ' if up_to else ''}{pct:g}%"
@@ -1578,6 +1655,8 @@ def _insurance(text: str) -> float | None:
     if not m:
         return None
     value, per = _num(m.group(1)), (m.group(2) or "").lower()
+    if re.search(r"\b(?:optional|recommended|not required|if you want)\b", text[m.end():m.end() + 30], re.I):
+        return None  # an insurance the listing calls optional is not a cost
     if re.search(r"mo", per):
         value *= 12
     return round(value, 2) if 100 <= value <= 100000 else None
@@ -1597,7 +1676,37 @@ _PAYER_SELLER = re.compile(r"\b(?:seller|owner)\b[^.\n]{0,25}\b(?:pays?|paid|to 
 _PAYER_BUYER = re.compile(r"\bbuyer\b[^.\n]{0,25}\b(?:pays?|assumes?|to pay|responsib\w*|takes?|inherits?|covers?)\b|\bresponsibility of (?:the )?buyer\b|\bpaid by (?:the )?buyer|\bassumed by (?:the )?buyer|\bbuyer[- ]paid|\bpayable (?:in full )?by (?:the )?buyer|\bdue from (?:the )?buyer", re.I)
 
 
-def _special_assessment_facts(text: str) -> tuple[float | None, str, str]:
+def _buyer_closing_charge(text: str) -> tuple[float, str, str] | None:
+    """A one-time charge the buyer pays at closing that is not called a "special assessment": "Condo assessment of $2,400 payable
+    by buyer at closing", "$1,000 one-time capital contribution at closing". Returns (amount, kind words, sentence) or None.
+    A charge per month or per year is not one-time and is left out."""
+    for sent in re.split(r"[.\n;]", text):
+        if re.search(r"\bspecial assessments?\b|\bno\b[^.\n]{0,15}\bassessments?\b", sent, re.I):
+            continue
+        if re.search(r"/\s*(?:mo|yr)|per[ \t]+(?:month|year)|monthly|yearly|annual|quarterly|each[ \t]+(?:month|year)|seller|owner", sent, re.I) and not _PAYER_BUYER.search(sent):
+            continue
+        contrib = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|new[ \t]+)?((?:working[ \t]+)?capital[ \t]+contributions?)\b"
+                            r"|\b((?:working[ \t]+)?capital[ \t]+contributions?)\b[ \t:\-=(]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", sent, re.I)
+        if contrib and re.search(r"\bat closing\b|\bone[- ]time\b|\b(?:buyer|due at|paid at)\b", sent, re.I):
+            amount = _num(contrib.group(1) or contrib.group(4))
+            return amount, (contrib.group(2) or contrib.group(3)).lower(), sent
+        if re.search(r"\b(?:condo|hoa|association|building)[ \t]+assessments?\b", sent, re.I) and (_PAYER_BUYER.search(sent) or re.search(r"\bat closing\b", sent, re.I)):
+            amount = _assessment_amount(sent, skip_monthly=True)
+            if amount:
+                return amount, "condo assessment", sent
+    return None
+
+
+def _buyer_closing_note(text: str) -> str:
+    got = _buyer_closing_charge(text)
+    if not got:
+        return ""
+    amount, kind, _sent = got
+    return (f"The ${amount:,.0f} {kind} is a one-time cost for the buyer at closing, so it is saved as a special assessment paid by the buyer "
+            "and counted in the cash to close. Ask the seller's agent to confirm it.")
+
+
+def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | None, str, str]:
     """(one-time amount or None, payer "seller" / "buyer" / "", the matching sentence) for a special assessment.
     An amount quoted per month is left out of the amount (it is not one-time), but the sentence still comes back."""
     if re.search(r"\bno (?:known |pending |current )?special assessments?\b", text, re.I):
@@ -1608,7 +1717,8 @@ def _special_assessment_facts(text: str) -> tuple[float | None, str, str]:
         if re.search(r"\$\s?\d", sentence):
             break
     if sentence is None:
-        return None, "", ""
+        got = _buyer_closing_charge(text) if buying else None
+        return (got[0], "buyer", got[2]) if got else (None, "", "")
     amount = _assessment_amount(sentence, skip_monthly=True)
     payer = ""
     if _PAYER_SELLER.search(sentence):
@@ -2265,6 +2375,17 @@ def listing_hoa_in_rent(text: str) -> bool:
         return False
 
 
+def _hoa_paid_by_owner(text: str) -> str:
+    """For a rental: "Quarterly HOA $240 paid by owner" -> the sentence's amount words ("$240 quarterly"), "" when the owner paying
+    the HOA is not said. The tenant pays nothing for it, so nothing is counted."""
+    for sent in re.split(r"[.\n;]", text):
+        if re.search(r"\b(?:hoa|h\.o\.a\.|association)\b", sent, re.I) and re.search(r"\b(?:paid|billed|covered|handled)[ \t]+by[ \t]+(?:the[ \t]+)?(?:owner|landlord|management)\b|\b(?:owner|landlord|management)[ \t]+(?:pays?|covers?|handles?)\b", sent, re.I):
+            amt = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)", sent)
+            per = re.search(r"\b(quarterly|annual(?:ly)?|yearly|monthly|per[ \t]+(?:month|quarter|year)|/[ \t]*(?:mo|yr))", sent, re.I)
+            return (f"${amt.group(1)}" if amt else "") + (f" {per.group(1).lower()}" if per and amt else "")
+    return ""
+
+
 def listing_billed_amount(text: str) -> float | None:
     """Public: the monthly utilities bill a listing's text gives ("billed back at $85/month", "billed back monthly (avg $55)"), or None."""
     try:
@@ -2631,12 +2752,20 @@ def _hoa(text: str) -> float | None:
     if re.search(r"\bno[ \t]+(?:hoa|h\.o\.a\.|homeowners'?[ \t]+association)(?:[ \t]+(?:fees?|dues))?\b|\bhoa(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=][ \t]*(?:none|no|n/a|\$0)\b|\bwithout[ \t]+(?:an?[ \t]+)?hoa\b|\b(?:hoa|association)[ \t]+(?:fees?|dues)?[ \t]*(?:\(none\)|not required)", text, re.I) \
             and not re.search(r"\$\s?[1-9]\d*(?:,\d{3})*(?:\.\d\d)?\s*(?:/\s*\w+|per\s+\w+|\w+ly)\s*(?:hoa|association)|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t:\-=(]{0,6}\$\s?[1-9]", text, re.I):
         return 0.0
-    m = re.search(r"(?:\bhoa|association|homeowners'? association|\b(?:monthly|building|unit owners?)[ \t]+dues(?![ \t]+(?:to|for)\b)|\bcondo(?=\s*(?:fee|fees|dues|payment|assessment))|\bcommon (?:area )?(?:charges?|fees?))(?:\s*(?:fee|fees|dues|payment|assessment))*[ \t:\-=(]{0,6}\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?", text, re.I)
+    m = re.search(r"(?:\bhoa|association|homeowners'? association|\b(?:monthly|building|unit owners?)[ \t]+dues(?![ \t]+(?:to|for)\b)|\bcondo(?=\s*(?:fee|fees|dues|payment|assessment))|\bcommon (?:area )?(?:charges?|fees?))(?:\s*(?:fee|fees|dues|payment|assessments?))*[ \t:\-=(]{0,6}\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?", text, re.I)
     if not m:
         m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?\s*(?:hoa|association) (?:fee|dues)?", text, re.I)
     if not m:
         return None
     value, per = _num(m.group(1)), (m.group(2) or "").lower()
+    if not per:
+        # "HOA $240 billed quarterly", "HOA $240, paid annually": the period comes after the amount
+        after = re.match(r"[ \t,]*(?:\(?(?:billed|paid|due|charged|payable|collected|assessed)[ \t]+)?(quarterly|annual(?:ly)?|yearly|semi-?annual(?:ly)?|monthly|every[ \t]+(?:3|three)[ \t]+months|every[ \t]+(?:quarter|year)|each[ \t]+(?:quarter|year)|once[ \t]+a[ \t]+year)\b", text[m.end():m.end() + 40], re.I)
+        if after:
+            w = after.group(1).lower()
+            if w.startswith("semi"):
+                return None  # twice a year: not a period this reader converts
+            per = "quarter" if ("quarter" in w or "three" in w or "3" in w) else ("month" if w == "monthly" else "year")
     if not per:
         # "Quarterly HOA $240": the period comes before the label
         lead = re.search(r"\b(quarterly|annual(?:ly)?|yearly|semi-?annual(?:ly)?)[ \t]+$", text[max(0, m.start() - 16):m.start()], re.I)
@@ -2644,6 +2773,8 @@ def _hoa(text: str) -> float | None:
             per = lead.group(1).lower()
             if per.startswith("semi"):
                 return None  # twice a year: not a period this reader converts
+    if re.search(r"assessments?\W*$", m.group(0).split("$")[0], re.I) and not per:
+        return None  # "HOA assessment $4,000" with no period is not monthly dues
     if re.search(r"yr|year|annual", per):
         value /= 12
     elif "quarter" in per:
@@ -3122,11 +3253,27 @@ def _try(fn: Callable[[], Any]) -> Any:
         return None
 
 
-def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False) -> dict[str, Any]:
+def _per_animal_notes(kind: str, prices: dict[str, float], pet_kind: str, out: dict[str, Any]) -> list[str]:
+    """A pet charge with a price for each animal. The search's pet ("cat" or "dog") picks the one that is saved; with both pets,
+    no pet or an unknown pet nothing is saved and the note names both prices."""
+    key = {"fee": "pet_fee", "rent": "pet_rent", "deposit": "pet_deposit"}[kind]
+    label = {"fee": "pet fee", "rent": "pet rent", "deposit": "pet deposit"}[kind]
+    per = " a month" if kind == "rent" else ""
+    both = f"${prices['cat']:,.0f}{per} for a cat and ${prices['dog']:,.0f}{per} for a dog"
+    want = str(pet_kind or "").strip().lower()
+    if want in ("cat", "dog") and want in prices:
+        out[key] = _tidy_number(prices[want])
+        return [f"The listing has a {label} of {both}. Your search has a {want}, so the {want} amount is saved."]
+    if want == "both":
+        return [f"The listing has a {label} of {both}. Your search has both, so no {label} is saved. Fill it in once you know what you will pay."]
+    return [f"The listing has a {label} of {both}. The {label} is left empty because it depends on the pet. Fill in the one that applies to you."]
+
+
+def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "") -> dict[str, Any]:
     """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
     ``buying`` is True for a buy search: the listing is then a home for sale, never a rental, and the rent-only readings
-    are not used."""
+    are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
     text = _tidy(text or "")
     out: dict[str, Any] = {}
     src = site_name(url)
@@ -3181,7 +3328,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         was = "studio" if corrected[0] == 0 else f"{corrected[0]:g} bedroom"
         now = "studio" if corrected[1] == 0 else f"{corrected[1]:g} bedroom"
         facts.append("The listing gives two different bedroom counts and corrects itself. The later count is saved, so check the bedroom count.")
-    facts += _try(lambda: _price_notes(text, price_read)) or []
+    facts += _try(lambda: _price_notes(text, price_read, buying)) or []
     put("baths", _try(lambda: _baths(text)))
     put("sqft", _try(lambda: _sqft(text)))
     laundry = _try(lambda: _laundry(text))
@@ -3206,10 +3353,24 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         soft = _try(lambda: _pets_soft_note(text)) or ""
         if soft:
             facts.append(soft)
-    deposit_amount, fee_text = _try(lambda: _pet_deposit(text)) or (None, text)
+    pet_text = text
+    split = _try(lambda: _pet_deposit_split(text))
+    if split:
+        pet_text = split[2]
+        put("pet_deposit", split[0])
+        put("pet_fee", split[1])
+        facts.append(split[3])
+    animals = _try(lambda: _per_animal_charges(pet_text))
+    if animals:
+        pet_text = animals[2]
+        facts.extend(_per_animal_notes(animals[0], animals[1], pet_kind, out))
+    deposit_amount, fee_text = _try(lambda: _pet_deposit(pet_text)) or (None, pet_text)
+    if deposit_amount is not None and "pet_deposit" in out:
+        deposit_amount = None
     put("pet_deposit", deposit_amount)
     for key, value in (_try(lambda: _pet_fees(fee_text)) or {}).items():
-        put(key, value)
+        if key not in out:
+            put(key, value)
     if "pet_rent" not in out:
         monthly_after_deposit = _try(lambda: _pet_deposit_then_monthly(text))
         if monthly_after_deposit:
@@ -3500,6 +3661,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.extend(_try(lambda: _holding_fee_amount_notes(text)) or [])
             facts.extend(_try(lambda: _periodic_fee_notes(text)) or [])
             facts.extend(_try(lambda: _renters_insurance_note(text)) or [])
+            renters_ins = _try(lambda: _renters_insurance_yearly(text))
+            if renters_ins:
+                put("insurance", renters_ins[0])  # a yearly amount: "$15/mo" is 180
             credit_fee = _try(lambda: _credit_check_fee(text))
             if credit_fee:
                 cf, who = credit_fee
@@ -3524,6 +3688,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         credit, credit_notes = _try(lambda: _seller_credit_detail(text, out.get("price") if isinstance(out.get("price"), (int, float)) else None)) or (None, [])
         if credit:
             put("seller_credit", credit)
+        have_credit = current.get("seller_credit") if current else None
+        if have_credit not in (None, "") and not isinstance(have_credit, bool):
+            credit_notes = [re.sub(r"so no seller credit is saved\. Ask what the seller will really give\.|so the seller credit is blank\. Ask how much\.",
+                                   f"so check that the seller credit of ${float(have_credit):,.0f} on this place is what the seller agreed to.", n) for n in credit_notes]
+            credit_notes = [n.replace("gives no amount, so the seller credit is blank", "gives no amount") for n in credit_notes]
         facts.extend(credit_notes)
         insurance = _try(lambda: _insurance(text))
         if insurance is not None:
@@ -3537,7 +3706,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         yearly_assessment = _try(lambda: _assessment_yearly_note(text))
         if yearly_assessment:
             facts.append(yearly_assessment)
-        amount, payer, _sentence = _try(lambda: _special_assessment_facts(text)) or (None, "", "")
+        amount, payer, _sentence = _try(lambda: _special_assessment_facts(text, buying)) or (None, "", "")
+        if buying and amount and not re.search(r"\bspecial assessments?\b", _sentence, re.I):
+            closing_note = _try(lambda: _buyer_closing_note(text))
+            if closing_note:
+                facts.append(closing_note)
         if amount:
             put("special_assessment", amount)
             if payer:
@@ -3566,6 +3739,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             hm = re.search(r"[^.\n;]*\b(?:hoa|association)\b[^.\n;]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[^.\n;]*|[^.\n;]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[^.\n;]*\b(?:hoa|association)\b[^.\n;]*", text, re.I)
             amt = (hm.group(1) or hm.group(2)) if hm else ""
             facts.append(f"The listing says the HOA dues{f' (${amt})' if amt else ''} are included in the rent, so nothing is added for them.")
+        if not buying and hoa is not None and not listing_hoa_in_rent(text):
+            owner_hoa = _try(lambda: _hoa_paid_by_owner(text))
+            if owner_hoa:
+                hoa = None
+                facts.append(f"The listing says the owner pays the HOA{f' ({owner_hoa})' if owner_hoa else ''}, so nothing is counted for you. Ask whether any HOA charge is passed on to the tenant.")
         if hoa is not None:
             put("hoa", hoa)
         tax = _try(lambda: _tax(text))
@@ -3601,10 +3779,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     return out
 
 
-def reader_notes_for(place: dict[str, Any], buying: bool = False) -> str:
+def reader_notes_for(place: dict[str, Any], buying: bool = False, pet_kind: str = "") -> str:
     """The "Also in the listing" notes for a saved place: its listing text read again, with what is filled on the place
     counted as placed. One rule for add, edit and update: a note about something that is filled in now is not kept."""
-    found = parse_listing(str(place.get("listing_text") or ""), str(place.get("url") or ""), current=place, buying=buying)
+    found = parse_listing(str(place.get("listing_text") or ""), str(place.get("url") or ""), current=place, buying=buying, pet_kind=pet_kind)
     return str(found.get("found_in_listing") or "")
 
 
@@ -4025,14 +4203,19 @@ def _cleaning_fee(text: str) -> tuple[float | None, list[str]]:
     said to be due at move-in is not counted, and a note says so."""
     notes: list[str] = []
     for clause in re.split(r"\n|;|\.(?=\s|$)", text):
-        m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|move[- ]in[ \t]+)*cleaning[ \t]+fees?\b|\bcleaning[ \t]+fees?[ \t:\-=(]{0,4}\$\s?(\d{1,3}(?:,\d{3})+|\d{1,4})(?:\.\d\d)?", clause, re.I)
+        m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|move[- ]in[ \t]+|non[- ]?refundable[ \t]+)*cleaning[ \t]+fees?\b|\bcleaning[ \t]+fees?[ \t:\-=(]{0,4}\$\s?(\d{1,3}(?:,\d{3})+|\d{1,4})(?:\.\d\d)?", clause, re.I)
         if not m:
             continue
         amount = _num(m.group(1) or m.group(2))
         non_refundable = bool(re.search(r"\bnon[- ]?refundable", clause, re.I))
+        if re.search(r"move[- ]?out|moving out|\bwhen you (?:leave|move out)|\bat checkout\b", clause, re.I) and not re.search(r"move[- ]?in\b|moving in|\bat signing|\bpet\b|\brefund|\bdeducted|\bfrom the deposit", re.sub(r"\bnon[- ]?refundable", " ", clause, flags=re.I), re.I):
+            notes.append(f"The listing has a ${amount:,.0f} cleaning fee when you move out. It is a one-time cost at the end of the lease, so it is not counted in the monthly cost.")
+            continue
         if re.search(r"move[- ]?out|moving out|\brefund|\bdeducted|\bfrom the deposit|\bpet\b|\bper[ \t]+(?:month|mo)\b|/\s*mo\b", re.sub(r"\bnon[- ]?refundable", " ", clause, flags=re.I), re.I):
             continue
         if non_refundable or re.search(r"move[- ]?in\b|moving in|\bat signing|\bupon (?:move|signing)|\bdue at (?:lease|signing)", clause, re.I):  # a non-refundable cleaning fee is paid up front
+            if not re.search(r"move[- ]?in\b|moving in|\bat signing|\bupon (?:move|signing)|\bdue at (?:lease|signing)", clause, re.I):
+                notes.append(f"The ${amount:,.0f} non-refundable cleaning fee is counted as a one-time move-in fee. Ask if it is due at move-in.")
             return amount, notes
         notes.append(f"The listing mentions a ${amount:,.0f} cleaning fee but not when it is due, so it is not counted. Ask if it is due at move-in.")
     return None, notes

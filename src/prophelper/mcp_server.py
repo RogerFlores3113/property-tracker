@@ -133,7 +133,7 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
     ("application_fee", float | str, ""), ("other_monthly_fees", float | str, "Monthly fees besides rent, parking, pets"),
     ("move_in_fees", float | str, "One-time fees besides the deposit"), ("broker_fee", float | str, ""),
     ("hoa", float | str, "Monthly HOA (buying)"), ("property_tax", float | str, "Yearly (buying)"),
-    ("insurance", float | str, "Yearly (buying)"),
+    ("insurance", float | str, "Insurance as a YEARLY amount in dollars, never monthly (renter's insurance of $15 a month is 180). Homeowner's insurance when buying, renter's insurance when renting"),
     ("days_on_market", int | str, "How many days the home has been listed (buying)"),
     ("special_assessment", float | str, "One-time HOA charge in dollars (buying)"),
     ("special_assessment_payer", str, "Who pays the special assessment: buyer or seller (buying)"),
@@ -818,8 +818,12 @@ def build_server(store: Store) -> FastMCP:
                 buying = _search_for(store, fields.get("search_id")).get("mode") == "buy"
             except Exception:  # noqa: BLE001 - no search yet: read it as the default
                 buying = False
-            found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying,
-                                          current={"price": fields["price"]} if not _is_blank(fields.get("price")) else None)
+            try:
+                pet_kind = str(_search_for(store, fields.get("search_id")).get("pet_kind") or "")
+            except Exception:  # noqa: BLE001
+                pet_kind = ""
+            known = {k: fields[k] for k in ("price", "seller_credit") if not _is_blank(fields.get(k))}
+            found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying, pet_kind=pet_kind, current=known or None)
         except Exception:  # noqa: BLE001 - a reader failure must not lose the place
             fields["_text_notes"] = ["The listing text was saved but not read (the reader could not make sense of it), so no facts were filled from it. "
                                      "Send the facts you can read yourself."]
@@ -944,6 +948,17 @@ def build_server(store: Store) -> FastMCP:
                 if not (x.split(" $")[0].lower() in notes and x.split(" ")[-1].split("/")[0].lower() in notes)]  # not again what a note already says
         return [f"Seen but not counted: {', '.join(seen)} (looks optional; add it to other monthly fees if you need it)."] if seen else []
 
+    def insurance_warning(place: dict[str, Any]) -> list[str]:
+        """The insurance field is a yearly amount. A small number on a rent place looks like a monthly price, so say so."""
+        try:
+            value = float(place.get("insurance"))
+        except (TypeError, ValueError):
+            return []
+        if not 0 < value < 50 or store.place_mode(place["id"]) == "buy":
+            return []
+        return [f"Warning: insurance is saved as {_money(value)} a YEAR, which counts as only {_money(round(value / 12, 2))} a month. "
+                f"If {_money(value)} is the monthly price, send the yearly amount instead ({_money(value * 12)}) with update_place."]
+
     def finish_add(place: dict[str, Any], created: bool, notes: list[str], photos: bool = False) -> list[str]:
         e = _enrich(store, place)
         search = _search_of(store, place)
@@ -951,7 +966,7 @@ def build_server(store: Store) -> FastMCP:
                 else f"Updated {_title(e)} (id {e['id']}).")
         if search.get("mode") == "buy":
             notes = [compare_mod.for_buyer(n) for n in notes]
-        lines = [head, *notes, *_card(e)[1:], *seen_not_counted(place)]
+        lines = [head, *notes, *insurance_warning(place), *_card(e)[1:], *seen_not_counted(place)]
         if not place.get("listing_text"):
             lines.append("No listing text is saved yet. If you can, call update_place with listing_text so the details survive when the listing comes down.")
         if place.get("lat") is None:
@@ -1211,13 +1226,16 @@ def build_server(store: Store) -> FastMCP:
             if unused:
                 lines.append(f"The cost of buying does not use {' or '.join(unused)}, so {'it is' if len(unused) == 1 else 'they are'} saved but not counted in the cost or the cash to close. "
                              "Tell the user to add it to their own budget.")
+        if "insurance" in fields:
+            lines += insurance_warning(after)
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
 
     update_place.__doc__ = ("Fill in or change facts on a place (price, fees, laundry, dates, lat/lng...). Never touches the user's notes or "
                             "rating; put your words in ai_notes. A value you replace is logged on the timeline. Moving stages is move_place. "
                             "utilities_included holds the words (\"heat, water\" or \"all\"); utilities_estimate is a monthly amount, and "
-                            "utilities_source (guess, billed back or from the listing) says where that amount came from.")
+                            "utilities_source (guess, billed back or from the listing) says where that amount came from. insurance is a yearly "
+                            "amount (renter's insurance of $15 a month is 180).")
     update_place.__signature__ = _params(  # type: ignore[attr-defined]
         [_req("place_id", int, "The place's id")],
         [("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor, mode, minutes}]", None),

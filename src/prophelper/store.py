@@ -1658,11 +1658,12 @@ class Store:
                 return None
         try:
             from . import parsers
-            buying = False
+            buying, pet_kind = False, ""
             if place.get("search_id") is not None:
-                row = self._row("SELECT mode FROM searches WHERE id = ?", (place["search_id"],))
+                row = self._row("SELECT mode, pet_kind FROM searches WHERE id = ?", (place["search_id"],))
                 buying = bool(row) and str(row["mode"] or "") == "buy"
-            return parsers.reader_notes_for(place, buying=buying)[:READER_NOTES_MAX]
+                pet_kind = str(row["pet_kind"] or "") if row else ""
+            return parsers.reader_notes_for(place, buying=buying, pet_kind=pet_kind)[:READER_NOTES_MAX]
         except Exception:  # noqa: BLE001 - a reader failure must not stop a save
             return None
 
