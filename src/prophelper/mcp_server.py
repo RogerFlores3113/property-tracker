@@ -788,7 +788,8 @@ def build_server(store: Store) -> FastMCP:
                 buying = _search_for(store, fields.get("search_id")).get("mode") == "buy"
             except Exception:  # noqa: BLE001 - no search yet: read it as the default
                 buying = False
-            found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying)
+            found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying,
+                                          current={"price": fields["price"]} if not _is_blank(fields.get("price")) else None)
         except Exception:  # noqa: BLE001 - a reader failure must not lose the place
             fields["_text_notes"] = ["The listing text was saved but not read (the reader could not make sense of it), so no facts were filled from it. "
                                      "Send the facts you can read yourself."]
@@ -1163,6 +1164,11 @@ def build_server(store: Store) -> FastMCP:
             lines.append("A value I replaced is on the timeline, so the user can put it back.")
         if "ai_notes" in fields:
             lines.append("Claude's note was added to AI notes under today's date. The user's own notes were not touched.")
+        if store.place_mode(e["id"]) == "buy":  # the buy cost does not use these rent-side fields: say so plainly
+            unused = [label for key, label in (("parking_cost", "parking cost"), ("move_in_fees", "move-in fees")) if key in fields and not _is_blank(fields.get(key))]
+            if unused:
+                lines.append(f"The cost of buying does not use {' or '.join(unused)}, so {'it is' if len(unused) == 1 else 'they are'} saved but not counted in the cost or the cash to close. "
+                             "Tell the user to add it to their own budget.")
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
 
