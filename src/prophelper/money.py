@@ -115,6 +115,12 @@ def has_pets(pet_kind: Any) -> bool:
     return str(pet_kind or "").strip().lower() in ("cat", "dog", "both")
 
 
+def _optional_parking_noted(place: dict[str, Any]) -> bool:
+    """True when the saved listing notes say a garage or parking space is available for a price but looks optional (so it is not counted)."""
+    return any(re.search(r"\b(?:parking|garage|carport|space)\b", n, re.I) and re.search(r"looks optional", n, re.I)
+               for n in note_units(place.get("reader_notes")))
+
+
 def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict[str, Any]:
     """The true monthly cost of renting this place, line by line. ``pets`` False (the search has no pets) leaves pet
     rent, the pet fee and the pet deposit out of the cost and the cash at move-in and says so on the pet line. ``adults``
@@ -175,7 +181,13 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
         lines.append(line)
 
     parking = num(place.get("parking_cost"))
-    if parking is None and str(place.get("parking") or "") in PRIVATE_PARKING:
+    optional_parking = not parking and str(place.get("parking") or "") in PRIVATE_PARKING and _optional_parking_noted(place)
+    if optional_parking:
+        # The listing offers parking as an extra it did not price into the cost: never "included $0".
+        missing.append("parking cost")
+        uncounted.append("parking")
+        lines.append(_line("parking", "Parking", None, "optional parking is not counted; ask what it costs"))
+    elif parking is None and str(place.get("parking") or "") in PRIVATE_PARKING:
         missing.append("parking cost")
         uncounted.append("parking")
         lines.append(_line("parking", "Parking", None, "not filled in"))
@@ -213,6 +225,11 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
             lines.append(_line("hoa", "HOA", 0, "included in the rent"))
         else:
             lines.append(_line("hoa", "HOA", hoa, "paid by the tenant, counted each month"))
+
+    ins = num(place.get("insurance"))
+    if ins:
+        # The insurance field is a yearly amount (the same field buying uses), so a renter's share is a twelfth of it each month.
+        lines.append(_line("insurance", "Insurance", _r(ins / 12), f"{_dollars(ins)} a year, counted as a twelfth each month"))
 
     months = place.get("lease_months")
     try:
@@ -454,7 +471,7 @@ _NOTE_OPEN = re.compile(r"not counted|not saved|not used|no amount is saved|coul
 _NOTE_MONEY = re.compile(r"\$\s?\d|\b(?:fee|fees|deposit|assessment|parking|garage|utilit\w*|rent|cost|costs|free|credit|hoa|tax|insurance)\b", re.I)
 
 
-_NOTE_CONTINUES = re.compile(r"(?:It|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
+_NOTE_CONTINUES = re.compile(r"(?:It|No|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
 
 
 def note_units(text: str) -> list[str]:

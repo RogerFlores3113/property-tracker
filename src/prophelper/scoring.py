@@ -134,7 +134,7 @@ def _buyer_assessment(place: dict[str, Any]) -> float:
 
 
 NEAR_GUESS = 0.05  # over by this share or less, only because of a guess, is a near miss and not a fail
-_PART_NAMES = {"utilities": "utilities", "parking": "parking", "pet_rent": "pet rent", "other": "other fees", "one_time": "fees spread"}
+_PART_NAMES = {"utilities": "utilities", "parking": "parking", "pet_rent": "pet rent", "other": "other fees", "hoa": "HOA", "insurance": "insurance", "one_time": "fees spread"}
 
 
 def _cost_parts(cost: dict[str, Any]) -> tuple[float | None, list[str], float]:
@@ -650,6 +650,9 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
         if i.get("concern") and i["dealbreaker_status"] != "fail":
             pts = i["points_lost"] if not i["dealbreaker"] else 0
             text = f"{i['concern']}, cost {pts} point{'' if pts == 1 else 's'}" if pts else i["concern"]
+            if (i.get("over_pct") or 0) > 0.25 and raw is not None and raw > CAP_FAR_COMMUTE:
+                # a commute this far over also holds the whole score down, so the drop is bigger than this criterion's own share
+                text = f"{i['concern']}, so the score can't go above {CAP_FAR_COMMUTE}"
             if not i["dealbreaker"] and not (i.get("over_pct") or 0) > 0.25:
                 notes.append(text)  # a nice-to-have a little over its limit is a plain fit with a note, not "Fits, but check"
             else:

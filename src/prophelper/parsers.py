@@ -472,7 +472,9 @@ def _renters_insurance_note(text: str) -> list[str]:
     """"Renter's insurance required": a cost that has no amount, so it is a note."""
     if re.search(r"\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b[^.\n;]{0,30}\b(?:required|mandatory|is[ \t]+a[ \t]+must|needed|must[ \t]+(?:be|have))\b|\b(?:requires?|required|must[ \t]+(?:have|carry|show))\b[^.\n;]{0,20}\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b", text, re.I) \
             and not re.search(r"\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b[^.\n;]{0,20}\b(?:not|isn'?t|optional)\b", text, re.I):
-        return ["The listing says renter's insurance is required. No cost is counted for it. Ask what coverage you need and what it costs."]
+        amt = re.search(r"\b(?:renter'?s?|tenant'?s?|renters)[ \t]+insurance\b[^.\n;$]{0,40}\$[ \t]?(\d[\d,]*(?:\.\d+)?)[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly)", text, re.I)
+        said = f" (${float(amt.group(1).replace(',', '')):,.0f}/month)" if amt else ""  # said once here, so the amount is not quoted again as a second note
+        return [f"The listing says renter's insurance is required{said}. No cost is counted for it. Ask what coverage you need and what it costs."]
     return []
 
 
@@ -3486,6 +3488,8 @@ def _drop_placed_facts(facts: list[str], out: dict[str, Any], follow: bool = Fal
     deposit = out.get("deposit") is not None
     broker = out.get("broker_fee") is not None
     for f in facts:
+        if _restates_field(f, out):
+            continue  # a note that only says again what a filled field holds
         if re.fullmatch(r"Tenant pays [a-z, ]+\.", f) and out.get("tenant_pays"):
             continue  # the "Utilities you pay" field holds exactly this
         if re.search(r"parking", f) and re.search(r"gives no price\. It looks optional", f) and out.get("parking_cost") is not None:
@@ -3505,6 +3509,20 @@ def _drop_placed_facts(facts: list[str], out: dict[str, Any], follow: bool = Fal
                 continue
         kept.append(_one_time_wording(f))
     return kept
+
+
+def _restates_field(note: str, out: dict[str, Any]) -> bool:
+    """True when the note only repeats what a filled field holds: the assessment amount and payer, the renter's insurance
+    that the insurance or other monthly fees field now counts, or a quoted amount that a money field now carries."""
+    if re.fullmatch(r"Special assessment \$[\d,]+: the (?:buyer|seller) pays it\.", note):
+        return _filled(out, "special_assessment") and _filled(out, "special_assessment_payer")
+    if re.match(r"The listing says renter's insurance is required", note):
+        return _filled(out, "insurance") or _filled(out, "other_monthly_fees")
+    m = re.fullmatch(r'The listing also says "([^"]*)"\. It is not counted anywhere\. Check what it is for\.', note)
+    if m:
+        amounts = _dollar_values(m.group(1))
+        return bool(amounts) and amounts <= _net_used_numbers(out, [])
+    return False
 
 
 def _filled(out: dict[str, Any], key: str) -> bool:
@@ -3529,6 +3547,8 @@ _FIELD_NOTES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple((re.co
 def _follow_fields(note: str, out: dict[str, Any]) -> str:
     """The note made again so it agrees with the fields: "" when everything it is about is filled, else the note (reworded when
     only part of it is settled). Special assessment notes depend on both the amount and who pays."""
+    if _restates_field(note, out):
+        return ""
     for pat, keys in _FIELD_NOTES:
         if pat.search(note) and all(_filled(out, k) for k in keys):
             if keys == ("utilities_estimate",) and "internet" in note.lower():
@@ -3752,6 +3772,7 @@ def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> 
             used.add(float(v))
             if key in ("hoa", "property_tax", "insurance", "other_monthly_fees", "parking_cost", "utilities_estimate", "pet_rent"):
                 used.update({round(float(v) * 12, 2), round(float(v) / 12, 2), round(float(v) * 3, 2), round(float(v) * 6, 2)})  # a yearly, quarterly or half-year figure written beside the monthly one
+                used.update({float(round(float(v) / 12)), float(int(float(v) / 12)), float(round(float(v) / 4)), float(round(float(v) / 2))})  # "$3,100 a year ($258/mo)": the rounded share is the same figure
     price = out.get("price")
     if isinstance(price, (int, float)) and price:
         used.update({float(price) * 2, float(price) * 3})  # first and last month, three months up front

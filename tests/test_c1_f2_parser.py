@@ -132,7 +132,8 @@ def test_buyer_fields():
     assert out["insurance"] == 1100          # the field is per year
     assert out["hoa"] == 215                 # the field is per month
     assert out["property_tax"] == 5124       # the field is per year
-    assert "Special assessment $4,500" in out["found_in_listing"] and "buyer pays" in out["found_in_listing"]
+    assert out["special_assessment"] == 4500 and out["special_assessment_payer"] == "buyer"  # read into fields, so no note says it again (cycle 13)
+    assert "Special assessment $4,500" not in out["found_in_listing"]
     assert parse("Home insurance about $90/mo. 3 bd 2 ba for sale $250,000")["insurance"] == 1080
 
 
