@@ -73,7 +73,7 @@ def test_billed_back_always_utilities_estimate(t):
                                     ("Tenant pays garbage", {"trash"}),
                                     ("Tenant pays refuse", {"trash"}),
                                     ("Tenant pays rubbish", {"trash"}),
-                                    ("Tenant pays cable", {"internet"})])
+                                    ("Tenant pays cable/internet", {"internet"})])  # cycle 13: cable alone is TV, not internet
 def test_utility_names(t, want):
     assert set(pays(parse_listing(t))) == want
 
