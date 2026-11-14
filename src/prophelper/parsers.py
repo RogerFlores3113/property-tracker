@@ -633,6 +633,9 @@ def _beds_conflict(text: str) -> str:
     a plain note (and the bedroom count stays empty), or "" when there is no such pair."""
     if _beds_converted(text) or _beds_corrected(text):
         return ""
+    st = re.search(r"\bstudio[ \t]*(?:-|/|to|or|&)[ \t]*\d[ \t]*(?:br|bd|bed(?:room)?s?)\b", text, re.I)
+    if st:  # "Studio-1BR Prairie Commons": a plan range, not one layout
+        return f'The listing says "{st.group(0)}", which covers more than one layout, so the bedroom count is left empty. Ask which layout you would get.'
     m = _BEDS_SLASH_PAIR.search(text)
     if not m or m.group(1) == m.group(2):
         return ""
@@ -1726,6 +1729,8 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
     note instead. Also a broker percent and a transfer fee, which have no field. Takes the two fields out of ``out``."""
     notes: list[str] = []
     cost = out.pop("parking_cost", None)
+    if cost == 0 and re.search(r"\bincluded\b|\bno charge\b|\bfree\b", text, re.I):
+        cost = None  # "1 deeded space included": nothing to add or ask about
     if cost is not None:
         required = re.search(r"\bparking\b[^.\n]{0,60}\b(?:required|mandatory|must)\b|\b(?:required|mandatory)\b[^.\n]{0,25}\bparking\b", text, re.I) \
             and not re.search(r"\b(?:not|isn't|optional)\b[^.\n]{0,15}\b(?:required|mandatory)\b|\bparking\b[^.\n]{0,40}\boptional\b", text, re.I)
