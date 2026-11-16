@@ -581,6 +581,9 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
         lines.append(_line("hoa", "HOA", None, "not filled in"))
     else:
         lines.append(_line("hoa", "HOA", hoa))
+    other_fees = num(place.get("other_monthly_fees"))
+    if other_fees:  # cycle 24: another monthly charge (capital reserve, amenity) entered on a buy place is part of the monthly cost
+        lines.append(_line("other", "Other monthly fees", other_fees))
     total = None if pi is None else _r(sum(l["amount"] or 0 for l in lines))
     cash = cash_to_close(place, cfg)
     sa, payer = num(place.get("special_assessment")), str(place.get("special_assessment_payer") or "")
