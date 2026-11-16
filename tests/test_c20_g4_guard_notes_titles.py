@@ -85,8 +85,8 @@ def test_only_sentence_is_one_plain_sentence():
 
 
 def test_estimate_set_answers_utility_notes():
-    t = open(os.path.join(G.PANEL, "r19-uiuc-l15.txt")).read() if os.path.exists(os.path.join(G.PANEL, "r19-uiuc-l15.txt")) else \
-        "Quiet 1 bedroom $1,340 per month, 1401 E Florida Ave Urbana IL.\nElectric $45 seasonal (more in summer), gas $20-$60 depending on season. Water and trash included."
+    # cycle 21: the "$20-$60" range wording is read by the utilities reader now, so the fixture uses a wording it still leaves unread
+    t = "Quiet 1 bedroom $1,340 per month, 1401 E Florida Ave Urbana IL.\nElectric $45 seasonal (more in summer), gas between $20 and $60 depending on season. Water and trash included."
     r = parse_listing(t, "")
     place = {k: v for k, v in r.items() if k != "found_in_listing"}
     place.update(listing_text=t, reader_notes=r["found_in_listing"], utilities_estimate=110, tenant_pays="electric, gas")
