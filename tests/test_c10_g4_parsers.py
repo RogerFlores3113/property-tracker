@@ -176,9 +176,10 @@ def test_seller_to_contribute_dollars():
 def test_monthly_assessment_is_a_note():
     r = parse_listing("List price $500,000\nAssessment for windows: $150/month for 24 months")
     assert "special_assessment" not in r
-    assert "an assessment of $150 a month for 24 months ($3,600 in all)" in notes(r)
+    # cycle 19: a monthly assessment is counted in the monthly HOA figure, with a note
+    assert r["hoa"] == 150 and "a special assessment of $150 a month for 24 months ($3,600 in all)" in notes(r)
     r = parse_listing("List price $500,000\nSpecial assessment of $150/month for 24 months")
-    assert "special_assessment" not in r and "$150 a month for 24 months" in notes(r)
+    assert "special_assessment" not in r and r["hoa"] == 150 and "$150 a month for 24 months" in notes(r)
 
 
 @pytest.mark.parametrize("text", ["Special assessment pending, amount not yet determined", "Special assessment: amount TBD"])
