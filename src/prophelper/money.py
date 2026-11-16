@@ -325,7 +325,17 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -
             last = bool(_move_in_months(str(place.get("listing_text") or ""))[0])
         except Exception:  # the listing text is only a hint
             pass
-    if months > 1:
+    each = None
+    if months == 2 and not (num(place.get("price")) is None):
+        try:
+            from .parsers import _deposit_each, _move_in_months as _mim
+            text_l = str(place.get("listing_text") or "")
+            each = _deposit_each(text_l) if _mim(text_l)[0] == 2 else None
+        except Exception:
+            each = None
+    if each and abs(each - rent) >= 1:  # "first, last and security deposit ($2,800 each)": the listing gives the amount, not the rent
+        parts = [("First month's rent (as the listing says)", each), ("Last month's rent (as the listing says)", each)]
+    elif months > 1:
         parts = [(f"Rent due up front ({months} months)", rent * months)]
     else:
         parts = [("First month's rent", rent)]
@@ -347,6 +357,25 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -
     unknown = num(place.get("deposit")) is None
     return {"total": _r(sum(v for _, v in parts)), "parts": [{"label": a, "amount": b} for a, b in parts],
             "deposit_unknown": unknown}
+
+
+def _listing_cash_note(place: dict[str, Any], cash: dict[str, Any] | None) -> str:
+    """"The listing says cash to close is about $55,000; ours is $41,200." Empty when the listing quotes none or there is no figure of ours."""
+    if not cash:
+        return ""
+    try:
+        from .parsers import listing_cash_to_close
+        est = listing_cash_to_close(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        return ""
+    if not est:
+        return ""
+    ours = cash["total"]
+    if abs(ours - est) < 1:
+        return f"The listing says cash to close is about {_dollars(est)}, the same as ours."
+    guess = " Ours uses a guess for the closing costs." if cash.get("has_estimate") else ""
+    return (f"The listing says cash to close is about {_dollars(est)}; ours is {_dollars(ours)}.{guess} "
+            "Ask what the listing's figure includes (for example a different down payment or loan costs).")
 
 
 def _listing_estimate_note(place: dict[str, Any], total: float | None, lines: list[dict[str, Any]]) -> str:
@@ -392,6 +421,15 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
     if sa and str(place.get("special_assessment_payer") or "") == "buyer":
         parts.append({"label": "Special assessment (you pay it)", "amount": _r(sa), "estimated": False})
     left_out: list[str] = []
+    try:  # one-time fees the listing says the buyer pays at closing (capital improvement, reserve contribution, move-in fee)
+        from .parsers import buyer_one_time_fees
+        paid, unclear = buyer_one_time_fees(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        paid, unclear = [], []
+    for label, amount in paid:
+        parts.append({"label": f"One-time fee at closing ({label})", "amount": _r(amount), "estimated": False})
+    for label, amount in unclear:
+        left_out.append(f"a {_dollars(amount)} {label} isn't counted because who pays it isn't known")
     if sa and str(place.get("special_assessment_payer") or "") not in ("buyer", "seller"):
         left_out.append(f"a {_dollars(sa)} special assessment isn't counted because who pays it isn't known")
     credit = num(place.get("seller_credit"))
@@ -472,7 +510,7 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
         notes.append(f"A special assessment of {_dollars(sa)} is paid by the seller, so it is not counted.")
     elif sa:
         notes.append(f"A special assessment of {_dollars(sa)} is listed but who pays it is not filled in, so it is not counted. Ask who pays it, then set Who pays on this page.")
-    listing_note = _listing_estimate_note(place, total, lines)
+    listing_note = " ".join(x for x in (_listing_estimate_note(place, total, lines), _listing_cash_note(place, cash)) if x)
     return {"mode": "buy", "listing_estimate_note": listing_note, "total": total, "lines": lines, "missing": missing, "uncounted": uncounted,
             "notes": notes, "deposit": None,
             "down_payment": None if down is None else _r(down), "loan_amount": None if loan is None else _r(loan),
@@ -631,7 +669,7 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
     unplaced: dict[float, str] = {}
     for note in notes:
         for raw in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", note):
-            amount = raw.replace(" ", "")
+            amount = raw.replace(" ", "").rstrip(",.")  # "$3,400," is $3,400 (a comma after the amount is not part of it)
             value = float(amount.lstrip("$").replace(",", ""))
             seen.setdefault(value, amount)
             if round(value, 2) not in used:
