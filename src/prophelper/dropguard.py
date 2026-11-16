@@ -58,12 +58,12 @@ _SUMMED = ("other_monthly_fees", "move_in_fees")
 _CATS = (
     ("app", re.compile(r"application|\bapp\.? fee|applicants?\b|screening|credit check|background", re.I), ("application_fee",)),
     ("pet", re.compile(r"\bpets?\b|\bcats?\b|\bdogs?\b|\bpet\b", re.I), ("pet_rent", "pet_fee", "pet_deposit")),
-    ("deposit", re.compile(r"deposit", re.I), ("deposit",)),
+    ("deposit", re.compile(r"deposit|\bsecurity\b(?!\s+(?:cameras?|system|guard|gate|patrol|alarm|door|doors|entry|cams?|lights?|lighting|monitoring|service|staff|features?))", re.I), ("deposit",)),
     ("hoa", re.compile(r"\bhoa\b|dues|association|condo fee", re.I), ("hoa",)),
     ("insurance", re.compile(r"insurance|\bHO6\b", re.I), ("insurance",)),
     ("tax", re.compile(r"\btaxes\b|\btax\b", re.I), ("property_tax",)),
     ("parking", re.compile(r"parking|garage|carport|\bcar\b|\bspace\b|permit|valet|\bvehicle", re.I), ("parking_cost", "other_monthly_fees")),
-    ("util", re.compile(r"electric|\bgas\b|water|sewer|trash|garbage|\bheat|internet|wi-?fi|cable|utilit|\bpg&e\b|\bcomed\b|\bnicor\b|\bameren\b", re.I), ("utilities_estimate", "other_monthly_fees")),
+    ("util", re.compile(r"electric|pg&e|\bpge\b|sdg&e|con ?ed\b|comed\b|duke energy|xcel|ameren|\bnicor\b|eversource|national grid|\bgas\b|water|sewer|trash|garbage|\bheat|internet|wi-?fi|cable|utilit", re.I), ("utilities_estimate", "other_monthly_fees")),
     ("fee", re.compile(r"\bfees?\b|admin|move-?in|lease|cleaning|processing|amenity|package|pest|locker|storage", re.I), ("move_in_fees", "other_monthly_fees", "application_fee", "deposit")),
 )
 
@@ -170,6 +170,91 @@ def _util_placed(text: str, est: float | None) -> set[float]:
 
 
 
+def clause_placed(text: str, r: dict[str, Any], start: int, end: int, amount: float) -> bool:
+    """Cycle 22: decided from the FINAL field values. The figure is placed when, taken with the other figures of the clause it sits in, a saved
+    field holds it, holds its monthly share, or holds a sum it is a part of ("PG&E avg $140, water/sewer/trash flat $75 and internet ~$65" is the
+    $280 estimate; "Background check $25 each applicant. Security $1,480" is the per-adult application fee and the deposit)."""
+    P = _P()
+    phrase = P._net_clause(text, start, end)
+    if not phrase:
+        return False
+    vals = P._dollar_values(phrase)
+    if amount not in vals:
+        return False
+    used = P._net_used_numbers(r, [], text)
+    return amount in P.placed_amounts(vals, used, P._field_sums(r), phrase, r)
+
+
+def sum_members(text: str, value: float, price: float | None = None) -> set[int] | None:
+    """Cycle 22: where the figures behind a summed field are. The listing's dollar figures (not the rent-sized or sale-sized ones) are tried in
+    every combination of up to six, each over the period its item names; the figures of every combination that adds up to ``value`` are the
+    field's parts ({start offsets}). None when no combination does (the field was worked out some other way: it is not checked)."""
+    P = _P()
+    cands: list[tuple[int, tuple[float, ...]]] = []
+    for m in P._NET_DOLLARS.finditer(text):
+        raw = m.group(1) if m.group(1) is not None else m.group(4)
+        try:
+            amount = float(raw.replace(",", "") + (m.group(2) or "" if m.group(1) is not None else "")) * (1000 if m.group(3) else 1)
+        except ValueError:
+            continue
+        if amount <= 0:
+            continue
+        item, _line = _item(text, m.start(), m.end(), back=False)
+        if _NON_COST.search(item):
+            continue
+        low = item.lower()
+        opts = {round(amount, 2)}
+        if re.search(r"year|annual|/\s*yr|\byr\b", low):
+            opts.add(round(amount / 12, 2))
+        if re.search(r"quarter|qtr", low):
+            opts.add(round(amount / 3, 2))
+        if re.search(r"semi|half|6 months|six months", low):
+            opts.add(round(amount / 6, 2))
+        if re.search(r"bi-?monthly|every other month|two months|2 months", low):
+            opts.add(round(amount / 2, 2))
+        if re.search(r"\beach\b|\bper\b|/\s*(?:space|pet|car|adult|person|applicant)", low):
+            opts |= {round(amount * 2, 2), round(amount * 3, 2)}
+        if min(opts) > value + 0.51:
+            continue
+        cands.append((m.start(), tuple(sorted(opts))))
+    if price:  # fees worked out from the rent: "landlord fee half a month", "broker fee 8% of annual rent"
+        derived = {price * k for k in (0.5, 1, 1.5, 2)}
+        for pm in _PCT.finditer(text):
+            derived |= {price * float(pm.group(1)) / 100, price * 12 * float(pm.group(1)) / 100}
+        cands += [(-1 - i, (round(d, 2),)) for i, d in enumerate(sorted(derived)) if d < value * 1.01 + 0.51]
+    cands = cands[:22]
+    found: set[int] = set()
+    hit = False
+
+    def rec(i: int, total: float, chosen: tuple[int, ...]) -> None:
+        nonlocal hit
+        if chosen and abs(total - value) < 0.51:
+            hit = True
+            found.update(cands[j][0] for j in chosen)
+        if i >= len(cands) or len(chosen) >= 6 or total > value + 0.51:
+            return
+        rec(i + 1, total, chosen)
+        for o in cands[i][1]:
+            rec(i + 1, total + o, (*chosen, i))
+    rec(0, 0.0, ())
+    return found if hit else None
+
+
+def _num_or_none(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v else None
+
+
+def overcounted(text: str, r: dict[str, Any]) -> list[str]:
+    """Cycle 22: a summed field (move-in fees, other monthly fees) whose value no combination of the listing's figures adds up to: a figure
+    was read twice (or invented). One line per field: "move_in_fees 150: no combination of the listing's figures adds up to it"."""
+    out = []
+    for k in _SUMMED:
+        v = r.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v and sum_members(text, float(v), _num_or_none(r.get("price"))) is None:
+            out.append(f"{k} {float(v):g}: no combination of the listing's figures adds up to it")
+    return out
+
+
 def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, Any]]:
     """Every dollar figure of a rental listing that no field holds and no note explains: [{"amount", "start", "end", "item", "kind"}]."""
     price = r.get("price")
@@ -177,6 +262,7 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
     util_ok = _util_placed(text, float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None)
     bad: list[dict[str, Any]] = []
     seen: set[tuple[float, str]] = set()
+    members = {k: sum_members(text, float(r[k]), _num_or_none(r.get("price"))) for k in _SUMMED if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)}
     for m in _P()._NET_DOLLARS.finditer(text):
         raw = m.group(1) if m.group(1) is not None else m.group(4)
         try:
@@ -195,6 +281,9 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue
         if is_non_cost(text, m.start(), m.end(), amount):
             continue
+        own = next((c for c in _CATS if c[1].search(item)), None)
+        if (own is None or own[0] in ("app", "deposit")) and clause_placed(text, r, m.start(), m.end(), amount):
+            continue  # only the clause of an application fee or deposit item: a utility is placed by the estimate (util_ok), a fee by the sums of its field; a bare $25 beside a $25 fee is a coincidence
         if amount >= 500 and re.search(r"\$\s?[\d,]+\s*(?:-|\u2013|to)\s*$|^\s*(?:-|\u2013|to)\s*\$", text[max(0, m.start() - 12):m.start()] + "|" + text[m.end():m.end() + 8]):
             continue  # a rent range
         if amount >= 1000 and "deposit" in item.lower() and re.search(rf"(?:rent|/\s*mo|per month|\bmonth)\W{{0,4}}[^.\n]{{0,25}}\${amount:,.0f}|\${amount:,.0f}\s*(?:/\s*mo|per month|a month|monthly)", text, re.I):
@@ -215,9 +304,42 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
                                                                                 for k in ("pet_deposit", "pet_fee", "pet_rent")):
             continue  # cycle 21: "Pet policy: Cats only, $35 monthly rent, $200 fee": the pet fields hold both figures
         fieldkv = [(k, r.get(k)) for k in cat[2] if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k) not in (0,)]
-        if cat[0] != "util" and any(_matches(amount, float(v), item) or (k in _SUMMED and amount <= float(v) + 0.5) for k, v in fieldkv):
+        if cat[0] != "util" and any(_matches(amount, float(v), item) or (k in _SUMMED and (m.start() in members[k] if members.get(k) is not None else amount <= float(v) + 0.5)) for k, v in fieldkv):
             continue
         if cat[0] == "util" and any(amount <= float(r[k]) + 0.5 for k in ("other_monthly_fees",) if isinstance(r.get(k), (int, float)) and r.get(k)):
             continue
         bad.append({"amount": amount, "start": m.start(), "end": m.end(), "item": item.strip(), "kind": cat[0]})
     return bad
+
+
+_PCT = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,2})?)[ \t]*(?:%|percent\b)")
+_PCT_MONEY = re.compile(r"credit|concession|contribut|toward|towards|closing|commission|compensation|brokerage|broker|agent|finder|listing fee|\bfees?\b|\bpay(?:s|ing)?\b|\boffer", re.I)
+_PCT_NOT = re.compile(r"\bdown\b|\bPMI\b|\binterest\b|\bAPR\b|\brate\b|\bltv\b|\bappreciat|\bincrease|\bescalat|\bof income|\boff\b|\bdiscount|\bdeposit\b|\boccupan|\bhumidity|\bcapacity|\bcomplete|\bsatisf|\bscore|\bmatch|\bwalk|\bgrowth|\bsunlight|\bcredit (?:score|check)|\bvacan", re.I)
+
+
+def find_unplaced_percent(text: str, r: dict[str, Any], notes: str) -> list[dict[str, Any]]:
+    """Cycle 22: a percent the listing gives for money (a seller credit "2% toward closing costs", a broker fee "5% of annual rent", an agent
+    commission) that no field holds as dollars and no note quotes: [{"pct", "start", "end", "item"}]. A late fee, a down payment, a rate or an
+    "x% off" deal is not one (the first is a penalty, the others have their own notes or are about the buyer's own loan)."""
+    price = r.get("price")
+    bases = [float(price) * k for k in (1, 12) if isinstance(price, (int, float)) and not isinstance(price, bool) and price]
+    held = [float(r[k]) for k in ("seller_credit", "closing_costs", "broker_fee", "move_in_fees", "other_monthly_fees", "hoa", "insurance") if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)]
+    out: list[dict[str, Any]] = []
+    for m in _PCT.finditer(text):
+        pct = float(m.group(1))
+        if pct <= 0 or pct > 100:
+            continue
+        item, line = _item(text, m.start(), m.end(), back=False)
+        ls = text.rfind("\n", 0, m.start()) + 1
+        item_all = line[max(0, m.start() - ls - 70):m.end() - ls + 60]
+        if not _PCT_MONEY.search(item) and not _PCT_MONEY.search(item_all[40:]):
+            continue
+        if _PCT_NOT.search(item) or _NON_COST.search(item) or re.search(r"\blate\b", item_all, re.I) or re.search(r"[?]", text[m.end():m.end() + 25]):
+            continue
+        low = re.escape(f"{pct:g}") + r"\s*(?:%|percent)"
+        if re.search(low, notes, re.I):
+            continue
+        if any(abs(v - pct / 100 * b) <= max(2.0, 0.004 * v) for v in held for b in bases):
+            continue
+        out.append({"pct": pct, "start": m.start(), "end": m.end(), "item": item.strip()})
+    return out

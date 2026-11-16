@@ -313,7 +313,7 @@ def cost_check(rows: list[dict[str, Any]], also: Any = ()) -> list[dict[str, Any
         if why:
             text = why[0].upper() + why[1:] + ". " + ask
         else:
-            text = _join(parts)[0].upper() + _join(parts)[1:] + (" is" if len(parts) == 1 else " are") + " not counted yet. " + ask
+            text = _join(parts)[0].upper() + _join(parts)[1:] + _verb(parts) + " not counted yet. " + ask
         out.append({"place": p, "text": text})
     out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
     return out
@@ -327,6 +327,11 @@ def _closing_help_only(place: dict[str, Any]) -> bool:
     """True when every open money note in a buyer's listing notes is a closing-help offer (not a cost the buyer pays monthly)."""
     notes = money_mod.open_listing_notes(place.get("reader_notes"), place)
     return bool(notes) and all(_CLOSING_HELP.search(n) and not _REAL_COST_WORD.search(n) for n in notes)
+
+
+def _verb(parts: list[str]) -> str:
+    """" is" for one thing ("parking"), " are" for several or for a plural name ("some amounts in the listing notes", "utilities")."""
+    return " is" if len(parts) == 1 and not re.search(r"\bamounts\b|(?:ies|charges|costs|fees|notes)$| and ", parts[0]) else " are"
 
 
 def unknown_cost_parts(place: dict[str, Any]) -> list[str]:

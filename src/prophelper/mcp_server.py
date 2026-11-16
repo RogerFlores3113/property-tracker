@@ -542,7 +542,7 @@ def _commute_text(e: dict[str, Any]) -> str:
 def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
     """One short line for a list: id, title, stage, cost, score, top commute."""
     score = "no score" if e["score_total"] is None else f"score {e['score_total']}" + (" (check first, do not trust this score)" if e.get("check_first") else "")
-    bits = [f"#{e['id']} {_title(e)} [{e['stage']}]", _money(e["cost_total"]) + "/mo true cost" if e["cost_total"] is not None else "cost unknown", score]
+    bits = [f"#{e['id']} {_title(e)} [{e['stage']}]", _money(e["cost_total"]) + ("/mo, not complete" if (e.get("cost") or {}).get("uncounted") else "/mo true cost") if e["cost_total"] is not None else "cost unknown", score]
     if _per_person_text(e):
         bits.insert(2, _per_person_text(e))
     if e["score"].get("fit") == "check_first":
@@ -1651,7 +1651,7 @@ def build_server(store: Store) -> FastMCP:
         lines.append("Best fits right now:" + (" none yet." if not fits else ""))
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
-            lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}/mo true cost{each}"
+            lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}{'/mo, not complete' if (p.get('cost') or {}).get('uncounted') else '/mo true cost'}{each}"
                          + (", no address yet" if not str(p.get("address") or "").strip() else "")
                          + (f". {p['caution']}" if p.get("caution") else ""))
         if not fits and data.get("unconfirmed"):

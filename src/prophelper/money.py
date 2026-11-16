@@ -141,11 +141,27 @@ def _unpriced_tenant_utilities(place: dict[str, Any]) -> list[str]:
     except Exception:
         rough = []
     priced = {"water" if w == "hot water" else w for w in _billed_names(place) + rough}
-    if not priced:
+    noted = _noted_unpriced(place)
+    if not priced and not noted:
         return []
     if priced & {"gas", "heat"}:
         priced |= {"gas", "heat"}  # a gas bill is the heat bill: a gas figure counts the heat, a heat figure counts the gas
-    return [w for w in _cost_pays(place) if w not in priced and w not in NOTHING_WORDS]
+    left = [w for w in _cost_pays(place) if w not in priced and w not in NOTHING_WORDS]
+    return list(dict.fromkeys(left + [w for w in noted if w not in left]))
+
+
+_UNPRICED_NOTE = re.compile(r"\b((?:electric(?:ity)?|gas|water|sewer|trash|heat|internet)(?:(?:,| and|, and)\s+(?:electric(?:ity)?|gas|water|sewer|trash|heat|internet))*)\s+(?:is|are) listed as something you pay, with no amount", re.I)
+
+
+def _noted_unpriced(place: dict[str, Any]) -> list[str]:
+    """Cycle 22: utilities the saved notes say the tenant pays with no amount ("Electric and gas are listed as something you pay, with no
+    amount"), whatever the listing text reading says the estimate covers: the cost line names them as missing."""
+    out: list[str] = []
+    for n in note_units(place.get("reader_notes")):
+        m = _UNPRICED_NOTE.search(n)
+        if m:
+            out += ["electric" if w == "electricity" else w for w in re.findall(r"electric(?:ity)?|gas|water|sewer|trash|heat|internet", m.group(1).lower())]
+    return list(dict.fromkeys(out))
 
 
 def has_pets(pet_kind: Any) -> bool:
@@ -560,16 +576,39 @@ def _short_unc(unc: list[str]) -> list[str]:
     return list(dict.fromkeys(short))
 
 
+def uncounted_display(cost: dict[str, Any]) -> list[str]:
+    """Cycle 22: the "not counted yet" names of a cost result, with the generic "some amounts in the listing notes" replaced by what it is
+    ("water and sewer", "the $200 amount in the listing notes"). Utilities the listing notes name are folded into a "utilities (...)" entry
+    that is already there, so the line says "utilities (electric, internet, water and sewer)" and never lists a thing twice."""
+    unc = list(cost.get("uncounted") or [])
+    label = cost.get("listing_notes_label")
+    if LISTING_NOTES_UNCOUNTED not in unc or not label:
+        return unc
+    names = [str(n) for n in cost.get("listing_notes_names") or []]
+    names_only = bool(names) and label == _join_words(names)
+    out: list[str] = []
+    for u in unc:
+        if u != LISTING_NOTES_UNCOUNTED:
+            out.append(u)
+        elif not names_only:
+            out.append(label)
+    if names:
+        at = next((i for i, u in enumerate(out) if u.startswith("utilities (") and u.endswith(")")), None)
+        if at is not None:
+            have = [x for x in re.split(r",\s*|\s+and\s+", out[at][len("utilities ("):-1]) if x]
+            out[at] = f"utilities ({_join_words(have + [n for n in names if n not in have])})"
+        else:
+            out.append(_join_words(names))
+    return list(dict.fromkeys(out))
+
+
 def headline(cost: dict[str, Any], people: int = 1, noun: str = "people") -> str:
     """The one line next to the total: '$2,414/mo, insurance not counted yet' (and '$807 each' when people share it)."""
     total = cost.get("total")
     if total is None:
         return "Cost unknown"
     text = f"{_dollars(total)}/mo"
-    unc = list(cost.get("uncounted") or [])
-    label = cost.get("listing_notes_label")
-    if label:
-        unc = [label if u == LISTING_NOTES_UNCOUNTED else u for u in unc]
+    unc = uncounted_display(cost)
     if unc:
         text += f", {_join_words(_short_unc(unc))} not counted yet"
     if people and people > 1:
@@ -729,19 +768,49 @@ def _nearest_kind(note: str, amount: str) -> re.Match[str] | None:
     return best[1] if best else None
 
 
+_UTIL_WORDS = (("electric", re.compile(r"\b(?:electric(?:ity)?|power|pg&e)\b", re.I)), ("gas", re.compile(r"\bgas\b", re.I)), ("heat", re.compile(r"\bheat(?:ing)?\b", re.I)),
+               ("water", re.compile(r"\bwater\b", re.I)), ("sewer", re.compile(r"\bsewer\b", re.I)), ("trash", re.compile(r"\b(?:trash|garbage)\b", re.I)),
+               ("internet", re.compile(r"\b(?:internet|wi-?fi|cable)\b", re.I)))
+_UTIL_ITEM_SPLIT = re.compile(r"[,;|\n]|\bplus\b|\band\b(?![ \t]*(?:sewer|trash|garbage|internet|gas))|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|[ \t]~[ \t]|\.(?=\s|$)")
+_NOT_UTIL_ITEM = re.compile(r"\b(?:fees?|parking|garage|carport|deposit|pets?|hoa|dues|insurance|application|admin|permit|locker|storage|valet|pest|lawn|amenity)\b", re.I)
+
+
+def _util_names_of(note: str, amount: str) -> list[str]:
+    """The utilities named by the item of the note's quote that holds ``amount`` ("Water/sewer $55 (bi-monthly $110)" gives water and sewer);
+    [] when that item is not a utility item."""
+    qm = re.search(r'"([^"]*)"', note)
+    if not qm or amount not in qm.group(1):
+        return []
+    for item in _UTIL_ITEM_SPLIT.split(qm.group(1)):
+        if amount in item and not _NOT_UTIL_ITEM.search(item):
+            return [name for name, pat in _UTIL_WORDS if pat.search(item)]
+    return []
+
+
+def open_notes_util_names(reader_notes: Any, place: dict[str, Any] | None = None) -> list[str]:
+    """Cycle 22: the utilities (water, sewer, internet...) whose amounts sit in the open notes and are not counted. [] when none."""
+    names, _label = _open_notes_parts(reader_notes, place)
+    return names
+
+
 def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> str:
+    return _open_notes_parts(reader_notes, place)[1]
+
+
+def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) -> tuple[list[str], str]:
     """A few words for what is open in the notes, naming the amounts: "the $75 flat fee in the listing notes" for one amount,
     "the $96 and $40 amounts in the listing notes" for several (up to four), else the generic "some amounts in the listing notes"."""
     notes = open_listing_notes(reader_notes, place)
     if not notes:
-        return LISTING_NOTES_UNCOUNTED
+        return [], LISTING_NOTES_UNCOUNTED
     ranges = [n for n in notes if _RENT_RANGE_NOTE.search(n)]
     if ranges:  # a rent range names the rent, not two loose amounts
         rest = [n for n in notes if n not in ranges]
         other = open_notes_label("\n".join(rest), place) if rest else ""
-        return RENT_RANGE_LABEL if not other else f"{other} and {RENT_RANGE_LABEL}"
+        return [], (RENT_RANGE_LABEL if not other else f"{other} and {RENT_RANGE_LABEL}")
     seen: dict[float, str] = {}
     unplaced: dict[float, str] = {}
+    named: dict[float, list[str]] = {}
     for note in notes:
         used: set[float] = set()
         placed: set[float] = set()
@@ -750,20 +819,28 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
             try:
                 from .parsers import _CURRENT_EXTRA, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
                 fields = {k: v for k, v in place.items() if v is not None and k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
+                if place.get("listing_text"):
+                    fields["_text"] = str(place["listing_text"])
                 used = {round(u, 2) for u in _net_used_numbers(fields, [], str(place.get("listing_text") or "")) | _field_sums(place)}
                 placed = placed_amounts(set(values), used, _field_sums(place), note, fields)
             except Exception:
                 used, placed = set(), set()
         for value, amount in values.items():
             seen.setdefault(value, amount)
-            if value not in placed and round(value, 2) not in used:
+            util = _util_names_of(note, amount)
+            if value not in placed and (util or round(value, 2) not in used):  # a utility figure is placed by the estimate only, never by an equal figure elsewhere
                 unplaced.setdefault(value, amount)
-    amounts = list(unplaced.values())  # an amount a field already counts is never named as left out
-    if len(amounts) == 1 and len(notes) == 1:
+                if util:
+                    named.setdefault(value, util)
+    amounts = [a for v, a in unplaced.items() if v not in named]  # an amount a field already counts is never named as left out
+    names = list(dict.fromkeys(n for v in named for n in named[v]))
+    if names and not amounts:
+        return names, _amount_list(names)  # "water and sewer": the things, not the figures
+    if len(amounts) == 1 and len(notes) == 1 and not names:
         kind = _nearest_kind(notes[0], amounts[0]) or _OPEN_KIND.search(notes[0])
-        return f"the {amounts[0]} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
+        return names, f"the {amounts[0]} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
     if 1 <= len(amounts) <= 4:
-        return f"the {_amount_list(amounts)} amount{'s' if len(amounts) > 1 else ''} in the listing notes"
+        return names, f"the {_amount_list(amounts)} amount{'s' if len(amounts) > 1 else ''} in the listing notes"
     if not amounts:
         kinds = []
         for note in notes:
@@ -777,8 +854,8 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
             if word and word not in kinds:
                 kinds.append(word)
         if kinds and len(kinds) <= 3:
-            return f"the {_amount_list(kinds)} in the listing notes"
-    return LISTING_NOTES_UNCOUNTED
+            return names, f"the {_amount_list(kinds)} in the listing notes"
+    return names, LISTING_NOTES_UNCOUNTED
 
 
 def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[str, Any] | None = None,
@@ -799,7 +876,9 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets, n)
     noun = "adults" if explicit and mode != "buy" else "people"
     if listing_notes_uncounted(place.get("reader_notes"), place):
-        out["listing_notes_label"] = open_notes_label(place.get("reader_notes"), place)
+        names, label = _open_notes_parts(place.get("reader_notes"), place)
+        out["listing_notes_label"] = label
+        out["listing_notes_names"] = names  # cycle 22: the utilities (water, internet) behind the label; the headline folds them into the utilities it already names
         out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
         out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
     # "all in" is only said when nothing the listing gave is left out: a buyer's one-time fee that is not counted keeps it from reading "all in" too
