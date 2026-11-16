@@ -154,7 +154,13 @@ def _missing_names(p: dict[str, Any]) -> list[str]:
         out.append(f"utilities you pay ({_join_and(paid)})")  # named, so the row never says "Nothing unknown" for them
     if money_mod.LISTING_NOTES_UNCOUNTED in ((p.get("cost") or {}).get("uncounted") or []):
         label = (p.get("cost") or {}).get("listing_notes_label") or ""
-        out.append(label if label and label != money_mod.LISTING_NOTES_UNCOUNTED else "amounts in the listing notes")
+        names = [str(n) for n in (p.get("cost") or {}).get("listing_notes_names") or []]
+        seen = " ".join(out).lower()
+        fresh = [n for n in names if not re.search(rf"\b{re.escape(n)}\b", seen)]  # a utility the line already names is not named twice
+        if not (names and label == _join_and(names)):
+            out.append(label if label and label != money_mod.LISTING_NOTES_UNCOUNTED else "amounts in the listing notes")
+        if fresh:
+            out.append(_join_and(fresh))
     if any(money_mod.RENT_RANGE_LABEL in x for x in out) and "monthly rent" in out:
         out.remove("monthly rent")  # the range label already says the rent is unknown
     return list(dict.fromkeys(out))
@@ -204,7 +210,7 @@ def partial_utilities(p: dict[str, Any]) -> list[str]:
 def _uncounted(p: dict[str, Any]) -> list[str]:
     """Cost parts left out of the monthly number: the money result's own list plus utilities the listing does not
     include and nobody priced. The one list behind "not counted yet" everywhere (cost cell, lowest cost, per person)."""
-    out = list((p.get("cost") or {}).get("uncounted") or [])
+    out = money_mod.uncounted_display(p.get("cost") or {})
     names = partial_utilities(p)
     if names:
         out.append(f"utilities ({_join_and(names)})")

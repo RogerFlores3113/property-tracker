@@ -313,9 +313,14 @@ def cost_check(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         ask = "Ask the listing agent before you count on this cost." if (p.get("cost") or {}).get("mode") == "buy" \
             else "Ask the landlord before you count on the rent."
-        out.append({"place": p, "text": _join(parts)[0].upper() + _join(parts)[1:] + (" is" if len(parts) == 1 else " are") + " not counted yet. " + ask})
+        out.append({"place": p, "text": _join(parts)[0].upper() + _join(parts)[1:] + _verb(parts) + " not counted yet. " + ask})
     out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
     return out
+
+
+def _verb(parts: list[str]) -> str:
+    """" is" for one thing ("parking"), " are" for several or for a plural name ("some amounts in the listing notes", "utilities")."""
+    return " is" if len(parts) == 1 and not re.search(r"\bamounts\b|(?:ies|charges|costs|fees|notes)$| and ", parts[0]) else " are"
 
 
 def unknown_cost_parts(place: dict[str, Any]) -> list[str]:
