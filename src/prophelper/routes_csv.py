@@ -14,7 +14,7 @@ import re
 from datetime import datetime
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from . import csv_io, enrich
 from .deps import get_store, redirect, render
@@ -141,6 +141,13 @@ async def import_apply(request: Request):
         msg += f" {len(result['failed'])} row{'s' if len(result['failed']) != 1 else ''} could not be saved ({result['failed'][0]})."
     store.set_current_search(state["search_id"])
     return redirect("/board", notice=msg)
+
+
+@router.get("/export", include_in_schema=False)
+def export_alias(request: Request):
+    """/export goes to the CSV download, keeping any ?search_id=, ?stage= or ?q= the link had."""
+    query = request.url.query
+    return RedirectResponse("/places.csv" + (f"?{query}" if query else ""), status_code=307)
 
 
 @router.get("/places.csv", include_in_schema=False)

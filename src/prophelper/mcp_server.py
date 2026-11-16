@@ -19,6 +19,7 @@ Rules the tools enforce (design rule 3, "the AI never deletes"):
 """
 
 import inspect
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
@@ -183,9 +184,11 @@ def _clip(text: str | None, n: int) -> str:
     return text if len(text) <= n else text[:n].rstrip() + f" ... (cut, {len(text) - n} more characters; open the app for all of it)"
 
 
-def _note_lines(text: Any) -> str:
-    """The saved listing notes one note to a line (the notes are stored as one paragraph)."""
+def _note_lines(text: Any, place: dict[str, Any] | None = None) -> str:
+    """The saved listing notes one note to a line (the notes are stored as one paragraph). Plain quotes, and no second copy of
+    hostile text that the place's flag already quotes."""
     try:
+        text = redflags.clean_reader_notes(text, place)
         return "\n".join(money_mod.note_units(text)) if text else ""
     except Exception:  # noqa: BLE001 - the notes still show, as one paragraph
         return str(text or "")
@@ -975,7 +978,7 @@ def build_server(store: Store) -> FastMCP:
                                  f"at a time. Add it as Saved and move it forward one step at a time, or ask the user. Nothing was saved.")
         place, created = store.add_place(by="ai", search_id=search["id"], stage=stage, **fields)
         notes: list[str] = []
-        reader_block = guards.fence(_clip(_note_lines(place.get("reader_notes")), 1500), "notes the reader made from the listing") if fields.get("reader_notes") else ""
+        reader_block = guards.fence(_clip(_note_lines(place.get("reader_notes"), place), 1500), "notes the reader made from the listing") if fields.get("reader_notes") else ""
         matched = ""
         if not created:
             matched = "the same link" if dup and fields.get("url") and normalize_url(dup.get("url")) == normalize_url(fields["url"]) else "the same address and unit"
@@ -1181,7 +1184,7 @@ def build_server(store: Store) -> FastMCP:
         blocks = [guards.fence(_clip(e.get("listing_text"), LISTING_CLIP), "listing text"),
                   guards.fence(_clip(e.get("notes"), 1500), "the user's notes"),
                   guards.fence(_clip(e.get("ai_notes"), 1500), "earlier AI notes"),
-                  guards.fence(_clip(_note_lines(e.get("reader_notes")), 1500), "notes the reader made from the listing when it was added")]
+                  guards.fence(_clip(_note_lines(e.get("reader_notes"), e), 1500), "notes the reader made from the listing when it was added")]
         events = store.list_events(e["id"])[:TIMELINE_LINES]
         if events:
             blocks.append(guards.fence("\n".join(f"{helpers.day_text(ev['at'])} [{ev['kind']}, {ev['source']}] {guards.inline(ev['body'], 200)}" for ev in events),
@@ -1723,6 +1726,33 @@ def build_server(store: Store) -> FastMCP:
     def _say(v: Any, n: int = 40) -> str:
         return guards.inline(v, n)
 
+    DEAL_ALIASES = ("deal_breaker", "dealBreaker", "deal-breaker", "deal breaker", "Dealbreaker", "must_have", "musthave")
+    BARE_TARGET_KEY = {"price": "max", "beds": "min", "baths": "min", "sqft": "min", "newer": "year",
+                       "laundry": "want", "parking": "want", "pets": "want"}
+
+    def _bare_target(kind: str, target: Any) -> Any:
+        """A target given as a bare value (``"covered"``, ``1600``) read as the kind's own key: {"want": "covered"}.
+        Objects, JSON text and empty values are left alone."""
+        if target is None or isinstance(target, (dict, list, bool)):
+            return target
+        if isinstance(target, str):
+            text = target.strip()
+            if not text or text[0] in "{[":
+                return target
+        key = BARE_TARGET_KEY.get(kind)
+        return {key: target} if key else target
+
+    def _deal_alias(c: dict[str, Any]) -> bool:
+        """Move a deal-breaker spelled another way (``deal_breaker``) onto ``dealbreaker``. True when something moved."""
+        moved = False
+        for k in DEAL_ALIASES:
+            if k in c:
+                v = c.pop(k)
+                if "dealbreaker" not in c:
+                    c["dealbreaker"] = v
+                moved = True
+        return moved
+
     def check_anchors(items: Any, where: str = "Anchor") -> tuple[list[dict[str, Any]], list[str], list[str]]:
         """Every anchor checked without saving anything: (clean items, problems, gentle notes)."""
         clean: list[dict[str, Any]] = []
@@ -1769,6 +1799,8 @@ def build_server(store: Store) -> FastMCP:
                 notes.append(f"{at}: I read field as the criterion's kind. Next time use kind.")
             if "name" in c and "label" not in c:
                 c["label"] = c.pop("name")
+            if _deal_alias(c):
+                notes.append(f"{at}: I read that as dealbreaker. Next time use dealbreaker.")
             if "kind" not in c:
                 problems.append(f"{at} needs a kind (one of {', '.join(CRITERION_KINDS)})")
                 continue
@@ -1783,7 +1815,7 @@ def build_server(store: Store) -> FastMCP:
             if extra:
                 inside = [k for k in extra if k in TARGET_KEYS]
                 hint = (f" {', '.join(inside)} belongs inside target, for example \"target\": {{\"{inside[0]}\": {TARGET_EXAMPLE[inside[0]]}}}." if inside else "")
-                problems.append(f"{at} doesn't take {', '.join(_say(k) for k in extra)}.{hint} A criterion takes kind, label (or name), weight, dealbreaker and target (an object)")
+                problems.append(f"{at} doesn't take {', '.join(_say(k) for k in extra)}.{hint} A criterion takes kind, label (or name), weight, dealbreaker (deal_breaker also works) and target (an object)")
                 bad = True
             if c.get("weight") is not None:
                 try:
@@ -1792,6 +1824,11 @@ def build_server(store: Store) -> FastMCP:
                     problems.append(f"{at}: weight must be a number from 0 to 100 (it is optional, and 10 when left out)")
                     bad = True
             target = c.get("target")
+            bare = _bare_target(kind, target)
+            if bare is not target:
+                target = bare
+                c["target"] = bare
+                notes.append(f"{at}: I read the bare target as {json.dumps(bare)}. Next time put it inside target as an object.")
             if isinstance(target, dict):
                 target = dict(target)
                 keys = KIND_TARGET.get(kind, ())
@@ -1964,6 +2001,8 @@ def build_server(store: Store) -> FastMCP:
             if not isinstance(r, dict) or "id" not in r:
                 problems.append(f"{at} needs the criterion's id and what to change (weight, dealbreaker, target, label)")
                 continue
+            r = dict(r)
+            _deal_alias(r)
             extra = [k for k in r if k not in ("id", "weight", "dealbreaker", "target", "label")]
             if extra:
                 problems.append(f"{at} doesn't take {', '.join(_say(k) for k in extra)}. Allowed: id, weight, dealbreaker, target, label (criteria can't be removed)")
@@ -1979,6 +2018,8 @@ def build_server(store: Store) -> FastMCP:
             try:
                 if "weight" in ch:
                     Store._weight(ch["weight"])  # noqa: SLF001
+                if "target" in ch:
+                    ch["target"] = _bare_target(valid[cid]["kind"], ch["target"])
                 if isinstance(ch.get("target"), dict):
                     t = dict(ch["target"])
                     if "anchor" in t:

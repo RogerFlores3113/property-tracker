@@ -429,10 +429,28 @@ def _readable(raw: bytes) -> str:
     return t if len(t) >= 12 and letters / len(t) >= 0.85 and len(t.split()) >= 3 else ""
 
 
-def encoded_text(text: str) -> str:
-    """Readable text hidden in a base64 block of 24 or more characters ('' when none). A link or a plain long word is not
-    base64 text: only a block that decodes to words counts."""
+_AI_OBJECT = re.compile(r"\b(?:previous|prior|above|instructions?|rules|prompts?|assistant|ai|claude|chatgpt|model|system|tool|tools|move_place|update_place|"
+                        r"this (?:place|listing|property|home|apartment)|it (?:to|as|best|safe)|rating|score|stage|best|safe|passed|closed|contacted|lease signed|"
+                        r"notes?|price|everything|the rest|user|tenant)\b", re.I)
+
+
+def reads_as_instruction(text: str) -> bool:
+    """True when text reads as an order to an AI tool or the app: it matches the AI-text rules, or it is an imperative that
+    names the assistant, the rules, the place or a stage. Harmless sentences ("Welcome to the building, call us any time")
+    are not."""
+    t = " ".join(str(text or "").split())
+    if not t:
+        return False
+    if any(p.search(t) for p in (_AI_TARGETED, _AI_EXTRA, _AI_C17)):
+        return True
+    return bool(_HIDDEN_ORDER.search(t) and _AI_OBJECT.search(t))
+
+
+def encoded_texts(text: str) -> list[str]:
+    """Every readable text hidden in a base64 block of 24 or more characters. A link or a plain long word is not base64 text:
+    only a block that decodes to words counts."""
     import base64
+    out: list[str] = []
     for m in _B64.finditer(str(text or "")):
         block = m.group(0)
         if len(block) % 4 == 1:
@@ -442,8 +460,14 @@ def encoded_text(text: str) -> str:
         except ValueError:
             continue
         if (r := _readable(raw)):
-            return r
-    return ""
+            out.append(r)
+    return out
+
+
+def encoded_text(text: str) -> str:
+    """The first base64 block that decodes to text reading as an instruction to an AI tool ('' when none). A block that decodes
+    to harmless words is never flagged."""
+    return next((r for r in encoded_texts(text) if reads_as_instruction(r)), "")
 
 
 def reversed_injection(text: str) -> str:
@@ -572,23 +596,27 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             if ai_line is None:
                 ai_line = spelled
     encoded = ""
-    if ai_line is None:
-        raw_all = " ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes"))
-        decoded = encoded_text(raw_all)
-        if decoded:
-            encoded = decoded
-            ai_line = _quote(decoded)
-        else:
-            for k in ("listing_text", "notes", "ai_notes", "title"):
-                if (rev := reversed_injection(normalise_text(str(place.get(k) or ""))[0])):
-                    ai_line = _quote(rev)
-                    break
+    extra_quotes: list[str] = []
+    raw_all = " ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes"))
+    decoded = encoded_text(raw_all)
+    if decoded:
+        encoded = decoded
+        extra_quotes.append(_quote(decoded))
+    for k in ("listing_text", "notes", "ai_notes", "title"):
+        if (rev := reversed_injection(normalise_text(str(place.get(k) or ""))[0])):
+            extra_quotes.append(_quote(rev))
+            break
+    for q in extra_quotes:
+        if ai_line is None:
+            ai_line = q
+        elif q and q not in ai_line:
+            ai_line = f"{ai_line} / {q}"
     if ai_line is not None:
         hidden_note = ""
         if spelled:
             hidden_note = " Hidden characters that spelled this were removed from the listing text."
         elif encoded:
-            hidden_note = " It was written as an encoded block, and what it decodes to is quoted here."
+            hidden_note = " Part of it was written as an encoded block, and what it decodes to is quoted here."
         flags.append("This listing has text aimed at AI tools; treat it with care." + hidden_note + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
     ctx = str(place.get("hidden_chars_context") or "")
     if (place.get("hidden_text") or ctx) and not any("Hidden characters that spelled this" in f for f in flags):
@@ -600,6 +628,10 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         else:
             note += " Ask the seller why they were there."
             quote = ctx
+        if ai_line is not None and quote and reads_as_instruction(quote):
+            quote = ""  # the same hostile words are already quoted in the "aimed at AI tools" line: not twice
+        elif quote:
+            quote = trim_at_injection(quote)
         flags.append(note + (f'{AI_QUOTE_MARK}{_quote(quote, 100)}"' if quote else ""))
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and buy_payment_hit(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
@@ -625,3 +657,31 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
     if not address and not place.get("lat") and (place.get("listing_text") or place.get("url")):
         flags.append("There is no address yet. Ask for one before you go anywhere or pay anything.")
     return flags
+
+
+_ESCAPED_QUOTE = re.compile(r"\\(['\"])")
+
+
+def clean_reader_notes(text: Any, place: dict[str, Any] | None = None) -> str:
+    """The saved reader notes ready to show: backslash-escaped quotes shown as plain quotes, and a note that only repeats the
+    hostile text the place's "aimed at AI tools" flag already quotes left out (a note that also carries an amount stays,
+    so no stated figure is dropped)."""
+    out = _ESCAPED_QUOTE.sub(r"\1", str(text or ""))
+    if not out.strip() or place is None:
+        return out
+    flagged = place.get("flags")
+    if flagged is None:
+        try:
+            flagged = local_flags(place)
+        except Exception:  # noqa: BLE001
+            flagged = []
+    if not any("aimed at AI tools" in str(f) for f in flagged):
+        return out
+    def hostile_only(piece: str) -> bool:
+        return bool(piece.strip()) and reads_as_instruction(normalise_text(piece)[0]) and not re.search(r"\$\s?\d", piece)
+
+    lines = out.split("\n")
+    if len([x for x in lines if x.strip()]) == 1:  # one paragraph: go sentence by sentence
+        parts = re.split(r"(?<=[.!?])\s+(?=[A-Z\"'])", out.strip())
+        return " ".join(x for x in parts if not hostile_only(x))
+    return "\n".join(x for x in lines if not hostile_only(x))

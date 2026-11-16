@@ -540,7 +540,14 @@ _ENUM_ALIASES: dict[str, dict[str, str]] = {
                 "reserved": "lot", "reserved parking": "lot", "reserved spot": "lot", "reserved space": "lot",
                 "assigned": "lot", "assigned parking": "lot", "assigned spot": "lot", "assigned space": "lot",
                 "carport parking": "covered", "covered parking": "covered", "parking lot": "lot", "private lot": "lot", "street": "street", "on street": "street",
-                "none": "none", "no": "none", "no parking": "none"},
+                "none": "none", "no": "none", "no parking": "none",
+                # an ordered want (garage > covered > assigned > lot > street): "covered or better" is met by covered or garage
+                "covered or better": "covered", "covered or garage": "covered", "garage or covered": "covered",
+                "covered or above": "covered", "at least covered": "covered",
+                "covered or garage parking": "covered", "garage or covered parking": "covered", "garage or carport": "covered",
+                "carport or garage": "covered", "covered/garage": "covered", "garage/covered": "covered",
+                "garage or better": "garage", "garage only": "garage",
+                "assigned or better": "lot", "lot or better": "lot", "off street or better": "lot", "off-street or better": "lot"},
     "pets": {"cats": "cats", "cat": "cats", "cats ok": "cats", "dogs": "dogs", "dog": "dogs", "dogs ok": "dogs",
              "both": "both", "cats and dogs": "both", "dogs and cats": "both", "pets ok": "both", "pet friendly": "both",
              "pet-friendly": "both", "pets allowed": "both", "yes": "both", "none": "none", "no": "none",
@@ -558,7 +565,8 @@ def clean_enum(field: str, value: Any) -> str:
     if alias is None and raw.replace(" ", "_") in _ENUM_ALLOWED[field]:
         alias = raw.replace(" ", "_")
     if alias is None:
-        raise ValueError(f"{field.title()} needs to be one of: {', '.join(_ENUM_ALLOWED[field])}.")
+        more = (' You can also say "covered or better" (covered or garage counts) or "garage or covered".' if field == "parking" else "")
+        raise ValueError(f"{field.title()} needs to be one of: {', '.join(_ENUM_ALLOWED[field])}.{more}")
     return alias
 
 
@@ -588,6 +596,11 @@ def clean_document_kind(kind: Any) -> str:
     """A document kind typed any way ("Loan estimate", "loan_estimate", " LEASE ") as the stored one; the text unchanged when it is none of them."""
     text = re.sub(r"[\s_-]+", " ", str(kind or "").strip().lower())
     return text if text in DOCUMENT_KINDS else str(kind or "")
+
+
+def document_kinds_text() -> str:
+    """The accepted document kinds as a person may type them: a two-word kind also takes its underscore spelling."""
+    return ", ".join(k if " " not in k else f"{k} (or {k.replace(' ', '_')})" for k in DOCUMENT_KINDS)
 
 
 PRIVATE_LINK_REASON = ("That link points to this computer or a private network (like localhost, 127.0.0.1, 192.168.x.x, 10.x.x.x or a .local name), "
@@ -2397,7 +2410,7 @@ class Store:
         self._require_place(place_id)
         kind = clean_document_kind(kind)
         if kind not in DOCUMENT_KINDS:
-            raise ValueError(f"A document is one of: {', '.join(DOCUMENT_KINDS)}.")
+            raise ValueError(f"A document is one of: {document_kinds_text()}.")
         if size < 0 or size > UPLOAD_LIMIT_BYTES:
             raise ValueError("Files can be up to 20 MB.")
         stored = _text(stored_name, 200)
@@ -2420,7 +2433,7 @@ class Store:
         self.get_document(document_id)
         if kind is not None:
             if kind not in DOCUMENT_KINDS:
-                raise ValueError(f"A document is one of: {', '.join(DOCUMENT_KINDS)}.")
+                raise ValueError(f"A document is one of: {document_kinds_text()}.")
             self._exec("UPDATE documents SET kind = ? WHERE id = ?", (kind, document_id))
         if original_name is not None and _text(original_name):
             self._exec("UPDATE documents SET original_name = ? WHERE id = ?", (_text(original_name, 300), document_id))
