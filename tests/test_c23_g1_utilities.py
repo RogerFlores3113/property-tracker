@@ -209,7 +209,7 @@ def test_hoa_covers_water_and_water_has_a_price_is_a_conflict(text):
     assert r.get("utilities_estimate") is None, (r.get("utilities_estimate"), notes(r))
     assert "water" in pays_set(r) and "water" not in included_set(r)
     low = notes(r)
-    assert "HOA covers water" in low and "$25" in low and "don't agree" in low
+    assert "HOA covers water" in low and "$25" in low and "Ask which is right" in low
     c, missing = cost_of(r, HEAD + " " + text)
     assert "water" in " ".join(missing)
 
@@ -217,7 +217,7 @@ def test_hoa_covers_water_and_water_has_a_price_is_a_conflict(text):
 def test_family_l51_saved_listing():
     r, t = saved("r22-family-l51")
     assert "water" in pays_set(r) and "water" not in included_set(r)
-    assert "don't agree" in notes(r)
+    assert "ask which is right" in notes(r).lower()
     assert "water" in " ".join(cost_of(r, t)[1])
 
 
