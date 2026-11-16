@@ -292,7 +292,9 @@ def near_miss_text(place: dict[str, Any]) -> str:
         return ""
     text = "; ".join(p["text"] for p in scoring.near_parts(score, place.get("cost")))
     if not text and not fails_dealbreakers(place) and (over := over_budget(place)):
-        text = f"${over:,.0f} over your budget (price is not a must-have for you)"  # a place over budget is never a best fit
+        cost = place.get("cost") or {}
+        lead = "at least " if cost.get("uncounted") or cost.get("missing") else ""
+        text = f"{lead}${over:,.0f} over your budget (price is not a must-have for you)"  # a place over budget is never a best fit
     return text
 
 

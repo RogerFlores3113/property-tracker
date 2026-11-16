@@ -249,7 +249,9 @@ def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[
         if over is None or pct is None or over <= 0 or (pct >= NEAR_MISS_PCT and item.get("dealbreaker_status") != "near"):
             return []
         if item["kind"] == "price":
-            text = f"${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near")))
+            # cycle 24: a cost part that is unknown (gas, internet...) can only make the real overage bigger
+            lead = "at least " if (cost or {}).get("uncounted") or (cost or {}).get("missing") else ""
+            text = f"{lead}${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near")))
         else:
             text = item.get("gap") or f"{item.get('label', 'A must-have')} is just short"
             pts = item.get("points_lost") or 0
