@@ -63,7 +63,7 @@ _CATS = (
     ("insurance", re.compile(r"insurance|\bHO6\b", re.I), ("insurance",)),
     ("tax", re.compile(r"\btaxes\b|\btax\b", re.I), ("property_tax",)),
     ("parking", re.compile(r"parking|garage|carport|\bcar\b|\bspace\b|permit|valet|\bvehicle", re.I), ("parking_cost", "other_monthly_fees")),
-    ("util", re.compile(r"electric|\bgas\b|water|sewer|trash|garbage|\bheat|internet|wi-?fi|cable|utilit", re.I), ("utilities_estimate", "other_monthly_fees")),
+    ("util", re.compile(r"electric|\bgas\b|water|sewer|trash|garbage|\bheat|internet|wi-?fi|cable|utilit|\bpg&e\b|\bcomed\b|\bnicor\b|\bameren\b", re.I), ("utilities_estimate", "other_monthly_fees")),
     ("fee", re.compile(r"\bfees?\b|admin|move-?in|lease|cleaning|processing|amenity|package|pest|locker|storage", re.I), ("move_in_fees", "other_monthly_fees", "application_fee", "deposit")),
 )
 
