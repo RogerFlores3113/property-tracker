@@ -1063,6 +1063,11 @@ _PARKING_FREE = re.compile(r"\bfree (?:off[- ]?street |on[- ]?street |street |on
                            r"\bparking\b[^.\n;$]{0,30}\b(?:at|for|with)\s+no\s+(?:extra\s+|additional\s+)?(?:charge|cost|fee)\b|\bno\s+(?:extra\s+|additional\s+)?(?:charge|cost|fee)\s+for\s+(?:\w+\s+){0,2}parking\b", re.I)
 
 
+# "Off-street parking, free.", "Parking: street - free", "Parking (free)": the word free comes after the parking words
+_PARKING_FREE_AFTER = re.compile(r"\b(?:parking|garages?|carports?|(?:driveway|lot|street|off[- ]?street)[ \t]+(?:parking|spots?|spaces?))[ \t]*(?:[:,(\-\u2013\u2014][ \t]*)(?:[a-z][a-z\- ]{0,20}?[ \t]*[,\-(][ \t]*)?(?:is[ \t]+)?"
+                                 r"(?:free|included|no[ \t]+(?:extra[ \t]+|additional[ \t]+)?(?:charge|cost|fee))\b(?![ \t]+(?:for|during|until|trial|first|if|with|(?:wi-?fi|internet|water|rent|cable|trash|laundry|heat|utilit\w*|storage|tours?|month|app\w*|pets?|gym|pool)\b))")
+
+
 def _parking_prices(low: str) -> list[tuple[float, bool, str, str]]:
     """Every parking price in the text as (amount a month, optional, clause, unit). A price that is only offered ("available", "additional",
     "optional", or a different spot than the free one) is optional and never counts toward the monthly cost. A yearly price ("street permit
@@ -1179,10 +1184,130 @@ _PARK_TYPE = r"(?:covered|garage|carport|reserved|assigned|surface|open|uncovere
 _PARK_LINE_ITEM = re.compile(r"^[ \t*\u2022\-]*(" + _PARK_TYPE + r"[a-z \t]{0,20}?)[ \t]*[:\-]?[ \t]*((?:\$\s?\d|free\b)[^\n]*)$")
 
 
-def _parking_options(low: str) -> tuple[str, float, list[str]] | None:
-    """Cycle 19: several parking choices with their own prices in one list ("Parking: $0 (open lot), Covered $45", "Parking: free surface lot"
-    then a line "Covered: $45/mo"). They are options, not extra charges, so the cheapest stated one is the parking cost and one plain note
-    names the others. Returns (kind of the cheapest, its monthly cost, notes) or None when the text is not such a list."""
+_PARK_RANK_WORDS = re.compile(r"\b(?:assigned|reserved)\b")
+_PARK_YEARLY_WORDS = re.compile(r"/\s*y(?:ea)?r|per\s+year|a\s+year|yearly|annual")
+_PARK_KIND_NAMES = {"garage": "a garage", "covered": "covered parking", "lot": "a surface lot", "street": "street parking", "": "another parking choice"}
+
+
+def _choice_kind(it: str) -> str:
+    """The kind of one parking choice ("assigned garage space" garage, "2 driveway spots" lot, "street permit" street, "" when no kind is named)."""
+    k = _parking_kind_words(it)
+    if k:
+        return k
+    if re.search(r"\bdriveway\b", it):
+        return "lot"
+    return ""
+
+
+def _choice_label(kind: str, it: str) -> str:
+    """Plain words for one parking choice in a note."""
+    if kind == "lot" and re.search(r"\bdriveway\b", it):
+        return "driveway parking"
+    if kind == "street":
+        return "a street permit" if re.search(r"\bpermit\b", it) else "street parking"
+    if kind == "lot" and _PARK_RANK_WORDS.search(it):
+        return "assigned parking"
+    return _PARK_KIND_NAMES.get(kind, "another parking choice")
+
+
+def _parking_choice_items(parts: list[str], strict: bool) -> list[tuple[float | None, str, str]] | None:
+    """Split parking text into its choices: (monthly price or None when none is given, kind, the words). A choice has a kind word, a price or
+    "free". Returns None when the text holds a word that makes it an extra rather than a choice ("optional", "available", "extra") or a price
+    that is not monthly or yearly. ``strict`` (text that is not a "Parking:" list) needs a kind word in every priced choice."""
+    items: list[str] = []
+    for part in parts:
+        # "street (free)" and "$0 (open lot)" are one choice: a bracket that only holds the price, or follows only a price, joins its neighbour
+        part = re.sub(r"\(\s*((?:free|included|no[ \t]+(?:charge|cost|fee))\b[^()$\d]*|\$\s?\d[^()a-z]*(?:(?:/\s*mo\w*|per\s+\w+|a\s+\w+)[^()]*)?)\)", r" \1 ", part)
+        part = re.sub(r"((?:^|[,;|])\s*\$\s?\d[^(),;|a-z]*)\(\s*([a-z][^()$\d]*)\)", r"\1 \2 ", part)
+        items += [x.strip() for x in re.split(r"\s*[;|]\s*|,(?!\d{3})\s*|\s+/\s+|\s*/(?=\s*(?:covered|garage|carport|reserved|assigned|surface|open|uncovered|street|driveway)\b)|\s+or\s+|\s+-\s+|[()]", part) if x.strip()]
+    raw: list[list[Any]] = []  # [price or None, kind words or "", words]
+    for it in items:
+        if not re.search(_PARK_TYPE + r"|free|included|\$\s?0\b|^\$|\bpermit\b", it) and not _PARK_FREE_ITEM.search(it):
+            continue  # not a parking choice (a stray word between two choices)
+        if re.search(r"\bfree[ \t]+(?:wi-?fi|internet|water|rent|cable|trash|laundry|heat|utilit\w*|storage|month|tours?)", it):
+            continue  # "free wifi" is not a free parking choice
+        if _PARK_ITEM_BAD.search(it):
+            return None
+        pm = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", it)
+        kind = _choice_kind(it)
+        price: float | None = None
+        if pm:
+            price = float(pm.group(1).replace(",", ""))
+            if _PARK_YEARLY_WORDS.search(it):
+                price = round(price / 12, 2)
+            elif re.search(r"per\s+(?:semester|quarter)|quarterly|semester", it):
+                return None
+        elif _PARK_FREE_ITEM.search(it):
+            price = 0.0
+        elif not kind or re.search(r"\bno\b|\bnone\b", it):
+            continue
+        # "2-car garage, included" and "$75/mo per vehicle, covered": a price with no kind and a kind with no price next to each other are one choice
+        if raw and not kind and price is not None and raw[-1][0] is None and raw[-1][1]:
+            raw[-1][0] = price
+            raw[-1][2] += " " + it
+            continue
+        if raw and kind and price is None and raw[-1][0] is not None and not raw[-1][1]:
+            raw[-1][1] = kind
+            raw[-1][2] += " " + it
+            continue
+        raw.append([price, kind, it])
+    got: list[tuple[float | None, str, str]] = []
+    for price, kind, it in raw:
+        if price is not None and strict and not kind:
+            return None
+        got.append((price, kind or ("lot" if price == 0 else ""), it))
+    return got
+
+
+def _parking_decide(got: list[tuple[float | None, str, str]]) -> tuple[str, float | None, list[str]] | None:
+    """The one parking choice to save from several: the best kind offered (garage > covered or carport > assigned or reserved > surface lot or
+    street) with that choice's own price, and one note naming the others. The same kind at different prices keeps the cheapest."""
+    priced_kinds = {k for v, k, _it in got if v is not None}
+    got = [g for g in got if g[0] is not None or g[1] not in priced_kinds]  # "garage" then "garage $150": the priced mention is the choice
+    seen: set[tuple[Any, str]] = set()
+    uniq = []
+    for g in got:
+        if (g[0], g[1]) not in seen:
+            seen.add((g[0], g[1]))
+            uniq.append(g)
+    got = uniq
+    if len(got) < 2 or (len({g[1] for g in got}) < 2 and len({g[0] for g in got}) < 2):
+        return None
+
+    def _rank(g):
+        if g[1] == "garage":
+            return 4
+        if g[1] == "covered":
+            return 3
+        return 2 if _PARK_RANK_WORDS.search(g[2]) else 1
+    top = max(_rank(g) for g in got)
+    cands = [g for g in got if _rank(g) == top]
+    best = min(cands, key=lambda g: (g[0] is None, g[0] if g[0] is not None else 0))  # the best kind offered, at its cheapest price
+    others = []
+    for v, k, it in got:
+        if (v, k, it) == best:
+            continue
+        yearly = bool(_PARK_YEARLY_WORDS.search(it))
+        price = "" if v is None else (" for free" if v == 0 else f" for ${v * 12:,.0f} a year" if yearly else f" for ${v:,.0f} a month")
+        others.append(_choice_label(k, it) + price)
+    kind_best = best[1] or "lot"
+    nm = _choice_label(kind_best, best[2])
+    if best[0] is None:
+        saved = f"{nm[0].upper() + nm[1:]} is saved, but the listing gives no price for it."
+    else:
+        cost_words = "free" if best[0] == 0 else f"${best[0]:,.0f} a month"
+        saved = f"{nm[0].upper() + nm[1:]} ({cost_words}) is saved."
+    note = (f"The listing gives more than one parking choice. {saved} It also offers {' and '.join(others)}. "
+            "They are alternatives, so the others are not in the monthly cost. Ask which one you would get"
+            + (" and what it costs." if best[0] is None or any(g[0] is None for g in got) else "."))
+    return kind_best, (None if best[0] is None else round(best[0], 2)), [note]
+
+
+def _parking_options(low: str) -> tuple[str, float | None, list[str]] | None:
+    """Cycle 19 and 20: several parking choices in one list ("Parking: $0 (open lot), Covered $45", "Parking: garage OR 2 driveway spots OR street
+    permit", "free parking in a surface lot (garage spaces also offered for $75)"). They are options, not extra charges. The best kind offered
+    is saved with its own price (never another choice's price) and one plain note names the others. Returns (kind, monthly cost or None, notes)
+    or None when the text is not such a list."""
     for m in re.finditer(r"\bparking(?:[ \t]+(?:options?|types?|rates?|fees?|costs?|choices?))?[ \t]*[:\-][ \t]*([^\n]*)", low):
         parts = [re.split(r"\.(?:\s|$)|\s\|\s", m.group(1))[0]]
         rest = low[m.end():].split("\n")
@@ -1190,56 +1315,63 @@ def _parking_options(low: str) -> tuple[str, float, list[str]] | None:
             if not _PARK_LINE_ITEM.match(line):
                 break
             parts.append(line)
+        if "$" not in " ".join(parts):
+            parts = [re.sub(r"\bavailable\b", " ", x) for x in parts]  # "garage, carport, or street permit available": a list of kinds, not an extra
         if re.search(r"\b(?:optional|available|extra|additional|upgrade|waitlist|wait[- ]list)\b", " ".join(parts)):
             continue  # an offered extra is handled by the optional-parking reader, not as a choice
-        items: list[str] = []
-        for part in parts:
-            items += [x.strip() for x in re.split(r"\s*[;|]\s*|,(?!\d{3})\s*|\s+/\s+|\s*/(?=\s*(?:covered|garage|carport|reserved|assigned|surface|open|uncovered)\b)|\s+or\s+|\s+-\s+", part) if x.strip()]
-        got: list[tuple[float, str, str]] = []
-        for it in items:
-            if not re.search(_PARK_TYPE + r"|free|included|\$\s?0\b|^\$", it) and not _PARK_FREE_ITEM.search(it):
-                continue  # not a parking choice (a stray word between two choices)
-            if _PARK_ITEM_BAD.search(it):
-                got = []
-                break
-            pm = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", it)
-            if pm:
-                v = float(pm.group(1).replace(",", ""))
-                if re.search(r"/\s*y(?:ea)?r|per\s+year|a\s+year|yearly|annual", it):
-                    v = round(v / 12, 2)
-                elif re.search(r"per\s+(?:semester|quarter)|quarterly|semester", it):
-                    got = []
-                    break
-                got.append((v, _parking_kind_words(it) or ("lot" if v == 0 else ""), it))
-            elif _PARK_FREE_ITEM.search(it):
-                got.append((0.0, _parking_kind_words(it) or "lot", it))
-        if len(got) < 2 or len({round(g[0], 2) for g in got}) < 2 and len({g[1] for g in got}) < 2:
-            continue
-        def _rank(g):  # best kind first: garage > covered or carport > assigned or reserved > surface lot or street
-            if g[1] == "garage":
-                return 4
-            if g[1] == "covered":
-                return 3
-            return 2 if re.search(r"\b(?:assigned|reserved)\b", g[2]) else 1
-        top = max(_rank(g) for g in got)
-        best = min((g for g in got if _rank(g) == top), key=lambda g: g[0])  # the best kind offered, at its cheapest price
-        names = {"garage": "a garage", "covered": "covered parking", "lot": "a surface lot", "street": "street parking", "": "another parking choice"}
-        others = []
-        for v, k, it in got:
-            if (v, k, it) == best:
+        got = _parking_choice_items(parts, strict=False)
+        if got:
+            res = _parking_decide(got)
+            if res:
+                return res
+    # the same choice written inside a sentence: "free parking in a surface lot (garage spaces also offered for $75)"
+    for line in low.split("\n"):
+        for sent in re.split(r"\.(?:\s|$)(?![^(]*\))", line):
+            if not re.search(r"\b(?:parking|garages?|carports?|driveway|lot)\b", sent) or not re.search(r"\$\s?\d|\bfree\b|\bincluded\b", sent):
                 continue
-            yearly = bool(re.search(r"/\s*y(?:ea)?r|per\s+year|a\s+year|yearly|annual", it))
-            others.append(f"{names.get(k, 'another parking choice')} for " + ("free" if v == 0 else f"${v * 12:,.0f} a year" if yearly else f"${v:,.0f} a month"))
-        kind_best = best[1] or "lot"
-        cost_words = "free" if best[0] == 0 else f"${best[0]:,.0f} a month"
-        note = (f"The listing gives more than one parking choice. {names.get(kind_best, 'Parking').capitalize()} ({cost_words}) is saved. "
-                f"It also offers {' and '.join(others)}. Ask which one you would get.")
-        return kind_best, round(best[0], 2), [note]
+            if sent.count("(") + sent.count(",") + len(re.findall(r"\bor\b", sent)) == 0:
+                continue
+            if re.search(r"\b(?:optional|available|extra|additional|upgrade|waitlist|wait[- ]list|required|mandatory)\b", sent):
+                continue  # an offered extra (or a required one) is the optional-parking reader's, not a choice
+            got = _parking_choice_items([sent], strict=True)
+            if got and all(v is not None for v, _k, _i in got) and len({g[1] for g in got}) >= 2:
+                res = _parking_decide(got)
+                if res:
+                    return res
     return None
+
+
+_CAR_FIRST = r"(?:1st|first|one|1)[ \t]+(?:car|vehicle|spot|space|stall)s?"
+_CAR_SECOND = r"(?:2nd|second|additional|extra|each[ \t]+additional|another)[ \t]+(?:car|vehicle|spot|space|stall)s?"
+_CAR_AMT = r"\$\s?(\d{2,4})(?:\.\d\d)?(?!\d)(?!,\d)(?![ \t]*(?:/[ \t]*y|per[ \t]+y|a[ \t]+y|yearly|annual))"
+
+
+def _parking_per_car(low: str) -> tuple[float, float | None, str] | None:
+    """Cycle 20: "Parking: 1st car $100, 2nd car $120", "$100 for the first car, $120 for a second", "first car $100 / additional car $120".
+    Returns (the first car's monthly price, the second car's price or None, the matched text with the prices blanked) or None."""
+    first = re.search(r"\b" + _CAR_FIRST + r"[ \t:\-=]*(?:is[ \t]+|are[ \t]+|at[ \t]+|for[ \t]+)?" + _CAR_AMT, low) \
+        or re.search(_CAR_AMT + r"[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*(?:for[ \t]+)?(?:the[ \t]+|your[ \t]+)?" + _CAR_FIRST + r"\b", low)
+    if not first:
+        return None
+    second = re.search(r"\b" + _CAR_SECOND + r"[ \t:\-=]*(?:is[ \t]+|are[ \t]+|at[ \t]+|for[ \t]+)?" + _CAR_AMT, low) \
+        or re.search(_CAR_AMT + r"[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*(?:for[ \t]+)?(?:a[ \t]+|the[ \t]+|each[ \t]+)?" + _CAR_SECOND + r"\b", low)
+    blanked = low
+    for m in [first] + ([second] if second else []):
+        blanked = blanked[:m.start()] + " " * (m.end() - m.start()) + blanked[m.end():]
+    return float(first.group(1)), (float(second.group(1)) if second else None), blanked
 
 
 def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
     low = text.lower()
+    per_car = _parking_per_car(low)
+    if per_car:
+        first, second, rest_low = per_car
+        kind, cost = _parking_kind_cost(rest_low, first)
+        notes = []
+        if second is not None:
+            notes.append(f"The listing gives a second car as ${second:,.0f}. A second car costs ${second:,.0f} a month more, and it is not counted in the monthly cost, "
+                         f"which holds the first car's ${first:,.0f}. Ask the price if you will have two cars.")
+        return kind, (cost if cost is not None else first), notes
     opts = _parking_options(low)
     if opts:
         return opts
@@ -1306,7 +1438,7 @@ def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | No
             kind = "street"
         elif re.search(r"\blot\b|off[- ]?street|surface|assigned|reserved|driveway|included|free|yes|on[- ]?site", v):
             kind = "lot"
-        elif re.match(r"\s*(?:none|no)\b", v):
+        elif re.match(r"\s*(?:none|no)\b(?!\s+(?:extra\s+|additional\s+)?(?:charge|cost|fee))", v):
             kind = "none"
     if kind:
         pass
@@ -1344,6 +1476,9 @@ def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | No
         cost = 0.0  # cycle 19: "Surface lot, free" / "free off-street parking": stated free
     if cost is None and kind == "lot" and re.search(r"\bfree\s+(?:\w+\s+)?driveway\b|\bdriveway(?:\s+parking)?\s+(?:is\s+)?(?:free|included)\b", low):
         cost = 0.0  # "Free driveway parking"
+    if cost is None and kind != "none" and _PARKING_FREE_AFTER.search(low):
+        cost = 0.0  # cycle 20: "Off-street parking, free." / "Parking: off-street, no charge"
+        kind = kind or "lot"
     if cost is None and kind in ("garage", "covered") and _GARAGE_INCLUDED.search(low):
         cost = 0.0  # "Attached garage included in rent", "Attached 1-car garage"
     return kind, cost
@@ -1545,7 +1680,8 @@ def _pets_doubt(text: str) -> str:
 def _pets_soft_note(text: str) -> str:
     """"Cats welcome. Dogs considered case by case": cats is saved, and this says dogs are not a yes. "" when there is nothing to say."""
     stances, quoted = _pet_stances(text)
-    soft = [sp for sp, v in stances.items() if "maybe" in v and "yes" not in v and "no" not in v]
+    soft = [sp for sp, v in stances.items() if "maybe" in v and "yes" not in v and "no" not in v
+            and re.search(r"\b" + sp[:-1] + r"s?\b", text, re.I)]  # cycle 20: a species the listing never names ("Pets considered, one dog ok") is not talked about
     if not soft or not any("yes" in v for v in stances.values()):
         return ""
     names = " and ".join(sp for sp in soft)
@@ -1681,6 +1817,20 @@ def _pet_fees(text: str) -> dict[str, float]:
     return out
 
 _NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4}
+
+
+def _pet_deposit_says_refundable(text: str, amount: float) -> bool:
+    """True when the sentence that gives this pet deposit amount (or the one next to it) says it comes back ("refundable", "returned",
+    "comes back"). "Non-refundable" is the opposite and never counts."""
+    amt = f"{amount:,.0f}"
+    plain = f"{amount:.0f}"
+    for m in re.finditer(r"\$\s?(?:" + re.escape(amt) + "|" + re.escape(plain) + r")(?!\d)", text):
+        a = max(text.rfind(x, 0, m.start()) for x in (".", "\n", ";", "|")) + 1
+        b = min([x for x in (text.find(". ", m.end()), text.find("\n", m.end()), text.find(";", m.end()), text.find("|", m.end())) if x != -1] or [len(text)])
+        around = re.sub(r"non[- ]?refundable", " ", text[a:b], flags=re.I)
+        if re.search(r"\brefundable\b|\b(?:comes?|come|given|paid|sent|get|gets)[ \t]+back\b|\breturn(?:ed|able)\b|\brefunded\b", around, re.I):
+            return True
+    return False
 
 
 def _no_pet_deposit(text: str) -> bool:
@@ -2059,6 +2209,19 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
                     if count >= 1:
                         out["pet_count_limit"] = count
                         break
+    if "pet_count_limit" not in out:  # cycle 20: "one dog under 75 lb ok", "1 dog OK": the listing allows that many
+        for sentence in re.split(r"[.\n;]", text):
+            if not _PET_WORD.search(sentence) or re.search(r"\bno[ \t]+(?:pets?|dogs?|cats?|animals?)\b|\bnot[ \t]+allowed|\b(?:per|each|every)[ \t]+(?:pets?|dogs?|cats?|animals?)\b", sentence, re.I):
+                continue
+            if not re.search(r"\b(?:ok|okay|allowed|welcome\w*|accepted|permitted|considered|fine|only)\b", sentence, re.I):
+                continue
+            n = re.search(r"(?<![\w$.\-/#])(\d|one|two|three|four)[ \t]+(?:(?:small|medium|large|big|friendly|well[- ]behaved|house[- ]trained)[ \t]+)?(?:dogs?|cats?|pets?|animals?)\b(?![ \t]*(?:fee|deposit|rent|policy|limit|charges?|per\b|each\b|/))", sentence, re.I)
+            if n:
+                v = n.group(1).lower()
+                count = int(v) if v.isdigit() else _NUM_WORDS[v]
+                if count >= 1:
+                    out["pet_count_limit"] = count
+                    break
     b = next((c for c in _clauses(text) if re.search(r"\b(?:breed|breeds|breed restrictions?)\b", c, re.I)), None)
     if b:
         clause = " ".join(b.split()).strip(" -:,")
@@ -2319,6 +2482,31 @@ def _closing_costs(text: str) -> float | None:
     return None
 
 
+def _closing_costs_percent(text: str, price: float | None) -> tuple[float | None, str] | None:
+    """Cycle 20: "title and closing costs approx. 2.5% of price" is worked out from the price (with a note). With no price only a note is
+    given. What the seller gives ("Seller pays 3% toward closing") and a percent of the loan or down payment are never read here."""
+    for m in re.finditer(r"\bclosing[ \t]+costs?\b(?:[^.\n$%;]|\b(?:approx|est)\.){0,30}?(\d{1,2}(?:\.\d+)?)[ \t]*%([^.\n;]{0,40})", text, re.I):
+        clause_start = max(text.rfind(".", 0, m.start()), text.rfind("\n", 0, m.start()), text.rfind(";", 0, m.start())) + 1
+        before = text[clause_start:m.start()]
+        if re.search(r"\b(?:seller|owner)(?:'s)?\b|\bconcession|\bcredit", before + " " + m.group(0)[:m.start(1) - m.start()], re.I):
+            continue
+        tail = m.group(2)
+        if re.match(r"[ \t]*(?:of|on)[ \t]+(?:the[ \t]+)?(?:buyer'?s?[ \t]+)?(?:loan|mortgage|down|financed|financing|rent)\b", tail, re.I):
+            continue
+        if not re.match(r"[ \t]*(?:of|on)[ \t]+(?:the[ \t]+)?(?:purchase[ \t]+|sale[ \t]+|sales[ \t]+|list[ \t]+|listing[ \t]+|asking[ \t]+|home[ \t]+)?price\b|[ \t]*(?:\)|,|$)", tail, re.I):
+            continue
+        pct = float(m.group(1))
+        if not 0 < pct <= 10:
+            continue
+        said = re.sub(r"\s+", " ", text[clause_start:m.end()].strip())
+        if isinstance(price, (int, float)) and price > 0:
+            dollars = round(float(price) * pct / 100, 2)
+            return dollars, (f"The listing says the closing costs are about {pct:g}% of the price. At a price of ${float(price):,.0f} that is ${dollars:,.0f} "
+                             f"({pct:g}% x ${float(price):,.0f}), saved as the closing costs. It is an estimate, so ask for a real figure.")
+        return None, f'The listing says the closing costs are about {pct:g}% of the price ("{said}"), but there is no price to work it out from, so the closing costs are left empty.'
+    return None
+
+
 def _seller_credit(text: str) -> float | None:
     """What the seller gives the buyer toward closing: "Seller will contribute up to $5,000 toward closing costs", "seller
     concessions of $8,000", "$3,000 seller credit". None when the text gives no amount."""
@@ -2560,6 +2748,11 @@ def _insurance(text: str) -> float | None:
                   r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly)?", text, re.I)
     if not m:  # "$55/mo HO6 insurance", "$660 a year condo insurance"
         m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly)?[ \t]+(?:for[ \t]+)?(?:ho-?[36]|condo|home(?:owner'?s?)?)[ \t]+insurance\b", text, re.I)
+    if not m:
+        # cycle 20: "Homeowner's insurance (HO6) about $70 per month", "HO6 insurance (about $70/mo)": filler words between the name and the amount
+        m = re.search(r"\b(?:ho-?[36]|(?:home(?:owner'?s?)?|hazard|condo(?:minium)?|unit[- ]owner'?s?|property)[ \t]+insurance|insurance)\b"
+                      r"(?:[ \t:\-=(),~]|\b(?:ho-?[36]|about|around|approx\w*\.?|est\w*\.?|roughly|of|at|is|cost|costs|premium|policy|coverage|insurance|condo|home\w*|hazard|owner'?s?|typically|runs|for)\b)*"
+                      r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly|yearly)?", text, re.I)
     if not m:
         return None
     value, per = _num(m.group(1)), (m.group(2) or "").lower()
@@ -5758,6 +5951,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     for key, value in side.items():
         if key not in out and not (key == "pet_fee" and "pet_fee" in out):
             put(key, value)
+    if out.get("pet_deposit") and not split and not _try(lambda: _pet_deposit_says_refundable(text, float(out["pet_deposit"]))):
+        # cycle 20: the field has no "unknown" state, so the amount stays (cash at move-in) and a note says refundability is unknown
+        unsure = float(out["pet_deposit"])
+        facts.append(f"The listing gives a ${unsure:,.0f} pet deposit but does not say if it comes back. It is saved in the pet deposit field so the cash at move-in "
+                     "includes it, but do not count on getting it back. Ask if it is refundable.")
     if out.get("pet_rent") and re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*)?(?:per|each|/)\s*(?:pet|dog|cat|animal)\b", fee_text, re.I):
         facts.append(f"Pet rent is ${out['pet_rent']:,.0f} for each pet, so with more than one pet it adds up.")
     elif out.get("pet_rent") and re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*)?pet\s+rent\s+(?:per|each|for each|a|/)\s*(?:pet|animal|dog|cat)\b", fee_text, re.I):
@@ -6445,6 +6643,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         closing = _try(lambda: _closing_costs(text))
         if closing:
             put("closing_costs", closing)
+        else:
+            pct_note = _try(lambda: _closing_costs_percent(text, out.get("price") if isinstance(out.get("price"), (int, float)) else None))
+            if pct_note:
+                if pct_note[0]:
+                    put("closing_costs", pct_note[0])
+                facts.append(pct_note[1])
         cut = _try(lambda: _price_cut(text))
         if cut:
             facts.append(f"Price reduced ${cut:,.0f}.")
