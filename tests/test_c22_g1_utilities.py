@@ -225,8 +225,9 @@ def test_a_utility_package_fee_is_not_the_utilities_total():
     "HOA covers trash and water. Tenant pays all utilities, water is $25, electric and gas about $120 total.",
 ])
 def test_hoa_covering_water_is_not_a_conflict_with_tenant_paid_items(text):
+    # cycle 23 changed this on purpose: "HOA covers water" next to "water is $25" IS a conflict, so the $25 is not counted (see test_c23_g1_*)
     r = read(text)
-    assert r.get("utilities_estimate") == 145, (r.get("utilities_estimate"), notes(r))
+    assert r.get("utilities_estimate") == 120, (r.get("utilities_estimate"), notes(r))
     assert "unclear about" not in notes(r)
     assert {"electric", "gas", "water"} <= pays_set(r)
     assert "not counted anywhere" not in notes(r)
