@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from . import compare, enrich, helpers, redflags, scoring, stages
+from . import money as money_mod
 from .store import PLACE_DATE_LABELS, Store
 
 COMING_UP_DAYS = 14
@@ -81,6 +82,24 @@ def over_budget(place: dict[str, Any]) -> float:
     return 0.0
 
 
+LOW_INSURANCE_YEARLY = 300  # a house is never insured for less than about this much a year
+
+
+def low_insurance(place: dict[str, Any]) -> str:
+    """'' or a plain check note when a bought place's yearly insurance is far below normal (under about $300 for a house)."""
+    cost = place.get("cost") or {}
+    if cost.get("mode") != "buy":
+        return ""
+    try:
+        ins = float(place.get("insurance"))
+    except (TypeError, ValueError):
+        return ""
+    if ins <= 0 or ins >= LOW_INSURANCE_YEARLY:
+        return ""
+    return (f"the insurance of ${ins:,.0f} a year is far below normal for a house, so the monthly cost looks too low. "
+            "Confirm the real quote before you count on it")
+
+
 def cost_unsettled(place: dict[str, Any]) -> str:
     """Why a place's monthly cost can't be trusted for a ranking, in plain words ('' when it can). Rent: the listing's utilities
     lines disagree (so none are counted), a utility the tenant pays has no amount, or two or more parts of the monthly cost
@@ -93,15 +112,23 @@ def cost_unsettled(place: dict[str, Any]) -> str:
     if cost.get("mode") == "buy":
         left = [n for n, keys in (("property tax", ("property tax", "tax")), ("insurance", ("insurance",)), ("HOA", ("hoa",)))
                 if any(u in keys for u in unc)]
+        low = low_insurance(place)
+        if low:
+            return low
         return f"{_join(left)} are not counted yet" if len(left) >= 2 else ""
     notes = " ".join(str(place.get(k) or "") for k in ("reader_notes", "ai_notes"))
     utilities = [u for u in unc if u.startswith("utilities")]
     if utilities and _UTILITY_CONFLICT.search(notes):
         return "the listing's utilities lines don't agree, so no utilities are counted"
     named = [n for u in utilities for n in _utility_names(u)]
+    gives_amounts = bool(compare.cost_may_be_higher(place))  # the listing states amounts that the reader did not place
     if named:
+        if gives_amounts:
+            return f"you pay {_join(named)} and the listing gives amounts that were not read"
         return f"you pay {_join(named)} but no amount is counted yet"
     if utilities and _TENANT_PAYS_UTILITIES.search(" ".join(str(place.get(k) or "") for k in ("listing_text", "reader_notes", "ai_notes", "notes"))):
+        if gives_amounts:
+            return "you pay the utilities and the listing gives amounts that were not read"
         return "you pay the utilities but no amount is counted yet"  # the whole utilities bill is unknown
     parts = []
     if utilities:
@@ -277,7 +304,35 @@ def cost_check(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ask = "Ask the listing agent before you count on this cost." if (p.get("cost") or {}).get("mode") == "buy" \
             else "Ask the landlord before you count on the rent."
         out.append({"place": p, "text": why[0].upper() + why[1:] + ". " + ask})
+    listed = {r["place"]["id"] for r in out if "id" in r["place"]}
+    for p in rows:  # any other open place that fits so far and has an unknown cost part is listed too (one part is enough)
+        if p.get("id") in listed or not _open(p) or not fits(p) or ai_text_only(p) or no_price(p):
+            continue
+        parts = unknown_cost_parts(p)
+        if not parts:
+            continue
+        ask = "Ask the listing agent before you count on this cost." if (p.get("cost") or {}).get("mode") == "buy" \
+            else "Ask the landlord before you count on the rent."
+        out.append({"place": p, "text": _join(parts)[0].upper() + _join(parts)[1:] + (" is" if len(parts) == 1 else " are") + " not counted yet. " + ask})
     out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
+    return out
+
+
+def unknown_cost_parts(place: dict[str, Any]) -> list[str]:
+    """Plain names of the parts of the monthly cost that are unknown ('utilities', 'parking', 'pet rent', 'HOA'...), whatever
+    their number. A part the listing gave amounts for that were not read counts as unknown too."""
+    cost = place.get("cost") or {}
+    out: list[str] = []
+    for u in cost.get("uncounted") or []:
+        u = str(u)
+        if u == money_mod.LISTING_NOTES_UNCOUNTED:
+            out.append("some amounts in the listing notes")
+            continue
+        name = re.sub(r"\s*\(.*\)\s*$", "", u).strip()
+        if name and name not in out:
+            out.append(name)
+    if cost.get("mode") != "buy" and any(l.get("key") == "pet_rent" and l.get("unset") and not l.get("not_counted") for l in cost.get("lines") or []):
+        out.append("pet rent")
     return out
 
 

@@ -59,7 +59,7 @@ def make_templates(store: Store) -> Jinja2Templates:
         "num": helpers.number_text, "ago": helpers.ago, "until": helpers.until, "money": helpers.money,
         "stage_slug": helpers.stage_slug, "beds": helpers.beds_text, "host": helpers.host_of,
         "dt_input": helpers.input_datetime, "street_unit": street_with_unit,
-        "note_lines": money.note_units, "place_note_lines": money.display_note_units,
+        "note_lines": money.note_units, "place_note_lines": lambda place: money.display_note_units({**place, "reader_notes": redflags.clean_reader_notes(place.get("reader_notes"), place)}),
     })
     env.globals.update({
         "STAGES_BY_MODE": stages.STAGES_BY_MODE, "stages_for": stages.stages_for, "CLOSED_STAGES": stages.CLOSED_STAGES,
