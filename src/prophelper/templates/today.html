@@ -84,6 +84,19 @@
 </section>
 {% endif %}
 
+{% if cost_check %}
+<section class="card" aria-labelledby="cost-check-h">
+  <h2 id="cost-check-h">Needs a cost check <span class="count">{{ cost_check|length|num }}</span></h2>
+  <ul class="items">
+    {% for n in cost_check %}
+    <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a> {{ score_pill(n.place.score_total, n.place.band) }}
+      <span class="item-sub">{{ n.text }}</span></div></li>
+    {% endfor %}
+  </ul>
+  <p class="fine">These fit so far, but their monthly cost is not settled, so they are not in Best fits.</p>
+</section>
+{% endif %}
+
 {% if needs_price %}
 <section class="card" aria-labelledby="needs-price-h">
   <h2 id="needs-price-h">Needs a price <span class="count">{{ needs_price|length|num }}</span></h2>

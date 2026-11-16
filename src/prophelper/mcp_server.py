@@ -557,8 +557,8 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
         bits.append("Fits, with a note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
     if compare_mod.ai_text_only(e):
         bits.append(compare_mod.AI_TEXT_FIT)
-    elif [f for f in e["flags"] if f != redflags.HIDDEN_REMOVED_NOTE] and e["score"].get("fit") != "check_first":
-        n_ = len([f for f in e["flags"] if f != redflags.HIDDEN_REMOVED_NOTE])
+    elif [f for f in e["flags"] if not redflags.is_hidden_note(f)] and e["score"].get("fit") != "check_first":
+        n_ = len([f for f in e["flags"] if not redflags.is_hidden_note(f)])
         bits.append(f"{n_} thing{'s' if n_ != 1 else ''} to check (possible scam signs)")
     if e.get("is_sample"):
         bits.append("sample")
@@ -1646,6 +1646,8 @@ def build_server(store: Store) -> FastMCP:
             lines.append(today_view.UNCONFIRMED_TEXT)
             for c in data["unconfirmed"]:
                 lines.append(f"  - #{c['place']['id']} {_title(c['place'])} [{c['place']['stage']}], score {c['place']['score_total']}: {_t(c['text'], 'fit reason', 200)}")
+        for c in data.get("cost_check") or []:
+            lines.append(f"Needs a cost check: #{c['place']['id']} {_title(c['place'])} [{c['place']['stage']}], score {c['place']['score_total']}: {c['text']}")
         for p in data["needs_price"]:
             lines.append(f"Needs a price: #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, no price yet, so it is not ranked.")
         for c in data["check_first"]:

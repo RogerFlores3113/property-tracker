@@ -7,6 +7,7 @@ high-severity red flag. A place that doesn't fit, or that may be a scam, stays o
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -53,8 +54,30 @@ def ai_text_only(place: dict[str, Any]) -> bool:
     return compare.ai_text_only(place)
 
 
+_UTILITY_CONFLICT = re.compile(r"(?:utilit|electric|heat|water|gas)[\s\S]{0,300}\b(?:(?:do|does)(?: not|n'?t) agree|conflict\w*|contradict\w*|disagree\w*)|"
+                               r"\b(?:(?:do|does)(?: not|n'?t) agree|conflict\w*|contradict\w*|disagree\w*)\b[\s\S]{0,300}(?:utilit|electric|heat|water|gas)", re.I)
+
+
+def cost_unsettled(place: dict[str, Any]) -> str:
+    """Why a place's monthly cost can't be trusted for a ranking, in plain words ('' when it can). Two cases: the listing's utilities
+    lines disagree with each other (so none are counted), or both the utilities and a parking charge are left out of the number
+    (rent only is not the monthly cost). A place with only one unknown part still ranks, after the complete ones."""
+    cost = place.get("cost") or {}
+    if cost.get("mode") == "buy" or not cost:
+        return ""
+    unc = [str(u).lower() for u in cost.get("uncounted") or []]
+    utilities = any(u.startswith("utilities") for u in unc)
+    parking = any(u.startswith("parking") for u in unc)
+    notes = " ".join(str(place.get(k) or "") for k in ("reader_notes", "ai_notes"))
+    if utilities and _UTILITY_CONFLICT.search(notes):
+        return "the listing's utilities lines don't agree, so no utilities are counted"
+    if utilities and parking:
+        return "utilities and parking are not counted yet"
+    return ""
+
+
 def is_best_fit(place: dict[str, Any]) -> bool:
-    return fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place)
+    return fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place) and not cost_unsettled(place)
 
 
 def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
@@ -191,9 +214,25 @@ def unconfirmed(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
         if (not _open(p) or not fits(p) or score.get("fit") != "fits" or ai_text_only(p) or no_price(p) or is_best_fit(p)):
             continue
         bits = [f"{n} not known yet" for n in score.get("unknown") or []] + [str(c) for c in score.get("concerns") or []]
+        if (why := cost_unsettled(p)):
+            bits.append("monthly cost not settled: " + why)
         out.append({"place": p, "text": "; ".join(bits) or "Check the details on its page."})
     out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
     return out[:limit]
+
+
+def cost_check(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Open places that would be best fits except that their monthly cost has unknown or conflicting parts: [{"place", "text"}],
+    best score first. They stay out of "Best fits" until the cost is settled."""
+    out = []
+    for p in rows:
+        if not _open(p) or not fits(p) or ai_text_only(p) or no_price(p) or is_near(p) or p["score_total"] < MIN_FIT_SCORE:
+            continue
+        if (p.get("score") or {}).get("fit") != "fits" or not (why := cost_unsettled(p)):
+            continue
+        out.append({"place": p, "text": why[0].upper() + why[1:] + ". Ask the landlord before you count on the rent."})
+    out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
+    return out
 
 
 def month_day(value: str | date) -> str:
@@ -399,7 +438,7 @@ def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> d
     needs = needs_price(rows)
     priceless = {p["id"] for p in needs}  # a place with no price shows under "Needs a price" only
     near_closest = [] if top else closest(rows)
-    return {"fits": top, "unconfirmed": [] if top else unconfirmed(rows), "needs_price": needs, "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
+    return {"fits": top, "unconfirmed": [] if top else unconfirmed(rows), "needs_price": needs, "cost_check": [] if not top else cost_check(rows), "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
             "near_miss": [n for n in near_misses(rows) if n["place"]["id"] not in {c["place"]["id"] for c in near_closest}], "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
             "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late_availability(rows, search),
             "tours": store.upcoming_tours(days, search_id=search["id"])}

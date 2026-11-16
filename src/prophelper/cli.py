@@ -19,7 +19,7 @@ from pathlib import Path
 
 import httpx
 
-from .paths import DEFAULT_PORT, app_key, data_dir, db_path, health_proof, is_frozen, launch_url, port_file
+from .paths import DEFAULT_PORT, app_key, data_dir, db_path, tighten_data_dir, health_proof, is_frozen, launch_url, port_file
 
 
 def _private(path: Path) -> Path:
@@ -180,6 +180,7 @@ def run_app(port: int = DEFAULT_PORT, open_browser: bool = True, quiet: bool = F
     if port != wanted:
         say.warning("Port %s is in use by another program that isn't this Property Helper, so no launch code was sent "
                     "to it. Starting on port %s instead.", wanted, port)
+    tighten_data_dir()
     app = create_app(Store(db_path()))
     try:  # packaged app only: an AI app's entry that points at a moved copy is pointed at this one
         from . import integrations
