@@ -773,7 +773,7 @@ ONE_TIME_NOTE = re.compile(r"not in the monthly cost|not counted in the monthly 
                            r"price was cut|price (?:cut|drop|reduc\w*|lowered)|(?:cut|reduced|lowered|dropped) (?:by|to|from)\s+\$|\$\s?[\d,]+\s+off\b|rent concession|\bdiscount\b", re.I)
 # A note about an optional extra with no price ("A carport is available but the listing gives no price. It looks optional") holds no amount.
 NOT_A_COST_NOTE = re.compile(r"not a cost on top of the rent|\bis the old price and is not used\b|\bis another lease length option, so it is not added to the cost\b|\bThe rent saved is the (?:lowest|cheapest|matching)\b[^.]*\bplan\b|\bthe rent saved is\b[^.]*,\s*not the \"?starting at\"? price", re.I)
-_NOTE_CLOSED = re.compile(r"\bcounted once\b|\bnot counted again\b|\balready counted\b|\bpaid through that flat fee\b|was a mistake or an old figure|\bthe HOA covers \w+ and also lists a \w+ charge of\b", re.I)  # cycle 20 join: a figure the listing takes back is not open
+_NOTE_CLOSED = re.compile(r"\bcounted once\b|\bnot counted again\b|\balready counted\b|\bpaid through that flat fee\b|was a mistake or an old figure|\bthe HOA covers \w+ and also lists a \w+ charge of\b|\bIt is read as a deposit of [\d.]+ months? of rent\b", re.I)  # cycle 20 join: a figure the listing takes back is not open
 _NOTE_CONDITIONAL = re.compile(r"only applies on that condition|only if (?:credit|your credit)", re.I)
 # A note with no dollar amount names an open cost only when it names a cost word ("rent" and "free" alone are not: "Ask what the month to month terms and rent are").
 _NOTE_COST_WORD = re.compile(r"\b(?:fee|fees|deposit|assessment|parking|garage|utilit\w*|hoa|tax|insurance)\b", re.I)
