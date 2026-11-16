@@ -472,8 +472,15 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
     credit = num(place.get("seller_credit"))
     if credit and credit > 0:
         # The seller pays part of the closing costs, so it lowers the cash you bring (never below zero overall).
-        credit = min(credit, sum(p["amount"] for p in parts))
-        parts.append({"label": "Seller credit toward closing (comes off)", "amount": _r(-credit), "estimated": False})
+        # Cycle 23: a credit only pays closing costs, so it can't lower the cash below the down payment. It is capped at the closing costs line.
+        closing_amount = next((p["amount"] for p in parts if p["label"].startswith("Closing costs")), 0)
+        if credit > closing_amount:
+            extra = credit - closing_amount
+            left_out.append(f"{_dollars(extra)} of the {_dollars(credit)} seller credit isn't counted, because a credit can only pay the {_dollars(closing_amount)} closing costs "
+                            "and can't lower the cash below the down payment")
+            credit = closing_amount
+        if credit:
+            parts.append({"label": "Seller credit toward closing (comes off)", "amount": _r(-credit), "estimated": False})
     return {"total": _r(sum(p["amount"] for p in parts)), "parts": parts,
             "has_estimate": any(p["estimated"] for p in parts), "left_out": left_out}
 
