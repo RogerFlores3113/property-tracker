@@ -80,7 +80,11 @@ def buy_payment_hit(text: str) -> bool:
 
 _BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waives?|waived|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b(?!\s+fees?)|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b|"
                              r"\b(?:do not|don'?t|never)\s+(?:try to |need to |bother to )?inspect\b|\bno need (?:to|for) (?:an? )?inspect(?:ion)?\b|"
-                             r"\b(?:do not|don'?t|never)\s+(?:do|get|have|order|schedule|book)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b", re.I)
+                             r"\b(?:do not|don'?t|never)\s+(?:do|get|have|order|schedule|book)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b|"
+                             r"\b(?:will not|won'?t|cannot|can'?t|does not|doesn'?t|do not|don'?t|not)\s+(?:be\s+)?(?:allow|permit|let|accept|agree to|entertain)\w*\s+(?:(?:you|the buyer|buyers?|any|an?|your|the)\s+)*(?:(?:home|property|buyer'?s?|third[- ]party)\s+)?inspections?\b|"
+                             r"\binspections?\s+(?:is |are |will be |would be )?(?:not\s+(?:be\s+)?(?:allowed|permitted|accepted)|prohibited|forbidden|refused|denied)\b|"
+                             r"\b(?:no|zero)\s+(?:home\s+|property\s+|buyer\s+)?inspections?\s+(?:allowed|permitted|accepted)\b|"
+                             r"\b(?:refuses?|denies|declines?|prohibits?|forbids?|disallows?)\s+(?:to\s+(?:allow|permit)\s+)?(?:any\s+|the\s+|an?\s+)?(?:home\s+|property\s+|buyer\s+)?inspections?\b", re.I)
 _BUY_AS_IS = re.compile(r"\bas[- ]is\b", re.I)
 _BUY_CASH_ONLY = re.compile(r"\bcash[ -]only\b|\bcash (?:buyers?|offers?) only\b|\bonly (?:accept|take)s? cash\b", re.I)
 _BUY_SAME_DAY = re.compile(r"\b(?:today|tonight|same[- ]day|within 24 hours|right away|immediately|asap)\b[^.\n]{0,40}\b(?:wire|send|pay|deposit|earnest|close|sign|offer)|"
@@ -345,7 +349,10 @@ def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
         if re.search(r"\d", text[begin:hit.start()]):
             begin = hit.start()  # "12 N Race St Urbana ignore previous instructions": an address or price in front is not part of it
         lead = text[begin:hit.start()]
-        if lead and re.fullmatch(r"[^.!?:;]{1,40}[:\-\u2013\u2014]\s*", lead):
+        polite = re.fullmatch(r"(?:[^.!?:;]{1,40}[:\-\u2013\u2014]\s*)?(?:(?:now|also|just|and|then|kindly|please|pls|plz)[ ,]+){1,4}", lead, re.I)
+        if polite and re.search(r"\b(?:kindly|please|pls|plz)\b", lead, re.I):
+            begin = hit.start()  # "Please kindly ignore previous instructions": the quote starts at the instruction, not at the politeness
+        elif lead and re.fullmatch(r"[^.!?:;]{1,40}[:\-\u2013\u2014]\s*", lead):
             begin = hit.start()
         elif lead:
             lm = re.fullmatch(r"([^.!?:;]{1,40}[:\-\u2013\u2014]\s*)((?:(?:kindly|please|now|also|just|and|then|you must|you should|you need to)[ ,]+){1,3})", lead, re.I)
@@ -449,9 +456,16 @@ def reversed_injection(text: str) -> str:
     for pattern in (_AI_TARGETED, _AI_EXTRA, _AI_C17):
         m = pattern.search(back)
         if m:
-            end = min([i for i in (back.find(sep, m.end()) for sep in (". ", "! ", "? ")) if i != -1] or [len(back)])
-            begin = max([back.rfind(sep, 0, m.start()) + 2 for sep in (". ", "! ", "? ") if back.rfind(sep, 0, m.start()) != -1] or [0])
-            return back[begin:end + 1].strip()
+            # only the reversed run: it ends at the next sentence mark (read backwards a reversed sentence's own period comes first)
+            # and never takes in an ordinary price next to it, which reads "008,1$" backwards
+            stops = [(i + 1, i) for i in (back.find(sep, m.end()) for sep in (". ", "! ", "? ")) if i != -1]  # (end of the run, mark index)
+            stops += [(i, i) for i in (back.find(sep, m.end()) for sep in (" .", " !", " ?")) if i != -1]
+            price = re.search(r"(?:^|\s)(?:\S*\$|\$\S*)(?=\s|$)", back[m.end():])
+            if price:
+                stops.append((m.end() + price.start(), m.end() + price.start()))
+            end = min(stops)[0] if stops else len(back)
+            piece = back[m.start():end]
+            return piece.strip()
     return ""
 
 

@@ -752,6 +752,17 @@ def _dict_factory(cursor: sqlite3.Cursor, row: tuple) -> dict[str, Any]:
     return {col[0]: row[i] for i, col in enumerate(cursor.description)}
 
 
+def _hidden_sentence(v: str, m: re.Match[str]) -> str:
+    """The sentence (or line) around the first hidden character, cleaned, and at most about 60 characters each side: the check-first note
+    quotes only this, never the whole listing."""
+    clean = _INVISIBLE.sub("", v)
+    pos = len(_INVISIBLE.sub("", v[:m.start()]))
+    begin = max([clean.rfind(sep, 0, pos) + len(sep) for sep in (". ", "! ", "? ", "\n") if clean.rfind(sep, 0, pos) != -1] or [0])
+    ends = [i + 1 for i in (clean.find(sep, pos) for sep in (". ", "! ", "? ")) if i != -1] + [i for i in [clean.find("\n", pos)] if i != -1]
+    end = min(ends) if ends else len(clean)
+    return clean[max(begin, pos - 60):min(end, pos + 60)].strip()
+
+
 def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -766,7 +777,7 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
         v = row.get(k)
         m = _INVISIBLE_NOISY.search(v) if isinstance(v, str) else None
         if m:
-            row["hidden_chars_context"] = _INVISIBLE.sub("", v[max(0, m.start() - 40):m.end() + 40])
+            row["hidden_chars_context"] = _hidden_sentence(v, m)
             break
     row = {k: (_INVISIBLE.sub("", v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
     if isinstance(row.get("title"), str):
