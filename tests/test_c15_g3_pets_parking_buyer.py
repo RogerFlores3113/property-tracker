@@ -19,7 +19,7 @@ def test_one_cat_or_small_dog_is_cats_and_dogs():
 
 
 def test_cat_or_dog_still_reads_no():
-    assert "pets" not in read("No cat or dog")
+    assert read("No cat or dog")["pets"] == "none"  # cycle 23: no cats and no dogs is no pets, still never "dogs only"
     assert read("Pets: no cats or dogs allowed").get("pets") != "dogs"
 
 

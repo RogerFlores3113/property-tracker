@@ -146,7 +146,7 @@ def test_priced_assigned_space(text, cost, kind):
 
 def test_additional_space_price_is_quoted_not_counted():
     r = rent("Parking: 1 assigned space $40/mo, additional spaces $60.")
-    assert "$60 a month" in notes(r) and "optional" in notes(r)
+    assert "$60" in notes(r) and "optional" in notes(r) and "not counted in the monthly cost" in notes(r)
 
 
 @pytest.mark.parametrize("text,cost", [

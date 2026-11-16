@@ -1783,7 +1783,7 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
     low = text.lower()
     kind, cost, notes = _parking_detail_core(text, low)
     if extras:
-        notes = notes + [_parking_extras_note(extras, kind, cost, low)]
+        notes = [n for n in notes if "gives no price" not in n] + [_parking_extras_note(extras, kind, cost, low)]  # the price that note missed is in the extras note
     if rent_garage:
         notes = notes + [rent_garage[1]]
     return kind, cost, notes
@@ -2212,6 +2212,8 @@ def _pet_clause_charges(text: str) -> dict[str, float]:
                 left = re.split(r",|\band\b|\bplus\b|\+|\$", sent[:am.start()])[-1]
                 if re.match(r"[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+|refundable[ \t]+)?(?:pet[ \t]+)?deposits?\b", right, re.I) or re.search(r"deposits?\W{0,4}$", left, re.I):
                     continue
+                if re.search(r"\b(?:unless|waiv\w*|except\w*|if approved)\b", sent[am.end():am.end() + 60], re.I):
+                    continue  # a charge the listing says can be waived stays a quoted note
                 if _PC_MONTHLY.match(right) and value <= 300:
                     out.setdefault("pet_rent", value)
                 elif re.search(r"\b(?:monthly|per month|a month)\W*(?:pet[ \t]+)?(?:rent|fee|charge)?\W{0,4}$", left, re.I) and value <= 300 and not _PC_ONE_TIME.match(right):
@@ -2371,9 +2373,10 @@ def _pet_conditional_deposit(text: str) -> tuple[float, str, str] | None:
             clause = part.group(0)
             base = sm.start() + part.start()
             for m in re.finditer(r"\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?[ \t]*(?:(?:pet|extra|additional)[ \t]+)?(?:deposit|fee)s?\b|\b(?:deposit|fee)[ \t:\-]*\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?", clause, re.I):
-                before = clause[:m.start()]
+                before = re.split(r"[,]", clause[:m.start()])[-1]
+                before = re.sub(r"\bno[ \t]+(?:\w+[ \t]+)?(?:over|above|exceeding|more than|larger|bigger|heavier)\b", " ", before, flags=re.I)  # "no pets over 25 pounds" is the weight rule
                 if not (re.search(r"\b(?:larger|bigger|heavier|big|over|above|exceeding|more than)\b", before, re.I) and re.search(r"\b(?:dogs?|pets?|animals?|cats?)\b", before, re.I)
-                        and re.search(r"\b(?:additional|extra|another|plus|with|requires?|needs?)\b", before[-60:], re.I)):
+                        and re.search(r"\b(?:additional|extra|another|plus|approval|approved|requires?|needs?)\b", before, re.I)):
                     continue
                 if re.search(r"\b(?:each|every|per)[ \t]+(?:pet|dog|cat)\b|\bper[ \t]+(?:pet|dog|cat)\b", clause[m.end():m.end() + 14], re.I):
                     continue  # "$300 deposit per pet" is the general one
