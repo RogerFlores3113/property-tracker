@@ -608,7 +608,7 @@ _NO_AMOUNT_OPTIONAL = re.compile(r"gives no price|no price is given|looks option
 
 
 # A note that names the other parking choices of a place that is already counted at one of them, and a warning about a wire: neither is a cost left out.
-_NOTE_CHOICE = re.compile(r"gives more than one parking choice|more than one parking (?:choice|option)", re.I)
+_NOTE_CHOICE = re.compile(r"gives more than one parking choice|more than one parking (?:choice|option)|also offers another parking choice", re.I)
 _NOTE_WARNING = re.compile(r"can't be taken back|don't send money|do not send money", re.I)
 _RENT_RANGE_NOTE = re.compile(r"\brent range of \$", re.I)
 RENT_RANGE_LABEL = "the rent (the listing gives a range)"

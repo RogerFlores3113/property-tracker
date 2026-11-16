@@ -65,6 +65,8 @@ _STREET = (r"(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|
 _NOT_STREET_WORDS = {"bed", "beds", "bedroom", "bedrooms", "bath", "baths", "bathroom", "bathrooms", "br", "ba", "bd", "bds", "sq",
                      "ft", "sqft", "month", "mo", "year", "years", "min", "minute", "minutes", "mile", "miles", "unit", "units",
                      "floor", "floors", "car", "cars", "pet", "pets", "story", "stories", "block", "blocks", "min."}
+# words that make "2 driveway spots OR street" or "1 car garage or street" a parking phrase, never a street address
+_PARKING_ADDRESS_WORDS = frozenset("driveway driveways spot spots garage garages parking permit permits or and covered stall stalls space spaces either free included carport carports".split())
 _UNIT = r"(?:#|apt\.?|apartment|unit|suite|ste\.?)\s*#?\s*([A-Za-z]?\d{1,5}[A-Za-z]?(?:-\d{1,3})?|[NS][EW]\b|[A-Z])\b"
 _ADDRESS = re.compile(
     r"(?<![\w$.,/-])(\d{1,6}(?:-\d{1,6})?\s+(?:[NSEW]\.?\s+|(?:North|South|East|West)\s+)?"
@@ -4905,7 +4907,7 @@ def _address_no_suffix(text: str) -> tuple[str, int] | None:
         if um:  # "4620 N BROADWAY APT 402": the unit word belongs to the unit, not to the street name
             name, end = name[:um.start()], m.start(2) + um.start()
         words = [w.strip(".,").lower() for w in name.split()]
-        if set(words) & _NOSUFFIX_BAD:
+        if set(words) & _NOSUFFIX_BAD or set(words) & _PARKING_ADDRESS_WORDS:
             continue
         if len(words) == 1 and len(words[0]) <= 1:
             continue
@@ -5057,7 +5059,7 @@ def _address_raw(text: str) -> dict[str, str]:
     for m in _ADDRESS.finditer(text):
         street = " ".join(m.group(1).split()).rstrip(",.")
         words = {w.lower().strip(".,") for w in street.split()[1:-1]}
-        if words & _NOT_STREET_WORDS:
+        if words & _NOT_STREET_WORDS or words & _PARKING_ADDRESS_WORDS:
             continue
         candidates.append((street, m.group(2) if _unit_ok(m.group(2)) else None, m.end()))
         break
@@ -5412,13 +5414,34 @@ def _street_name_title(text: str, found: dict[str, Any]) -> str:
     return f"{'Studio' if beds == 0 else f'{beds:g} bed'} on {street}"
 
 
+_CORRECTION_CUT = re.compile(r"[ \t.!?,;]+(?:no|nope|oops|sorry|correction|actually|wait)\b[:,!.]?(?:[ \t].*)?$|[ \t]+--.*$|[ \t]+\u2014[ \t]+.*$", re.I)
+# a policy, amenity, parking or correction line is never the name of a place, even when it comes first and a street address is in the paste
+_POLICY_TITLE = re.compile(
+    r"\b(?:month[- ]to[- ]month|lease|leases|leasing|doorman|concierge|rooftop|fenced|fence|yard|driveway|street permit|street parking|garage|carport|parking|"
+    r"pets?|dogs?|cats?|utilit\w*|deposits?|laundry|washer|dryer|dishwasher|included|allowed|tours?|appointment|tenant|landlord|owner|"
+    r"credit|application|available|rent[:=]|no:|sorry|oops|correction)\b", re.I)
+_REAL_PLACE_NOUN = re.compile(r"\b(?:apartments?|apts?|house|home|condo|townhome|townhouse|duplex|loft|flat|cottage|bungalow|villa|residences?|estates?|commons|court|manor|terrace|towers?)\b", re.I)
+
+
+def _policy_title_line(line: str) -> bool:
+    """True for a policy, amenity, parking or correction phrase ("Month to month possible after first year", "Doorman building, rooftop", "Yard fenced on
+    all sides"). A line that names its beds or a kind of place ("Cozy 2 bed with garage", "Oak Court Apartments") is a headline."""
+    return bool(_POLICY_TITLE.search(line)) and not _BED_CUE.search(line) and not _REAL_PLACE_NOUN.search(line)
+
+
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
+    cut = _CORRECTION_CUT.sub("", title).strip(" ,;:-|\u2013\u2014")
+    if len(cut) >= 8:
+        title = cut  # "Gorgeous 3 bedroom house near Lincoln Elementary! No: rent 3,240 -- no wait": the correction is not part of the name
     letters = [c for c in title if c.isalpha()]
     if len(letters) >= 4 and title.upper() == title:
         title = re.sub(r"\d*[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in _ALL_CAPS_KEEP or re.fullmatch(r"\d+(?:BR|BA|BD)", m.group(0)) else m.group(0).capitalize(), title)
         title = re.sub(r"^The\b", "The", title)
     title = _finish_title(title, text)
+    if title and _policy_title_line(title) and not _ADDRESS.match(title):
+        addr = str(found.get("address") or "")
+        return addr.split(",")[0] if addr else ""  # a policy, amenity or parking phrase is never the name
     if title and _fee_or_policy_head(title) and not _ADDRESS.match(title):
         addr = str(found.get("address") or "")
         return addr.split(",")[0] if addr else ""  # a fee or policy phrase is never the name: the street address, else no title
@@ -5515,7 +5538,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         for _ in range(2):  # "FB Marketplace - 2 bedroom ...", "Rental: 3 Bedroom Home in Belmont": the label is not the title
             line = _LABEL_PREFIX.sub("", line, count=1)
         line = _name_segment(line)
-        if not line or _not_a_name(line) or _money_line_cut(line) or _date_only_line(line) or (_fee_or_policy_head(line) and not (found.get("address") and found["address"].lower() in line.lower())):
+        if not line or _not_a_name(line) or _money_line_cut(line) or _date_only_line(line) or (len(line.split()) <= 8 and _policy_title_line(line)) or (_fee_or_policy_head(line) and not (found.get("address") and found["address"].lower() in line.lower())):
             continue
         shout = line
         line = _headline_clean(line)
@@ -6521,14 +6544,20 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if title:
         out["title"] = title
     reader_estimate = out.get("utilities_estimate")
+    est_replaced = False
     if current:
         _apply_current(out, current)
         facts = _reword_replaced_estimate(facts, reader_estimate, out.get("utilities_estimate"))
+        saved_est = out.get("utilities_estimate")
+        est_replaced = isinstance(saved_est, (int, float)) and not isinstance(saved_est, bool) and (
+            not isinstance(reader_estimate, (int, float)) or abs(float(saved_est) - float(reader_estimate)) >= 0.5)
     facts = _drop_placed_facts(facts, out, follow=bool(current))
     facts += _try(lambda: _safety_net(text, out, facts)) or []
     facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
     if not buying:
-        facts += _try(lambda: _no_silent_drop(text, out, facts)) or []  # cycle 20: the last net, every figure is placed, explained or quoted
+        facts += _try(lambda: _no_silent_drop(text, out, facts, est_replaced)) or []  # cycle 20: the last net, every figure is placed, explained or quoted
+    if est_replaced:
+        facts = _answer_utility_notes(facts, out)
     facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
@@ -6900,6 +6929,8 @@ def drop_filled_notes(notes: str, place: dict[str, Any]) -> str:
         unit = _follow_fields(unit, out)
         if unit:
             kept.append(unit)
+    if not any("counted as your utilities estimate" in k for k in kept):
+        kept = _answer_utility_notes(kept, out)  # the estimate was set after the notes were made (by the user or Claude)
     return "\n".join(kept)
 
 
@@ -7112,8 +7143,9 @@ def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> 
         if isinstance(v, (int, float)) and not isinstance(v, bool) and v:
             used.add(float(v))
             if key in ("hoa", "property_tax", "insurance", "other_monthly_fees", "parking_cost", "utilities_estimate", "pet_rent"):
-                used.update({round(float(v) * 12, 2), round(float(v) * 3, 2), round(float(v) * 6, 2)})  # a yearly, quarterly or half-year figure written beside the monthly one
-                used.update({float(round(float(v) * k)) for k in (3, 6, 12)})  # "$425 a quarter" saved as 141.67 a month: 141.67 x 3 is 425.01
+                if key in ("hoa", "property_tax", "insurance"):  # cycle 20: a bare multiple is a coincidence ($120 against parking $40), so only the fields that are billed by period keep it
+                    used.update({round(float(v) * 12, 2), round(float(v) * 3, 2), round(float(v) * 6, 2)})  # a yearly, quarterly or half-year figure written beside the monthly one
+                    used.update({float(round(float(v) * k)) for k in (3, 6, 12)})  # "$425 a quarter" saved as 141.67 a month: 141.67 x 3 is 425.01
                 if key == "parking_cost":
                     used.update({round(float(v) / 2, 2)})  # "$175 each, 2 required" saved as $350
                 if key in ("property_tax", "insurance"):  # saved per year: the monthly share is the same figure ("$3,100 a year ($258/mo)")
@@ -7184,7 +7216,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
             notes.append(f'The listing says "{phrase}". It is a one-time amount, so it is not in the monthly cost. Ask if it is taken off what you owe at move-in.')
         elif re.search(r"\b(?:second|2nd|additional|extra)[ \t]+(?:vehicle|car|auto)s?\b", phrase, re.I) and not re.search(r"\b(?:required|mandatory|must)\b", phrase, re.I):
             notes.append(f'The listing says "{phrase}". A second vehicle is optional, so it is not counted in the monthly cost. Ask the price if you will have two cars.')
-        elif re.search(r"\boptional\b", near, re.I) and not re.search(r"\b(?:required|mandatory|must)\b", phrase, re.I):
+        elif re.search(r"\boptional\b|\balso (?:offered|available)\b|\b(?:garage|carport|covered|reserved)\b[^.\n]{0,25}\b(?:offered|available) (?:for|at)\b", near, re.I) and not re.search(r"\b(?:required|mandatory|must)\b", phrase, re.I):
             notes.append(f'The listing says "{phrase}". It looks optional, so it is not counted in the monthly cost. Ask if it is required.')
         else:
             notes.append(f'The listing also says "{phrase}". {_with_rest_counted(_only_unplaced(_uncounted_kind_sentence(phrase), phrase, used, out))} Check what it is for.')
@@ -7228,13 +7260,39 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
     return notes
 
 
-def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
+_UTIL_QUOTE_NOTE = re.compile(r'The listing also says "([^"]*)"\. ')
+_NON_UTIL_COST_WORD = re.compile(r"\b(?:fees?|parking|garage|carport|deposit|pets?|hoa|dues|insurance|application|admin|permit|locker|storage|valet|pest|lawn|amenity)\b", re.I)
+
+
+def _answer_utility_notes(facts: list[str], out: dict[str, Any]) -> list[str]:
+    """When the place holds a utilities estimate that the user or Claude set (not the reader's own), every note that only quotes utility
+    amounts ("Electric $45 seasonal, gas $20-$60", "Only $15 of that", "I could not tell who pays") is answered by that estimate: the whole
+    utility note family says so in one plain sentence, so none of it is left reading as "not counted"."""
+    est = out.get("utilities_estimate")
+    if not isinstance(est, (int, float)) or isinstance(est, bool):
+        return facts
+    done: list[str] = []
+    for f in facts:
+        m = _UTIL_QUOTE_NOTE.match(f)
+        if m and _NET_UTIL_WORD.search(m.group(1)) and not _NON_UTIL_COST_WORD.search(m.group(1)):
+            f = f'The listing also says "{m.group(1)}". The utilities estimate saved on this place is ${float(est):,.0f} a month, so the utility amounts in that line are answered by it.'
+        elif re.match(r'The listing mentions utilities \("[^"]*"\), but I could not tell who pays', f):
+            continue
+        done.append(f)
+    return done
+
+
+def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str], skip_util: bool = False) -> list[str]:
     """Cycle 20: a dollar figure of the listing that no field holds and no note explains gets a plain note that quotes its phrase."""
     from . import dropguard
+    if any("more things that are not counted" in f for f in facts):
+        return []  # the safety net already said the listing has too many to list
     if not dropguard.ENABLED or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000):
         return []  # a home for sale has its own readers and notes
     notes: list[str] = []
     for hit in dropguard.find_unplaced(text, out, "\n".join(facts)):
+        if skip_util and hit["kind"] == "util":
+            continue  # the estimate on the place was set by the user or Claude, so the utility figures are answered
         phrase = _net_clause(text, hit["start"], hit["end"])
         item = " ".join(str(hit["item"]).replace('"', "'").split()).strip(" ,:-'")
         if len(item) <= 120 and len(item) != len(phrase) and re.search(r"[A-Za-z]{4}", item) and (phrase in item or item in phrase):
