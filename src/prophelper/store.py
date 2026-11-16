@@ -590,10 +590,10 @@ def clean_document_kind(kind: Any) -> str:
     return text if text in DOCUMENT_KINDS else str(kind or "")
 
 
-PRIVATE_LINK_REASON = ("That link points to this computer or a private network (like localhost, 127.0.0.1, 192.168.x.x or 10.x.x.x), "
+PRIVATE_LINK_REASON = ("That link points to this computer or a private network (like localhost, 127.0.0.1, 192.168.x.x, 10.x.x.x or a .local name), "
                        "not to a listing on the web, so I won't save it.")
 _PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in (
-    "0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
     "::/128", "::1/128", "fc00::/7", "fe80::/10"))
 
 
@@ -605,6 +605,8 @@ def private_host(host: str) -> bool:
         return False
     if h == "localhost" or h.endswith(".localhost"):
         return True
+    if h.endswith((".local", ".internal", ".lan", ".home.arpa")) or h in ("local", "internal", "lan", "home.arpa"):
+        return True  # names that only resolve inside a home or office network
     h = h.split("%", 1)[0]  # an IPv6 zone like fe80::1%eth0
     addr: Any = None
     try:
@@ -698,6 +700,7 @@ _LINK_RAW = re.compile("[<>\"'`\\\\\\s\u202a-\u202e\u2066-\u2069\u200e\u200f\u06
 
 
 _INVISIBLE = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u061c\u00ad\ufeff\u180e]")
+_INVISIBLE_NOISY = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u061c\ufeff\u180e]")  # all of them but the soft hyphen, which copy-paste leaves behind
 _BIDI = re.compile("[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
 
 
@@ -757,7 +760,14 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if hidden:  # invisible tag characters are removed from every text; what they spelled is kept apart so the flags can still see it
         row = {k: (guards.strip_tag_chars(v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
         row["hidden_text"] = " ".join(h for h in hidden if h) or "(hidden characters)"
-    # zero-width and bidi controls are removed from every text on read, like tag characters (a link is left to its own cleaning)
+    # zero-width and bidi controls are removed from every text on read, like tag characters (a link is left to its own cleaning).
+    # What was around the first one is kept apart (not in any column) so the check-first note can quote it.
+    for k in ("listing_text", "notes", "title", "ai_notes", "address"):
+        v = row.get(k)
+        m = _INVISIBLE_NOISY.search(v) if isinstance(v, str) else None
+        if m:
+            row["hidden_chars_context"] = _INVISIBLE.sub("", v[max(0, m.start() - 40):m.end() + 40])
+            break
     row = {k: (_INVISIBLE.sub("", v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
     if isinstance(row.get("title"), str):
         row["title"] = _BIDI.sub("", row["title"])  # a title that flips the text around it is shown plainly on every page, Today and the CSV

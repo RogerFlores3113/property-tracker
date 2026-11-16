@@ -151,10 +151,14 @@ def _safe_cell(value: Any) -> Any:
     return value
 
 
+_TAG_LIKE = re.compile(r"<\s*([/A-Za-z!?][^<>]*)>?")
+
+
 def _no_tags(value: Any) -> Any:
-    """Listing text in a note column can hold a fence-like tag ("</untrusted>"). The CSV has no fence, so the angle brackets are
-    written as &lt; and &gt;, and a tag can't close or open a block if the file is handed to an AI tool."""
-    return value.replace("<", "&lt;").replace(">", "&gt;") if isinstance(value, str) else value
+    """Listing text in a note column can hold a fence-like tag ("</untrusted>"). A CSV cell is plain text, so a tag is written
+    with square brackets instead of angle brackets ("[/untrusted]"): it can't close or open a block if the file is handed to an
+    AI tool, and an arrow like "->" or a "<" that is not a tag stays as typed (never HTML-escaped text)."""
+    return _TAG_LIKE.sub(lambda m: "[" + m.group(1).strip() + "]", value) if isinstance(value, str) else value
 
 
 def _plain(value: Any) -> Any:

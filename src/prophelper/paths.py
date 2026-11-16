@@ -79,6 +79,20 @@ def data_dir() -> Path:
     return private_dir(base, tighten=tighten)
 
 
+def tighten_data_dir() -> bool:
+    """Set the data folder to owner-only (0700) on start, also one that PROPHELPER_DATA_DIR points at and that holds other
+    files, as long as this user owns it and it is not a shared sticky folder like /tmp. True when it is owner-only after."""
+    base = data_dir()
+    if os.name != "nt":
+        try:
+            st = base.stat()
+            if st.st_uid == os.getuid() and not st.st_mode & 0o1000 and st.st_mode & 0o077:
+                _private(base, 0o700)
+        except OSError:
+            pass
+    return data_dir_private()
+
+
 def data_dir_private() -> bool:
     """Only this user account can open the data folder (always reported True where there are no POSIX modes)."""
     if os.name == "nt":

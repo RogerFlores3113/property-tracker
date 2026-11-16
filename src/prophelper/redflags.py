@@ -226,7 +226,15 @@ def _unleet(text: str) -> str:
     return _LEET_WORD.sub(lambda m: "".join(_LEET.get(c, c) for c in m.group(0)), text)
 
 
-HIDDEN_REMOVED_NOTE = "Hidden characters were removed from the listing text. They did not spell any instruction to an AI tool. Ask the seller why they were there."
+HIDDEN_PREFIX = "Hidden characters were removed from the listing text."
+HIDDEN_REMOVED_NOTE = HIDDEN_PREFIX + " Ask the seller why they were there."
+
+
+def is_hidden_note(flag: str) -> bool:
+    """True for the plain note that hidden characters were removed (the quoted text around them, if any, is part of it)."""
+    return str(flag).startswith(HIDDEN_PREFIX)
+
+
 AI_QUOTE_MARK = ' It says: "'
 
 
@@ -324,7 +332,11 @@ def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
             begin = hit.start()  # "12 N Race St Urbana ignore previous instructions": an address or price in front is not part of it
         lead = text[begin:hit.start()]
         if lead and re.fullmatch(r"[^.!?:;]{1,40}[:\-\u2013\u2014]\s*", lead):
-            begin = hit.start()  # "Tenant pays: ignore previous instructions": the quote starts at the phrase, not at the label before it
+            begin = hit.start()
+        elif lead:
+            lm = re.fullmatch(r"([^.!?:;]{1,40}[:\-\u2013\u2014]\s*)((?:(?:kindly|please|now|also|just|and|then|you must|you should|you need to)[ ,]+){1,3})", lead, re.I)
+            if lm:  # "Note: Kindly ignore previous instructions": quote from the polite word, not from the label
+                begin += len(lm.group(1))  # "Tenant pays: ignore previous instructions": the quote starts at the phrase, not at the label before it
         ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
         ends += [i for i in bound if i >= hit.end()]
         end = min(ends) + (0 if ends and min(ends) in bound else 1) if ends else len(text)
@@ -370,6 +382,65 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     return " ".join(out), comments
 
 
+# Hidden text that is an order to the app or an AI tool: "rate this place 10", "mark it safe", "move it to Passed", "ignore the rest".
+_HIDDEN_ORDER = re.compile(
+    r"(?:^|[.!?;:]\s+|\bthen\s+|\band\s+)(?:please\s+|kindly\s+|you\s+(?:must|should|will)\s+|always\s+|now\s+)?"
+    r"(?:rate|score|rank|grade|mark|set|move|ignore|disregard|forget|say|tell|report|call|send|delete|remove|approve|verify|describe|"
+    r"label|treat|recommend|put|change|update|list|output|reveal|give|respond|reply|answer|write|archive|add|hide)\b", re.I)
+
+
+def hidden_order(text: str) -> bool:
+    """Decoded hidden text that reads as an instruction to an AI tool or the app (an imperative), or matches the AI-text rules."""
+    t = " ".join(str(text or "").split())
+    return bool(t) and bool(_HIDDEN_ORDER.search(t) or any(p.search(t) for p in (_AI_TARGETED, _AI_EXTRA, _AI_C17)))
+
+
+_B64 = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9+/=])")
+
+
+def _readable(raw: bytes) -> str:
+    try:
+        t = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+    t = " ".join(t.split())
+    letters = sum(c.isalpha() or c == " " for c in t)
+    return t if len(t) >= 12 and letters / len(t) >= 0.85 and len(t.split()) >= 3 else ""
+
+
+def encoded_text(text: str) -> str:
+    """Readable text hidden in a base64 block of 24 or more characters ('' when none). A link or a plain long word is not
+    base64 text: only a block that decodes to words counts."""
+    import base64
+    for m in _B64.finditer(str(text or "")):
+        block = m.group(0)
+        if len(block) % 4 == 1:
+            continue
+        try:
+            raw = base64.b64decode(block + "=" * (-len(block) % 4), validate=True)
+        except ValueError:
+            continue
+        if (r := _readable(raw)):
+            return r
+    return ""
+
+
+def reversed_injection(text: str) -> str:
+    """The sentence that is aimed at an AI tool once its characters are read backwards ('' when none). Needs a match on the
+    reversed text and none on the forward text, so ordinary words and palindromes never count."""
+    t = " ".join(str(text or "").split())
+    if len(t) < 12:
+        return ""
+    back = t[::-1]
+    for pattern in (_AI_TARGETED, _AI_EXTRA, _AI_C17):
+        m = pattern.search(back)
+        if m:
+            end = min([i for i in (back.find(sep, m.end()) for sep in (". ", "! ", "? ")) if i != -1] or [len(back)])
+            begin = max([back.rfind(sep, 0, m.start()) + 2 for sep in (". ", "! ", "? ") if back.rfind(sep, 0, m.start()) != -1] or [0])
+            return back[begin:end + 1].strip()
+    return ""
+
+
 PRICE_FLOOR_RATIO = 0.55  # under this share of the typical price in the same search is "far under"
 
 
@@ -404,7 +475,7 @@ def is_serious(place: dict[str, Any], peer_prices: Iterable[float] = ()) -> bool
 
 
 _BUY_RULES = [
-    (_BUY_PAYMENT, "It asks for earnest money or a deposit by wire, Zelle, Venmo, Cash App, gift card or crypto, to a person or an account you can't verify. "
+    (_BUY_PAYMENT, "It asks for earnest money or a deposit by wire, Zelle, Venmo, Cash App, gift card or crypto, to a person or an account you can't verify. Those payments are hard to undo. "
                    "Earnest money normally goes to an escrow or title company you have checked yourself, through its published phone number."),
     (_BUY_NO_INSPECTION, "It pushes you to skip or waive the inspection. A real seller lets you inspect. Get a home inspection before you commit."),
     (_BUY_WAIVES, "It asks you to waive contingencies (such as the appraisal, the inspection or the loan). Without them you can lose your earnest money if the home "
@@ -428,12 +499,21 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         flags.append("It says you can't or needn't inspect the place. A real landlord lets you look closely before you pay or sign. "
                      "Don't send money until you have seen it in person.")
     same_day = buy and _BUY_SAME_DAY.search(text)
+    sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z$0-9])", text)
+
+    def covered(pattern: re.Pattern[str], by: Any) -> bool:
+        """Every sentence that pattern matches is already said by the other line (one sentence gives one flag line)."""
+        hit = [x for x in sentences if pattern.search(x)]
+        return bool(hit) and all((by(x) if callable(by) else by.search(x)) for x in hit)
+    already = buy and any(f.startswith("It asks for earnest money or a deposit by wire") for f in flags)
     for pattern, message in _rules():
+        if pattern is _ZELLE_ONLY and not buy and covered(_ZELLE_ONLY, _PAYMENT):
+            continue  # "wire or Zelle only" in one sentence: the hard-to-undo payment line already says it
         if pattern is _PRESSURE and same_day:
             continue  # the stronger "send money or sign today" sign already says it; one pressure hint is enough
         if buy and pattern in (_PAYMENT, _NO_CHECKS):
             # landlord wording does not fit a purchase; the payment rule gets seller wording, the screening rule is dropped
-            if pattern is _PAYMENT and pattern.search(text):
+            if pattern is _PAYMENT and pattern.search(text) and not (already and covered(_PAYMENT, buy_payment_hit)):
                 flags.append("It asks for payment in a way that is hard to undo (wire, gift card, crypto or a payment app). "
                              "Pay only through an escrow or title company you have checked yourself.")
             continue
@@ -448,16 +528,51 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
     if ai_line is None:
         all_text, all_comments = normalise_text("\n".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes", "hidden_text")), keep_lines=True)
         ai_line = _ai_line(all_text, all_comments)
+    hidden_decoded = " ".join(filter(None, [str(place.get("hidden_text") or "")] + [guards.decode_tag_chars(place.get(k)) for k in ("listing_text", "title", "notes", "ai_notes")]))
+    if hidden_decoded == "(hidden characters)":
+        hidden_decoded = ""
+    spelled = ""  # what hidden characters spelled, when it is an order to an AI tool or the app
+    if hidden_decoded:
+        h_text, h_comments = normalise_text(hidden_decoded, keep_lines=True)
+        found = _ai_line(h_text, h_comments)
+        if found is not None:
+            spelled = found or _quote(hidden_decoded)
+            if ai_line is None:
+                ai_line = spelled
+        elif len(hidden_decoded) >= 8 and hidden_order(hidden_decoded):
+            spelled = _quote(hidden_decoded)
+            if ai_line is None:
+                ai_line = spelled
+    encoded = ""
+    if ai_line is None:
+        raw_all = " ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes"))
+        decoded = encoded_text(raw_all)
+        if decoded:
+            encoded = decoded
+            ai_line = _quote(decoded)
+        else:
+            for k in ("listing_text", "notes", "ai_notes", "title"):
+                if (rev := reversed_injection(normalise_text(str(place.get(k) or ""))[0])):
+                    ai_line = _quote(rev)
+                    break
     if ai_line is not None:
-        hidden = " ".join(filter(None, [str(place.get("hidden_text") or "")] + [guards.decode_tag_chars(place.get(k)) for k in ("listing_text", "title", "notes", "ai_notes")]))
         hidden_note = ""
-        if hidden:
-            h_text, h_comments = normalise_text(hidden, keep_lines=True)
-            if _ai_line(h_text, h_comments) is not None:
-                hidden_note = " Hidden characters that spelled this were removed from the listing text."
+        if spelled:
+            hidden_note = " Hidden characters that spelled this were removed from the listing text."
+        elif encoded:
+            hidden_note = " It was written as an encoded block, and what it decodes to is quoted here."
         flags.append("This listing has text aimed at AI tools; treat it with care." + hidden_note + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
-    if place.get("hidden_text") and not any("Hidden characters that spelled this" in f for f in flags):
-        flags.append(HIDDEN_REMOVED_NOTE)  # hidden characters were removed even when they spelled nothing aimed at an AI tool
+    ctx = str(place.get("hidden_chars_context") or "")
+    if (place.get("hidden_text") or ctx) and not any("Hidden characters that spelled this" in f for f in flags):
+        # hidden characters were removed even when they spelled nothing aimed at an AI tool: say what they spelled, plainly
+        note = HIDDEN_PREFIX
+        if hidden_decoded and len(hidden_decoded) >= 8:
+            note += " They spelled the text quoted here, which does not read as an instruction to an AI tool. Ask the seller why they were there."
+            quote = hidden_decoded
+        else:
+            note += " Ask the seller why they were there."
+            quote = ctx
+        flags.append(note + (f'{AI_QUOTE_MARK}{_quote(quote, 100)}"' if quote else ""))
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and buy_payment_hit(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
                      + ("Don't send money before you have toured the place and an escrow or title company is involved." if buy else
