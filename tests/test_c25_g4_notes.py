@@ -108,7 +108,9 @@ def test_months_count_with_a_dollar_sign_is_explained_by_the_deposit_field(line)
     r, c, p = _place(text)
     assert r.get("deposit") == pytest.approx(1500 * months)
     notes = str(r.get("found_in_listing") or "")
-    assert "not counted anywhere" not in notes and f"${months:g} " not in notes
+    assert "not counted anywhere" not in notes
+    # cycle 25 join: G2's deposit reader may quote the line, but only in the note that explains it as the deposit
+    assert all("read as a deposit" in u for u in notes.split("\n") if f"${months:g} " in u)
     assert not any("listing notes" in u for u in c.get("uncounted") or [])
     assert not any(f"${months:g}" in n for n in compare._missing_names(p))
 
