@@ -169,7 +169,7 @@ def test_typical_electric_next_to_rubs(text):
 
 def test_lakeview_rubs_is_not_also_a_monthly_fee():
     r = check(LAKEVIEW, 195, "electric, gas, water, sewer, trash")
-    assert r.get("other_monthly_fees") == 30
+    assert r.get("other_monthly_fees") == 40  # valet $30 + package locker $10 (cycle 18 G2 counts the locker); the $85 RUBS is not counted again
 
 
 # no regression on figures that were right

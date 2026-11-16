@@ -173,16 +173,17 @@ def test_placeholder(text, amounts_named, counted):
 
 def test_not_counted_names_only_the_unplaced_amounts():
     r = parse_listing("Oak Row 1BR $1,000\nMonthly fees: pest control $6, package locker $4, valet trash $20.", "")
-    assert r.get("other_monthly_fees") == 26
-    notes = r["found_in_listing"]
-    assert "Only $4 of that" in notes
-    assert "not counted anywhere" in notes
+    assert r.get("other_monthly_fees") == 30  # cycle 18 join: G2's service-fee step now counts the package locker too
+    notes = r.get("found_in_listing") or ""
+    assert "not counted anywhere" not in notes
 
 
 def test_not_counted_note_whole_line_when_nothing_placed():
     r = parse_listing("Oak Row 1BR $1,000\nTrash valet $20, locker $4, courtyard fee $9", "")
     notes = r.get("found_in_listing") or ""
-    assert "Only $" not in notes
+    # cycle 18 join: G2 now counts the valet trash $20, so only the two amounts left are named
+    assert r.get("other_monthly_fees") == 20
+    assert "Only $4 and $9 of that is not counted anywhere" in notes
 
 
 def test_only_unplaced_helper_layouts():
