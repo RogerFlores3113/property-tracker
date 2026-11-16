@@ -150,6 +150,7 @@ def _util_placed(text: str, est: float | None) -> set[float]:
     if est is None:
         return set()
     amts: list[tuple[float, tuple[float, ...]]] = []
+    util_starts: set[int] = set()
     for m in _P()._NET_DOLLARS.finditer(text):
         item, line = _item(text, m.start(), m.end(), back=True)
         first = next((c for c in _CATS if c[1].search(item)), None)
@@ -163,6 +164,13 @@ def _util_placed(text: str, est: float | None) -> set[float]:
             if re.search(r"year|annual|/\s*yr", low):
                 divs += [12.0]
             amts.extend((a, tuple(divs)) for a in _P()._dollar_values(m.group(0)))
+            util_starts.add(m.start())
+    try:
+        for b in _P()._internet_bills(_P()._tidy(text)):  # cycle 24: "Internet: Comcast, you set up (about $55)": the figure is the internet's bill, a part of the estimate, whatever the item cut says
+            if not any(abs(b["amount_at"][0] - st) <= 2 for st in util_starts):
+                amts.append((float(b["amount"]), (1.0,)))
+    except Exception:
+        pass
     amts = sorted(amts)[:8]
     opts = [[a / d for d in ds] for a, ds in amts]
     amts = [a for a, _d in amts]
