@@ -453,7 +453,12 @@ def _limit_can_be_waived(place: dict[str, Any]) -> bool:
     ("No dogs over 50 lbs unless approved by management", "case-by-case")."""
     for key in ("listing_text", "pet_breed_note", "reader_notes", "notes"):
         text = str(place.get(key) or "")
-        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
+        for i, sentence in enumerate(sentences):
+            # "No pets over 40 lbs. Exceptions may be granted.": the waiver is the next sentence, so the two are read together
+            nxt = sentences[i + 1] if i + 1 < len(sentences) else ""
+            if nxt and re.search(r"\bexceptions?\b|\bwaiv|\bcase[- ]by[- ]case\b|\bapproval\b|\bnegotiable\b|\bpermission\b", nxt, re.I) and len(nxt) < 80:
+                sentence = sentence + " " + nxt
             if _WAIVABLE.search(sentence) and re.search(r"\d", sentence) and _LIMIT_WORDS.search(sentence) \
                     and re.search(r"\b(?:lbs?\.?|pounds?|weight|limit|max(?:imum)?|(?:one|two|three|\d)\s+(?:pets?|dogs?|cats?|animals?))\b", sentence, re.I):
                 return True

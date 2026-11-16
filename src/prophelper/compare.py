@@ -367,6 +367,9 @@ def _pet_charges_unknown(p: dict[str, Any]) -> bool:
     if not p["cost"].get("pets_counted", True) or str(p.get("pets") or "") == "none":
         return False
     known_pets = str(p.get("pets") or "") in ("cats", "dogs", "both")
+    kind = str(p["cost"].get("search_pet_kind") or "")
+    if (kind == "dog" and str(p.get("pets") or "") == "cats") or (kind == "cat" and str(p.get("pets") or "") == "dogs"):
+        return False  # the place does not take your pet at all, so its pet charges are not a gap to fill
     if known_pets and any(p.get(k) not in (None, "") for k in ("pet_rent", "pet_fee", "pet_deposit")):
         return False  # a pet charge was read and the pets allowed are known: the pet side of the cost is not a gap
     return p.get("pet_fee") in (None, "") and p.get("pet_deposit") in (None, "")

@@ -36,7 +36,7 @@ def test_empty_and_link_only():
 def test_fees_are_never_the_rent():
     out = parsers.parse_listing("Security deposit $1,500. Application fee $50. Pet fee $300. Rent $1,200 per month.", "")
     assert out["price"] == 1200 and out["deposit"] == 1500 and out["pet_fee"] == 300
-    out = parsers.parse_listing("Parking $75/mo. HOA $200/mo. Rent: $1,400", "")
+    out = parsers.parse_listing("Parking $75/mo. HOA $200/mo, tenant pays. Rent: $1,400", "")
     assert out["price"] == 1400 and out["parking_cost"] == 75 and out["hoa"] == 200
 
 
