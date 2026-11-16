@@ -153,6 +153,42 @@ def _tidy(text: str) -> str:
                  ("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'), ("\u201d", '"'), ("\u2212", "-")):
         text = text.replace(a, b)
     text = re.sub(r"[\u2013\u2014]", "-", text)
+    return normalize_money(text)
+
+
+_FULLWIDTH = {**{0xFF10 + i: 0x30 + i for i in range(10)}, 0xFF04: 0x24, 0xFE69: 0x24}
+_MONEY_K_WORD = re.compile(r"concession|credit|closing|seller|toward|reserve|assessment|\bfees?\b|dues|deposit|\brent\b|\bcash\b|\bpay|\bcost|\bprice|\boffer|\bhoa\b|\btax|insurance|\bbudget|\bcommission|\bgrant|\bhelp", re.I)
+_K_NOT_MONEY = re.compile(r"^\s*(?:sq|sf|ft|run|tv|video|mi\b|miles?|steps|lbs|pounds|resolution|display|monitor)", re.I)
+
+
+def normalize_money(text: str) -> str:
+    """Cycle 23: one spelling of money for every reader and the guard. A fullwidth dollar or digits, "USD 30", "US$30", "30 USD", "30 dollars" or
+    "30 bucks" become "$30", and "$6k", "$1.5k" or a "6k" beside a money word ("$6k in concessions", "6k credit") become "$6,000" and
+    "$1,500". Nothing else in the text changes."""
+    if not text:
+        return text
+    if any(0xFF00 <= ord(c) <= 0xFFEF or ord(c) == 0xFE69 for c in text):
+        text = text.translate(_FULLWIDTH)
+        text = re.sub(r"(?<=\d)\uFF0C(?=\d)", ",", text)
+        text = re.sub(r"(?<=\d)\uFF0E(?=\d)", ".", text)
+    if "$" in text or re.search(r"usd|dollar|bucks|\d\s?k\b", text, re.I):
+        text = re.sub(r"\bUS\s?\$\s?(?=\d)", "$", text, flags=re.I)
+        text = re.sub(r"\bUSD\s?\$?\s?(?=\d)", "$", text, flags=re.I)
+        text = re.sub(r"(?<![\w$.,])(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?\s?(?:USD|US dollars?|dollars?|bucks)\b", lambda m: "$" + m.group(1) + (m.group(2) or ""), text, flags=re.I)
+
+        def _k(m: re.Match[str]) -> str:
+            n = float(m.group(1).replace(",", "")) * 1000
+            return "$" + (f"{n:,.0f}" if n == int(n) else f"{n:,.2f}")
+        text = re.sub(r"\$\s?(\d+(?:\.\d+)?)\s?[kK]\b(?![\w-]*\w)", _k, text)
+
+        def _bare_k(m: re.Match[str]) -> str:
+            ls = text.rfind("\n", 0, m.start()) + 1
+            le = text.find("\n", m.end())
+            near = text[max(ls, m.start() - 40):min(le if le >= 0 else len(text), m.end() + 40)]
+            if _K_NOT_MONEY.search(text[m.end():m.end() + 12]) or not _MONEY_K_WORD.search(near):
+                return m.group(0)
+            return _k(m)
+        text = re.sub(r"(?<![\w$.,])(\d+(?:\.\d+)?)[kK]\b(?![-\w])", lambda m: _bare_k(m), text)
     return text
 
 
@@ -2670,6 +2706,9 @@ def _pet_limits(text: str) -> list[str]:
         if not re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", raw, re.I):
             continue
         clause = " ".join(raw.split()).strip(" -:,")
+        clause = re.split(r"[\u2714\u2713\u2705\u2611]\ufe0f?\s*(?:\([^)]*\)\s*)?", clause)[-1].strip(" -:,")  # cycle 23: "Heated garage ✔ ($135/mo) Pet friendly (dogs up to 40 lbs)": the pet rule is the part after the last tick, not the whole feature line
+        if not re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", clause, re.I):
+            continue
         if re.search(r"\b\d{1,3}\s*(?:lbs?|pounds?)|\bbreed|\bweight|\brestrict\w*|\blimits?\b|\bmax(?:imum)?\b|\bunder \d|\bup to \d|\b(?:two|2) pets\b|\bsize\b", clause, re.I) \
                 and len(clause) <= 140 and not any(clause.lower() in f.lower() for f in found):
             found.append(clause[0].upper() + clause[1:])
@@ -4789,8 +4828,7 @@ def _util_general_note(gen: dict[str, Any]) -> str:
             text += f" The ${rs:,.0f} in the listing is the same {_join_names(mine['names'])} bill said another way, so it is not added again."
     for op in gen.get("optional") or []:
         text += f" {_join_names(op['names']).capitalize()} is listed as optional at ${op['amount']:,.0f}, so it is not counted. Ask if you need it."
-    if gen.get("stated_total") and abs(gen["stated_total"] - gen["amount"]) < 0.01:
-        text += f" The listing also gives ${gen['stated_total']:,.0f} a month as the total, which is the figure counted."
+    # cycle 23: a stated total that is the counted figure needs no sentence of its own (it was said twice: "about $148 a month ... also gives $148 as the total")
     for sz in gen.get("seasonal") or []:
         shown = f": {sz['quote']}" if "(" in sz["quote"] else f" ({sz['quote']})"  # a bracket inside the quote would nest
         text += (f" The listing gives {_join_names(sz['names'])} two figures{shown}. The higher one, ${sz['figures'][0]:,.0f}, is counted. "
@@ -6457,6 +6495,17 @@ def _policy_title_line(line: str) -> bool:
 _HYPE_LEAD = re.compile(r"^(?:wow|omg|hurry|look|must[ \t]+see|don'?t[ \t]+miss(?:[ \t]+this)?|won'?t[ \t]+last|amazing[ \t]+deal|great[ \t]+deal|rare[ \t]+find|a[ \t]+must[ \t]+see|act[ \t]+fast|available[ \t]+now|just[ \t]+listed|new[ \t]+listing)\b[ \t!:,.\u2013\u2014-]*", re.I)
 
 
+_TITLE_DECOR = re.compile(r"[*#~=_\u2022\u00b7\u2605\u2606\u2726\u2727\u2756\u25cf\u25a0\u25c6\u25ba\u25b6]+")
+
+
+def strip_title_decoration(title: str) -> str:
+    """Cycle 23: stars, hashes, bullets and emoji around a name are decoration ("*** Edgewater 3 bed 2 bath ***"), never part of the title."""
+    import unicodedata
+    t = _TITLE_DECOR.sub(" ", title or "")
+    t = "".join(" " if unicodedata.category(c) in ("So", "Sk") else c for c in t)
+    return " ".join(t.split()).strip(" ,;:-|\u2013\u2014")
+
+
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
     lead = _HYPE_LEAD.sub("", title)
@@ -7734,6 +7783,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     title = _try(lambda: _title(text, out))
     title = _try(lambda: _lead_title(text, out, title or "")) or title  # cycle 22: a descriptive name instead of the street address or a policy line
     title = title or _try(lambda: _street_name_title(text, out))
+    title = strip_title_decoration(title or "")
     if title:
         out["title"] = title
     reader_estimate = out.get("utilities_estimate")
@@ -8014,7 +8064,7 @@ def _semantic_placed(amount: float, phrase: str, out: dict[str, Any]) -> bool:
     return bool(mine_util and est is not None and est + 0.5 >= util_sum)
 
 
-def placed_amounts(amounts: set[float], used: set[float], extra: set[float] | None = None, phrase: str = "", out: dict[str, Any] | None = None) -> set[float]:
+def placed_amounts(amounts: set[float], used: set[float], extra: set[float] | None = None, phrase: str = "", out: dict[str, Any] | None = None, semantic: bool = True) -> set[float]:
     """The amounts (of ``amounts``) that a field already counts. An amount is placed when a field holds it, when its monthly share does
     ("$600 annual" is $50 a month), when some of the amounts add up to a field ("$210 plus $600 annual" is the $260 HOA), or, given the
     place's fields (``out``), when the item it sits in names a cost a field carries (electric $60, gas $35 with a $125 utilities estimate)."""
@@ -8033,7 +8083,7 @@ def placed_amounts(amounts: set[float], used: set[float], extra: set[float] | No
                 placed |= set(combo)
     if out:
         for a in pool:
-            if a not in placed and _semantic_placed(a, phrase or "", out):
+            if semantic and a not in placed and _semantic_placed(a, phrase or "", out):
                 placed.add(a)
         # an amount that repeats the monthly share of a placed periodic amount ("$600 annual ... $50/month") is placed with it
         for a in pool:
@@ -8075,6 +8125,9 @@ def amounts_all_placed(amounts: set[float], used: set[float], extra: set[float] 
     return placed_amounts(amounts, used, extra, phrase, out) >= set(amounts)
 
 
+_NET_NOTE = re.compile(r"The listing also says \"[^\"]+\"\. (?:It is not counted anywhere|It is a monthly fee and it is not counted anywhere|It looks like a utility cost and it is not counted anywhere|It is a one-time cost, so it is not in the monthly cost|Only .{1,80} of that )")
+
+
 def note_amounts_placed(note: str, place: dict[str, Any]) -> bool:
     """For a saved note that says an amount is not counted: True when every dollar amount in it is already in a field of the place
     (or is part of a sum a field holds), so the note is stale."""
@@ -8084,7 +8137,10 @@ def note_amounts_placed(note: str, place: dict[str, Any]) -> bool:
     out = {k: v for k, v in place.items() if k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
     if place.get("listing_text"):
         out["_text"] = str(place["listing_text"])
-    return amounts_all_placed(amounts, _net_used_numbers(out, [], str(place.get("listing_text") or "")), _field_sums(out), note, out)
+    used = _net_used_numbers(out, [], str(place.get("listing_text") or ""))
+    # cycle 23: a note the last check wrote was decided from the final fields, so only a field that holds the figure itself settles it
+    # ("Locker $12" is not placed by a $65 other fees that does not hold it)
+    return placed_amounts(amounts, used, _field_sums(out), note, out, semantic=not _NET_NOTE.match(note)) >= set(amounts)
 
 
 def _filled(out: dict[str, Any], key: str) -> bool:

@@ -176,7 +176,7 @@ def test_headline_of_a_complete_cost_is_unchanged_and_amount_labels_stay():
 
 def test_place_page_and_claude_lines_do_not_call_an_incomplete_cost_true_cost():
     html = open(os.path.join(os.path.dirname(__file__), "..", "src", "prophelper", "templates", "place.html"), encoding="utf-8").read()
-    assert "{% if not place.cost.uncounted %}, true cost{% endif %}" in html
+    assert "{% if not place.cost.uncounted and place.cost.all_in != false %}, true cost{% endif %}" in html  # cycle 23: also decided from all_in
 
 
 def test_tenant_paid_utilities_the_notes_say_have_no_amount_are_missing():

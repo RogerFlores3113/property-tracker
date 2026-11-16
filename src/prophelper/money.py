@@ -132,6 +132,33 @@ def _billed_names(place: dict[str, Any]) -> list[str]:
         return []
 
 
+_UTIL_NAME = r"(electric(?:ity)?|gas|water|sewer|trash|garbage|internet)"
+_TENANT_WORD = r"(?:tenant|resident|renter)s?"
+_TEXT_TENANT_PAYS = (
+    re.compile(r"\b" + _UTIL_NAME + r"\b[ \t]*[:\-][ \t]*" + _TENANT_WORD + r"(?:[ \t]+(?:pays?|paid|responsible))?\b(?![^.\n;|]{0,25}\$)", re.I),
+    re.compile(r"\b" + _TENANT_WORD + r"[ \t]+(?:pays?|is responsible for|are responsible for)[ \t]+(?:for[ \t]+)?" + _UTIL_NAME + r"\b(?![^.\n;|]{0,25}\$)", re.I),
+)
+
+
+def _text_tenant_unpriced(place: dict[str, Any]) -> list[str]:
+    """Cycle 23: the last check behind "true cost", decided from the final values. A utility the saved listing text says the tenant pays
+    ("Electric: tenant") with no price beside it, that the place's own fields do not hold as tenant-paid, included or priced, is still an unknown
+    cost part, whatever a reader did with the line."""
+    text = str(place.get("listing_text") or "")
+    if not text:
+        return []
+    have = set(tenant_pays_list(place))
+    have |= {w.strip().lower() for w in re.split(r"[,;]| and ", str(place.get("utilities_included") or "")) if w.strip()}
+    found: list[str] = []
+    for pat in _TEXT_TENANT_PAYS:
+        for m in pat.finditer(text):
+            w = m.group(1).lower()
+            w = {"electricity": "electric", "garbage": "trash"}.get(w, w)
+            if w not in have and w not in found:
+                found.append(w)
+    return found
+
+
 def _unpriced_tenant_utilities(place: dict[str, Any]) -> list[str]:
     """What the tenant pays that the listing's billed-back amount does not cover ("electric, gas, internet" when only trash
     is billed back). Empty when the amount covers everything the tenant pays, or the listing text does not say what it covers."""
@@ -189,8 +216,10 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
     lines.append(_line("price", "Rent", price))
 
     util = num(place.get("utilities_estimate"))
+    extra_unpriced = _text_tenant_unpriced(place)
     if util is None:
         pays = _cost_pays(place)
+        pays = pays + [w for w in extra_unpriced if w not in pays]
         internet_done = bool(pays) and "internet" in pays and _internet_counted(place)
         if internet_done:
             pays = [w for w in pays if w != "internet"]  # the internet is already counted in other monthly fees: not unknown
@@ -233,6 +262,13 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
         line = _line("utilities", "Utilities" if from_listing else ("Utilities (added by Claude)" if by_claude else "Utilities (a guess)"), util, note)
         line["estimated"] = not from_listing  # an amount the listing states (or bills back) is not a guess
         unpriced = _unpriced_tenant_utilities(place) if from_listing else []
+        if from_listing and extra_unpriced:
+            try:
+                from .parsers import listing_estimate_names
+                covered = {"water" if w == "hot water" else w for w in _billed_names(place) + listing_estimate_names(str(place.get("listing_text") or ""))}
+            except Exception:
+                covered = set()
+            unpriced = unpriced + [w for w in extra_unpriced if w not in covered and w not in unpriced]
         if unpriced:
             # The listing prices only part of what the tenant pays (for example trash billed back), so the rest is not counted yet.
             names = _join_words(unpriced)
@@ -602,13 +638,23 @@ def uncounted_display(cost: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+_AMOUNTS_LABEL = re.compile(r"^the (\$[\d,.]+(?:(?:, | and )\$[\d,.]+)+) amounts in the listing notes$")
+
+
+def _plain_amounts_label(label: str) -> str:
+    """Cycle 23: "utilities and the $99 and $1,490 amounts in the listing notes" has two "and"s that run together, so in the headline several
+    amounts read "utilities and listing amounts ($99 and $1,490)"."""
+    m = _AMOUNTS_LABEL.match(label)
+    return f"listing amounts ({m.group(1)})" if m else label
+
+
 def headline(cost: dict[str, Any], people: int = 1, noun: str = "people") -> str:
     """The one line next to the total: '$2,414/mo, insurance not counted yet' (and '$807 each' when people share it)."""
     total = cost.get("total")
     if total is None:
         return "Cost unknown"
     text = f"{_dollars(total)}/mo"
-    unc = uncounted_display(cost)
+    unc = [_plain_amounts_label(u) for u in uncounted_display(cost)]
     if unc:
         text += f", {_join_words(_short_unc(unc))} not counted yet"
     if people and people > 1:
@@ -752,20 +798,32 @@ def _amount_list(amounts: list[str]) -> str:
 _THING_STOP = frozenset("the a an and also says say of for per each every this that it is are be to in on at or with only extra any one two monthly month mo yearly year flat total about approx roughly est by".split())
 
 
+def _quoted_line_holds(note: str, amount: str) -> bool:
+    qm = re.search(r'"([^"]*)"', note)
+    return bool(qm and amount in qm.group(1))
+
+
 def _nearest_kind(note: str, amount: str) -> re.Match[str] | None:
-    """The kind word (fee, deposit, parking...) closest to the amount inside the note's quote, so "$1,380 security deposit + $50 lease fee"
-    names the $50 as a fee and never as the deposit. None when the note quotes nothing or no kind word sits beside the amount."""
+    """The kind word (fee, deposit, parking...) that the listing gives this amount, inside the note's quote: the label right after it ("$35 monthly
+    fee") or the one right in front of it ("Security deposit $1,380", "Deposit: $500"). A label that belongs to the figure next to it ("$300 deposit
+    and $35 monthly fee": the deposit is the $300) is never the $35's. None when no label is the figure's own: the headline then says "amount"."""
     qm = re.search(r'"([^"]*)"', note)
     if not qm or amount not in qm.group(1):
         return None
     q = qm.group(1)
     at = q.index(amount)
-    best = None
-    for m in _OPEN_KIND.finditer(q):
-        gap = at - m.end() if m.end() <= at else m.start() - (at + len(amount))
-        if gap <= 25 and (best is None or gap < best[0]):
-            best = (gap, m)
-    return best[1] if best else None
+    after = q[at + len(amount):]
+    before = q[:at]
+    m = _OPEN_KIND.match(re.sub(r"^\s*(?:/\s*mo\w*|per month|a month|monthly|each|one[- ]time|non-?refundable|refundable|flat|extra|annual|yearly)?\s*", "", after, count=1, flags=re.I))
+    if not m:
+        m = re.match(r"\s*(?:(?!and\b|or\b|plus\b|per\b)[A-Za-z-]+\s+){1,2}(?=" + _OPEN_KIND.pattern + ")", after, re.I)
+        m = _OPEN_KIND.match(after[m.end():]) if m else None
+    if m:
+        return m
+    b = re.search(r"(?:^|[\s,;(])(" + _OPEN_KIND.pattern[3:-3] + r")\s*(?:of|is|are|:|-|\()?\s*$", before, re.I)
+    if b:
+        return _OPEN_KIND.search(b.group(1))
+    return None
 
 
 _UTIL_WORDS = (("electric", re.compile(r"\b(?:electric(?:ity)?|power|pg&e)\b", re.I)), ("gas", re.compile(r"\bgas\b", re.I)), ("heat", re.compile(r"\bheat(?:ing)?\b", re.I)),
@@ -817,12 +875,12 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
         values = {float(r.replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): r.replace(" ", "").rstrip(",.") for r in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", note)}
         if place:
             try:
-                from .parsers import _CURRENT_EXTRA, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
+                from .parsers import _CURRENT_EXTRA, _NET_NOTE, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
                 fields = {k: v for k, v in place.items() if v is not None and k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
                 if place.get("listing_text"):
                     fields["_text"] = str(place["listing_text"])
                 used = {round(u, 2) for u in _net_used_numbers(fields, [], str(place.get("listing_text") or "")) | _field_sums(place)}
-                placed = placed_amounts(set(values), used, _field_sums(place), note, fields)
+                placed = placed_amounts(set(values), used, _field_sums(place), note, fields, semantic=not _NET_NOTE.match(note))  # cycle 23: a last-check note is settled only by a field holding the figure itself
             except Exception:
                 used, placed = set(), set()
         for value, amount in values.items():
@@ -837,7 +895,9 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
     if names and not amounts:
         return names, _amount_list(names)  # "water and sewer": the things, not the figures
     if len(amounts) == 1 and len(notes) == 1 and not names:
-        kind = _nearest_kind(notes[0], amounts[0]) or _OPEN_KIND.search(notes[0])
+        kind = _nearest_kind(notes[0], amounts[0])
+        if kind is None and not _quoted_line_holds(notes[0], amounts[0]):
+            kind = _OPEN_KIND.search(notes[0])  # cycle 23: a quoted line gives the figure its own label or none ("the $35 amount"); only a note with no quote is searched whole
         return names, f"the {amounts[0]} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
     if 1 <= len(amounts) <= 4:
         return names, f"the {_amount_list(amounts)} amount{'s' if len(amounts) > 1 else ''} in the listing notes"
@@ -884,7 +944,7 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     # "all in" is only said when nothing the listing gave is left out: a buyer's one-time fee that is not counted keeps it from reading "all in" too
     one_time_left = mode == "buy" and any(ONE_TIME_NOTE.search(u) and re.search(r"not counted|not saved|not used", u, re.I) and re.search(r"\$\s?\d", u)
                                           and not _note_is_stale(u, place) for u in note_units(place.get("reader_notes")))
-    out["all_in"] = not out.get("uncounted") and not one_time_left
+    out["all_in"] = not out.get("uncounted") and not out.get("missing") and not one_time_left
     out["people"] = n
     out["split_noun"] = noun
     out["per_person"] = _r(out["total"] / n) if out["total"] is not None and n > 1 else None

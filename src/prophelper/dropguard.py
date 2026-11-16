@@ -53,7 +53,7 @@ def _P():
     return parsers
 
 
-_ITEM_SEP = re.compile(r"(?:(?<!\d),|,(?!\d{3}(?!\d)))|[;|\n]|[ \t]\+[ \t]|[ \t]~[ \t]|\.(?=\s|$)|\bplus\b|\band\b|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|\([^)]*\)")
+_ITEM_SEP = re.compile(r"(?:(?<!\d),|,(?!\d{3}(?!\d)))|[;|\n]|[ \t]\+[ \t]|[ \t]~[ \t]|\.(?=\s|$)|\bplus\b|\band\b|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|[✔✓✅☑]️?|\([^)]*\)")
 _SUMMED = ("other_monthly_fees", "move_in_fees")
 _CATS = (
     ("app", re.compile(r"application|\bapp\.? fee|applicants?\b|screening|credit check|background", re.I), ("application_fee",)),
@@ -78,6 +78,16 @@ def _item(text: str, start: int, end: int, back: bool = False) -> tuple[str, str
     seps = [m for m in _ITEM_SEP.finditer(line)]
     lo = max([0] + [m.end() for m in seps if m.end() <= s0])
     hi = min([len(line)] + [m.start() for m in seps if m.start() >= e0])
+    inside = next((m for m in seps if m.group(0).startswith("(") and m.start() <= s0 and m.end() >= e0), None)
+    if inside is not None:  # cycle 23: a figure in its own brackets ("Heated garage ✔ ($135/mo)") belongs to the words in front of the bracket, not to the items after it
+        before = [m for m in seps if m.end() <= inside.start()]
+        lo = 0
+        for m in reversed(before):
+            if re.search(r"[A-Za-z]", line[m.end():inside.start()]):
+                lo = m.end()
+                break
+        item_text = line[lo:inside.start()] + " " + line[inside.start():inside.end()]
+        return (item_text if re.search(r"[A-Za-z]", line[lo:inside.start()]) else line[inside.start():inside.end()]), line
     item = line[lo:hi]
     if back and not any(c[1].search(item) for c in _CATS):
         prev = [m for m in seps if m.end() <= lo]
@@ -247,6 +257,7 @@ def _num_or_none(v: Any) -> float | None:
 def overcounted(text: str, r: dict[str, Any]) -> list[str]:
     """Cycle 22: a summed field (move-in fees, other monthly fees) whose value no combination of the listing's figures adds up to: a figure
     was read twice (or invented). One line per field: "move_in_fees 150: no combination of the listing's figures adds up to it"."""
+    text = _P().normalize_money(text)
     out = []
     for k in _SUMMED:
         v = r.get(k)
@@ -257,6 +268,7 @@ def overcounted(text: str, r: dict[str, Any]) -> list[str]:
 
 def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, Any]]:
     """Every dollar figure of a rental listing that no field holds and no note explains: [{"amount", "start", "end", "item", "kind"}]."""
+    text = _P().normalize_money(text)
     price = r.get("price")
     est = r.get("utilities_estimate")
     util_ok = _util_placed(text, float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None)
@@ -321,6 +333,7 @@ def find_unplaced_percent(text: str, r: dict[str, Any], notes: str) -> list[dict
     """Cycle 22: a percent the listing gives for money (a seller credit "2% toward closing costs", a broker fee "5% of annual rent", an agent
     commission) that no field holds as dollars and no note quotes: [{"pct", "start", "end", "item"}]. A late fee, a down payment, a rate or an
     "x% off" deal is not one (the first is a penalty, the others have their own notes or are about the buyer's own loan)."""
+    text = _P().normalize_money(text)
     price = r.get("price")
     bases = [float(price) * k for k in (1, 12) if isinstance(price, (int, float)) and not isinstance(price, bool) and price]
     held = [float(r[k]) for k in ("seller_credit", "closing_costs", "broker_fee", "move_in_fees", "other_monthly_fees", "hoa", "insurance") if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)]
