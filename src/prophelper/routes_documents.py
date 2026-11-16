@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from . import docfiles
 from .deps import get_store, redirect
 from .routes_data import discard_body
-from .store import DOCUMENT_KINDS, NotFound, Store
+from .store import DOCUMENT_KINDS, NotFound, Store, clean_document_kind
 
 router = APIRouter()
 OVERHEAD_BYTES = 256 * 1024  # form fields and boundaries around the file
@@ -53,9 +53,9 @@ async def upload_document(request: Request, place_id: int):
         return redirect(target, error=docfiles.too_big_text())
     form = await request.form()
     upload = form.get("file")
-    kind = str(form.get("kind") or "other")
+    kind = clean_document_kind(form.get("kind") or "other")
     if kind not in DOCUMENT_KINDS:
-        return redirect(target, error="Pick what kind of document it is.")
+        return redirect(target, error="That kind of document isn't one I know. Pick one of: " + ", ".join(DOCUMENT_KINDS) + ". Nothing was added.")
     if upload is None or isinstance(upload, str) or not getattr(upload, "filename", ""):
         return redirect(target, error="Choose a file first.")
     data = await upload.read(docfiles.LIMIT_BYTES + 1)  # one byte more than allowed is enough to know it is too big

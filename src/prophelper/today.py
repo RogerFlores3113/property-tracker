@@ -61,7 +61,8 @@ def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[st
     """The top places by score that fit. ``rows`` are enriched places. Passed, won and hidden places are skipped."""
     open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in OFF_THE_MARKET and is_best_fit(p)
                  and not no_price(p)]
-    open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), -p["score_total"], p["title"].lower()))
+    # a place whose cost leaves listed amounts out never ranks above a complete place (its price is only as low as what was read)
+    open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), bool(compare.cost_may_be_higher(p)), -p["score_total"], p["title"].lower()))
     if open_rows and _no_address(open_rows[0]):  # a place with no address is never the top pick when another full fit has one
         i = next((i for i, p in enumerate(open_rows) if not _no_address(p)), None)
         if i is not None:
@@ -127,7 +128,11 @@ def _own_reason(place: dict[str, Any], generic: str, first: str = "") -> str:
 def caution(place: dict[str, Any]) -> str:
     """A short caution for a place shown as a best fit: its listing has text aimed at AI tools ('' otherwise).
     A possible scam never gets here (it is not a best fit at all)."""
-    return AI_TEXT_CAUTION if any("aimed at AI tools" in str(f) for f in place.get("flags") or []) else ""
+    parts = [AI_TEXT_CAUTION] if any("aimed at AI tools" in str(f) for f in place.get("flags") or []) else []
+    higher = compare.cost_may_be_higher(place)
+    if higher:
+        parts.append(higher)
+    return " ".join(parts)
 
 
 NEAR_MISS_PCT = scoring.NEAR_MISS_PCT  # over the budget by less than this share counts as a near miss
