@@ -36,7 +36,7 @@
     {% if flags %}<div class="card sub-card" id="redflags" role="region" aria-labelledby="flags-h"><h3 id="flags-h">Things to check <span class="count">{{ flags|length }}</span></h3>
       <p class="fine">These are only hints from the text and numbers saved here. They are not proof of anything.</p>
       <ul>{% for f in flags %}<li class="flag">{{ f }}</li>{% endfor %}</ul></div>{% endif %}
-    {% if v.get('found_in_listing') %}<div class="card sub-card" id="found-in-listing"><h3>Also in the listing</h3><p>{{ v.get('found_in_listing') }}</p>
+    {% if v.get('found_in_listing') %}<div class="card sub-card" id="found-in-listing"><h3>Also in the listing</h3><ul class="reader-notes">{% for n in v.get('found_in_listing')|note_lines %}<li>{{ n }}</li>{% endfor %}</ul>
       <p class="fine">Some of these have no box of their own below. They are only shown here, and the full listing text is saved with the place.</p></div>{% endif %}
     {% set folded = ["unit", "city", "state", "zip", "url", "source", "dishwasher", "parking_cost", "pet_rent", "pet_fee", "pet_deposit", "pet_weight_limit", "pet_count_limit", "pet_breed_note", "fenced_yard", "utilities_estimate", "year_built", "lease_start", "lease_end", "application_fee", "other_monthly_fees", "move_in_fees", "broker_fee", "days_on_market", "closing_costs", "seller_credit", "application_fee_per_adult", "listing_agent", "lat", "lng", "rating", "notes"] %}
     {% set filled = [] %}{% for k in folded %}{% if k in found %}{% set _ = filled.append(k) %}{% endif %}{% endfor %}

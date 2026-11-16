@@ -115,7 +115,7 @@ def test_compare_never_says_nothing_unknown_for_tenant_paid_utilities_or_the_not
                            reader_notes='The listing also says "Gym fee $40". It is not counted anywhere. Check what it is for.')
     es = _en(store, s, a, b)
     row = {r["key"]: r for sec in compare.build_rows(es) for r in sec["rows"]}
-    assert [c["text"] for c in row["unknown"]["cells"]] == ["Unknown: utilities you pay (electric and gas)", "Unknown: amounts in the listing notes"]
+    assert [c["text"] for c in row["unknown"]["cells"]] == ["Unknown: utilities you pay (electric and gas)", "Unknown: the $40 fee in the listing notes"]  # c16: names the one open amount
 
 
 def test_lowest_cost_headline_says_when_the_winner_only_fits_with_a_check(store):

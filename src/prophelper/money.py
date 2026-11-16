@@ -75,6 +75,13 @@ def tenant_pays_list(place: dict[str, Any]) -> list[str]:
     return [w.strip().lower() for w in raw.replace(";", ",").replace(" and ", ",").split(",") if w.strip()]
 
 
+def _internet_counted(place: dict[str, Any]) -> bool:
+    """True when the saved notes say the internet is counted in other monthly fees and that field holds an amount."""
+    fees = num(place.get("other_monthly_fees"))
+    return bool(fees) and any(re.search(r"\binternet\b", n, re.I) and re.search(r"\bcounted\b[^.]*other monthly fees", n, re.I)
+                             and not re.search(r"not counted", n, re.I) for n in note_units(place.get("reader_notes")))
+
+
 def _estimate_from_listing(place: dict[str, Any], util: float) -> bool:
     """True when the utilities estimate is the monthly bill the saved listing text itself gives (read by the parser), so it
     is not a guess. No stored flag is needed: the listing text is kept, so the same reading is repeated here."""
@@ -142,8 +149,13 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
     util = num(place.get("utilities_estimate"))
     if util is None:
         pays = tenant_pays_list(place)
+        internet_done = bool(pays) and "internet" in pays and _internet_counted(place)
+        if internet_done:
+            pays = [w for w in pays if w != "internet"]  # the internet is already counted in other monthly fees: not unknown
         listed = str(place.get("utilities_included") or "").strip()
-        if utilities_covered(place) or (pays and all(w in NOTHING_WORDS for w in pays)):
+        if internet_done and not pays and not listed:
+            lines.append(_line("utilities", "Utilities", 0, "internet is counted in other monthly fees"))
+        elif utilities_covered(place) or (pays and all(w in NOTHING_WORDS for w in pays)):
             lines.append(_line("utilities", "Utilities", 0, "included in the rent"))
         elif listed and not pays and listed.lower() not in NOTHING_WORDS:
             # "Heat, water and trash included" and nothing the tenant pays: say what is included, don't call it unknown.
@@ -464,6 +476,9 @@ def headline(cost: dict[str, Any], people: int = 1, noun: str = "people") -> str
         return "Cost unknown"
     text = f"{_dollars(total)}/mo"
     unc = list(cost.get("uncounted") or [])
+    label = cost.get("listing_notes_label")
+    if label:
+        unc = [label if u == LISTING_NOTES_UNCOUNTED else u for u in unc]
     if unc:
         text += f", {_join_words(unc)} not counted yet"
     if people and people > 1:
@@ -513,10 +528,10 @@ def _note_is_stale(note: str, place: dict[str, Any] | None) -> bool:
         return False
 
 
-def listing_notes_uncounted(reader_notes: Any, place: dict[str, Any] | None = None) -> bool:
-    """True when the saved reader notes still hold a money note that is open: an amount, fee or cost the reader saw and did
-    not count or could not place. The one test behind the "some amounts in the listing notes aren't counted" tag. ``place``
-    (its saved fields) lets a note whose amounts are all counted in a field count as closed."""
+def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -> list[str]:
+    """The saved reader notes that still hold a money note that is open: an amount, fee or cost the reader saw and did
+    not count or could not place. ``place`` (its saved fields) lets a note whose amounts are all counted in a field count as closed."""
+    out: list[str] = []
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
@@ -529,8 +544,33 @@ def listing_notes_uncounted(reader_notes: Any, place: dict[str, Any] | None = No
         if _NO_AMOUNT_OPTIONAL.search(note) and not re.search(r"\$\s?\d", note):
             continue  # an optional carport with no price: nothing to add up
         if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(note):
-            return True
-    return False
+            out.append(note)
+    return out
+
+
+def listing_notes_uncounted(reader_notes: Any, place: dict[str, Any] | None = None) -> bool:
+    """True when the saved reader notes still hold a money note that is open. The one test behind the "some amounts in the
+    listing notes aren't counted" tag."""
+    return bool(open_listing_notes(reader_notes, place))
+
+
+_OPEN_KIND = re.compile(r"\b(flat fee|amenity fee|pool fee|pool|trash fee|parking fee|parking|garage|deposit|hoa|insurance|assessment|pet fee|pet rent|application fee|move-in fee|fee)\b", re.I)
+
+
+_OPEN_KIND_WORDS = {"parking": "parking cost", "garage": "garage cost", "pool": "pool fee", "hoa": "HOA", "assessment": "assessment", "deposit": "deposit"}
+
+
+def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> str:
+    """A few words for what is open in the notes: "the $75 flat fee in the listing notes" when one note holds one amount,
+    else the generic "some amounts in the listing notes"."""
+    notes = open_listing_notes(reader_notes, place)
+    if len(notes) == 1:
+        amounts = re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", notes[0])
+        if len({a.replace(" ", "") for a in amounts}) == 1:
+            kind = _OPEN_KIND.search(notes[0])
+            amount = amounts[0].replace(" ", "")
+            return f"the {amount} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
+    return LISTING_NOTES_UNCOUNTED
 
 
 def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[str, Any] | None = None,
@@ -551,6 +591,7 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets, n)
     noun = "adults" if explicit and mode != "buy" else "people"
     if listing_notes_uncounted(place.get("reader_notes"), place):
+        out["listing_notes_label"] = open_notes_label(place.get("reader_notes"), place)
         out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
         out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
     out["people"] = n

@@ -802,9 +802,9 @@ def _laundry(text: str) -> str:
 
 def _dishwasher(text: str) -> int | None:
     low = text.lower()
-    if re.search(r"\bno\s+dish\s?washer|\bwithout\s+(?:a\s+)?dish\s?washer|\bdish\s?washer\s*[:\-]\s*(?:no|none)\b", low):
+    if re.search(r"\bno\s+dish\s?washer|\bwithout\s+(?:a\s+)?dish\s?washer|\bdish\s?washer\s*[:\-]\s*(?:no|none)\b|(?<![\w/&-])no\s+dw(?![\w/&-])", low):
         return 0
-    if re.search(r"\bdish\s?washer", low):
+    if re.search(r"\bdish\s?washer", low) or re.search(r"(?<![\w/&-])dw(?![\w/&-])", low):  # "DW" alone, or "W/D, DW"
         return 1
     return None
 
@@ -3149,6 +3149,9 @@ def _available(text: str) -> str | None:
     m = re.search(r"\b(?:available|avail\.?)\s*(?:for\s+)?" + _DATE + r"\s*(?:move[- ]?in|lease)", low)
     if m:
         return _read_date(m, today)
+    m = re.search(r"(?<![\d/.-])" + _DATE + r"[ \t]*[-:(]?[ \t]*(?:move[- ]?in|lease start)\b", low)
+    if m and not re.search(r"(?:to|through|thru|until|-)[ \t]*$", low[max(0, m.start() - 4):m.start()]):  # "15-JAN-2027 MOVE IN"
+        return _read_date(m, today)
     if re.search(r"\bavailable\s*(?:now|immediately|today)\b|\bavailability\s*[:\-]\s*(?:now|immediate)|\bmove[- ]in ready\b|\bimmediate(?:ly)? (?:move[- ]in|available)", low):
         return today.isoformat()
     return None
@@ -3208,6 +3211,12 @@ _LEASE_START_PHRASE = re.compile(r"\blease[ \t]+(?:starting|starts?|begins?|begi
 _LEASE_END_PHRASE = re.compile(r"\blease[ \t]+(?:through|thru|ends?|ending|expires?|until|end[ \t]+date)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<e_"), re.I)
 
 
+_LEASE_START_PHRASE2 = re.compile(
+    r"\b(?:lease|\d{1,2}[- ]?(?:months?|mos?)(?:[- ]lease)?)\b[^.\n;]{0,60}?\b(?:starting|starts?|begins?|beginning|commenc\w+|from)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<s_"), re.I)
+_LEASE_MONTHS_AFTER_DATE = re.compile(
+    r"\blease\b[^.\n;]{0,40}?(?:\d{4}|\d{1,2}/\d{1,2}/\d{2})[ \t]*,[ \t]*(?:for[ \t]+)?(\d{1,2})[ \t]*[- ]?months?\b(?![ \t]*(?:free|off|rent|of|discount|concession|,[ \t]*\d|/|or\b|and\b))", re.I)
+
+
 def _dated_with_year(m: re.Match[str], prefix: str) -> str | None:
     """The date a prefixed _DATE match holds, only when it names its year ("Feb 28, 2027"): a lease date with no year is not guessed."""
     keys = {k[len(prefix):]: v for k, v in m.groupdict().items() if k.startswith(prefix) and v}
@@ -3240,6 +3249,11 @@ def _lease_phrases(text: str) -> tuple[str | None, str | None]:
     m = _LEASE_START_PHRASE.search(text)
     if m:
         start = _dated_with_year(m, "s_")
+    if not start:
+        for m in _LEASE_START_PHRASE2.finditer(text):  # "Lease through 2/28/2028, starting 3/1/2027", "13 months lease from 15-Jan-2027"
+            start = _dated_with_year(m, "s_")
+            if start:
+                break
     m = _LEASE_END_PHRASE.search(text)
     if m:
         end = _dated_with_year(m, "e_")
@@ -3319,8 +3333,13 @@ def _lease_months(text: str) -> int | None:
                     continue  # "9 month lease or 12 month lease": two lengths on offer, so neither is the lease
             g = m.group(1)
             n = 12 if g in ("one", "1") and "year" in m.group(0) else int(g)
-            if 1 <= n <= 60 and not re.search(r"\d\s*(?:,|-|to|or)\s*$", low[max(0, m.start() - 6):m.start()]):
+            if 1 <= n <= 60 and (not re.search(r"\d\s*(?:,|-|to|or)\s*$", low[max(0, m.start() - 6):m.start()])
+                                 or re.search(r"(?:\b\d{4}|\d/\d{1,2}/\d{2})\s*,\s*$", low[max(0, m.start() - 12):m.start()])):  # "3/1/2027, 13 month lease": the date is not a lease length
                 found.append((m.start(), n))
+    if not found:
+        m = _LEASE_MONTHS_AFTER_DATE.search(text)  # "Lease starting 3/1/2027, 13 months."
+        if m and 3 <= int(m.group(1)) <= 60:
+            return int(m.group(1))
     return min(found)[1] if found else None
 
 
@@ -4759,11 +4778,20 @@ def _restates_field(note: str, out: dict[str, Any]) -> bool:
         return _filled(out, "insurance") or _filled(out, "other_monthly_fees")
     m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It is not counted anywhere\. Check what it is for\.|It is a one-time cost, so it is not in the monthly cost\. Check what it is for\.|It is a monthly fee and it is not counted anywhere\. Check what it is for\.)', note)
     if m:
-        return amounts_all_placed(_dollar_values(m.group(1)), _net_used_numbers(out, []))
+        return amounts_all_placed(_dollar_values(m.group(1)), _net_used_numbers(out, []), _field_sums(out))
     return False
 
 
-def amounts_all_placed(amounts: set[float], used: set[float]) -> bool:
+_SUM_FIELDS = ("utilities_estimate", "other_monthly_fees", "parking_cost", "pet_rent", "hoa", "insurance")
+
+
+def _field_sums(out: dict[str, Any]) -> set[float]:
+    """Sums of any two or three monthly fields ("$55 + $70 + $48 flat" with utilities $125 and other fees $48 is $173)."""
+    vals = [float(out[k]) for k in _SUM_FIELDS if isinstance(out.get(k), (int, float)) and not isinstance(out.get(k), bool) and out[k]]
+    return {round(sum(c), 2) for size in (2, 3) for c in itertools.combinations(vals, size)}
+
+
+def amounts_all_placed(amounts: set[float], used: set[float], extra: set[float] | None = None) -> bool:
     """True when every dollar amount in a note is a value a field holds, or part of a sum a field holds ("electric avg $60, gas avg
     $45" with a utilities estimate of $105). The one test behind dropping a stale "not counted anywhere" note."""
     left = sorted(a for a in amounts if round(a, 2) not in {round(u, 2) for u in used})
@@ -4772,7 +4800,7 @@ def amounts_all_placed(amounts: set[float], used: set[float]) -> bool:
     if not left:
         return True
     pool = sorted(amounts)
-    targets = {round(u, 2) for u in used}
+    targets = {round(u, 2) for u in used} | {round(e, 2) for e in (extra or set())}
     for size in range(len(pool), 1, -1):
         for combo in itertools.combinations(pool, size):
             if round(sum(combo), 2) in targets:
@@ -4789,7 +4817,7 @@ def note_amounts_placed(note: str, place: dict[str, Any]) -> bool:
     if not amounts:
         return False
     out = {k: v for k, v in place.items() if k in _NET_REAL_FIELDS}
-    return amounts_all_placed(amounts, _net_used_numbers(out, [], str(place.get("listing_text") or "")))
+    return amounts_all_placed(amounts, _net_used_numbers(out, [], str(place.get("listing_text") or "")), _field_sums(out))
 
 
 def _filled(out: dict[str, Any], key: str) -> bool:
