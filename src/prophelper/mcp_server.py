@@ -1291,8 +1291,26 @@ def build_server(store: Store) -> FastMCP:
         except Exception:  # noqa: BLE001 - the not-found message comes from the lookup below
             current = None
         sent = kw.pop("_sent", None)  # names the caller really sent, so an explicit null can be told from a field left out
+        covers = str(kw.pop("other_monthly_fees_covers", None) or "").strip()
         clear = [k for k in CLEARABLE if sent and k in sent and kw.get(k) is None]
         fields = check_fields(kw, existing=current)
+        covers_lines: list[str] = []
+        if covers:  # cycle 24: what the monthly fee covers. "internet" makes the cost stop calling the internet missing.
+            fee = fields.get("other_monthly_fees", (current or {}).get("other_monthly_fees"))
+            try:
+                fee_n = float(fee) if fee is not None else 0.0
+            except (TypeError, ValueError):
+                fee_n = 0.0
+            said = f"Other monthly fees: the user says they cover {_clip(covers, 80)}."
+            fields["ai_notes"] = (str(fields["ai_notes"]).strip() + " " if fields.get("ai_notes") else "") + said
+            if fee_n > 0 and re.search(r"\binternet\b", covers, re.I):
+                line = f"The internet is counted in other monthly fees (${fee_n:,.2f}".replace(".00", "") + " a month), because the user says the fee covers it."
+                old_notes = str((current or {}).get("reader_notes") or "").strip()
+                if line not in old_notes:
+                    fields["reader_notes"] = (old_notes + "\n" if old_notes else "") + line
+                covers_lines.append("Because the fee covers the internet, the internet is no longer shown as missing.")
+            elif fee_n <= 0:
+                covers_lines.append("The note about what the fee covers was saved, but there is no other monthly fee amount yet, so nothing changes in the cost.")
         for k in clear:
             fields[k] = None  # the caller sent null: clear the value (it is logged on the timeline like any replaced value)
         photo_notes = fields.pop("_photo_notes", [])
@@ -1323,6 +1341,7 @@ def build_server(store: Store) -> FastMCP:
             lines += insurance_warning(after)
         if "price" in fields:
             lines += rent_warning(after)
+        lines += covers_lines
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
 
@@ -1334,7 +1353,8 @@ def build_server(store: Store) -> FastMCP:
     update_place.__signature__ = _params(  # type: ignore[attr-defined]
         [_req("place_id", int, "The place's id")],
         [("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor, mode, minutes}]", None),
-         ("utilities_source", str | None, UTILITIES_SOURCE_HELP, None)])
+         ("utilities_source", str | None, UTILITIES_SOURCE_HELP, None),
+         ("other_monthly_fees_covers", str | None, "Optional, with other_monthly_fees: what that monthly amount covers, for example \"internet\". When it says internet, the cost no longer lists the internet as missing", None)])
     mcp.tool(annotations=SAME_AGAIN)(update_place)
     try:  # tell "hoa: null" (clear it) from "hoa not sent": FastMCP fills every missing argument with None, so also pass the names that were sent
         _model = mcp._tool_manager.get_tool("update_place").fn_metadata.arg_model
@@ -1710,7 +1730,7 @@ def build_server(store: Store) -> FastMCP:
         new = data["new"]
         lines.append("New places the user has not looked at:" + (" none." if not new else ""))
         for p in new[:8]:
-            lines.append(f"  - #{p['id']} {_title(p)}" + (" (no price yet)" if p.get("cost_total") is None else ""))
+            lines.append(f"  - #{p['id']} {_title(p)}" + (" (no price yet)" if p.get("cost_total") is None else "") + (f" (check first: {p['low_rent_note']})" if p.get("low_rent_note") else ""))
         late = data["late"]
         for item in late:
             lines.append(f"Heads up: {_title(item['place'])} (id {item['place']['id']}): {item['text']}.")
@@ -1801,7 +1821,7 @@ def build_server(store: Store) -> FastMCP:
             clean.append(a)
         return clean, problems, notes
 
-    def check_criteria(items: Any, pending: set[str], where: str = "Criterion", search_id: int | None = None) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    def check_criteria(items: Any, pending: set[str], where: str = "Criterion", search_id: int | None = None, pet_kind: Any = None) -> tuple[list[dict[str, Any]], list[str], list[str]]:
         """Every criterion checked without saving anything: (clean items, problems, gentle notes). ``pending`` are the
         lower-case names of anchors that will be saved first, so a criterion may point at them."""
         clean: list[dict[str, Any]] = []
@@ -1897,6 +1917,12 @@ def build_server(store: Store) -> FastMCP:
             if not bad and kind == "pets":
                 had = any(x["kind"] == "pets" for x in clean) or (
                     search_id is not None and any(x["kind"] == "pets" for x in store.list_criteria(search_id)))
+                have_kind = str(pet_kind if pet_kind is not None else (store.get_search(search_id).get("pet_kind") if search_id is not None else "") or "").strip().lower()
+                if not bad and not had and have_kind not in ("cat", "dog", "both") and str((target or {}).get("want") or "") not in ("cats", "dogs", "both") \
+                        and not (target or {}).get("auto"):
+                    problems.append(f"{at}: a pets rule needs to know which pets. Give target {{\"want\": \"cats\"}}, {{\"want\": \"dogs\"}} or {{\"want\": \"both\"}}, "
+                                    "or set pet_kind on the search (cat, dog or both) so the rule follows it. Nothing was saved")
+                    bad = True
                 if had:
                     problems.append(f"{at}: there is already a pets rule. A search has one pets rule, and it follows the search's pets setting (pet_kind). Change that one with reweight instead")
                     bad = True
@@ -1966,7 +1992,7 @@ def build_server(store: Store) -> FastMCP:
         except ValueError as exc:
             problems.append(str(exc))
         a_clean, a_probs, a_notes = check_anchors(anchors)
-        c_clean, c_probs, c_notes = check_criteria(criteria, {str(a["name"]).strip().lower() for a in a_clean})
+        c_clean, c_probs, c_notes = check_criteria(criteria, {str(a["name"]).strip().lower() for a in a_clean}, pet_kind=pet_kind or "")
         stop_with(problems + a_probs + c_probs, "saved")
         s = store.add_search(name, mode, **fields)
         a_lines = add_anchors(a_clean, s["id"])
@@ -2027,7 +2053,7 @@ def build_server(store: Store) -> FastMCP:
         except ValueError as exc:
             problems.append(str(exc))
         a_clean, a_probs, a_notes = check_anchors(add_anchors_list)
-        c_clean, c_probs, c_notes = check_criteria(add_criteria_list, {str(a["name"]).strip().lower() for a in a_clean}, search_id=s["id"])
+        c_clean, c_probs, c_notes = check_criteria(add_criteria_list, {str(a["name"]).strip().lower() for a in a_clean}, search_id=s["id"], pet_kind=fields.get("pet_kind", s.get("pet_kind") or ""))
         problems += a_probs + c_probs
         valid = {c["id"]: c for c in store.list_criteria(s["id"])}
         r_clean: list[dict[str, Any]] = []

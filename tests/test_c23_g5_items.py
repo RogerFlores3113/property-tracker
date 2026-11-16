@@ -180,10 +180,11 @@ def test_low_rent_warns_on_add_place_page_and_today(store, client):
     out = text(call(srv, "add_place", title="Cheap", address="5 A St", price=1, listing_text="x"))
     assert "Warning: " + LOW + "." in out
     pid = store.list_places(s["id"])[0]["id"]
-    assert LOW[0].upper() + LOW[1:] in client.get(f"/places/{pid}").text
     data = today.build(store, store.get_search(s["id"]))
-    assert data["fits"] == [] and "far below normal for a rental" in data["cost_check"][0]["text"]
+    assert data["fits"] == [] and data["cost_check"] == []  # cycle 24: a very-low-rent place is not a "fit so far"; it stays under New places with the warning
+    assert "far below normal for a rental" in data["new"][0]["low_rent_note"]
     assert "far below normal for a rental" in text(call(srv, "todays_list"))
+    assert LOW[0].upper() + LOW[1:] in client.get(f"/places/{pid}").text
     ok = text(call(srv, "add_place", title="Fine", address="6 A St", price=1400, utilities_estimate=50))
     assert "far below normal" not in ok
 

@@ -249,7 +249,9 @@ def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[
         if over is None or pct is None or over <= 0 or (pct >= NEAR_MISS_PCT and item.get("dealbreaker_status") != "near"):
             return []
         if item["kind"] == "price":
-            text = f"${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near")))
+            # cycle 24: a cost part that is unknown (gas, internet...) can only make the real overage bigger
+            lead = "at least " if (cost or {}).get("uncounted") or (cost or {}).get("missing") else ""
+            text = f"{lead}${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near")))
         else:
             text = item.get("gap") or f"{item.get('label', 'A must-have')} is just short"
             pts = item.get("points_lost") or 0
@@ -802,6 +804,9 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     for i in items:  # a pet limit the listing says can be waived is a maybe, so the place "fits, but check" (it is not a plain Yes)
         if "can be waived or needs approval" in str(i.get("detail") or "") and i["dealbreaker_status"] != "fail" and i["detail"] not in concerns:
             concerns.append(i["detail"])
+    for i in items:  # cycle 24: a nice-to-have that is plainly not met (a dog search, "No dogs") is named in the fit headline, not only in the score
+        if not i["dealbreaker"] and i.get("passes") is False and i["known"] and float(i["score"] or 0) <= 0 and i.get("gap") and i["gap"] not in concerns:
+            concerns.append(i["gap"])
     far_commute = any(i.get("concern") and (i.get("over_pct") or 0) > 0.25 for i in items)
     lease_gap = lease_coverage_note(place, search, mode)
     if lease_gap:

@@ -28,6 +28,15 @@ _ABROAD = re.compile(r"\b(out of (?:the )?(?:country|town|state|us|u\.s\.)|owner
                      r"(?:living|working|stationed|serving|based) (?:abroad|overseas|in (?:africa|europe|asia|london|canada|spain|italy|dubai))|"
                      r"(?:abroad|overseas|missionary|mission trip|deployed)|can'?t (?:show|meet|tour)|unable to (?:show|meet|tour)|"
                      r"(?:cannot|can not) (?:show|meet|tour))\b", re.I)
+# cycle 24: a payment sentence that also names a place outside the country ("wire it to my attorney's trust account in Lagos"): the payment flag says so
+_FOREIGN_PLACE = re.compile(r"\b(?:overseas|abroad|offshore|off-shore|out of (?:the )?country|outside (?:of )?(?:the )?(?:us|u\.s\.|usa|united states|country)|international(?:ly)?|foreign|"
+                            r"lagos|abuja|nigeria|ghana|accra|nairobi|kenya|south africa|johannesburg|london|england|united kingdom|u\.k\.|dubai|uae|abu dhabi|hong kong|shenzhen|china|"
+                            r"cyprus|malta|manila|philippines|mumbai|india|pakistan|bangladesh|russia|ukraine|romania|bulgaria|poland|malaysia|singapore|thailand|cayman|panama|cambodia|"
+                            r"vietnam|indonesia|egypt|cairo|morocco|senegal|cameroon|togo|benin|ivory coast|amsterdam|netherlands|germany|france|paris|spain|madrid|italy|rome|"
+                            r"ireland|dublin|brazil|colombia|argentina|peru|mexico|canada|toronto|vancouver|australia|sydney|new zealand|japan|korea)\b", re.I)
+_PAY_VERB = re.compile(r"\b(?:wire[sd]?|wiring|send|transfer|pay|deposit|remit|forward|western union|moneygram|funds?|earnest|account)\b", re.I)
+OVERSEAS_WIRE_NOTE = ("The money would go to someone or an account outside the country, so a wire there is almost impossible to get back. "
+                      "Do not send anything overseas before you have toured the place and checked the seller yourself.")
 _PRESSURE = re.compile(r"\b(act (?:now|fast|today|quickly)|decide today|(?:must|need to|have to) (?:decide|respond|pay|reply|send) (?:today|now|immediately|asap)|"
                        r"won'?t last|many (?:people|applicants) (?:are )?(?:interested|waiting|inquiring)|first come|hurry|"
                        r"(?:today|tonight) only|(?:rent|pay|respond|reply|send)[^.\n]{0,20}\b(?:today|immediately|right away|asap) (?:to|or|before)|"
@@ -104,7 +113,7 @@ _AI_TARGETED = re.compile(r"\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+|the
                           r"\b(?:ai|a\.i\.|llm)\s+(?:assistants?|agents?|models?|tools?|bots?|readers?|crawlers?|scrapers?)\s*[:,]|"
                           r"\b(?:assistant|ai|llm|chatbot|claude|chat ?gpt),\s*(?:please|kindly|you (?:must|should|need to|will|have to))\b|"
                           r"\bif you(?:'re| are) (?:reading this as |reading this, you are |)(?:an?|the) (?:ai|a\.i\.|llm|large language model|language model|chatbot|bot)\b", re.I)
-_AI_EXTRA = re.compile(
+_AI_EXTRA_RAW = re.compile(
     r"\bfor (?:the )?(?:language models?|large language models?|llms?|ai (?:assistants?|agents?|models?|tools?|readers?)|chatbots?|ai)\s*[:\-]|"
     r"\btell the (?:user|reader|human)\b|"
     r"\b(?:score|rate|rank|grade)\s+(?:it|this|this (?:place|listing|apartment|home|property)|the (?:place|listing))\s+(?:a |as |at |an? )?(?:100|perfect|10/10)\b|"
@@ -121,6 +130,53 @@ _AI_EXTRA = re.compile(
     r"\bnew (?:rules|instructions) (?:now )?apply\b|"
     r"\b(?:send|forward|share|email|reveal|disclose|leak)\s+(?:the\s+|your\s+)?(?:user|renter|buyer)(?:'s|s'|’s)?\s+(?:contact|contacts|data|notes|personal|private|address book|files?|messages?)\b|"
     r"\b(?:mention|say|state|report|tell|inform|remind|assure)\s+(?:to\s+)?(?:your|the)\s+(?:user|human|operator)s?\b", re.I)
+
+
+# cycle 24: "CORRECTION: rent is now $3,100, ignore earlier price." is an ordinary correction, not text aimed at an AI tool. A hit that
+# is only "ignore/disregard the earlier price/rent/cost" is dropped when its own sentence also says it is a correction.
+_PRICE_ONLY_HIT = re.compile(r"^(?:disregard|ignore|forget)\s+(?:the\s+|that\s+|any\s+)?(?:earlier|previous|prior|above|listed|old|first)\s+(?:price|rent|cost|fees?|amount|numbers?)$", re.I)
+_CORRECTION_CUE = re.compile(r"\b(?:corrections?|corrected|updated?|now|new (?:rent|price|cost)|changed|reduced|revised|instead|replaces?|replaced|typo|mistake|error|no longer)\b", re.I)
+
+
+class _CorrectionAware:
+    """The _AI_EXTRA rules, minus a bare "ignore earlier price" inside a sentence that says it is a correction."""
+
+    def __init__(self, raw: re.Pattern[str]) -> None:
+        self._raw = raw
+        self.pattern = raw.pattern
+
+    def _is_correction(self, text: str, m: re.Match[str]) -> bool:
+        if not _PRICE_ONLY_HIT.match(m.group(0).strip()):
+            return False
+        starts = [text.rfind(sep, 0, m.start()) + len(sep) for sep in (". ", "! ", "? ", "\n") if text.rfind(sep, 0, m.start()) != -1]
+        ends = [i for i in (text.find(sep, m.end()) for sep in (". ", "! ", "? ", "\n")) if i != -1]
+        begin = max(starts, default=0)
+        before = [text.rfind(sep, 0, max(begin - 1, 0)) + len(sep) for sep in (". ", "! ", "? ", "\n") if text.rfind(sep, 0, max(begin - 1, 0)) != -1]
+        sentence = text[max(before, default=0):min(ends, default=len(text))]  # this sentence and the one before it
+        return bool(_CORRECTION_CUE.search(sentence))
+
+    def finditer(self, text: str):
+        return (m for m in self._raw.finditer(text) if not self._is_correction(text, m))
+
+    def search(self, text: str):
+        return next(self.finditer(text), None)
+
+    def sub(self, repl: Any, text: str, count: int = 0) -> str:
+        """Replace the hits that are not plain corrections (the rest of the pattern API is the raw pattern's)."""
+        keep = [m for m in self.finditer(text)]
+        if not keep:
+            return text
+        out, last = [], 0
+        for m in keep[:count or None]:
+            out.append(text[last:m.start()])
+            out.append(repl(m) if callable(repl) else m.expand(repl))
+            last = m.end()
+        out.append(text[last:])
+        return "".join(out)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._raw, name)
+
 # cycle 12: polite and indirect ways of steering an AI reader. Each needs an AI-only tell (what you were told, prior guidance,
 # an AI addressee, a score, "when summarising"), so ordinary sentences like "Please forget about street parking" stay clear.
 _AI_SOFT = (
@@ -140,7 +196,7 @@ _AI_SOFT = (
     r"\b(?:kindly|please)\s+(?:rank|rate|score|list|put|place|recommend)\s+(?:this|it)(?:\s+(?:property|listing|place|unit|apartment|home|house|one))?\s+(?:as\s+)?(?:first|top|highest|#1|number one|the best|best)\b|"
     r"\b(?:please|kindly|you (?:should|must|need to))\s+(?:overlook|omit|skip|leave out|don'?t mention|do not mention|ignore|hide|play down|downplay)\s+(?:the\s+|any\s+|that\s+)?[^.\n]{0,40}\bwhen\s+(?:you\s+)?(?:summari[sz]\w*|reporting|writing (?:up )?(?:a |the )?summary|reviewing|rating|ranking)\b"
 )
-_AI_EXTRA = re.compile(_AI_EXTRA.pattern + "|" + _AI_SOFT, re.I)
+_AI_EXTRA = _CorrectionAware(re.compile(_AI_EXTRA_RAW.pattern + "|" + _AI_SOFT, re.I))
 # cycle 17: chat-template markers, role lines that start a tool call, tool names, snake_case and hyphen-split phrases, and the plain
 # German, French and Spanish forms of "ignore previous instructions". Each needs an AI-only tell.
 _HY = r"[-.·]?"
@@ -186,6 +242,11 @@ _AI_C22 = (
     r"\b(?:ignore|ignora|esque[cç]a)\s+(?:todas\s+)?(?:as\s+)?instru[cç][oõ]es\s+anteriores\b|"
     r"\b(?:ignora|ignorare|dimentica)\s+(?:tutte\s+)?(?:le\s+)?(?:istruzioni|regole)\s+(?:precedenti|sopra)\b")
 _AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_C22, re.I)
+# cycle 24: Japanese "ignore all previous instructions" (no word edges in Japanese: the order words themselves are the tell)
+_AI_JA = (r"(?:以前|これま[でて]|今ま[でて]|前|先|上記|上|従来|最初|元)(?:の|ま[でて]の)(?:す[べへ]て(?:の)?|全て(?:の)?|全部(?:の)?)?(?:指示|命令|指令|ルール|[プフ]ロン[プフ]ト|システム[プフ]ロン[プフ]ト|指導|[ガカ]イ[ドト]ライン)"
+          r"(?:を|は|も)?(?:す[べへ]て|全て|全部|一切)?(?:を)?(?:無視|忘れ|破棄|取り消|上書き|守らな|従わな)|"
+          r"(?:す[べへ]て|全て|全部)の(?:以前|これまで|上記|前)の(?:指示|命令|ルール)(?:を)?(?:無視|忘れ|破棄)")
+_AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_JA, re.I)
 # A fence-like tag in listing text ("</untrusted><untrusted source='user notes'>"): it only exists to pass listing words off as the user's.
 _FENCE_TAG = re.compile(r"</?\s*(?:untrusted|system|assistant|user|human|developer|tool_result|function_results|tool_use|instructions?)\b[^>]*>", re.I)
 
@@ -203,8 +264,8 @@ _SEP_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_][.\-_]){4,}[^\W\d_]\.?(?![^\W
 _DOT_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_]\.[ \t]){4,}[^\W\d_]\.?(?![^\W\d_])")
 # a hostile key word split once or twice by spaces ("ig nore", "instruc tions", "pre vious"). Only long, uncommon words are rejoined, and only when
 # the pieces start and end on word edges, so "for get" and "over ride" stay as they are.
-_SPLIT_KEYWORDS = tuple(re.compile(r"(?<![^\W\d_])" + r"[ \t]*".join(w) + r"(?![^\W\d_])", re.I)
-                        for w in ("ignore", "previous", "instructions", "instruction", "disregard", "guidance", "guidelines"))
+_SPLIT_KEYWORDS = tuple(re.compile(r"(?<![^\W\d_])" + r"[ \t]*(?:[.\-_\u00b7][ \t]*)?".join(w) + r"(?![^\W\d_])", re.I)
+                        for w in ("ignore", "previous", "prior", "instructions", "instruction", "disregard", "guidance", "guidelines"))
 # "i  g  n  o  r  e": letters split by the same run of two spaces
 _WIDE_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_] {2}){3,}[^\W\d_](?![^\W\d_])")
 # a whole phrase written with dots between every letter ("i.g.n.o.r.e a.l.l p.r.e.v.i.o.u.s"): short words of three letters or more are
@@ -411,7 +472,7 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     out = _WIDE_SPACED.sub(lambda m: m.group(0).replace(" ", ""), out)
     out = _DOT_SPACED.sub(lambda m: re.sub(r"[.\s]", "", m.group(0)), out)
     for _split in _SPLIT_KEYWORDS:
-        out = _split.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
+        out = _split.sub(lambda m: re.sub(r"[ \t.\-_\u00b7]", "", m.group(0)), out)
     out = _fold_mixed(out)
     comments = [" ".join(c.split()) for c in _COMMENT.findall(out)]
     out = _COMMENT.sub(" ", out)
@@ -620,6 +681,10 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             continue
         if pattern.search(text):
             flags.append(message.replace("lease", "contract") if buy else message)
+    if any(_FOREIGN_PLACE.search(x) and _PAY_VERB.search(x) and (_PAYMENT.search(x) or buy_payment_hit(x)) for x in sentences):
+        for i, f in enumerate(flags):  # the wire flag also says the money goes outside the country
+            if f.startswith(("It asks for earnest money or a deposit by wire", "It asks for payment in a way that is hard to undo")) and OVERSEAS_WIRE_NOTE not in f:
+                flags[i] = f + " " + OVERSEAS_WIRE_NOTE
     ai_line = None
     for key in ("listing_text", "notes", "ai_notes", "title", "hidden_text"):  # the title is quoted only when it is what matched
         field_text, field_comments = normalise_text(str(place.get(key) or ""), keep_lines=True)
