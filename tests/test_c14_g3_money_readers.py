@@ -75,7 +75,7 @@ def test_buy_place_insurance_warning_uses_the_homeowner_threshold(store):
 # ---- 2. HOA periods and who pays
 @pytest.mark.parametrize("t", ["HOA $240 billed quarterly", "HOA assessments $240 billed quarterly"])
 def test_hoa_billed_quarterly_is_a_third(t):
-    assert rent(t)["hoa"] == 80
+    assert rent(t + ", tenant pays")["hoa"] == 80
 
 
 def test_quarterly_hoa_paid_by_owner_is_not_counted_for_a_tenant():
@@ -84,8 +84,8 @@ def test_quarterly_hoa_paid_by_owner_is_not_counted_for_a_tenant():
 
 
 def test_hoa_billed_annually_and_plain_monthly_still_work():
-    assert rent("HOA $1,200 billed annually")["hoa"] == 100
-    assert rent("HOA $120/mo")["hoa"] == 120
+    assert rent("HOA $1,200 billed annually, tenant pays")["hoa"] == 100
+    assert rent("HOA $120/mo, tenant pays")["hoa"] == 120
 
 
 def test_hoa_assessment_with_no_period_is_not_monthly_dues():
