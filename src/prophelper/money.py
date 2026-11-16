@@ -198,7 +198,11 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
         lines.append(line)
 
     parking = num(place.get("parking_cost"))
-    optional_parking = not parking and str(place.get("parking") or "") in PRIVATE_PARKING and _optional_parking_noted(place)
+    # An explicit $0 on a lot or street spot ("Parking included, optional garage $100") is the listing's answer for the included spot, and the garage is
+    # the extra. A $0 on a garage or carport that the notes call optional is still "optional, ask what it costs".
+    park_kind = str(place.get("parking") or "")
+    optional_parking = (not parking and park_kind in PRIVATE_PARKING and _optional_parking_noted(place)
+                        and (parking is None or park_kind in ("garage", "covered")))
     if optional_parking:
         # The listing offers parking as an extra it did not price into the cost: never "included $0".
         missing.append("parking cost")
