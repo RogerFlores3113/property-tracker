@@ -130,8 +130,10 @@ def test_quarterly_water_other_wordings(line):
 
 def test_quarterly_water_with_trash_billed_back_and_estimates():
     out = read(UIUC_L3)
-    assert out["utilities_estimate"] == 169
+    # cycle 18: a $75 flat fee already covers trash, so the $12 trash charge is noted and not added (it was 169 with the $12)
+    assert out["utilities_estimate"] == 157
     assert out["tenant_pays"] == "electric, gas, water, trash"
+    assert "flat fee already covers trash" in out["found_in_listing"]
 
 
 def test_quarterly_water_plus_budget_for_both_family_beech():
