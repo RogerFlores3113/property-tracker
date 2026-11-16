@@ -89,8 +89,17 @@ def test_range_with_saved_rent_keeps_a_note():
 
 
 def test_range_without_saved_rent_stays_empty():
-    r = parse_listing("Bridgeport 2BR\n$3,000 - $3,200 / month")
+    # cycle 25: a wide or "from ... depending" range spans different units: no rent is saved
+    r = parse_listing("Bridgeport 2BR\n$3,000 - $3,800 / month")
+    assert "price" not in r and "rent range of $3,000 to $3,800" in notes(r)
+    r = parse_listing("Bridgeport 2BR\nRent from $3,000 - $3,200 / month")
     assert "price" not in r and "rent range of $3,000 to $3,200" in notes(r)
+
+
+def test_narrow_plain_range_saves_the_higher_figure():
+    # cycle 25: "$3,000 - $3,200" with no "from" or "depending" is one unit with a small spread: the higher figure counts
+    r = parse_listing("Bridgeport 2BR\n$3,000 - $3,200 / month")
+    assert r["price"] == 3200 and "rent range of $3,000 to $3,200" in notes(r)
 
 
 @pytest.mark.parametrize("text,cur", [("Hyde Park\nstarting at $3,250", None), ("Hyde Park\nstarting at $3,250", {"price": 3250}),
