@@ -65,5 +65,5 @@ def test_notes_one_per_line_in_add_and_get(store):
     srv = server(store)
     t = "2BR apt at 12 Oak St, $1,500/mo. Water/sewer $55 plus electric. Cleaning fee $200 per stay. Parking garage $90 optional."
     for out in (text(call(srv, "add_place", title="A", address="12 Oak St", listing_text=t)), text(call(srv, "get_place", place_id=1))):
-        lines = [ln for ln in out.split("\n") if ln.startswith(("A garage is available", "The listing mentions a $200", "The listing also says"))]
+        lines = [ln for ln in out.split("\n") if ln.startswith(("A garage is available", "The listing mentions a $200", "The listing also says", "Water and sewer are about $55"))]
         assert len(lines) >= 3 and len(set(lines)) == len(lines)
