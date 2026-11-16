@@ -8393,7 +8393,7 @@ def _broker_fee_percent(text: str) -> tuple[float, str, float] | None:
         if 0 < pct <= 100:
             return (pct, "a year of rent", 12.0) if m.group(2) else (pct, "one month's rent", 1.0)
     m = re.search(head + r"(\d{1,3}(?:\.\d)?)[ \t]*%[ \t]*of[ \t]+(?:(?:a|one|1|the)[ \t]+)?(?:full[ \t]+)?(?:year(?:'?s)?|12[ \t]+months'?)[ \t]+(?:of[ \t]+)?rent", text, re.I)
-    if m and 0 < float(m.group(1)) <= 100:  # cycle 21: "Broker fee is 8% of a year of rent", "10% of one year's rent"
+    if m and 0 < float(m.group(1)) <= 100 and not re.match(r"[ \t]*\?", text[m.end():]):  # cycle 21: "Broker fee is 8% of a year of rent"; "5% of one year's rent? No, ask" stays unread
         return float(m.group(1)), "a year of rent", 12.0
     m = re.search(head + r"(half)[ \t]+(?:of[ \t]+)?(?:(?:a|one|1)[ \t]+)?month(?:'?s)?(?:[ \t]+(?:of[ \t]+)?rent)?", text, re.I)
     if m:

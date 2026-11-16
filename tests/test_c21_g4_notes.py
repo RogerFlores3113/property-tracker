@@ -287,3 +287,8 @@ def test_buy_listing_has_one_truthful_note_for_an_extra_space(text):
     about = [n for n in notes(r) if f"${fee}" in n]
     assert len(about) == 1, about
     assert "not counted" in about[0] and "is counted in other monthly fees" not in about[0]
+
+
+def test_broker_percent_the_listing_questions_stays_unread():
+    r = parse("Foundry Lofts 1BR $1,500/mo, 5 S Neil St, Champaign IL 61820.\nBroker fee: 5% of one year's rent? No, ask\n")
+    assert r.get("broker_fee") is None
