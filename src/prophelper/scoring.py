@@ -495,6 +495,25 @@ def _says_all_sizes(place: dict[str, Any]) -> bool:
     return False
 
 
+def _refused_pet_kinds(place: dict[str, Any]) -> list[str]:
+    """Kinds of pet the saved listing says no to when the pets field is empty ("Pets: no cats"): ["cats"], ["dogs"] or []."""
+    try:
+        from .parsers import _pets_refused_kinds
+    except Exception:
+        return []
+    for key in ("listing_text", "reader_notes"):
+        text = str(place.get(key) or "")
+        if key == "reader_notes":
+            m = re.search(r"The listing says no (cats|dogs)\.", text)
+            if m:
+                return [m.group(1)]
+        elif text:
+            kinds = _pets_refused_kinds(text)
+            if len(kinds) == 1 and not re.search(r"\b(?:cats?|dogs?)\b[^.\n]{0,30}\b(?:ok|okay|allowed|welcome|only)\b", text, re.I):
+                return kinds
+    return []
+
+
 def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """The pet policy, then (when the search says what pets you have) the place's weight and count limits."""
     profile = (ctx or {}).get("pets") or {}
@@ -511,6 +530,13 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
                 return _result(None, "", target, text + ", but the listing says it can be waived or needs approval. Ask the landlord.",
                                known=False, passes=None)
             return _result(0.0, "", target, text + ".", known=True, passes=False, gap=text)
+        refused = _refused_pet_kinds(place)
+        if refused:
+            wants = {"cat": {"cats"}, "dog": {"dogs"}, "both": {"cats", "dogs"}}.get(kind) or {"cats": {"cats"}, "dogs": {"dogs"}, "both": {"cats", "dogs"}}.get(want, set())
+            hit = sorted(wants & set(refused))
+            if hit:  # cycle 23: "Pets: no cats" leaves the policy empty, but a renter with a cat still gets a clear no
+                text = f"The listing says no {hit[0]}"
+                return _result(0.0, "", target, text + ".", known=True, passes=False, gap=text)
         return _unknown(target, "The pet policy")
     ok = have in PETS_OK.get(want, ("cats", "dogs", "both"))
     value = have if have != "none" else "no pets"

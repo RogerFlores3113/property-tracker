@@ -21,7 +21,7 @@ def test_surface_lot_free_detached_garage_is_optional():
 def test_extra_space_is_noted_not_counted():
     r = parse_listing("1 space included; additional parking $120/mo")
     assert r["parking_cost"] == 0
-    assert "An extra parking space is available for $120 a month" in notes(r)
+    assert "an extra space is $120 a month" in notes(r) and "optional" in notes(r)
 
 
 @pytest.mark.parametrize("text,what,amount", [
