@@ -325,7 +325,17 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -
             last = bool(_move_in_months(str(place.get("listing_text") or ""))[0])
         except Exception:  # the listing text is only a hint
             pass
-    if months > 1:
+    each = None
+    if months == 2 and not (num(place.get("price")) is None):
+        try:
+            from .parsers import _deposit_each, _move_in_months as _mim
+            text_l = str(place.get("listing_text") or "")
+            each = _deposit_each(text_l) if _mim(text_l)[0] == 2 else None
+        except Exception:
+            each = None
+    if each and abs(each - rent) >= 1:  # "first, last and security deposit ($2,800 each)": the listing gives the amount, not the rent
+        parts = [("First month's rent (as the listing says)", each), ("Last month's rent (as the listing says)", each)]
+    elif months > 1:
         parts = [(f"Rent due up front ({months} months)", rent * months)]
     else:
         parts = [("First month's rent", rent)]

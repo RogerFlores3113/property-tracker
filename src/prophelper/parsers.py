@@ -1410,7 +1410,7 @@ def _pet_fees(text: str) -> dict[str, float]:
             continue  # "Pet fee n/a, application $40": no pet fee, and the amount after it belongs to something else
         trailing = re.split(r"[.;]\s", am.group(3))[0]
         monthly = (m.group(1).lower() in ("rent", "charge") or bool(re.match(r"\s*(?:/\s*mo|per month|monthly|a month)", trailing, re.I))
-                   or "monthly" in text[max(0, m.start() - 10):m.start()].lower())
+                   or "monthly" in re.split(r"[.;!?\n](?:\s|$)|\n", text[max(0, m.start() - 10):m.start()])[-1].lower())  # cycle 18: only the same sentence ("$35 per cat monthly. Pet fee $250" is not a monthly fee)
         out.setdefault("pet_rent" if monthly else "pet_fee", float(am.group(2)))
     m = re.search(r"\bmonthly\s+pet\s+(?:fee|rent|charge)\s*[:\-]?\s*\$\s?(\d{1,4})", text, re.I)
     if m:
@@ -1906,7 +1906,15 @@ def app_fee_note_for_people(values: dict[str, Any], people: int) -> dict[str, An
     note = values.get("found_in_listing") or ""
     fee = values.get("application_fee")
     if people > 1 and isinstance(fee, (int, float)) and fee > 0 and "is charged per" in note and "together" not in note:
-        values["found_in_listing"] = note + f" For {people} adults that is ${fee * people:,.0f} together."
+        extra = f" For {people} adults that is ${fee * people:,.0f} together."
+        lines = note.split("\n")
+        for i, ln in enumerate(lines):  # cycle 18: only the per-adult application fee line gets the sentence, never the last note
+            if "is charged per" in ln and re.search(r"application fee|admin fee|credit check fee", ln, re.I):
+                lines[i] = ln.rstrip() + extra
+                break
+        else:
+            return values
+        values["found_in_listing"] = "\n".join(lines)
     return values
 
 
@@ -1955,6 +1963,25 @@ def _best_case_deposit(text: str) -> tuple[float | None, str]:
         if m:
             return _num(m.group(1)), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
     return None, text
+
+
+_COND_DEPOSIT = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:security[ \t]+|refundable[ \t]+|damage[ \t]+)?deposit\b[ \t,]*"
+                           r"((?:if|when|for|with|should|unless|depending|based[ \t]+on|subject[ \t]+to|only[ \t]+if)\b[^.\n;]{0,50}?(?:credit|income|score|co-?signer|guarantor|history|references?|background)[^.\n;]{0,20})"
+                           r"|\b(?:security[ \t]+)?deposit[ \t]*(?:of|is|:|-)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t,]*"
+                           r"((?:if|when|for|with|should|unless|depending|based[ \t]+on|subject[ \t]+to|only[ \t]+if)\b[^.\n;]{0,50}?(?:credit|income|score|co-?signer|guarantor|history|references?|background)[^.\n;]{0,20})", re.I)
+
+
+def _conditional_deposit(text: str) -> tuple[float, str, str] | None:
+    """Cycle 18: "$1,200 security deposit if credit is poor", "Deposit $500 for tenants with no cosigner". A deposit that only applies on a condition is not
+    the deposit for everyone. Returns (amount, the condition, text with that phrase blanked) or None. A condition that is the best case
+    (approved or good credit) is left to _best_case_deposit."""
+    for m in _COND_DEPOSIT.finditer(text):
+        cond = m.group(2) or m.group(4)
+        if re.search(r"(?:approved|good|qualifying|excellent|great)[ \t]+credit|credit[ \t]+approval", cond, re.I):
+            continue
+        amount = _num(m.group(1) or m.group(3))
+        return amount, " ".join(cond.split()).rstrip(" ,"), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    return None
 
 
 def _deposit_in_months(text: str) -> float:
@@ -5170,6 +5197,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
 
     def fees() -> None:
         dep_src, wired = _split_wired_deposit(dep_text)
+        cond_dep = _try(lambda: _conditional_deposit(dep_src))
+        if cond_dep:
+            dep_src = cond_dep[2]
+            facts.append(f'The listing gives a ${cond_dep[0]:,.0f} security deposit "{cond_dep[1]}". It only applies on that condition, so it is not saved as the deposit. Ask what your deposit will be.')
         best_case, dep_src = _try(lambda: _best_case_deposit(dep_src)) or (None, dep_src)
         if best_case is not None:
             facts.append(f"The listing gives a best-case deposit of ${best_case:,.0f} with approved credit. The deposit is not saved, because it may be more for you, so ask what the deposit will be.")
@@ -5198,6 +5229,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("application_fee", per_adult_fee)
         elif (bare_app := re.search(r"\$\s?(\d{1,4})(?:\.\d\d)?[ \t]+application\b(?![ \t]*(?:fee|each|per|/))", text, re.I)) and float(bare_app.group(1)) > 0:
             put("application_fee", float(bare_app.group(1)))  # "Fees: $65 application, $175 amenity fee monthly"
+        elif (bare_app2 := re.search(r"(?<![\w-])application[ \t]*[:\-=][ \t]*\$\s?(\d{1,4})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:/|per|each))|(?<![\w-])application[ \t]+\$\s?(\d{1,4})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:/|per|each))", text, re.I)) and float(bare_app2.group(1) or bare_app2.group(2)) > 0:
+            put("application_fee", float(bare_app2.group(1) or bare_app2.group(2)))  # cycle 18: "Application $40", "Application: $40"
         elif re.search(r"\b(?:no|free|zero|\$0|waived)\s+app(?:lication)?[ \t]+(?:fee|processing)|\bapp(?:lication)? fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b|\bapplication fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b", text, re.I):
             put("application_fee", 0.0)
         mi_text = text
@@ -5317,7 +5350,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("months_up_front", months)
         if first_last and isinstance(rent, (int, float)) and 200 <= rent <= 30000 and not _SALE_WORDS.search(text):
             # First and last month are cash due at move-in, not a fee: money.cash_at_move_in shows them apart.
-            line = f"First and last month's rent (${first_last * float(rent):,.0f}) are due at move-in"
+            each = _try(lambda: _deposit_each(text)) if months == 2 and first_last == 2 else None
+            if each and abs(each - float(rent)) >= 1:  # cycle 18: "first, last and security deposit ($2,800 each)" with a rent of $2,700
+                line = (f"The listing says first month, last month and the deposit are ${each:,.0f} each, so first and last month are counted as ${each * 2:,.0f} "
+                        f"(not ${first_last * float(rent):,.0f} worked out from the ${float(rent):,.0f} rent) and the deposit is ${each:,.0f}. First and last month are due at move-in")
+                with_deposit = False
+            else:
+                line = f"First and last month's rent (${first_last * float(rent):,.0f}) are due at move-in"
             if with_deposit:
                 line += ", plus a deposit" + ("." if out.get("deposit") else " (the listing gives no amount).")
             else:
