@@ -702,6 +702,10 @@ def _lease_extra_option(text: str, price: float | None) -> tuple[float, int] | N
     opts = _lease_rent_options(text, raw=True) or []
     if len(opts) != 1 or opts[0][0] == price:
         return None
+    a = opts[0][2]
+    seg = text[max(text.rfind("\n", 0, a) + 1, text.rfind(";", 0, a) + 1, text.rfind("|", 0, a) + 1, a - 45):a]
+    if re.search(r"\b(?:sq\.?[ \t]?ft|sqft|sf)\b|\b\d[ \t]?(?:ba|bath)\b", seg, re.I):
+        return None  # "3BR/2BA 1,250 sf $2,380 (12 month lease)" is another floor plan, not another lease length of this one
     return opts[0][0], opts[0][1]
 
 
