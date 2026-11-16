@@ -917,10 +917,12 @@ def _short_parts(p: dict[str, Any]) -> str:
 
 def _its(parts: str) -> str:
     """"its utilities", but plain "some amounts in the listing notes" (no "its")."""
-    return "" if parts.startswith("some ") else "its "
+    return "" if parts.startswith(("some ", "the ")) else "its "  # "the $75 flat fee in the listing notes" is not "its the $75 ..."
 
 
 def _aren_t(text: str) -> str:
+    if text.startswith("the ") and text.endswith("in the listing notes"):
+        return "are" if re.search(r"\bamounts\b| and ", text) else "is"
     return "are" if (" and " in text or text.endswith("s") or text == "costs") else "is"
 
 
