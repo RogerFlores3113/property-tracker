@@ -33,7 +33,7 @@ from . import commute as commute_mod
 from . import compare as compare_mod
 from . import guards, helpers, redflags, scoring
 from . import stages as st
-from .parsers import split_address_unit, split_full_address
+from .parsers import split_address_unit, split_full_address, street_with_unit
 from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
@@ -564,7 +564,8 @@ def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
     """The short card of a place: facts, cost, score with reasons, deal-breakers, unknowns, commute, next date."""
     lines = [f"#{e['id']} {_title(e)} [{e['stage']}] in search {e['search_id']}"]
     if e.get("address") or e.get("city"):
-        addr = ", ".join(x for x in (e.get("address"), e.get("unit"), e.get("city"), e.get("state"), e.get("zip")) if x)
+        street = street_with_unit(e.get("address"), e.get("unit")) if e.get("address") else (f"#{str(e['unit']).lstrip('#')}" if e.get("unit") else "")
+        addr = ", ".join(x for x in (street, e.get("city"), e.get("state"), e.get("zip")) if x)
         lines.append("Address: " + _t(addr, "listing address", 200))
     f = _facts(e)
     if f:
@@ -591,7 +592,7 @@ def _card(e: dict[str, Any], other_ways: bool = False) -> list[str]:
     if e.get("next"):
         lines.append(f"Next: {e['next']['text']} ({e['next']['rel']})")
     if e["flags"]:
-        lines.append("Things to check: " + " ".join(_flag_with_quote(f) for f in e["flags"][:3]))
+        lines.append("Things to check: " + " ".join(_flag_with_quote(f) for f in e["flags"]))
     return lines
 
 
@@ -905,6 +906,12 @@ def build_server(store: Store) -> FastMCP:
         if isinstance(fields.get("address"), str) and fields["address"].strip():
             known = {k: fields.get(k) if not _is_blank(fields.get(k)) else (existing or {}).get(k) for k in ("city", "state", "zip")}
             fields["address"] = _street_only(fields["address"], known["city"], known["state"], known["zip"])  # the city, state and ZIP have their own fields
+            bare = re.fullmatch(r"(\d[^,]*?),\s*#?(\d{1,5}[A-Za-z]?|[A-Za-z])\s*(?:,\s*([A-Za-z][A-Za-z.' -]{1,40}))?", fields["address"].strip())
+            if bare and _is_blank(fields.get("unit")) and (_is_blank(known["city"]) or not bare.group(3)):
+                # "1500 Neil Ave, 12, Columbus": a bare unit between the street and the city is the unit
+                fields["address"], fields["unit"] = bare.group(1).strip(), bare.group(2)
+                if bare.group(3) and _is_blank(known["city"]):
+                    fields["city"] = bare.group(3).strip()
             parts = split_full_address(fields["address"], fields.get("unit"), known["city"], known["state"], known["zip"])  # "88 N Mattis Ave, Champaign, IL 61821", "#5", "Ohio"
             fields["address"] = parts["address"]
             for k in ("unit", "city", "state", "zip"):
@@ -986,7 +993,9 @@ def build_server(store: Store) -> FastMCP:
             return []
         # Under $100 a YEAR is almost always a monthly price sent by mistake (renter's insurance is rarely under $100 a year,
         # and $75 a month is a normal price), so warn at less than $100. Yearly amounts of $100 and up are believable.
-        if not 0 < value < 100 or store.place_mode(place["id"]) == "buy":
+        # Homeowner's insurance on a purchase is rarely under about $300 a year, so a smaller number is almost surely a monthly price.
+        limit = 300 if store.place_mode(place["id"]) == "buy" else 100
+        if not 0 < value < limit:
             return []
         return [f"Warning: insurance is saved as {_money(value)} a YEAR, which counts as only {_money(round(value / 12, 2))} a month. "
                 f"If {_money(value)} is the monthly price, send the yearly amount instead ({_money(value * 12)}) with update_place."]
