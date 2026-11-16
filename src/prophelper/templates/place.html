@@ -55,7 +55,7 @@
     <table class="cost-table">
       {% for l in c.lines %}<tr><td>{{ l.label }}{% if l.note %}<div class="fine">{{ l.note }}</div>{% endif %}</td>
         <td class="amt">{% if l.amount is none %}<span class="missing">unknown</span>{% elif l.unset %}<span class="fine">Not known</span>{% else %}{{ l.amount|money }}{% endif %}</td></tr>{% endfor %}
-      <tr class="total"><td>Per month{% if c.uncounted %}, so far{% else %}, all in{% endif %}</td><td class="amt">{% if c.total is not none %}{{ c.total|money }}{% else %}&ndash;{% endif %}</td></tr>
+      <tr class="total"><td>Per month{% if c.uncounted or c.all_in == false %}, so far{% else %}, all in{% endif %}</td><td class="amt">{% if c.total is not none %}{{ c.total|money }}{% else %}&ndash;{% endif %}</td></tr>
       {% if c.per_person is not none %}<tr class="total"><td>{% if c.split_noun == 'adults' %}Each of {{ c.people }} adults{% else %}Per person ({{ c.people }} {{ c.split_noun or "people" }}){% endif %}</td><td class="amt">{{ c.per_person|money }}</td></tr>{% endif %}
     </table>
     {% else %}<p>Add the price to see the true monthly cost.</p>{% endif %}
@@ -70,7 +70,7 @@
   {% if place.reader_notes %}
   <section class="card sub-card" id="listing-notes">
     <h3>From the listing when it was added</h3>
-    <ul class="reader-notes">{% for n in place.reader_notes|note_lines %}<li>{{ n }}</li>{% endfor %}</ul>
+    <ul class="reader-notes">{% for n in place|place_note_lines %}<li>{{ n }}</li>{% endfor %}</ul>
     <p class="fine">These quote the listing text. They were noted when you added the place. When you fill in a fact they mention, the note goes away.</p>
   </section>
   {% endif %}
