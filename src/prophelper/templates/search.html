@@ -126,6 +126,7 @@
       {% if shown.mode != 'buy' %}<div class="field" data-kinds="price"><label for="nc-count">Price: what is compared</label><select id="nc-count" name="t_count"><option value="">All in (rent plus utilities and fees)</option><option value="rent">Rent only</option></select></div>{% endif %}
       <div class="field" data-kinds="commute"><label for="nc-mode">Commute: by</label><select id="nc-mode" name="t_mode">{% for m in COMMUTE_MODES %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></div>
       <div class="field" data-kinds="commute"><label for="nc-minutes">Commute: minutes or less</label><input id="nc-minutes" name="t_minutes" type="number" step="1"></div>
+      <div class="field" data-kinds="commute"><label for="nc-hard"><input id="nc-hard" name="t_hard" type="checkbox" value="1"> Hard limit: a place over it does not fit (otherwise it only loses a few points)</label></div>
       <div class="field" data-kinds="laundry"><label for="nc-want-laundry">Laundry: you want</label>
         <select id="nc-want-laundry" name="t_want_laundry"><option value="in_unit">In the unit</option><option value="in_building">In the building is fine</option></select></div>
       <div class="field" data-kinds="parking"><label for="nc-want-parking">Parking: you want</label>

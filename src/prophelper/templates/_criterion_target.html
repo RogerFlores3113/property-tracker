@@ -11,6 +11,7 @@
 <div class="field"><label for="{{ pre }}-mode">By</label>
   <select id="{{ pre }}-mode" name="t_mode">{% for m in COMMUTE_MODES %}<option value="{{ m }}"{% if (t.get('mode') or 'bike') == m %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></div>
 <div class="field"><label for="{{ pre }}-min">Minutes or less</label><input id="{{ pre }}-min" name="t_minutes" type="number" step="1" value="{{ t.get('minutes', '') }}"></div>
+<div class="field"><label for="{{ pre }}-hard"><input id="{{ pre }}-hard" name="t_hard" type="checkbox" value="1"{% if t.get('hard') %} checked{% endif %}> Hard limit: a place over it does not fit (otherwise it only loses a few points)</label></div>
 {% elif kind == 'laundry' %}
 <div class="field"><label for="{{ pre }}-want">Want</label>
   <select id="{{ pre }}-want" name="t_want"><option value="in_unit"{% if t.get('want', 'in_unit') == 'in_unit' %} selected{% endif %}>In the unit</option><option value="in_building"{% if t.get('want') == 'in_building' %} selected{% endif %}>In the building is fine</option></select></div>

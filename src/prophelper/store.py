@@ -827,6 +827,8 @@ def _clean_target(kind: str, target: Any) -> dict[str, Any]:
         if clean_bool(target.get("all_anchors")) and "anchor_id" not in out:  # check every important place, one per person
             out["all_anchors"] = True
         out["mode"] = mode
+        if clean_bool(target.get("hard")):  # a hard limit: over it, the place fails this rule like any deal-breaker
+            out["hard"] = True
         n = to_number(target.get("minutes"), "minutes")
         if n is not None:
             out["minutes"] = _tidy_num(n)

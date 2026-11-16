@@ -1694,11 +1694,11 @@ def build_server(store: Store) -> FastMCP:
         return reply("\n".join(lines), tours=len(tours), waiting=len(waiting), dates=len(dates), new_places=len(new), best_fits=[p["id"] for p in fits])
 
     # ------------------------------------------------------------ searches
-    TARGET_KEYS = ("max", "min", "minutes", "anchor", "anchor_id", "mode", "want", "year")
-    KIND_TARGET = {"price": ("max",), "beds": ("min",), "baths": ("min",), "sqft": ("min",), "commute": ("anchor", "anchor_id", "mode", "minutes"),
+    TARGET_KEYS = ("max", "min", "minutes", "anchor", "anchor_id", "mode", "want", "year", "hard")
+    KIND_TARGET = {"price": ("max",), "beds": ("min",), "baths": ("min",), "sqft": ("min",), "commute": ("anchor", "anchor_id", "mode", "minutes", "hard"),
                    "laundry": ("want",), "parking": ("want",), "pets": ("want",), "newer": ("year",), "dishwasher": (), "fenced_yard": (), "custom": ()}
     TARGET_EXAMPLE = {"max": "1600", "min": "1", "minutes": "15", "anchor": '"Campus"', "anchor_id": "1", "mode": '"bike"',
-                      "want": '"in_unit"', "year": "2015"}
+                      "want": '"in_unit"', "year": "2015", "hard": "true"}
     CRIT_EXAMPLE = ('[{"kind": "price", "label": "Rent at most $1600", "weight": 80, "dealbreaker": true, "target": {"max": 1600}}, '
                     '{"kind": "commute", "label": "Campus by bike", "weight": 60, "target": {"anchor": "Campus", "mode": "bike", "minutes": 15}}]')
     WEIGHT_NOTE = ("weight is optional (10 when left out) and is a number from 0 to 100. "
@@ -1709,7 +1709,7 @@ def build_server(store: Store) -> FastMCP:
                    "Right, a price rule: {\"kind\": \"price\", \"label\": \"Rent at most $1600\", \"weight\": 80, \"dealbreaker\": true, \"target\": {\"max\": 1600}}. "
                    "Wrong: {\"kind\": \"price\", \"max\": 1600}. ")
     CRIT_DOC = (TARGET_RULE + "criteria: list of {kind, label?, weight? (0-100, optional), dealbreaker?, target}. Kinds and targets: price {max}, beds/baths {min}, sqft {min}, "
-                "commute {anchor: name or id, mode, minutes}, laundry {want: in_unit|in_building}, dishwasher, parking {want?}, pets {want?}, fenced_yard (no target; it reads the place's fenced_yard), "
+                "commute {anchor: name or id, mode, minutes, hard? (true makes the limit a hard one: over it, the place fails the rule like any deal-breaker; default false)}, laundry {want: in_unit|in_building}, dishwasher, parking {want?}, pets {want?}, fenced_yard (no target; it reads the place's fenced_yard), "
                 "newer {year}, custom (the user scores it by hand). target is an OBJECT with only that kind's keys, not extra keys on the criterion. "
                 "label may also be passed as name, and kind as field. Price is checked against true monthly cost, so include utilities and fees. Example: " + CRIT_EXAMPLE)
 
