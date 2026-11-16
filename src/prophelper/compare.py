@@ -154,6 +154,8 @@ def _missing_names(p: dict[str, Any]) -> list[str]:
     if money_mod.LISTING_NOTES_UNCOUNTED in ((p.get("cost") or {}).get("uncounted") or []):
         label = (p.get("cost") or {}).get("listing_notes_label") or ""
         out.append(label if label and label != money_mod.LISTING_NOTES_UNCOUNTED else "amounts in the listing notes")
+    if any(money_mod.RENT_RANGE_LABEL in x for x in out) and "monthly rent" in out:
+        out.remove("monthly rent")  # the range label already says the rent is unknown
     return list(dict.fromkeys(out))
 
 

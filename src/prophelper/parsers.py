@@ -6663,7 +6663,7 @@ def _restates_field(note: str, out: dict[str, Any]) -> bool:
         return _filled(out, "special_assessment") and _filled(out, "special_assessment_payer")
     if re.match(r"The listing says renter's insurance is required", note):
         return _filled(out, "insurance") or _filled(out, "other_monthly_fees")
-    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It|Only [^"]{1,80} of that) (?:is|are|looks?) [^"]{0,80}\. (?:The rest is already counted\. )?Check what it is for\.', note)
+    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It|Only [^"]{1,80} of that) (?:is|are|looks?) [^"]{0,80}(?:\. The rest is already counted\.|; the other amounts in that line are counted\.|\.) Check what it is for\.', note)
     if m and re.search(r"not counted anywhere|not in the monthly cost", note):
         return amounts_all_placed(_dollar_values(m.group(1)), _net_used_numbers(out, []), _field_sums(out), m.group(1), out)
     return False
@@ -7000,7 +7000,7 @@ _PLURAL_KIND = (("It is a one-time cost, so it is not in the monthly cost.", "ar
 
 def _with_rest_counted(sentence: str) -> str:
     """A "not counted" sentence that names only some of the amounts in a line says the rest of the line is counted."""
-    return sentence + " The rest is already counted." if sentence.startswith("Only ") else sentence
+    return sentence[:-1] + "; the other amounts in that line are counted." if sentence.startswith("Only ") and sentence.endswith(".") else sentence
 
 
 def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, Any] | None = None) -> str:
@@ -7151,6 +7151,9 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         rent_read = isinstance(out.get("price"), (int, float))  # with no rent read, a rent-looking amount is still worth a line
         if _NET_SKIP_NEAR.search(near):
             continue
+        from .dropguard import is_non_cost
+        if is_non_cost(text, m.start(), m.end(), amount):
+            continue  # cycle 20: a penalty, a replaced figure, an old price, the low of a seasonal pair: never a cost "not counted"
         if rent_read and amount >= 500 and ((floor_plans and _NET_UNIT_BEFORE.search(before)) or re.search(r"\$\s?[\d,]+\s*(?:-|–|to)\s*$", before)
                               or re.match(r"\s*(?:-|–|to)\s*\$\s?\d", after)):
             continue  # a floor plan or a rent range, not an extra cost

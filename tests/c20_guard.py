@@ -22,7 +22,9 @@ def listings() -> list[tuple[str, str]]:
         return out
     for f in names:
         try:
-            out.append((f, open(os.path.join(PANEL, f), encoding="utf-8").read()))
+            text = open(os.path.join(PANEL, f), encoding="utf-8").read()
+            if "\n====" not in text:  # a paste of several places is not one listing
+                out.append((f, text))
         except (OSError, UnicodeDecodeError):
             continue
     return out

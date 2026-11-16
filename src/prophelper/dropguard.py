@@ -14,9 +14,38 @@ ENABLED = True  # tests switch it off to see what the readers alone leave out
 
 _NON_COST = re.compile(
     r"\blate (?:fee|charge|rent|payment)|\bpenalt|\bbounced|\breturned check|\bNSF\b|\bwas \$|\bformerly\b|\bnow \$|\breduced from\b|\bdown from\b|\bprice (?:drop|cut|reduction)\b|"
-    r"\binstead of\b|\bnot \$|\bnot the \$|\bsuperseded\b|\bcorrection\b|\bsummer\b|\bwinter\b|\bseasonal|\bin (?:the )?(?:summer|winter)|\bvs\.?\b|\bcompared to\b|"
+    r"\binstead of\b|\bnot \$|\bnot the \$|\bsuperseded\b|\bcorrection\b|\bvs\.?\b|\bcompared to\b|"
     r"\bincome\b|\bearn|\bsalary|\bcomps?\b|\bassessed\b|\bzestimate\b|\bappraise|\bsold for\b|\blast sold\b|\bper sq|/\s*sq|\bpsf\b|\bmortgage\b|\bdown payment\b|"
     r"\bpre-?approv|\bbuyer.{0,30}budget|\bor (?:street|a street)\b", re.I)
+
+
+_SEASON = re.compile(r"\b(?:summer|winter|spring|fall|autumn|peak|off-?season|cooling season|heating season)\b", re.I)
+
+
+def is_non_cost(text: str, start: int, end: int, amount: float) -> bool:
+    """True when the figure at text[start:end] is one the cost never counts: a late fee or other penalty, the old price in a price drop, a
+    figure the listing replaces ("not $1,380"), an option named in a parking note, a buyer figure the listing compares, or the lower of a
+    seasonal pair ("$140 in winter, $80 summer": the peak is counted, the low is not a second cost)."""
+    item, line = _item(text, start, end, back=False)
+    ls = text.rfind("\n", 0, start) + 1
+    near = line[max(0, start - 60 - ls):end + 60 - ls]
+    if _NON_COST.search(item) or _NON_COST.search(near):
+        return True
+    figures = list(_P()._NET_DOLLARS.finditer(line))
+    ls = text.rfind("\n", 0, start) + 1
+
+    def season_of(i: int) -> bool:
+        lo = figures[i - 1].end() if i > 0 else 0
+        hi = figures[i + 1].start() if i + 1 < len(figures) else len(line)
+        window = line[max(lo, figures[i].start() - 18):min(hi, figures[i].end() + 30)]
+        return bool(_SEASON.search(window))
+
+    mine = next((i for i, f in enumerate(figures) if f.start() == start - ls), None)
+    if mine is not None and season_of(mine):
+        for i, f in enumerate(figures):
+            if i != mine and season_of(i) and any(v > amount for v in _P()._dollar_values(f.group(0))):
+                return True
+    return False
 
 
 def _P():
@@ -150,7 +179,7 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
         seen.add((amount, item.strip()))
         if _noted(amount, item, notes) or (isinstance(price, (int, float)) and amount == price):
             continue
-        if _NON_COST.search(item) or _NON_COST.search(near):
+        if is_non_cost(text, m.start(), m.end(), amount):
             continue
         if amount >= 500 and re.search(r"\$\s?[\d,]+\s*(?:-|\u2013|to)\s*$|^\s*(?:-|\u2013|to)\s*\$", text[max(0, m.start() - 12):m.start()] + "|" + text[m.end():m.end() + 8]):
             continue  # a rent range
