@@ -6527,6 +6527,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _drop_placed_facts(facts, out, follow=bool(current))
     facts += _try(lambda: _safety_net(text, out, facts)) or []
     facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
+    if not buying:
+        facts += _try(lambda: _no_silent_drop(text, out, facts)) or []  # cycle 20: the last net, every figure is placed, explained or quoted
     facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
@@ -7221,6 +7223,28 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
     if len(notes) > 6:
         notes = notes[:5] + [f"The listing has {len(notes) - 5} more things that are not counted. Read it again for the rest."]
     return notes
+
+
+def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
+    """Cycle 20: a dollar figure of the listing that no field holds and no note explains gets a plain note that quotes its phrase."""
+    from . import dropguard
+    if not dropguard.ENABLED or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000):
+        return []  # a home for sale has its own readers and notes
+    notes: list[str] = []
+    for hit in dropguard.find_unplaced(text, out, "\n".join(facts)):
+        phrase = _net_clause(text, hit["start"], hit["end"])
+        item = " ".join(str(hit["item"]).replace('"', "'").split()).strip(" ,:-'")
+        if len(item) <= 120 and len(item) != len(phrase) and re.search(r"[A-Za-z]{4}", item) and (phrase in item or item in phrase):
+            phrase = item  # "Internet (Xfinity) approx. $60/mo": the clause stops at the dot after approx.; "Fees: A $35, B $150": quote the one item
+        if phrase:
+            from .redflags import trim_at_injection
+            phrase = trim_at_injection(phrase)
+        if phrase and _quotes_title(phrase, out.get("title")) and item and len(item) < len(phrase):
+            phrase = item  # the figure sits in the title line, so only its own item is quoted
+        if not phrase or _quotes_title(phrase, out.get("title")) or any(f'"{phrase}"' in n for n in [*facts, *notes]):
+            continue
+        notes.append(f'The listing also says "{phrase}". {_uncounted_kind_sentence(phrase)} Check what it is for.')
+    return notes[:4]
 
 
 _PER_APPLICANT = r"(?:per|each|/)[ \t]*(?:applicant|adult|person|occupant|tenant|resident|roommate)s?\b"
