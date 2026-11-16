@@ -6907,11 +6907,12 @@ def _clean_title(title: str) -> str:
     cut = cut if len(cut) >= 3 else out
     # cycle 24: "Hilltop 2BR Condo 2 bed 1 bath": the beds and baths said a second time at the end are facts the name already has
     again = _TITLE_BEDBATH_AGAIN.search(cut)
-    if again and _BED_CUE.search(cut[:again.start()]) and len(cut[:again.start()].strip(" -|:,")) >= 3:
+    if again and _TITLE_BED_CUE.search(cut[:again.start()]) and len(cut[:again.start()].strip(" -|:,")) >= 3:
         cut = cut[:again.start()].strip(" -|:,")
     return cut
 
 
+_TITLE_BED_CUE = re.compile(r"\b\d(?:\.\d)?[ \t]*(?:br|bd|bdrm|bed(?:room)?s?)\b|\b[1-4][xX][1-3]\b|\b(?:one|two|three|four)[- ]bed", re.I)
 _TITLE_BEDBATH_AGAIN = re.compile(r"[ \t,/|]+(?:\d(?:\.\d)?[ \t]*(?:bed(?:room)?s?|bdrms?|bds?|brs?)|studio)(?:[ \t,/|]+\d(?:\.\d)?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)?[ \t]*$"
                                   r"|[ \t,/|]+\d(?:\.\d)?[ \t]*(?:bath(?:room)?s?|bths?|ba)[ \t]*$", re.I)
 _ALL_CAPS_KEEP = ("LLC", "II", "III", "IV", "NE", "NW", "SE", "SW", "UIUC", "BR", "BA", "HOA", "USA", "UW", "UC", "MIT", "NYC", "SF", "LA")
@@ -9055,7 +9056,7 @@ _NET_REAL_FIELDS = ("price", "parking_cost", "pet_rent", "pet_fee", "utilities_e
 _NET_ENDS = ".;!?\n|•"
 
 
-_ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|non[- ]?refundable|\bclosing\b|\blender\b|\btitle (?:fees?|insurance|company)\b|\bescrow (?:fee|deposit)|\bappraisal\b|\binspection\b|\borigination\b|\brecording\b|transfer tax", re.I)
+_ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|non[- ]?refundable|\bclosing\b|\blender\b|\btitle (?:fees?|insurance|company)\b|\bescrow (?:fee|deposit)|\borigination\b|\brecording fees?\b|transfer tax", re.I)
 _DEAL_WORDS = re.compile(r"\bconcessions?\b|\bfree rent\b|\bmonths? free\b|\bweeks? free\b|\bmove-in special\b|\brent credit\b", re.I)
 _MONTHLY_WORDS = re.compile(r"/\s*(?:mo|month)\b|\bper month\b|\ba month\b|\bmonthly\b|\bmo\.", re.I)
 
