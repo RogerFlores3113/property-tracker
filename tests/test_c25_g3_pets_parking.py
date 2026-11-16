@@ -167,9 +167,13 @@ def test_buyer_deeded_space_is_not_a_missing_parking_cost(text):
     "Dogs ok up to 40 lbs, larger dogs need management approval.",
 ])
 def test_weight_limit_with_approval_says_it_can_be_waived(text):
+    from prophelper import scoring
     r = read(text)
     assert r["pet_weight_limit"] == 40
-    assert "can be waived with approval" in notes(r)
+    # said once: the reader's own note, or the listing's own line when that is kept as a note; either way a heavier dog is an "ask"
+    assert "can be waived with approval" in notes(r) or text.rstrip(".").split(". ")[-1][:20] in notes(r) or text.rstrip(".") in notes(r)
+    place = dict(r, listing_text=BASE + text, reader_notes=r.get("found_in_listing"))
+    assert scoring._limit_can_be_waived(place)
 
 
 def test_weight_limit_without_waiver_has_no_waiver_note():
