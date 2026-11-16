@@ -23,7 +23,7 @@ def test_required_parking_for_all_residents_is_counted():
     assert "not counted anywhere" not in notes(r)
 
 
-@pytest.mark.parametrize("line,kind", [("Parking: 1 deeded space included", "lot"), ("One lot spot included", "lot")])
+@pytest.mark.parametrize("line,kind", [("One lot spot included", "lot")])  # cycle 24: a deeded space has no kind, see test_c24_g3_pets_parking
 def test_included_space_is_free_with_no_required_note(line, kind):
     r = rent(line)
     assert r["parking_cost"] == 0 and r["parking"] == kind
