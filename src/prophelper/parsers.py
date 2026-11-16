@@ -5243,26 +5243,27 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 else:
                     facts.append(f"The listing says the broker fee is {broker_months:g} month{'s' if broker_months != 1 else ''} of rent, but the rent was not read, so the broker fee is left empty. Fill it in once you know the rent.")
         monthly = 0.0
+        added: list[float] = []
         pool = list(dict.fromkeys(_money_monthly_fees(text)))
         for v in pool:
-            monthly += v
+            monthly += v; added.append(v)
         for v in _try(lambda: _monthly_list_fees(text)) or []:  # cycle 17: each item of a "Monthly:" list counts, equal amounts too
             if v in pool:
                 pool.remove(v)  # already counted by the reader above
             else:
-                monthly += v
+                monthly += v; added.append(v)
         counted, listed = _try(lambda: _extra_monthly(text)) or ([], [])
         for label, v in counted:
-            monthly += v
+            monthly += v; added.append(v)
             facts.append(f"${v:,.0f}/month extra for {label} is counted in other monthly fees. If it is optional, take it out.")
         for label, v in _try(lambda: _mandatory_monthly_fees(text)) or []:
-            monthly += v
+            monthly += v; added.append(v)
             facts.append(f"The {label} is ${v:,.0f}/month and the listing says it is required, so it is counted in other monthly fees.")
         storage = _try(lambda: _storage_fees(text)) or []
         listed = [(l, v) for l, v in listed if not re.search(r"storage|locker", l)]
         for label, v, required in storage:
             if required:
-                monthly += v
+                monthly += v; added.append(v)
                 facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month and the listing says it is required, so it is counted in other monthly fees.")
             else:
                 facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month. It is not counted in the cost because it looks optional. Add it to other monthly fees if you need it.")
@@ -5274,13 +5275,19 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 continue  # already the utilities estimate: never counted twice
             if v in already_monthly:
                 continue  # cycle 17: "flat $30 per month for trash and lawn" is already counted above, never twice
-            monthly += v
+            monthly += v; added.append(v)
             facts.append(f"The {label} flat fee is ${v:,.0f}" + ("/month" if has_period else "") + ", counted once in other monthly fees."
                          + ("" if has_period else " The listing does not say how often, so it is counted as monthly. Ask if that is right."))
             covered_utils = [w for w in re.findall(r"hot water|water|sewer|sewage|trash|garbage|waste", label) if w not in ("garbage", "waste", "sewage")]
             tenant_list = [w.strip() for w in str(out.get("tenant_pays") or "").split(",")]
             if covered_utils and has_period and not any(w in tenant_list or (w == "hot water" and "water" in tenant_list) for w in covered_utils):  # cycle 17: those utilities are paid through the flat fee, so they are not counted again
                 facts.append(f"{', '.join(dict.fromkeys(covered_utils)).capitalize()} {'is' if len(set(covered_utils)) == 1 else 'are'} paid through that flat fee, so {'it is' if len(set(covered_utils)) == 1 else 'they are'} not counted again in your utilities estimate.")
+        for label, v in _try(lambda: _service_fee_items(text)) or []:  # cycle 18: every named fee of a list counts once, whatever the layout
+            if v in added:
+                added.remove(v)  # a reader above already counted this one
+            else:
+                monthly += v
+                facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month, counted in other monthly fees. If it is optional, take it out.")
         if monthly:
             put("other_monthly_fees", monthly)
             est = out.get("utilities_estimate")
@@ -6099,6 +6106,50 @@ def _broker_fee_months(text: str) -> float | None:
     return nums[(m.group(1) or m.group(2)).lower()]
 
 
+_SVC_STRONG = (r"pest(?:[ \t]+control)?|package(?:[ \t]+(?:locker|lockers|service|room))?|parcel(?:[ \t]+locker)?|valet(?:[ \t]+(?:trash|waste))?|trash[ \t]+valet|"
+               r"lawn(?:[ \t]+(?:care|maintenance|mowing|service))?|landscaping|snow(?:[ \t]+(?:removal|plowing))?")
+_SVC_WEAK = r"amenit(?:y|ies)|community|technology|convenience|smart[ \t]+home"
+_SVC_FEE_WORD = r"(?:[ \t]+(?:fees?|charges?|service|package))"
+_SVC_PERIOD = r"(?:/[ \t]*mo(?:nth)?\b|[ \t]+per[ \t]+month|[ \t]+a[ \t]+month|[ \t]*monthly\b|[ \t]+each[ \t]+month)"
+_SVC_BAD_TAIL = re.compile(r"\b(?:optional|billed|passed|deposit|one[- ]time|set[- ]?up|install|per[ \t]+(?:use|load|visit)|/[ \t]*(?:yr|year)|per[ \t]+year|annual|yearly|quarterly|if[ \t]+(?:you|needed|wanted))", re.I)
+
+
+def _service_fee_items(text: str) -> list[tuple[str, float]]:
+    """Cycle 18: the general step for a list of named monthly services, in any layout: "Monthly pest control $6, package locker $4, valet trash
+    $20", "Fees: $25 amenity fee monthly, $10 monthly package locker fee", "$35/month for lawn care and snow removal", "flat $10/mo package
+    for trash valet". Returns (label, amount) for each named service with an amount that is monthly (a period beside it, a "monthly" word
+    in the same sentence or list, or valet trash, which is always monthly). Optional, one-time, per-use and yearly items are left out."""
+    found: list[tuple[str, float]] = []
+    strong, weak = _SVC_STRONG, _SVC_WEAK
+    more = r"(?:[ \t]*(?:,|/|&|\band\b)[ \t]*(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?)*"
+    amt = r"\$\s?(?P<a>\d{1,3})(?:\.\d\d)?(?!,?\d)"
+    lead = r"(?:(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?[ \t]*(?:,|/|&|\band\b)[ \t]*)*"
+    p_name = re.compile(r"(?<![\w$])(?P<n>" + lead + r"(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?|(?:" + weak + r")" + _SVC_FEE_WORD + r")(?:[ \t]*\([^)\n$]{1,25}\))?[ \t:\-=]{0,4}(?:of[ \t]+)?" + amt + r"(?P<p>" + _SVC_PERIOD + r")?", re.I)
+    p_amt = re.compile(amt + r"(?P<p>" + _SVC_PERIOD + r")?[ \t]*(?:flat[ \t]+)?(?:for[ \t]+)?(?:the[ \t]+)?(?:flat[ \t]+)?(?P<m>monthly[ \t]+)?(?P<n>(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?" + more + r"|(?:" + weak + r")" + _SVC_FEE_WORD + r")(?P<q>[ \t]*monthly\b|[ \t]+per[ \t]+month|/[ \t]*mo\b)?", re.I)
+    for clause in re.split(r"\n|;|(?<=[a-z\)\d])\.(?=\s|$)", text):
+        clause_monthly = bool(re.search(r"\bmonthly\b|\bper[ \t]+month\b|/[ \t]*mo\b|\ba[ \t]+month\b", clause, re.I))
+        spans: list[tuple[int, int]] = []
+        for pat in (p_name, p_amt):
+            for m in pat.finditer(clause):
+                if any(m.start() < e and s0 < m.end() for s0, e in spans):
+                    continue
+                if re.search(r"\b(?:pets?|dogs?|cats?|parking|garage|storage|deposit|application|move[- ]in)[ \t]*[:\-]?[ \t]*$", clause[max(0, m.start() - 14):m.start()], re.I):
+                    continue
+                tail = clause[m.end():m.end() + 30]
+                tail = re.split(r"[,]|\$", tail)[0]
+                if _SVC_BAD_TAIL.search(tail) or _SVC_BAD_TAIL.search(clause[m.start():m.end()]):
+                    continue
+                label = " ".join(m.group("n").lower().split())
+                amount = float(m.group("a"))
+                has_period = bool(m.groupdict().get("p") or m.groupdict().get("m") or m.groupdict().get("q"))
+                always = not re.match(r"amenit|community|technology|convenience|smart", label)  # pest, package, valet, lawn and snow services are monthly unless the item says otherwise
+                if amount <= 0 or not (has_period or clause_monthly or always):
+                    continue
+                spans.append((m.start(), m.end()))
+                found.append((label, amount))
+    return found
+
+
 def _money_monthly_fees(text: str) -> list[float]:
     """Required extras charged every month ("amenity fee $25/mo", "$10/month trash")."""
     found: list[float] = []
@@ -6217,7 +6268,7 @@ def _storage_fees(text: str) -> list[tuple[str, float, bool]]:
     "optional storage locker available for $30/month"). Returns (label, monthly amount, required). It is only required
     when the same line says so (required, mandatory, must); otherwise it looks optional."""
     out: list[tuple[str, float, bool]] = []
-    noun = r"(?:storage(?:\s+(?:locker|unit|space|cage|room))?|lockers?)"
+    noun = r"(?:storage(?:\s+(?:locker|unit|space|cage|room))?|(?<!package\s)(?<!parcel\s)(?<!mail\s)lockers?)"  # a package locker is a service fee, not storage
     monthly = r"(?:/\s*mo(?:nth)?\b|per\s+month|monthly|a\s+month|each\s+month)"
     for line in re.split(r"\n|;|(?<=[a-z\)])\.(?=\s|$)", text):
         found: list[tuple[str, float]] = []
