@@ -1136,6 +1136,8 @@ def _parking_options(low: str) -> tuple[str, float, list[str]] | None:
             if not _PARK_LINE_ITEM.match(line):
                 break
             parts.append(line)
+        if re.search(r"\b(?:optional|available|extra|additional|upgrade|waitlist|wait[- ]list)\b", " ".join(parts)):
+            continue  # an offered extra is handled by the optional-parking reader, not as a choice
         items: list[str] = []
         for part in parts:
             items += [x.strip() for x in re.split(r"\s*[;|]\s*|,(?!\d{3})\s*|\s+/\s+|\s*/(?=\s*(?:covered|garage|carport|reserved|assigned|surface|open|uncovered)\b)|\s+or\s+|\s+-\s+", part) if x.strip()]
@@ -1159,7 +1161,14 @@ def _parking_options(low: str) -> tuple[str, float, list[str]] | None:
                 got.append((0.0, _parking_kind_words(it) or "lot", it))
         if len(got) < 2 or len({round(g[0], 2) for g in got}) < 2 and len({g[1] for g in got}) < 2:
             continue
-        best = min(got, key=lambda g: g[0])
+        def _rank(g):  # best kind first: garage > covered or carport > assigned or reserved > surface lot or street
+            if g[1] == "garage":
+                return 4
+            if g[1] == "covered":
+                return 3
+            return 2 if re.search(r"\b(?:assigned|reserved)\b", g[2]) else 1
+        top = max(_rank(g) for g in got)
+        best = min((g for g in got if _rank(g) == top), key=lambda g: g[0])  # the best kind offered, at its cheapest price
         names = {"garage": "a garage", "covered": "covered parking", "lot": "a surface lot", "street": "street parking", "": "another parking choice"}
         others = []
         for v, k, it in got:
@@ -1169,7 +1178,7 @@ def _parking_options(low: str) -> tuple[str, float, list[str]] | None:
             others.append(f"{names.get(k, 'another parking choice')} for " + ("free" if v == 0 else f"${v * 12:,.0f} a year" if yearly else f"${v:,.0f} a month"))
         kind_best = best[1] or "lot"
         cost_words = "free" if best[0] == 0 else f"${best[0]:,.0f} a month"
-        note = (f"The listing gives more than one parking choice. The cheapest one ({names.get(kind_best, 'parking')}, {cost_words}) is what the parking cost counts. "
+        note = (f"The listing gives more than one parking choice. {names.get(kind_best, 'Parking').capitalize()} ({cost_words}) is saved. "
                 f"It also offers {' and '.join(others)}. Ask which one you would get.")
         return kind_best, round(best[0], 2), [note]
     return None
