@@ -681,9 +681,16 @@ def _price_notes(text: str, price: float | None = None, buying: bool = False) ->
             months = _LEASE_CONDITION.match(text[a["end"]:text.find("\n", a["end"]) if text.find("\n", a["end"]) >= 0 else len(text)])
             if months:
                 notes.append(f"The listing says the rent drops to ${a['value']:,.0f} with a {months.group(1)} month lease. Ask if that applies to you.")
-    m = re.search(r"\b(?:(first|last|one|two|three|\d{1,2})(?:st|nd|rd|th)?[ \t-]+months?(?:'s)?[ \t]+(?:of[ \t]+rent[ \t]+)?(?:rent[ \t]+)?free|(?:up to[ \t]+)?(?:one|two|three|\d{1,2})[ \t]+weeks?[ \t]+free|free[ \t]+(?:first|1st|one|two|\d{1,2})[ \t-]*months?)\b", text, re.I)
+    m = re.search(r"(?<![/\d.])\b(?:1/2|half(?:[ \t]+a)?)[ \t-]+months?(?:'s)?[ \t]+(?:of[ \t]+rent[ \t]+)?free\b", text, re.I)  # cycle 22: "1/2 month free" is half a month, never "2 month free"
+    if not m:
+        m = re.search(r"(?<![/\d.])\b(?:(first|last|one|two|three|\d{1,2})(?:st|nd|rd|th)?[ \t-]+months?(?:'s)?[ \t]+(?:of[ \t]+rent[ \t]+)?(?:rent[ \t]+)?free|(?:up to[ \t]+)?(?:one|two|three|\d{1,2})[ \t]+weeks?[ \t]+free|free[ \t]+(?:first|1st|one|two|\d{1,2})[ \t-]*months?)\b", text, re.I)
     if m:
         notes.append(f"The listing offers a rent concession (\"{' '.join(m.group(0).split())}\"). It is a one-time deal, so it is not taken off the rent. Ask what you have to do to get it.")
+    fm = re.search(r"\bfree[ \t]+for[ \t]+(?:the[ \t]+)?(?:first|1st)[ \t]+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[ \t]+(?:months?|weeks?)\b", text, re.I)
+    if fm:  # cycle 22: "garage $140 per month, free for first 6 months": a promo that ends, named so the full price is not forgotten
+        bounds = [b.end() for b in re.finditer(r"\.\s|\n|\||;", text[:fm.start()])]
+        line = " ".join(text[(bounds[-1] if bounds else 0):fm.end()].split())[-90:]
+        notes.append(f"The listing says \"{line}\". The free months are a one-time deal and are not taken off any monthly figure. Ask what you pay after the free months end.")
     return notes
 
 
@@ -945,8 +952,17 @@ def _beds_converted(text: str) -> tuple[float, float] | None:
 _SLASH_HOME = re.compile(r"(?<![\d.,$/:-])\b(\d{1,2})[ \t]*/[ \t]*(\d(?:\.\d)?)(?![\d/.])(?=[ \t]*(?:br|ba|bd)?[ \t,-]*(?:single|house|home|condo|townhome|townhouse|duplex|apartment|apt|bungalow|ranch|villa|cottage|loft|flat)\b)")
 
 
-_SLASH_LOOSE = re.compile(r"(?<![\w.,$/:#-])([1-6])[ \t]?/[ \t]?([1-4](?:\.5)?)(?![\w/.,$%:-]|[ \t]*(?:mile|miles|mi\b|bath|baths|off\b|acre|block|blocks|inch|in\b|month|mo\b|yr|year|%|am\b|pm\b|pets?\b|cats?\b|dogs?\b))")
+_SLASH_LOOSE = re.compile(r"(?<![\w.,$/:#-])([1-6])[ \t]?/[ \t]?([1-4](?:\.5)?)(?![\w/.$%:-]|,\d|[ \t]*(?:mile|miles|mi\b|bath|baths|off\b|acre|block|blocks|inch|in\b|month|mo\b|yr|year|%|am\b|pm\b|pets?\b|cats?\b|dogs?\b))")
 _SLASH_DATE_BEFORE = re.compile(r"\b(?:avail\w*|date|move|moving|start\w*|begin\w*|by|on|until|till|thru|through|ready|lease|due|from|since|open house|tour|expires?|deadline|posted|updated|built|before|after|today|tomorrow|sat|sun|mon|tue|wed|thu|fri|saturday|sunday|monday|tuesday|wednesday|thursday|friday|signed|renewal|rate|dated?|as of|effective)\b[ \t:]*$", re.I)
+
+
+_RETRACTED = re.compile(r"[ \t]*[?.,;!]*[ \t]*(?:no|nope|actually|wait|sorry|correction)\b", re.I)
+
+
+def _shorthand_retracted(text: str, end: int) -> bool:
+    """Cycle 22: "3/2? No - 2 bed 1.5 bath": a layout shorthand the listing takes back right away is never read."""
+    m = _RETRACTED.match(text[end:end + 20])
+    return bool(m) and bool(re.search(r"\d[ \t]*(?:bed|bd|br|ba\b|bath)|\b\d[ \t]?[/xX\u00d7][ \t]?\d|\bstudio\b|\b(?:one|two|three|four)[- ](?:bed|bath)", text[end + m.end():end + m.end() + 50], re.I))
 
 
 def _slash_beds_baths(text: str) -> tuple[int, float, float] | None:
@@ -958,6 +974,8 @@ def _slash_beds_baths(text: str) -> tuple[int, float, float] | None:
         if _SLASH_DATE_BEFORE.search(text[max(0, m.start() - 22):m.start()]):
             continue
         if re.match(r"[ \t]*[-/]\d", text[m.end():m.end() + 4]):
+            continue
+        if _shorthand_retracted(text, m.end()):
             continue
         return m.start(), float(m.group(1)), float(m.group(2))
     return None
@@ -995,12 +1013,26 @@ def _same_num(a: Any, b: float) -> bool:
 _BEDS_SLASH_PAIR = re.compile(r"(?<![\d.,$/])\b(\d)[ \t]*(?:bed(?:room)?s?|bds?|brs?)[ \t]*/[ \t]*(\d)[ \t]*(?:bed(?:room)?s?|bds?|brs?)\b", re.I)
 
 
+def _explicit_beds_baths(text: str, st: re.Match[str]) -> float | None:
+    """Cycle 22: "Studio-1BR ... 1 Bed 1 Bath": one plain "N bed N bath" and no other bedroom count outside the plan range wins over the range."""
+    if re.search(r"\b(?:from|starting[ \t]+(?:at|from)|starts?[ \t]+at|as[ \t]+low[ \t]+as)[ \t]+\$|\$\s?\d[\d,]*[ \t]*(?:-|\u2013|to)[ \t]*\$\s?\d", text, re.I):
+        return None  # a "from $X" price or a price range means the listing covers several plans, so one "1 bed 1 bath" may be only one of them
+    rest = text[:st.start()] + " " + text[st.end():]
+    ex = re.findall(r"(?<![\d.,$/])\b(\d{1,2})[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b[ \t,/|&-]*(?:and[ \t]+)?\d(?:\.\d)?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b", rest, re.I)
+    if len(ex) != 1:
+        return None
+    allb = {float(x) for x in re.findall(r"(?<![\d.,$/])\b(\d{1,2})[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b", rest, re.I)}
+    return float(ex[0]) if allb == {float(ex[0])} else None
+
+
 def _beds_conflict(text: str) -> str:
     """"1BR/2BR convertible" in the title and "3 bedrooms" in the body: the listing does not say how many bedrooms it has. Returns
     a plain note (and the bedroom count stays empty), or "" when there is no such pair."""
     if _beds_converted(text) or _beds_corrected(text):
         return ""
     st = re.search(r"\bstudio[ \t]*(?:-|/|to|or|&)[ \t]*\d[ \t]*(?:br|bd|bed(?:room)?s?)\b", text, re.I)
+    if st and _explicit_beds_baths(text, st):
+        return ""
     if st:  # "Studio-1BR Prairie Commons": a plan range, not one layout
         return f'The listing says "{st.group(0)}", which covers more than one layout, so the bedroom count is left empty. Ask which layout you would get.'
     m = _BEDS_SLASH_PAIR.search(text)
@@ -1039,7 +1071,7 @@ _XB_NOT_LAYOUT = re.compile(r"(?:deposit|security|fee|fees|admin|application|pet
 def _first_x_match(text: str):
     """The first "2x1" that is a layout. "Deposit: 1x1" (one month) is not."""
     for m in _BEDS_X_BATHS.finditer(text):
-        if _XB_NOT_LAYOUT.search(text[max(0, m.start() - 16):m.start()]):
+        if _XB_NOT_LAYOUT.search(text[max(0, m.start() - 16):m.start()]) or _shorthand_retracted(text, m.end()):
             continue
         return m
     return None
@@ -1066,6 +1098,11 @@ def _beds(text: str) -> float | None:
     xc = _beds_x_corrected(text)
     if xc:
         return xc[0]
+    st_r = re.search(r"\bstudio[ \t]*(?:-|/|to|or|&)[ \t]*\d[ \t]*(?:br|bd|bed(?:room)?s?)\b", text, re.I)
+    if st_r:
+        ex_b = _explicit_beds_baths(text, st_r)
+        if ex_b is not None:
+            return ex_b
     if _beds_conflict(text):
         return None
     low = text.lower()
@@ -1079,7 +1116,8 @@ def _beds(text: str) -> float | None:
     for m in re.finditer(r"\b(\d)\s*(?:bd|br|bed)\s*[/|]\s*\d(?:\.\d)?\s*(?:ba|bth|bath)", low):
         hits.append((m.start(), float(m.group(1))))
     for m in _SLASH_HOME.finditer(low):  # "3/2 single family home"
-        hits.append((m.start(), float(m.group(1))))
+        if not _shorthand_retracted(low, m.end()):
+            hits.append((m.start(), float(m.group(1))))
     for m in re.finditer(r"\b(one|two|three|four|five|six)[- ](?:bed(?:room)?s?|bdrms?|brs?)\b(?!\s*(?:and breakfast|room only))", low):
         hits.append((m.start(), float({"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}[m.group(1)])))
     studio = re.search(r"\bstudio\b(?!\s*(?:apartments?\s*)?(?:are|is|also|available)\b)", low)
@@ -1136,7 +1174,8 @@ def _baths(text: str) -> float | None:
     for m in re.finditer(r"\b(?:bed(?:room)?s?|bds?|brs?)[ \t]*/[ \t]*(\d{1,2}(?:\.\d)?)[ \t]*(?:bath(?:room)?s?|bths?|ba)\b", low):
         hits.append((m.start(), float(m.group(1))))  # "3 bedrooms/2 baths"
     for m in _SLASH_HOME.finditer(low):
-        hits.append((m.start(), float(m.group(2))))
+        if not _shorthand_retracted(low, m.end()):
+            hits.append((m.start(), float(m.group(2))))
     for m in re.finditer(r"\bbath(?:room)?s?\s*[:\-]\s*(\d{1,2}(?:\.\d)?)\b", low):
         hits.append((m.start(), float(m.group(1))))
     for m in re.finditer(r"\b(one|two|three|four|five)[- ](?:bath(?:room)?s?|bths?)\b", low):
@@ -2639,6 +2678,10 @@ def _move_in_months(text: str) -> tuple[int, bool]:
     """(months of rent due at move-in, deposit also due) from "first and last month" or "first, last and deposit"."""
     m = re.search(r"\b(?:first|1st)\b(?:\s+month(?:'?s)?(?:\s+rent)?)?\s*(?:,|and|&|\+|/|plus)\s*(?:and\s+)?\blast\b(?:\s+month(?:'?s)?(?:\s+rent)?)?"
                   r"(?:\s*(?:,|and|&|\+|/|plus)\s*(?:a\s+)?(?:the\s+)?(?:security\s+)?(deposit))?", text, re.I)
+    if not m:
+        mr = re.search(r"\blast\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:the[ \t]+)?\b(?:first|1st)\b[ \t]+month", text, re.I)
+        if mr:  # cycle 22: "Last month's rent plus first month required"
+            return 2, bool(re.match(r"[ \t]*(?:'?s)?(?:[ \t]+rent)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:a[ \t]+|the[ \t]+)?(?:security[ \t]+)?deposit", text[mr.end():mr.end() + 40], re.I))
     if not m:
         m2 = re.search(r"\blast[ \t]+month(?:'?s)?(?:[ \t]+rent)?[ \t]+(?:is[ \t]+|are[ \t]+)?(?:due|required|payable|collected)[ \t]+(?:at|before|on|upon|with)[ \t]+(?:lease[ \t]+)?(?:signing|move[- ]?in)\b"
                        r"|\b(?:due|required|payable)[ \t]+(?:at|before|on|upon)[ \t]+(?:lease[ \t]+)?(?:signing|move[- ]?in)[^.\n;]{0,25}\blast[ \t]+month", text, re.I)
@@ -7142,6 +7185,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("application_fee", float(bare_app.group(1)))  # "Fees: $65 application, $175 amenity fee monthly"
         elif (bare_app2 := re.search(r"(?<![\w-])application[ \t]*[:\-=][ \t]*\$\s?(\d{1,4})(?:\.\d\d)?(?!\d|,\d)(?![ \t]*(?:/[ \t]*(?:adult|person|applicant|occupant|tenant|resident|mo|month|each)|per|each))|(?<![\w-])application[ \t]+\$\s?(\d{1,4})(?:\.\d\d)?(?!\d|,\d)(?![ \t]*(?:/[ \t]*(?:adult|person|applicant|occupant|tenant|resident|mo|month|each)|per|each))", text, re.I)) and float(bare_app2.group(1) or bare_app2.group(2)) > 0:
             put("application_fee", float(bare_app2.group(1) or bare_app2.group(2)))  # cycle 18: "Application $40", "Application: $40"
+        elif (bare_app3 := re.search(r"(?<![\w-])app[ \t]*[:\-=]?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?(?!\d|,\d)(?![ \t]*(?:/|per\b|each\b|off\b|waived|credit|background|screening))", text, re.I)) and float(bare_app3.group(1)) > 0 \
+                and not re.search(r"\b(?:no|free|zero|waived?)[ \t]*$", text[max(0, bare_app3.start() - 8):bare_app3.start()], re.I):
+            put("application_fee", float(bare_app3.group(1)))  # cycle 22: "Fees: App $55, admin $200"
         elif re.search(r"\b(?:no|free|zero|\$0|waived)\s+app(?:lication)?[ \t]+(?:fee|processing)|\bapp(?:lication)? fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b|\bapplication fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b", text, re.I):
             put("application_fee", 0.0)
         mi_text = text
@@ -7157,11 +7203,24 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             elif float(out["application_fee"]) != per_applicant[0]:
                 facts.append(f"The listing also has a ${per_applicant[0]:,.0f} admin fee per applicant. It is not counted, because an application fee is already filled in. Ask whether they are two fees.")
         bg_each = _try(lambda: _background_check_each(text))
-        if bg_each and out.get("application_fee") and per_adult_fee and float(out["application_fee"]) == per_adult_fee:
+        bg_single = bool(bg_each) and per_adult_fee == bg_each and len(re.findall(r"\$\s?" + re.escape(f"{bg_each:g}") + r"(?![\d,])", text)) == 1  # cycle 22: one figure, so the per-adult phrase IS the background check
+        if bg_each and not bg_single and out.get("application_fee") and per_adult_fee and float(out["application_fee"]) == per_adult_fee:
             # cycle 21: "$35 per adult plus $25 background check each": both are charged to every adult, so the fee per adult is the two together
             out["application_fee"] = _tidy_number(float(out["application_fee"]) + bg_each)
             facts.append(f"The ${per_adult_fee:,.0f} application fee and the ${bg_each:,.0f} background check are both charged to each adult who applies, "
                          f"so the application fee saved is the two together, ${per_adult_fee + bg_each:,.0f} per adult.")
+        if bg_each and re.search(r"\b(?:background|screening)[ \t]+(?:check|report)", text, re.I) and not (not bg_single and per_adult_fee and out.get("application_fee") is not None and float(out["application_fee"]) == per_adult_fee + bg_each):
+            same_fig = re.search(r"\bapp(?:lication)?(?:[ \t]+(?:processing[ \t]+)?fees?)?[ \t:\-=]*\$\s?" + re.escape(f"{bg_each:g}") + r"(?:\.\d\d)?[ \t]*(?:background|screening|credit)\b", text, re.I)
+            have_app = out.get("application_fee")
+            if have_app in (None, "", 0, 0.0) or ((same_fig or bg_single) and float(have_app) == bg_each):
+                # cycle 22: "Background check $25 each", "Application $25 background check each": every adult pays it, so it is the per-adult application cost
+                put("application_fee", bg_each)
+                out["application_fee_per_adult"] = 1
+                facts.append(f"The ${bg_each:,.0f} background check is charged to each adult who applies, so it is saved as the application fee per adult. "
+                             "The listing gives no other application fee. Ask if there is one.")
+            elif float(have_app) != bg_each:
+                facts.append(f"The listing also says the background check is ${bg_each:,.0f} for each adult. It is not added to the ${float(have_app):,.0f} application fee, "
+                             "because the listing does not say if that fee is per adult too. Ask what each adult pays in total.")
         mi_text = re.sub(r"\$\s?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)(?=[ \t]+(?:[\w\"\u201c\u201d'-]+[ \t]+){0,2}fees?\b)", " ", mi_text)  # cycle 17: "$100/month community fee" is monthly, never a one-time move-in fee
         mi = _money_after(_without_pet_one_time(mi_text), r"(?:admin(?:istrative|istration)?|move[- ]in|lease[- ](?:signing|initiation|admin)|processing|community|one[- ]time|key) fees?", hi=5000)
         if not mi:
@@ -8727,6 +8786,7 @@ _ONE_TIME_LABELS = (
     r"admin(?:istrative|istration)?(?:[ \t]+fees?)?", r"lease[- ](?:processing|up|initiation|signing|admin\w*|set-?up|start-?up)(?:[ \t]+fees?)?",
     r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
     r"(?:amenity|community|technology|tech)[ \t]+fees?",
+    r"(?:one[- ]?time|non[- ]?refundable)[ \t]+(?:amenity|community|technology|tech)(?:[ \t]+fees?)?",  # cycle 22: "one-time amenity $200"
     r"move[- ]?in(?![ \t]*(?:fees?|total|costs?|specials?|date|day|ready|cash|charges?|money|price|amount|incentive|offer|-)\b)",
 )
 _ONE_TIME_CUE = re.compile(r"\b(?:one[- ]?time|once|up[- ]?front|due[ \t]+(?:at|before|on)[ \t]+(?:lease[ \t]+)?(?:signing|move[- ]?in)|at[ \t]+(?:lease[ \t]+)?(?:signing|move[- ]?in)|non[- ]?refundable|paid[ \t]+once)\b", re.I)
@@ -8738,6 +8798,7 @@ def _one_time_fee_items(text: str) -> list[tuple[str, float, str]]:
     "$250 amenity fee one-time", "Admin $125 due at signing", "$50 lease fee", "Key deposit $50 refundable"). Returns (label, amount, kind) where kind is
     "fee" or "key". Monthly and per-person amounts are skipped. An amenity or community fee counts only when the listing says it is one time."""
     out: list[tuple[str, float, str]] = []
+    out_pos: list[int] = []  # cycle 22: where each amount sits in the text, so one figure matched by two labels is counted once
     amt = r"\$[ \t]?(\d{1,2},\d{3}|\d{1,4})(?:\.\d\d)?(?!\d|,\d)"
     for lab in _ONE_TIME_LABELS:
         pats = (r"(?<![\w-])(" + lab + r")[ \t]*(?:is|are|of)?[ \t]*[:=\-]?[ \t]*(?:only[ \t]+)?" + amt,
@@ -8768,16 +8829,18 @@ def _one_time_fee_items(text: str) -> list[tuple[str, float, str]]:
                     around = text[max(0, m.start() - 20):m.end() + 40].split("\n")[0]
                     if not _ONE_TIME_CUE.search(around):
                         continue
-                out.append((label, v, "key" if label.startswith("key") else "fee"))
-    seen: set[tuple[str, float]] = set()
-    uniq: list[tuple[str, float, str]] = []
-    for item in out:
-        k = (item[0].split()[0], item[1])
-        if k in seen:
-            continue
-        seen.add(k)
-        uniq.append(item)
-    return uniq
+                apos = m.start(2 if i == 0 else 1)
+                item = (label, v, "key" if label.startswith("key") else "fee")
+                if apos in out_pos:  # the same amount again under a second label: keep the longer label, count it once
+                    j = out_pos.index(apos)
+                    if len(label) > len(out[j][0]):
+                        out[j] = item
+                    continue
+                if any(o[0].split()[0] == label.split()[0] and o[1] == v for o in out):
+                    continue  # the same fee quoted twice in the listing ("Admin $150 ... admin fee $150") is one fee
+                out.append(item)
+                out_pos.append(apos)
+    return out
 
 
 _DEPOSIT_MULT = re.compile(r"(?<![\w-])(?:security(?:[ \t]+deposit)?|(?:damage[ \t]+)?deposit)[ \t]*[:=\-]?[ \t]*(?:is[ \t]+|of[ \t]+)?(\d(?:\.\d{1,2})?)[ \t]*(?:x|\u00d7|times)(?:[ \t]*(?:the[ \t]+)?(?:monthly[ \t]+)?rent\b|[ \t]*1(?!\d|\.\d)(?![ \t]*(?:ba|bath))|(?![\w]))", re.I)
