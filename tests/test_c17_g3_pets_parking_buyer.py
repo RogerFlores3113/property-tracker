@@ -256,4 +256,4 @@ def test_bullet_quote_does_not_carry_the_pet_line(pets):
     assert r["pet_weight_limit"] == 40 and r["pet_count_limit"] == 2
     n = notes(r)
     assert "40 lb" not in n and "pets welcome" not in n and "pets ok" not in n and "pets allowed" not in n
-    assert "budget about $75" in n  # the amount itself is still quoted by name
+    assert r.get("utilities_estimate") == 75  # cycle 17 join: G1 now counts the electric budget, so it is not quoted

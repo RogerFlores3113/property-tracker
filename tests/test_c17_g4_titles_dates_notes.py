@@ -273,7 +273,7 @@ def test_amount_label_leaves_out_a_placed_amount():
 
 def test_bullet_quote_stops_at_the_bullet():
     r = P("LUXE 1x1 | $1,585/mo | The Hub-style living\nUnit 410, 33 N Neil St, Champaign. W/D in unit * DW * heated garage $120/mo (required for all residents) * Water, sewer, trash all included * Electric not included, budget about $75 * pets welcome (dogs 40 lb max, 2 pets max) * built 2024 * 11-month lease available, also 12-month * Amenity package $35/month (pool, gym) *")
-    assert any('"Electric not included, budget about $75"' in n for n in notes(r))
+    assert r.get("utilities_estimate") == 75  # cycle 17 join: G1 now counts the electric budget instead of quoting it
     assert not any("pets welcome (dogs 40 lb max" in n and "budget" in n for n in notes(r))
 
 
