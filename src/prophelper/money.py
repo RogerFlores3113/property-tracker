@@ -796,7 +796,7 @@ def figure_explained(note: str, start: int, end: int) -> str:
     sent = text[slo:shi]  # the whole sentence: "2 bedroom plans at $1,380; $1,520; $1,480" says "plans" once for every figure of the list
     if _EXPL_OLD.search(seg):
         return "old"
-    if _EXPL_ONE_TIME.search(seg) and not re.search(r"\bper\s+month\b|/\s*mo\b", after[:14], re.I):
+    if _EXPL_ONE_TIME.search(seg) and not re.search(r"\bper\s+month\b|/\s*mo\b|\ba\s+month\b|\bmonthly\b|\beach\s+month\b", after[:18], re.I):
         return "one_time"
     if _EXPL_SPECIAL.search(seg) and not re.search(r"\bfees?\b|\bdues\b|\bhoa\b|\butilit", seg, re.I):
         return "special"
