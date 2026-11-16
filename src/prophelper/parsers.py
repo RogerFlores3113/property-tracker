@@ -307,6 +307,41 @@ def _two_rents(text: str) -> tuple[str, str, float, str] | None:
     return None
 
 
+_OTHER_UNIT_RENT = re.compile(r"(?<![\w$])(studio|\d{1,2}[ \t-]*(?:br|bd|bds|beds?|bedrooms?))\b[ \t:,\-]*(?:from[ \t]+|at[ \t]+)?\$\s?(\d{1,2},\d{3}|\d{3,5})(?![\d,])(?![ \t]*(?:/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room)))", re.I)
+
+
+def _per_room_split_note(text: str, price: float | None) -> str:
+    """Cycle 17: "$1,425 ($712 per room)", "$3,225 per month; $1,075 per room", "2 BR $1,900 total ($950 per room) / 1 BR $1,325". The
+    rent read is the whole place. A per-room figure below it is a share of it, so it is named in one plain note, and a
+    separate unit at another price ("1 BR $1,325") is named as a different unit. "" when there is no such split."""
+    if price is None:
+        return ""
+    pm = None
+    for m in _PER_ROOM_RENT.finditer(text):
+        v = _num(m.group(2))
+        if 200 <= v < price:
+            pm = m
+            break
+    if not pm:
+        return ""
+    per = _num(pm.group(2))
+    rooms = round(price / per)
+    if rooms >= 2 and abs(per * rooms - price) <= max(5.0, 0.01 * price):
+        note = f"The listing gives ${price:,.0f} a month for the whole place and ${per:,.0f} per room. The per-room figure is part of the total, so ${price:,.0f} is saved as the rent."
+    else:  # the two figures do not add up (a self-correcting listing): say so, claim nothing
+        note = (f"The listing gives ${price:,.0f} a month and also ${per:,.0f} per room, which do not add up to the same rent. "
+                f"${price:,.0f} is saved as the rent. Ask what the whole place costs and what each person pays.")
+    others = []
+    for om in _OTHER_UNIT_RENT.finditer(text):
+        v = _num(om.group(2))
+        label = " ".join(om.group(1).upper().split())
+        if v != price and v != per and 200 <= v <= 30000 and not any(label == o[0] for o in others):
+            others.append((label, v))
+    if others:
+        note += " " + " ".join(f"A separate {l} option at ${v:,.0f} is a different unit, so it is not used as the rent." for l, v in others[:2])
+    return note
+
+
 _DISCOUNTS = (
     re.compile(r"\$\s?\d[\d,]*(?:\.\d\d)?[ \t]+off\b[^.\n;!]{0,40}?\b(?:first|1st|last|month|rent|move[- ]?in|lease|signing)[^.\n;!]{0,25}", re.I),
     re.compile(r"\b\d{1,2}[ \t]*%[ \t]+off\b[^.\n;!]{0,40}?\b(?:first|1st|last|month|rent|move[- ]?in|lease|signing)[^.\n;!]{0,25}", re.I),
@@ -1745,6 +1780,21 @@ def _move_in_months(text: str) -> tuple[int, bool]:
     return 2, bool(m.group(1))
 
 
+def _deposit_each(text: str) -> float | None:
+    """Cycle 17: a deposit given once for several items: "First, last and security deposit required ($2,800 each)", "first month,
+    last month and deposit, $1,500 each", "$2,800 each for first, last and security deposit". The amount is what each item
+    costs, so it is the security deposit. None when the line gives no per-item amount."""
+    amt = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])"
+    items = r"(?:first|1st)\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:last)\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:a[ \t]+|the[ \t]+)?(?:security[ \t]+)?deposit\b"
+    for pat in (items + r"[^.\n;$]{0,40}?[ \t(,:\-]*" + amt + r"[ \t]*(?:each|apiece|per[ \t]+item|for[ \t]+each)\b",
+                amt + r"[ \t]*(?:each|apiece)\b[ \t]*(?:for|toward|on)?[ \t]*(?:the[ \t]+)?" + items):
+        m = re.search(pat, text, re.I)
+        if m:
+            v = _num(m.group(1))
+            return v if 100 <= v <= 50000 else None
+    return None
+
+
 _WORD_NUM = {"one": 1, "a": 1, "1": 1, "two": 2, "2": 2}
 
 
@@ -1899,13 +1949,15 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
         or re.search(r"\b(\d{1,2}(?:\.\d+)?)[ \t]*%[ \t]+(?:buyer'?s?|buying)[ \t]+agent'?s?[ \t]+(?:commission|fee|compensation)\b", text, re.I)
     if cm:
         notes.append(f"The listing mentions a buyer agent commission of {float(cm.group(1)):g}%. No amount is saved and it is not counted anywhere. Ask who pays it and whether it changes what you owe.")
-    for pat in (r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]+(?:\w+[ \t]+)?transfer[ \t]+fee\b", r"\btransfer[ \t]+fee\b[ \t:\-=]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)"):
+    for pat in (r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]+(?:\w+[ \t]+)?transfer[ \t]+fee\b", r"\btransfer[ \t]+(?:fee|tax)\b[ \t:\-=]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
+                r"\btransfer[ \t]+fees?[ \t]+(?:is[ \t]+|are[ \t]+)?(?:paid|due|payable|covered|owed)[ \t]+by[ \t]+(?:the[ \t]+)?(?:buyer|seller)\b[ \t:\-=,]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
+                r"\b(?:buyer|seller)[ \t]+(?:pays|will[ \t]+pay|to[ \t]+pay|covers|is[ \t]+responsible[ \t]+for)[ \t]+(?:the[ \t]+)?transfer[ \t]+fees?\b[ \t:\-=,]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)"):
         t = re.search(pat, text, re.I)
         if t:
             amount = _num(t.group(1))
             sent = next((x for x in re.split(r"[.\n;]", text) if t.group(0) in x), "")
             buyer_pays = bool(_PAYER_BUYER.search(sent) or re.search(r"\bbuyer'?s?\b[^.\n]{0,30}\btransfer[ \t]+fee", sent, re.I)) and not _PAYER_SELLER.search(sent)
-            if buyer_pays and re.search(r"\bclosing\b|\bone[- ]time\b", sent, re.I):
+            if buyer_pays:  # cycle 17: a transfer fee the buyer pays is a closing cost, with or without the word "closing"
                 prior = out.get("closing_costs")
                 if prior in (None, ""):
                     out["closing_costs"] = _tidy_number(float(amount))
@@ -4178,6 +4230,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         price_read = unit_val
         facts.append(f"The listing gives two rents: {per_txt} a month per bedroom or room, and {unit_txt} as the {unit_kind} rent. "
                      f"The {unit_kind} rent of {unit_txt} is saved as the rent, not the {per_txt} figure. Ask which one you pay.")
+    if not two and not buying:
+        split_note = _try(lambda: _per_room_split_note(text, price_read))
+        if split_note:
+            facts.append(split_note)
     put("price", price_read)
     put("beds", _try(lambda: _beds(text)))
     conv = _try(lambda: _beds_converted(text))
@@ -4543,8 +4599,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         dep = [v for v in dep if v is not None]
         rent_now = out.get("price")
         by_months = _deposit_in_months(text)
+        each_dep = _try(lambda: _deposit_each(text))
         if dep:
             put("deposit", dep[0])
+        elif each_dep and not _SALE_WORDS.search(text):
+            put("deposit", each_dep)  # cycle 17: "first, last and security deposit ($2,800 each)"
         elif by_months and isinstance(rent_now, (int, float)) and 200 <= rent_now <= 30000 and not _SALE_WORDS.search(text):
             put("deposit", by_months * float(rent_now))  # "security deposit one month", "deposit equal to one month's rent"
         elif by_months and not _SALE_WORDS.search(text):
@@ -4573,6 +4632,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                     facts.append(f"The ${per_applicant[0]:,.0f} admin fee is charged per applicant, so it is counted as the application fee for each adult who applies.")
             elif float(out["application_fee"]) != per_applicant[0]:
                 facts.append(f"The listing also has a ${per_applicant[0]:,.0f} admin fee per applicant. It is not counted, because an application fee is already filled in. Ask whether they are two fees.")
+        mi_text = re.sub(r"\$\s?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)(?=[ \t]+(?:[\w\"\u201c\u201d'-]+[ \t]+){0,2}fees?\b)", " ", mi_text)  # cycle 17: "$100/month community fee" is monthly, never a one-time move-in fee
         mi = _money_after(_without_pet_one_time(mi_text), r"(?:admin(?:istrative|istration)?|move[- ]in|lease[- ](?:signing|initiation|admin)|processing|community|one[- ]time|key) fees?", hi=5000)
         clean_in, clean_notes = _try(lambda: _cleaning_fee(text)) or (None, [])
         facts.extend(clean_notes)
@@ -4582,10 +4642,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             rent_l = out.get("price")
             if isinstance(rent_l, (int, float)) and 200 <= rent_l <= 30000 and not _SALE_WORDS.search(text):
                 landlord_fee = landlord_months * float(rent_l)
-                facts.append(f"The landlord fee is {landlord_months:g} month{'s' if landlord_months != 1 else ''} of rent (${landlord_fee:,.0f}), worked out from the rent. "
+                facts.append(f"The landlord fee is {_months_words(landlord_months)} of rent (${landlord_fee:,.0f}), worked out from the rent. "
                              "It is counted as a one-time move-in fee.")
             else:
-                facts.append(f"The listing says the landlord fee is {landlord_months:g} month{'s' if landlord_months != 1 else ''} of rent, but the rent was not read, so no amount is saved. Fill it in once you know the rent.")
+                facts.append(f"The listing says the landlord fee is {_months_words(landlord_months)} of rent, but the rent was not read, so no amount is saved. Fill it in once you know the rent.")
         if mi or clean_in or landlord_fee:
             base = (sum(dict.fromkeys(mi).keys()) if len(mi) > 1 else mi[0]) if mi else 0.0
             put("move_in_fees", base + (clean_in or 0.0) + landlord_fee)
@@ -4603,8 +4663,14 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 else:
                     facts.append(f"The listing says the broker fee is {broker_months:g} month{'s' if broker_months != 1 else ''} of rent, but the rent was not read, so the broker fee is left empty. Fill it in once you know the rent.")
         monthly = 0.0
-        for v in dict.fromkeys(_money_monthly_fees(text)):
+        pool = list(dict.fromkeys(_money_monthly_fees(text)))
+        for v in pool:
             monthly += v
+        for v in _try(lambda: _monthly_list_fees(text)) or []:  # cycle 17: each item of a "Monthly:" list counts, equal amounts too
+            if v in pool:
+                pool.remove(v)  # already counted by the reader above
+            else:
+                monthly += v
         counted, listed = _try(lambda: _extra_monthly(text)) or ([], [])
         for label, v in counted:
             monthly += v
@@ -4622,12 +4688,19 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month. It is not counted in the cost because it looks optional. Add it to other monthly fees if you need it.")
         for label, v in listed:
             facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month extra. It looks optional, so it is not counted in the cost. Add it to other monthly fees if you need it.")
+        already_monthly = set(_try(lambda: _money_monthly_fees(text)) or [])
         for label, v, has_period in _try(lambda: _flat_service_fees(text)) or []:
             if isinstance(out.get("utilities_estimate"), (int, float)) and abs(float(out["utilities_estimate"]) - v) < 0.01:
                 continue  # already the utilities estimate: never counted twice
+            if v in already_monthly:
+                continue  # cycle 17: "flat $30 per month for trash and lawn" is already counted above, never twice
             monthly += v
             facts.append(f"The {label} flat fee is ${v:,.0f}" + ("/month" if has_period else "") + ", counted once in other monthly fees."
                          + ("" if has_period else " The listing does not say how often, so it is counted as monthly. Ask if that is right."))
+            covered_utils = [w for w in re.findall(r"hot water|water|sewer|sewage|trash|garbage|waste", label) if w not in ("garbage", "waste", "sewage")]
+            tenant_list = [w.strip() for w in str(out.get("tenant_pays") or "").split(",")]
+            if covered_utils and has_period and not any(w in tenant_list or (w == "hot water" and "water" in tenant_list) for w in covered_utils):  # cycle 17: those utilities are paid through the flat fee, so they are not counted again
+                facts.append(f"{', '.join(dict.fromkeys(covered_utils)).capitalize()} {'is' if len(set(covered_utils)) == 1 else 'are'} paid through that flat fee, so {'it is' if len(set(covered_utils)) == 1 else 'they are'} not counted again in your utilities estimate.")
         if monthly:
             put("other_monthly_fees", monthly)
             est = out.get("utilities_estimate")
@@ -5352,12 +5425,17 @@ def _flat_service_fees(text: str) -> list[tuple[str, float, bool]]:
     pats = (r"\b(" + _FLAT_LIST + r")[ \t]*[:\-]?[ \t]*flat(?:[ \t-]?(?:fee|rate|charge))?[ \t:\-]*\$\s?(\d{1,3})(?:\.\d\d)?(?![\d,])(" + _FLAT_PERIOD + r")?",
             r"\b(" + _FLAT_LIST + r")[ \t]*[:\-]?[ \t]*\$\s?(\d{1,3})(?:\.\d\d)?(?![\d,])(" + _FLAT_PERIOD + r")?[ \t,]*(?:is[ \t]+)?flat(?:[ \t-]?(?:fee|rate|charge))?(" + _FLAT_PERIOD + r")?")
     # cycle 16: "Flat $75/mo fee for amenities", "Flat $75/mo fee covers trash and amenity", "... covers trash, pest and valet"
-    for m in re.finditer(r"\bflat[ \t]+\$\s?(\d{1,3})(?:\.\d\d)?(?![\d,])(" + _FLAT_PERIOD + r")[ \t]*(?:fee|rate|charge)?[ \t]*(?:for|covers?|covering|includes?|including)[ \t]+(?:the[ \t]+)?"
-                         r"((?:" + _FLAT_WORDS + r"|amenit(?:y|ies)|valet(?:[ \t]+trash)?|package|technology|convenience)(?:[ \t]*(?:,|/|&|\+|\band\b)[ \t]*(?:and[ \t]+)?(?:" + _FLAT_WORDS + r"|amenit(?:y|ies)|valet(?:[ \t]+trash)?|package|technology|convenience))*)", text, re.I):
-        label = " ".join(m.group(3).lower().split())
-        amount = float(m.group(1))
-        only_known = not re.sub(r"[\s,/&+]|\band\b|" + _FLAT_WORDS, "", label, flags=re.I)
-        if amount > 0 and not only_known and not any(abs(amount - a) < 0.01 for _l, a, _p in found):
+    # cycle 17: "Flat fee $85/mo covers water, sewer, trash and pest control", "$20/mo flat fee for lawn care", "Flat $20/mo for lawn care".
+    # A flat fee that covers only water, sewer or trash is the utilities estimate (another reader); one that also covers a
+    # service that is not a utility (pest control, lawn, snow, amenities) is a monthly fee, counted here.
+    _cov = (_FLAT_WORDS + r"|amenit(?:y|ies)|valet(?:[ \t]+trash)?|package|technology|convenience")
+    for m in re.finditer(r"(?:\bflat(?:[ \t-]?(?:fee|rate|charge))?[ \t:\-]*\$\s?(\d{1,3})(?:\.\d\d)?(?![\d,])(" + _FLAT_PERIOD + r")|(?<![\w$])\$\s?(\d{1,3})(?:\.\d\d)?(?![\d,])(" + _FLAT_PERIOD + r")[ \t]*flat(?:[ \t-]?(?:fee|rate|charge))?)"
+                         r"[ \t,]*(?:fee|rate|charge)?[ \t,:\-]*(?:for|covers?|covering|includes?|including|pays?[ \t]+for)[ \t]+(?:the[ \t]+)?"
+                         r"((?:" + _cov + r")(?:[ \t]*(?:,|/|&|\+|\band\b)[ \t]*(?:and[ \t]+)?(?:" + _cov + r"))*)", text, re.I):
+        label = " ".join(m.group(5).lower().split())
+        amount = float(m.group(1) or m.group(3))
+        utility_only = bool(_FLAT_UTILITY_ONLY.match(label))
+        if amount > 0 and not utility_only and not any(abs(amount - a) < 0.01 for _l, a, _p in found):
             found.append((label, amount, True))
     for pat in pats:
         for m in re.finditer(pat, text, re.I):
@@ -5372,10 +5450,14 @@ def _flat_service_fees(text: str) -> list[tuple[str, float, bool]]:
     return found
 
 
+def _months_words(n: float) -> str:
+    return "half a month" if n == 0.5 else f"{n:g} month{'s' if n != 1 else ''}"
+
+
 def _landlord_fee_months(text: str) -> float | None:
     """Months of rent a landlord fee is worth: "Landlord fee: 1 month's rent paid to Lakeshore Realty"."""
-    nums = {"one": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5}
-    m = re.search(r"\blandlord(?:'?s)?[ \t]+fee\b[ \t:\-=(]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(one|two|1|2|half)(?: a)?[ \t-]*month", text, re.I)
+    nums = {"one": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5, "1/2": 0.5, "\u00bd": 0.5, "0.5": 0.5, "one-half": 0.5, "one half": 0.5, ".5": 0.5}
+    m = re.search(r"\blandlord(?:'?s)?[ \t]+fee\b[ \t:\-=(]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(one[- ]half|1/2|\u00bd|0?\.5|one|two|1|2|half)(?: a)?[ \t-]*month", text, re.I)
     return nums[m.group(1).lower()] if m else None
 
 
@@ -5416,7 +5498,7 @@ def _money_monthly_fees(text: str) -> list[float]:
         found.append(float(m.group(1)))
     for m in re.finditer(r"\b(?:valet[ -]trash|trash[ -]valet|valet[ -]waste)(?:\s*(?:fee|service|charge))?[ \t:\-=]{0,4}\$\s?(\d{1,4})(?:\.\d\d)?(?![\d,]|\s*(?:/\s*mo|per month|monthly|a month|one[- ]time|deposit))", text, re.I):
         found.append(float(m.group(1)))  # "Valet trash $30": valet trash is always a monthly service
-    for m in re.finditer(r"\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*(?:for\s+)?" + label + r"\b", text, re.I):
+    for m in re.finditer(r"\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*(?:for\s+)?[\"\u201c\u2018']?" + label + r"\b", text, re.I):
         if re.search(r"(?:trash|internet|cable)", m.group(0), re.I) and back.match(text[m.end():]):
             continue
         found.append(float(m.group(1)))
@@ -5425,6 +5507,30 @@ def _money_monthly_fees(text: str) -> list[float]:
             continue
         found.append(float(m.group(1)))  # "$175 amenity fee monthly"
     found.extend(_internet_amenity_fees(text))
+    return found
+
+
+_LIST_FEE_LABEL = re.compile(r"\b(?:amenit(?:y|ies)|community|trash|valet|pest|package|technology|tech|convenience|smart home|internet|wi-?fi|cable|lawn|landscap\w*|snow|pool|gym|fitness|clubhouse)\b", re.I)
+
+
+def _monthly_list_fees(text: str) -> list[float]:
+    """Cycle 17: a list under a "Monthly:" heading, where only some items carry the period ("Monthly: Pest control $5, Valet trash
+    $25, Internet $60/mo required"). Every named fee in the list is a monthly fee. Internet counts only when the item says it is
+    required; an item that says optional, billed back or per use is left to the other readers."""
+    found: list[float] = []
+    for m in re.finditer(r"\bmonthly(?:[ \t]+(?:fees?|charges|costs|extras))?[ \t]*[:\-][ \t]*([^\n]*)", text, re.I):
+        body = re.split(r"\.(?=\s+[A-Z])|\.\s*$", m.group(1))[0]
+        for item in re.split(r"[,;]|\band\b(?=[ \t]+[A-Za-z][A-Za-z \t-]*\$)", body):
+            im = re.match(r"[ \t]*([A-Za-z][A-Za-z \t-]{1,30}?)[ \t]*:?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?(?![\d,])(.*)$", item)
+            if not im or not _LIST_FEE_LABEL.search(im.group(1)):
+                continue
+            label, tail = im.group(1).lower(), im.group(3)
+            if re.search(r"\b(?:optional|billed|passed|deposit|one[- ]time|set[- ]?up|install|per[ \t]+(?:use|load|visit)|/\s*(?:yr|year))", tail, re.I) \
+                    or re.search(r"\b(?:parking|garage|pet|storage|locker)\b", label):
+                continue
+            if re.search(r"internet|wi-?fi|cable", label) and not re.search(r"\b(?:required|mandatory|must)\b", tail, re.I):
+                continue
+            found.append(float(im.group(2)))
     return found
 
 
