@@ -603,14 +603,14 @@ def document_kinds_text() -> str:
     return ", ".join(k if " " not in k else f"{k} (or {k.replace(' ', '_')})" for k in DOCUMENT_KINDS)
 
 
-PRIVATE_LINK_REASON = ("That link points to this computer or a private network (like localhost, 127.0.0.1, 192.168.x.x, 10.x.x.x or a .local name), "
+PRIVATE_LINK_REASON = ("That link points to this computer or a private network (like localhost, 127.0.0.1, 192.168.x.x, 10.x.x.x, a .local name or a one-word name like corp), "
                        "not to a listing on the web, so I won't save it.")
 _PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in (
     "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
     "::/128", "::1/128", "fc00::/7", "fe80::/10"))
 
 
-def private_host(host: str) -> bool:
+def private_host(host: str, one_word: bool = False) -> bool:
     """True for a host that is this computer or a private network: localhost, 127.0.0.0/8, ::1, 10/8, 172.16/12, 192.168/16,
     169.254/16 and the other spellings of those numbers (127.1, 2130706433, 0x7f.0.0.1, ::ffff:127.0.0.1). Never looks anything up."""
     h = str(host or "").strip().strip("[]").rstrip(".").lower()
@@ -631,7 +631,8 @@ def private_host(host: str) -> bool:
             except (OSError, ValueError):
                 addr = None
     if addr is None:
-        return False
+        # cycle 24: a name with no dot ("corp", "intranet", "printer") only resolves inside a company or home network
+        return one_word and bool(re.fullmatch(r"[a-z0-9_-]+", h)) and not h.isdigit()
     if addr.version == 6 and addr.ipv4_mapped is not None:
         addr = addr.ipv4_mapped
     return any(addr in net for net in _PRIVATE_NETS if net.version == addr.version)
@@ -642,7 +643,9 @@ def link_host_private(link: Any) -> bool:
     if not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I):
         text = "https://" + text
     try:
-        return private_host(urlsplit(text).hostname or "")
+        parts = urlsplit(text)
+        parts.port  # noqa: B018 - a port that is not a number raises: that is "not a web address", not a private one
+        return private_host(parts.hostname or "", one_word=parts.scheme.lower() in ("http", "https") and bool(re.match(r"^https?://", str(link or "").strip(), re.I)))
     except ValueError:
         return False
 
@@ -671,7 +674,7 @@ def _normalize_url(url: Any) -> str:
     if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
         return ""
     host = parts.hostname.lower()
-    if private_host(host):
+    if private_host(host, one_word=True):
         return ""  # this computer or a private network is never a listing on the web
     host = host[4:] if host.startswith("www.") else host
     port = parts.port  # ValueError for a port that isn't a number (caught by normalize_url)
