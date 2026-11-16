@@ -127,7 +127,7 @@ def test_heat_not_separate_unknown_when_gas_priced(text):
 
 def test_heat_stays_when_gas_not_priced():
     r = read("Tenant pays all utilities. Water paid by owner.")
-    assert "heat" in pays_set(r)
+    assert pays_set(r) == {"electric", "gas"}  # cycle 23: "heat is gas" means the gas bill is the heat, so heat is not a separate utility
 
 
 def test_total_for_everything_stays_unnamed():

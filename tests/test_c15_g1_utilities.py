@@ -162,7 +162,7 @@ def test_heat_incl_then_gas_tenant():
 def test_heat_is_gas_tenant_pays_counts_110_once():
     text = "Heat is gas, tenant pays, about $110"
     out = read(text)
-    assert keys(out) == (None, "gas, heat", 110)
+    assert keys(out) == (None, "gas", 110)  # cycle 23: "heat is gas" is gas only, heat is not a second utility the renter pays
     assert listing_estimate_names(RENT + text) == ["gas", "heat"]
     assert missing(text) == []
 
