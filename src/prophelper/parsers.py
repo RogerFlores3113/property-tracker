@@ -2436,7 +2436,7 @@ def _flat_util_fee(low: str, words: str | None = None) -> tuple[str, float] | No
     monthly = r"(?:/\s*mo(?:nth)?|per month|monthly|a month)"
     lst = r"((?:(?:" + words + r")[ \t]*(?:,|/|&|and|\+)?[ \t]*(?:and[ \t]+)?){1,6})"
     flat = r"flat(?:[ -]?(?:fee|rate|charge))?"
-    m = re.search(lst + r"[:\-]?[ \t]*(?:(?:is|are)[ \t]+)?(?:an?[ \t]+)?(?:utilit\w*[ \t]+)?" + flat + r"[ \t:\-]*\$\s?(\d{1,4})(?:\.\d\d)?\s*" + monthly, low)
+    m = re.search(lst + r"[:\-]?[ \t]*(?:(?:is|are)[ \t]+)?(?:an?[ \t]+)?(?:utilit\w*[ \t]+)?" + flat + r"[ \t:\-]*(?:of[ \t]+)?\$\s?(\d{1,4})(?:\.\d\d)?\s*" + monthly, low)
     if m:
         found = re.findall(words, m.group(1))
         return (_ordered_utilities(found), float(m.group(2))) if found else None
