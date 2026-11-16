@@ -90,9 +90,9 @@ def test_partial_utilities_listed_are_unknown(store):
     es = _es(store, s, a, b)
     secs = compare.build_rows(es)
     r = _rows(secs)
-    assert r["missing"]["cells"][0]["text"] == "Unknown: electric, gas and internet (not listed)"
+    assert r["missing"]["cells"][0]["text"] == "Unknown: electric, gas and internet (not listed), parking, other monthly fees"  # cycle 24: parking and other fees read Not known in the cost rows
     assert r["unknown"]["cells"][0]["text"] == "Unknown: electric, gas and internet"
-    assert r["missing"]["cells"][1]["text"] == "Nothing unknown"
+    assert r["missing"]["cells"][1]["text"] == "Unknown: parking, other monthly fees"
     assert "not counted yet" in r["cost"]["cells"][0]["text"]
     out = text(call(server(store), "compare_places", place_ids=[a["id"], b["id"]]))
     still = [l for l in out.split("\n") if l.startswith("Still unknown:")][0]
@@ -114,12 +114,12 @@ def test_guessed_utilities_and_unknown_pet_charges_are_not_nothing_unknown(store
     assert "Utilities guessed" in still and "pet charges" in still
 
 
-def test_nothing_unknown_stays_when_everything_is_known(store):
+def test_not_listed_parking_and_fees_are_named_when_the_rest_is_known(store):
     s = _rent_search(store)
     a, _ = store.add_place(title="A", address="1 A St", price=1500, beds=1, **_full())
     b, _ = store.add_place(title="B", address="2 A St", price=1600, beds=1, **_full())
     r = _rows(compare.build_rows(_es(store, s, a, b)))
-    assert r["missing"]["cells"][0]["text"] == "Nothing unknown"
+    assert r["missing"]["cells"][0]["text"] == "Unknown: parking, other monthly fees"  # cycle 24: both rows read Not known in the cost rows, so this row never says Nothing unknown
 
 
 # ---- 3: lowest complete cost

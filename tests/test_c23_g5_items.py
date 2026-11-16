@@ -252,7 +252,7 @@ def test_update_place_drops_the_starting_at_note_and_the_missing_amount(store):
     out = text(call(srv, "update_place", place_id=pid, price=1445))
     notes = store.get_place(pid)["reader_notes"]
     assert "starting at" not in notes and "$1,250" not in notes and "$35" in notes  # the other stated amount stays
-    assert "$1,250" not in out and "missing: the $35 amount in the listing notes" in out  # cycle 23 join: G4 names a figure by its own label
+    assert "$1,250" not in out and "missing: the $35" not in out  # cycle 24: the surety bond is an alternative to the deposit, so its $35 is a note, not a missing amount
 
 
 def test_a_later_update_does_not_bring_the_old_note_back(store):

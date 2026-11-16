@@ -179,6 +179,11 @@ def normalize_money(text: str) -> str:
         text = re.sub(r"\bUSD\s?\$?\s?(?=\d)", "$", text, flags=re.I)
         text = re.sub(r"(?<![\w$.,])(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?\s?(?:USD|US dollars?|dollars?|bucks)\b", lambda m: "$" + m.group(1) + (m.group(2) or ""), text, flags=re.I)
 
+        # cycle 24: a European thousands dot ("$1.700", "$1.700,50", "$12.500") is $1,700 / $1,700.50 / $12,500, never $1.70 (a dot with exactly three digits after it
+        # and no more is a thousands mark: nobody writes a thousandth of a dollar)
+        text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+),(\d{2})(?!\d)", lambda m: "$" + m.group(1).replace(".", ",") + "." + m.group(2), text)
+        text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+)(?![\d.]|,\d)", lambda m: "$" + m.group(1).replace(".", ","), text)
+
         def _k(m: re.Match[str]) -> str:
             n = float(m.group(1).replace(",", "")) * 1000
             return "$" + (f"{n:,.0f}" if n == int(n) else f"{n:,.2f}")
@@ -9556,6 +9561,10 @@ def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str], skip_util:
             phrase = _tidy_quote(phrase, text, hit["start"], hit["end"])
         if phrase and _quotes_title(phrase, out.get("title")) and item and len(item) < len(phrase):
             phrase = item  # the figure sits in the title line, so only its own item is quoted
+        if phrase and _quotes_title(phrase, out.get("title")):
+            tight = _hostile_figure_quote(text, hit["start"], hit["end"])  # cycle 24: a one-line listing whose title holds the figure: the figure with a few clean words beside it
+            if tight and not _quotes_title(tight, out.get("title")):
+                phrase = tight
         if not phrase or _quotes_title(phrase, out.get("title")) or any(f'"{phrase}"' in n for n in [*facts, *notes]):
             continue
         nk = dropguard.not_cost_kind(text, hit["start"], hit["end"], hit["amount"], out.get("price"))
