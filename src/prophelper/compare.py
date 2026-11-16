@@ -192,7 +192,13 @@ def partial_utilities(p: dict[str, Any]) -> list[str]:
     listed = str(p.get("utilities_included") or "").strip()
     if not listed or listed.lower() in money_mod.NOTHING_WORDS or _utilities_fully_included(p) or money_mod.tenant_pays_list(p):
         return []
-    return [name for name, pat in _STANDARD_UTILITIES if not pat.search(listed)]
+    names = [name for name, pat in _STANDARD_UTILITIES if not pat.search(listed)]
+    text = str(p.get("listing_text") or "")
+    if text and names:
+        seen = [n for n in names if next(pat for name, pat in _STANDARD_UTILITIES if name == n).search(text)]
+        if seen:
+            return seen  # a utility the listing never mentions (internet) is not called unknown beside ones it does
+    return names
 
 
 def _uncounted(p: dict[str, Any]) -> list[str]:
