@@ -359,6 +359,25 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -
             "deposit_unknown": unknown}
 
 
+def _listing_cash_note(place: dict[str, Any], cash: dict[str, Any] | None) -> str:
+    """"The listing says cash to close is about $55,000; ours is $41,200." Empty when the listing quotes none or there is no figure of ours."""
+    if not cash:
+        return ""
+    try:
+        from .parsers import listing_cash_to_close
+        est = listing_cash_to_close(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        return ""
+    if not est:
+        return ""
+    ours = cash["total"]
+    if abs(ours - est) < 1:
+        return f"The listing says cash to close is about {_dollars(est)}, the same as ours."
+    guess = " Ours uses a guess for the closing costs." if cash.get("has_estimate") else ""
+    return (f"The listing says cash to close is about {_dollars(est)}; ours is {_dollars(ours)}.{guess} "
+            "Ask what the listing's figure includes (for example a different down payment or loan costs).")
+
+
 def _listing_estimate_note(place: dict[str, Any], total: float | None, lines: list[dict[str, Any]]) -> str:
     """"The listing estimates $2,310/mo; ours is $2,708 because it counts PMI and HOA." Empty when the listing quotes
     no payment of its own (it is read from the saved listing text, so no column is needed)."""
@@ -402,6 +421,15 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
     if sa and str(place.get("special_assessment_payer") or "") == "buyer":
         parts.append({"label": "Special assessment (you pay it)", "amount": _r(sa), "estimated": False})
     left_out: list[str] = []
+    try:  # one-time fees the listing says the buyer pays at closing (capital improvement, reserve contribution, move-in fee)
+        from .parsers import buyer_one_time_fees
+        paid, unclear = buyer_one_time_fees(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        paid, unclear = [], []
+    for label, amount in paid:
+        parts.append({"label": f"One-time fee at closing ({label})", "amount": _r(amount), "estimated": False})
+    for label, amount in unclear:
+        left_out.append(f"a {_dollars(amount)} {label} isn't counted because who pays it isn't known")
     if sa and str(place.get("special_assessment_payer") or "") not in ("buyer", "seller"):
         left_out.append(f"a {_dollars(sa)} special assessment isn't counted because who pays it isn't known")
     credit = num(place.get("seller_credit"))
@@ -482,7 +510,7 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
         notes.append(f"A special assessment of {_dollars(sa)} is paid by the seller, so it is not counted.")
     elif sa:
         notes.append(f"A special assessment of {_dollars(sa)} is listed but who pays it is not filled in, so it is not counted. Ask who pays it, then set Who pays on this page.")
-    listing_note = _listing_estimate_note(place, total, lines)
+    listing_note = " ".join(x for x in (_listing_estimate_note(place, total, lines), _listing_cash_note(place, cash)) if x)
     return {"mode": "buy", "listing_estimate_note": listing_note, "total": total, "lines": lines, "missing": missing, "uncounted": uncounted,
             "notes": notes, "deposit": None,
             "down_payment": None if down is None else _r(down), "loan_amount": None if loan is None else _r(loan),

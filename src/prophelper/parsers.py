@@ -2126,6 +2126,14 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
             notes.append(f"The listing says parking is ${cost:,.0f}/month. The cost of buying does not count parking, so it is not counted anywhere. "
                          "Ask whether it is required, and add it to your own budget if it is.")
     fee = out.pop("move_in_fees", None)
+    counted_fees, unclear_fees = _try(lambda: buyer_one_time_fees(text)) or ([], [])
+    for label, amount in counted_fees:
+        notes.append(f"The listing says the buyer pays the ${amount:,.0f} {label} at closing. It is counted in the cash to close as a one-time fee, not in the monthly cost. "
+                     "Ask the seller's agent to confirm it.")
+    for label, amount in unclear_fees:
+        notes.append(f"The listing mentions a ${amount:,.0f} {label} but does not say who pays it, so it is not counted in the cash to close. Ask who pays it.")
+    if fee is not None and (any(abs(a - fee) < 0.01 for _l, a in counted_fees + unclear_fees)):
+        fee = None  # the move-in fee has its own note above
     if fee is not None:
         notes.append(f"The listing mentions a ${fee:,.0f} move-in fee. The cash to close does not count it, so it is not counted anywhere. Ask who pays it.")
     m = re.search(r"\bbrokerage[ \t]+fee\b[^.\n;$%]{0,25}?(\d{1,2}(?:\.\d+)?)[ \t]*%([^.\n;]{0,30})", text, re.I) \
@@ -2164,6 +2172,73 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
                 notes.append(f"The listing mentions a ${amount:,.0f} transfer fee. It is not counted anywhere. Ask what it is for and who pays it.")
             break
     return notes
+
+
+_BUYER_FEE_NAME = (r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contribution|charge))?|reserve(?:s)?(?:[ \t]+fund)?(?:[ \t]+(?:contribution|fee|deposit|payment))|"
+                   r"reserve[ \t]+fund|move[- ]in[ \t]+fee|initiation[ \t]+fee|working[ \t]+capital(?:[ \t]+contribution)?|capital[ \t]+contribution")
+_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:one[- ]time[ \t]+|new[ \t]+)?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
+                        r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
+
+
+def buyer_one_time_fees(text: str) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+    """Cycle 18: one-time fees on a home for sale that the buyer pays at closing ("Buyer to pay $2,400 capital improvement fee at closing",
+    "$1,800 reserve fund contribution at closing", "Buyer pays $800 move-in fee to the association"). Returns (counted, unclear): counted
+    when the sentence says the buyer pays or says at closing (and not the seller), unclear when no payer is named. A fee the seller pays,
+    a monthly or yearly amount and a plain "capital contribution" (read with the special assessment) are left out of counted."""
+    counted: list[tuple[str, float]] = []
+    unclear: list[tuple[str, float]] = []
+    seen: set[tuple[str, float]] = set()
+    for sent in re.split(r"[.\n;]", text):
+        for m in _BUYER_FEE.finditer(sent):
+            label = " ".join((m.group("n1") or m.group("n2")).lower().split())
+            amount = _num(m.group(1) if m.group("n1") else m.group(m.lastindex))
+            if re.fullmatch(r"(?:working[ \t]+)?capital[ \t]+contributions?", label):
+                continue  # read with the special assessment (it is already in the cash to close)
+            if (label, amount) in seen or not 50 <= amount <= 100000:
+                continue
+            seen.add((label, amount))
+            if _PAYER_SELLER.search(sent) and not _PAYER_BUYER.search(sent):
+                continue
+            if _PAYER_BUYER.search(sent) or re.search(r"\bat[ \t]+closing\b|\bat[ \t]+settlement\b|\bdue[ \t]+at[ \t]+(?:closing|signing)\b", sent, re.I):
+                counted.append((label, amount))
+            else:
+                unclear.append((label, amount))
+    return counted, unclear
+
+
+_MASTER_DUES = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(/[ \t]*\w+|per[ \t]+\w+)?[ \t]*(annual(?:ly)?|yearly|monthly|quarterly)?[ \t]*(?:master|umbrella|master[- ]association|master[- ]hoa|sub[- ]?association)[ \t]+(?:association[ \t]+|hoa[ \t]+)?(?:dues|fees?)"
+                          r"|\b(?:master|umbrella)[ \t]+(?:association[ \t]+|hoa[ \t]+)(?:dues|fees?)[ \t:\-=]{0,4}\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(/[ \t]*\w+|per[ \t]+\w+|annual(?:ly)?|yearly|monthly|quarterly)?", re.I)
+
+
+def _master_dues(text: str) -> tuple[float, str, float, str] | None:
+    """Cycle 18: "HOA fee $210/month plus $600 annual master association dues". Returns (monthly amount, the phrase, the amount as written, text with the
+    phrase blanked) or None when the period is not clear."""
+    m = _MASTER_DUES.search(text)
+    if not m:
+        return None
+    if m.group(1) is not None:
+        value, per = _num(m.group(1)), " ".join(((m.group(2) or "") + " " + (m.group(3) or "")).lower().split())
+    else:
+        value, per = _num(m.group(4)), (m.group(5) or "").lower()
+    if re.search(r"annual|yearly|/\s*y|per\s+y", per):
+        monthly = value / 12
+    elif re.search(r"quarter", per):
+        monthly = value / 3
+    elif re.search(r"mo", per):
+        monthly = value
+    else:
+        return None
+    phrase = " ".join(m.group(0).split())
+    return round(monthly, 2), phrase, value, text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+
+
+_LISTING_CASH_TO_CLOSE = re.compile(r"\bcash[ \t]+(?:needed[ \t]+)?to[ \t]+close(?:[ \t]+estimate)?[ \t]*(?:is|of|:|=|-|about|around|approx\.?)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?", re.I)
+
+
+def listing_cash_to_close(text: str) -> float | None:
+    """The cash to close figure the listing quotes itself ("Cash to close estimate: $55,000"), or None."""
+    m = _LISTING_CASH_TO_CLOSE.search(text or "")
+    return _num(m.group(1)) if m else None
 
 
 def _free_rent_match(text: str) -> re.Match[str] | None:
@@ -2226,7 +2301,7 @@ def _buyer_closing_charges(text: str):
         if re.search(r"/\s*(?:mo|yr)|per[ \t]+(?:month|year)|monthly|yearly|annual|quarterly|each[ \t]+(?:month|year)|seller|owner", sent, re.I) and not _PAYER_BUYER.search(sent):
             continue
         contrib = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|new[ \t]+)?((?:working[ \t]+)?capital[ \t]+contributions?)\b"
-                            r"|\b((?:working[ \t]+)?capital[ \t]+contributions?)\b[ \t:\-=(]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", sent, re.I)
+                            r"|\b((?:working[ \t]+)?capital[ \t]+contributions?)\b[ \t:\-=(]{0,4}(?:of[ \t]+)?(?:(?:due[ \t]+|payable[ \t]+|paid[ \t]+)?at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", sent, re.I)
         if contrib and re.search(r"\bat closing\b|\bone[- ]time\b|\b(?:buyer|due at|paid at)\b", sent, re.I):
             amount = _num(contrib.group(1) or contrib.group(4))
             yield amount, (contrib.group(2) or contrib.group(3)).lower(), sent
@@ -5460,6 +5535,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if cut:
             facts.append(f"Price reduced ${cut:,.0f}.")
         hoa = _try(lambda: _hoa(text))
+        master = _try(lambda: _master_dues(text))
+        if master:  # cycle 18: "$600 annual master association dues" next to "HOA fee $210/month": the monthly share is added to the HOA
+            base_hoa = _try(lambda: _hoa(master[3]))
+            if base_hoa is not None and base_hoa > 0:
+                hoa = round(base_hoa + master[0], 2)
+                facts.append(f"The listing gives an HOA fee of ${base_hoa:,.0f}/month and also master association dues ({master[1]}). The dues are ${master[0]:,.0f}/month, "
+                             f"so the HOA is saved as ${hoa:,.0f}/month. Ask whether the dues are already part of the HOA fee.")
+            elif base_hoa is None:
+                hoa = master[0]
+                facts.append(f"The listing gives master association dues ({master[1]}), saved as ${master[0]:,.0f}/month in the HOA. Ask whether there are other association fees.")
         if not buying and _try(lambda: listing_hoa_in_rent(text)):
             # HOA dues that are part of the rent are already in the rent: nothing is saved or added on top
             hoa = None
