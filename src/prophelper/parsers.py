@@ -2065,7 +2065,7 @@ def _parking_second_only(text: str) -> tuple[str, str] | None:
 
 
 _Q_TOPIC = re.compile(r"\b(?:park(?:ing)?|garage|carport|driveway|pets?|dogs?|cats?|animals?|yard)\b", re.I)
-_Q_SENTENCE = re.compile(r"[^.!?\n|;]*\?|[^.!?\n|;]*\b(?:please\s+ask|ask\s+us\s+(?:about|if|whether))\b[^.!?\n|;]*[.!]?", re.I)
+_Q_SENTENCE = re.compile(r"[^.!?\n|;]*\?(?=[ \t]*(?:$|\n|\||(?-i:[A-Z])|[\"'\u201c\u2018\-*\u2022]))|[^.!?\n|;]*\b(?:please\s+ask|ask\s+us\s+(?:about|if|whether))\b[^.!?\n|;]*[.!]?", re.I)
 
 
 def _drop_question_sentences(text: str) -> tuple[str, list[str]]:
@@ -2109,6 +2109,8 @@ def _parking_free_plus_upgrade(text: str) -> tuple[str, float, list[str]] | None
         pm = _ITEM_PRICE.search(item)
         price = float(pm.group(1).replace(",", "") + ("." + pm.group(2) if pm.group(2) else "")) if pm else None
         if price is not None and price > 0 and _UPGRADE_WORDS.search(item) and not _PARKING_REQUIRED.search(item):
+            if _PARKING_OPTIONAL.search(item):
+                return None  # "garage available $90", "optional garage $100": the optional-parking reader has its own note for these
             yearly = bool(pm.group(3))
             upgrades.append((re.sub(r"\s*[:\-=(]*\s*\$.*$", "", item).strip(" :-(") or "an upgraded spot", price, yearly))
         elif (price == 0 or (price is None and _FREE_ITEM.search(item))) and _PLAIN_SPOT.search(item) and not _UPGRADE_WORDS.search(item):
@@ -2311,7 +2313,7 @@ def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | No
         if not kind:  # cycle 21: "Parking $0, street" names its kind right after the price
             zm = re.search(r"\bparking\b(?:[ \t]+[a-z]+){0,3}[ \t:,\-]*\$\s?0(?:\.00)?[ \t]*[,;(\-]?[ \t]*([^\n.;|]{0,30})", low)
             kind = (_parking_kind_words(zm.group(1)) if zm else "") or "lot"
-    if cost is None and kind != "none" and re.search(r"(?:\bparking\b|\b(?:\d|one|two|three|four)[ \t]+(?:[a-z-]+[ \t]+){0,3}(?:spots?|spaces?|stalls?)\b)[^\n.;|$]{0,40}?[,:\-(][ \t]*\$\s?0(?:\.00)?(?!\d|\.\d|,\d)(?![ \t]*(?:[-\u2013\u2014]|to\b))", low):
+    if cost is None and kind != "none" and re.search(r"(?:\bparking\b|\b(?:\d|one|two|three|four)[ \t]+(?:[a-z-]+[ \t]+){0,3}(?:spots?|spaces?|stalls?)\b)[^\n.;|$]{0,40}?[,:\-(]?[ \t]*\$\s?0(?:\.00)?(?!\d|\.\d|,\d)(?![ \t]*(?:[-\u2013\u2014]|to\b))", low):
         cost = 0.0  # cycle 25: "Parking: 1 off-street spot, $0" and "1 off-street parking space, $0": the listing gives $0
         kind = kind or _parking_kind_words(low) or "lot"
     if cost is None and kind and kind != "none" and re.search(r"\bparking\b[^.\n;$]{0,30}\b(?:at|for|with)\s+no\s+(?:extra\s+|additional\s+)?(?:charge|cost|fee)\b|\bno\s+(?:extra\s+|additional\s+)?(?:charge|cost|fee)\s+for\s+(?:\w+\s+){0,2}parking\b", low):
@@ -8237,9 +8239,6 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     weight_note = _try(lambda: _pet_weight_unclear(ptext)) or ""
     if weight_note:
         facts.append(weight_note)
-    waiver_note = _try(lambda: _pet_weight_waiver_note(ptext, out)) or ""
-    if waiver_note:
-        facts.append(waiver_note)
     utext = _util_text(text)
     included = _try(lambda: _utilities(utext)) or ""
     pays = _try(lambda: _tenant_pays(utext)) or ""
@@ -8681,8 +8680,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts.extend(_try(lambda: _month_to_month_note(text, lease_read)) or [])
     facts.extend(_try(lambda: _commute_claims(text)) or [])
     put("year_built", _try(lambda: _year_built(text)))
-    facts += [f"{line.rstrip('.')}." for line in (_try(lambda: _pet_limits(ptext)) or [])
-              if not _pet_limit_is_in_fields(line, out)]
+    kept_limits = [f"{line.rstrip('.')}." for line in (_try(lambda: _pet_limits(ptext)) or [])
+                   if not _pet_limit_is_in_fields(line, out)]
+    facts += kept_limits
+    if not any(_WEIGHT_WAIVER.search(k) for k in kept_limits):  # cycle 25: the weight limit can be waived on approval, said once (a kept line that says it already is enough)
+        waiver_note = _try(lambda: _pet_weight_waiver_note(ptext, out)) or ""
+        if waiver_note:
+            facts.append(waiver_note)
 
     def fees() -> None:
         dep_src, wired = _split_wired_deposit(dep_text)
