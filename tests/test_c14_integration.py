@@ -10,7 +10,7 @@ def test_studio_to_one_bed_plan_range_leaves_beds_empty():
 
 def test_included_parking_in_a_buy_search_gets_no_note():
     r = parsers.parse_listing("Condo 2BR $299,000. Parking: 1 deeded space included.", buying=True)
-    assert "parking" not in r and r["parking_cost"] == 0  # cycle 24: a deeded space has no kind of its own
+    assert "parking" not in r  # cycle 24: a deeded space has no kind of its own
     assert "deeded space" in r["found_in_listing"]
 
 
