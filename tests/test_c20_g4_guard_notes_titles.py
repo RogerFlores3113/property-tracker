@@ -34,7 +34,8 @@ def test_guard_leaves_no_unaccounted_figure_in_the_corpus():
 def test_bare_multiple_is_not_placement():
     t = "2 BEDS | $1,475\nParking: Reserved $40 or street (free)\nFees: Application $35, Move-in fee $150, Parking permit $120/yr.\n"
     n = parse_listing(t, "")["found_in_listing"]
-    assert "$120" in n and "$35" in n and "Only $35 and $120 of that are not counted" in n
+    # cycle 20 join: G2 now reads "Application $35" from the Fees line, so only the yearly permit is left to quote
+    assert "$120" in n and "Only $120 of that is not counted" in n
 
 
 def test_period_words_support_multiple():
