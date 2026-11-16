@@ -3493,6 +3493,71 @@ def _closing_items(text: str) -> tuple[float, str] | None:
     return None
 
 
+_EXTRA_MONTHLY_LABEL = (r"(?:capital[ \t]+(?:reserves?|improvements?)|reserves?|amenit(?:y|ies)|club[ \t]?house|master[ \t]+association|master[ \t]+assoc\.?|sinking[ \t]+fund|"
+                        r"storage|elevator|doorman|security|shuttle)")
+_EXTRA_MONTHLY_PER = r"(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|each[ \t]+month|monthly\b)"
+_EXTRA_AMT = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d)"
+
+
+def _hoa_extra_monthly(text: str) -> list[tuple[float, str]]:
+    """Cycle 24: a second monthly charge next to the HOA on a sale listing ("HOA $475/month plus a $75 monthly capital reserve fee",
+    "Amenity fee: $40/month"). Returns (monthly amount, plain label) for each. A one-time, yearly, seller-paid, optional or included charge,
+    and an assessment (read by the assessment readers), is not here."""
+    out: list[tuple[float, str]] = []
+    for seg in re.split(r"[.\n;](?!\d)", text):
+        if re.search(r"\bone[- ]time\b|\bat[ \t]+closing\b|\bseller|\bspecial\b|\bassessments?\b|\boptional\b|\bavailable\b|\bincluded\b|\bif[ \t]+(?:you|desired|wanted)\b|\bby[ \t]+request\b|\bwaived?\b|\bper[ \t]+(?:year|quarter)\b|\bannual|\byearly\b|\bno[ \t]+\w+[ \t]+fee", seg, re.I):
+            continue
+        for pat_no, pat in enumerate((rf"{_EXTRA_AMT}[ \t]*(?:{_EXTRA_MONTHLY_PER}[ \t]*)?(?:a[ \t]+)?({_EXTRA_MONTHLY_LABEL})(?:[ \t]+(?:fees?|charges?|dues|payments?))?",
+                    rf"\b({_EXTRA_MONTHLY_LABEL})(?:[ \t]+(?:fees?|charges?|dues|payments?))?[ \t:\-=(]{{0,4}}(?:(?:about|around|approx\.?|roughly|~)[ \t]*)?{_EXTRA_AMT}")):
+            for m in re.finditer(pat, seg, re.I):
+                whole = seg[max(0, m.start() - 12):m.end() + 25]
+                if not re.search(_EXTRA_MONTHLY_PER, whole, re.I):
+                    continue
+                if re.search(r"\bper[ \t]+(?:year|quarter)|/[ \t]*(?:yr|year)|\bannual", seg[m.start():m.end() + 20], re.I):
+                    continue
+                groups = m.groups()
+                if pat_no == 0:
+                    amount, cents, label = groups[0], groups[1], groups[2]
+                else:
+                    label, amount, cents = groups[0], groups[1], groups[2]
+                value = _num(amount) + (int(cents) / 100 if cents else 0)
+                label = " ".join(label.lower().split())
+                if 5 <= value < 2000 and (value, label) not in out:
+                    out.append((value, label))
+    return out
+
+
+def _money_c(v: float) -> str:
+    """$7,400 or $42.50: cents only when there are some."""
+    return f"${v:,.0f}" if abs(v - round(v)) < 0.005 else f"${v:,.2f}"
+
+
+_SINGLE_CLOSING = re.compile(
+    r"\b((?:lender|title|settlement|escrow)(?:[ \t]*(?:,|and|&)[ \t]*(?:lender|title|settlement|escrow))*[ \t]+(?:fees?|costs?|charges?))"
+    r"(?:[ \t]+(?:are|is|run|runs|total|totals|come|comes|will[ \t]+(?:run|be|total)|should[ \t]+(?:run|be)))*(?:[ \t]+(?:to|at|of))?[ \t:\-=]{0,4}"
+    r"(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|close[ \t]+to|nearly|~)[ \t]*)*" + _EXTRA_AMT + r"(?!\d|,\d)(?![ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
+_SINGLE_CLOSING_AFTER = re.compile(
+    r"\bexpect[ \t]+(?:about|around|approx\.?|roughly|~)?[ \t]*" + _EXTRA_AMT + r"[ \t]+(?:in|for)[ \t]+((?:lender|title|settlement|escrow)(?:[ \t]*(?:,|and|&)[ \t]*(?:lender|title|settlement|escrow))*[ \t]+(?:fees?|costs?|charges?))", re.I)
+
+
+def _closing_single(text: str) -> tuple[float, str] | None:
+    """Cycle 24: closing costs given in one line as lender and title fees ("Lender and title fees run roughly $7,400", "expect around $7,400 in
+    lender and title fees"). Returns (amount, the quoted phrase) or None. What the seller pays is never read here."""
+    for pat in (_SINGLE_CLOSING, _SINGLE_CLOSING_AFTER):
+        for m in pat.finditer(text):
+            start = max(text.rfind(".", 0, m.start()), text.rfind("\n", 0, m.start()), text.rfind(";", 0, m.start())) + 1
+            end_candidates = [i for i in (text.find(".", m.end()), text.find("\n", m.end()), text.find(";", m.end())) if i != -1]
+            sent = text[start:min(end_candidates) if end_candidates else len(text)]
+            if re.search(r"\bseller|\bcredit|\bconcession|\bowner\b", sent, re.I):
+                continue
+            amt_g, cents_g = (2, 3) if pat is _SINGLE_CLOSING else (1, 2)
+            amount = _num(m.group(amt_g)) + (int(m.group(cents_g)) / 100 if m.group(cents_g) else 0)
+            if 100 <= amount <= 5_000_000:
+                return amount, " ".join(sent.split())[:100]
+    return None
+
+
+
 def _closing_costs_percent(text: str, price: float | None) -> tuple[float | None, str] | None:
     """Cycle 20: "title and closing costs approx. 2.5% of price" is worked out from the price (with a note). With no price only a note is
     given. What the seller gives ("Seller pays 3% toward closing") and a percent of the loan or down payment are never read here."""
@@ -8854,6 +8919,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("closing_costs", items[0])
             facts.append(f"The listing gives the closing costs in parts ({items[1]}). They are added up and saved as ${items[0]:,.0f} closing costs, used instead of a guess. "
                          "Ask the lender for the full estimate, because other fees may be missing.")
+        elif (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)) and (single := _try(lambda: _closing_single(text))):
+            put("closing_costs", single[0])
+            facts.append(f"The listing says \"{single[1]}\". It is read as the closing costs and saved as {_money_c(single[0])}, used instead of a guess. Ask the lender for the full estimate.")
         else:
             pct_note = _try(lambda: _closing_costs_percent(text, out.get("price") if isinstance(out.get("price"), (int, float)) else None))
             if pct_note:
@@ -8879,6 +8947,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 hoa = master[0]
                 facts.append(f"The listing gives master association dues ({master[1]}), saved as ${master[0]:,.0f}/month in the HOA. Ask whether there are other association fees.")
         sale_ctx = bool(buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000))
+        extras = (_try(lambda: _hoa_extra_monthly(text)) or []) if sale_ctx else []
+        if extras:
+            names = " and ".join(f"{_money_c(v)} monthly {lab}" for v, lab in extras)
+            if hoa is not None and hoa > 0:
+                base = hoa
+                hoa = round(base + sum(v for v, _l in extras), 2)
+                facts.append(f"The listing gives HOA dues of {_money_c(base)} a month and also a {names} fee. Both are added, so the HOA is saved as "
+                             f"{_money_c(hoa)} a month. Ask whether the fee is part of the HOA.")
+            else:
+                facts.append(f"The listing gives a {names} fee but no HOA amount, so it is not counted and the HOA is left empty. Ask the seller's agent for the total monthly HOA.")
         added = _try(lambda: _assessment_monthly(text)) if sale_ctx else None
         if reg_items and sale_ctx and payer != "seller" and not _try(lambda: _assessment_none(text)):
             # cycle 23: a regular monthly assessment is the HOA; a monthly special assessment is its own amount added on top, never the whole HOA
