@@ -211,7 +211,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
             note += f". The listing includes: {place['utilities_included']}"
         by_claude = not from_listing and _added_by_claude(place, util)
         if by_claude:
-            note = "Added by Claude, not read from the listing"
+            note = note.replace("A guess, not from the listing", "Added by Claude, not read from the listing")
         line = _line("utilities", "Utilities" if from_listing else ("Utilities (added by Claude)" if by_claude else "Utilities (a guess)"), util, note)
         line["estimated"] = not from_listing  # an amount the listing states (or bills back) is not a guess
         unpriced = _unpriced_tenant_utilities(place) if from_listing else []

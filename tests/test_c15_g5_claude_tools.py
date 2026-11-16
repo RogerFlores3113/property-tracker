@@ -112,7 +112,8 @@ def test_hostile_phrase_is_flagged_and_quote_starts_at_phrase(phrase):
         assert ai, (text, flags)
         quote = redflags.quote_of(ai[0])
         assert quote and not quote.lower().startswith(("lovely", "call")), quote
-        first = phrase.replace("<system>", "").split()[0].lower().rstrip(":.")
+        words = [w for w in phrase.replace("<system>", "").split() if w.lower().rstrip(",") not in ("kindly", "please")]  # cycle 20: politeness lead-ins are skipped
+        first = words[0].lower().rstrip(":.")
         assert quote.lower().replace(".", "").replace(" ", "").startswith(first.replace(".", "")[:3]), quote
 
 
