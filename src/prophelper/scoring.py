@@ -234,6 +234,53 @@ def _near_reason(cost: dict[str, Any] | None, over: float, guessed: bool) -> str
     return ""
 
 
+def fit_check_label(score: dict[str, Any]) -> str:
+    """The words for a place that fits only with something to check: "Check the rent first" when the rent looks wrong, else "Fits, but check"."""
+    return "Check the rent first" if score.get("rent_check") else "Fits, but check"
+
+
+def rent_looks_low(place: dict[str, Any], cost: dict[str, Any] | None, limit: Any = None, mode: str = "rent") -> str:
+    """A plain reason ('' when fine) when a saved rent is implausibly low next to everything else: under $200, or under $400 for two or
+    more bedrooms, or under about a seventh of the search's price limit, or smaller than another monthly part of the same place (a
+    $200 rent next to a $3,200 listing figure is a misread, never a bargain)."""
+    if mode == "buy":
+        return ""
+    rent = _num(place.get("price"))
+    if rent is None or rent <= 0:
+        return ""
+    beds = _num(place.get("beds")) or 0
+    others = [float(l.get("amount") or 0) for l in (cost or {}).get("lines") or [] if l.get("key") in ("utilities", "parking", "pet_rent", "other") and not l.get("estimated")]
+    why = ""
+    if rent < 200:
+        why = "far below normal for a rental"
+    elif rent < 400 and beds >= 2:
+        why = f"far below normal for {beds:g} bedrooms"
+    elif limit and rent < 400 and rent * 7 < float(limit):
+        why = f"far below the ${float(limit):,.0f} limit of this search"
+    elif rent < 600 and others and rent < max(others):
+        why = "less than one of the other monthly costs of this place"
+    if not why:
+        return ""
+    return (f"the rent of ${rent:,.2f}".replace(".00", "") + f" a month is {why}, so the monthly cost looks too low. "
+            "Confirm the real rent before you count on it")
+
+
+def _still_unknown(cost: dict[str, Any] | None) -> str:
+    """', and gas is still unknown' for the cost parts that have no amount yet (so "at least $18 over" says why it is "at least")."""
+    names: list[str] = []
+    for u in (cost or {}).get("uncounted") or []:
+        u = str(u)
+        if u.startswith("some amounts in the listing"):
+            continue
+        n = u[len("utilities ("):-1] if u.startswith("utilities (") and u.endswith(")") else u
+        if n and n not in names:
+            names.append(n)
+    if not names:
+        return ", and a cost part is still unknown" if (cost or {}).get("missing") or (cost or {}).get("uncounted") else ""
+    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f", and {joined} {'is' if len(names) == 1 and ' and ' not in joined else 'are'} still unknown"
+
+
 def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[str, str]]:
     """When every missed must-have is a small miss (a guess-only overage, or under 3 percent), one ``{"label", "text"}``
     per miss: '$51 over because the utilities guess counts'. Otherwise []. The one rule for a "near miss"."""
@@ -251,7 +298,7 @@ def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[
         if item["kind"] == "price":
             # cycle 24: a cost part that is unknown (gas, internet...) can only make the real overage bigger
             lead = "at least " if (cost or {}).get("uncounted") or (cost or {}).get("missing") else ""
-            text = f"{lead}${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near")))
+            text = f"{lead}${over:,.0f} over" + _near_reason(cost, over, bool(item.get("near"))) + (_still_unknown(cost) if lead and (cost or {}).get("mode") != "buy" else "")
         else:
             text = item.get("gap") or f"{item.get('label', 'A must-have')} is just short"
             pts = item.get("points_lost") or 0
@@ -826,6 +873,9 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     fit = "fits"
     total = raw
     caps: list[str] = []
+    rent_check = rent_looks_low(place, ctx["cost"], budget_max, mode)
+    if rent_check:
+        concerns.insert(0, rent_check[0].upper() + rent_check[1:])
 
     def cap(n: int, why: str) -> None:
         nonlocal total
@@ -851,6 +901,8 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     unknown_n = sum(1 for i in items if not i["known"])
     if unknown_n >= 3 and unknown_n * 2 >= len(items):
         cap(CAP_MOSTLY_UNKNOWN, "most of what matters is not known yet")
+    if rent_check:
+        cap(CAP_DEALBREAKER, "the rent looks too low to be right")
     if scam:
         fit = "check_first"
         reasons = ["Check first: possible scam. Do not pay anything before you have toured it."] + reasons
@@ -869,7 +921,7 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
             "fit": fit, "fit_label": fit_label, "fit_reasons": reasons, "near_texts": near_texts, "near_parts": parts_ if fit == "near_miss" else [], "conditional": conditional,
             "conditional_costs": [i["conditional"] for i in items if i.get("conditional") and i["dealbreaker_status"] == "pass"],
             "late_penalty": LATE_PENALTY if late else 0, "late_note": late, "lease_gap": lease_gap, "notes": notes,
-            "scam": scam, "sort_group": SORT_GROUPS[fit], "cost": ctx["cost"]}
+            "scam": scam, "rent_check": rent_check, "sort_group": SORT_GROUPS[fit], "cost": ctx["cost"]}
 
 
 def _flagged(p: dict[str, Any]) -> int:

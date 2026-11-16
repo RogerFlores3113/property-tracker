@@ -448,7 +448,25 @@ def _ineligible(p: dict[str, Any], best_of: bool = False) -> bool:
     (a small overage, often from a guess) can still win, and its Fit cell says it is a near miss. In a best-of line
     (``best_of``: lowest cost, highest score) a place with text aimed at AI tools is left out too."""
     return (p["score"].get("fit", "fits") not in ("fits", "near_miss") or bool(p.get("possible_scam"))
-            or (best_of and ai_text_only(p)))
+            or (best_of and (ai_text_only(p) or p.get("stage") == "Passed" or bool(p["score"].get("rent_check")))))  # a place the user passed on never wins a best-of line
+
+
+def _live(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The places a best-of line looks at: the ones not set to Passed (all of them when every place is Passed)."""
+    live = [p for p in places if p.get("stage") != "Passed"]
+    return live or places
+
+
+def _fail_text(p: dict[str, Any]) -> str:
+    """What a place that doesn't fit fails, in words: 'it fails your must-have Laundry (in the building, not in the unit)'."""
+    score = p["score"]
+    failed = [str(x) for x in score.get("failed") or [] if x]
+    reasons = [str(x) for x in score.get("fit_reasons") or [] if x]
+    if failed:
+        return "it fails your must-have " + " and ".join(failed) + (f" ({reasons[0].rstrip('.')})" if reasons and reasons[0] not in failed else "")
+    if reasons:
+        return "it doesn't fit: " + reasons[0].rstrip(".")
+    return "it doesn't fit what you asked for"
 
 def ai_text_only(p: dict[str, Any]) -> bool:
     """True when the listing has text aimed at AI tools and no scam sign. Other small flags (such as no address yet) don't
@@ -515,6 +533,7 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
     whose commute is over a limit is named, never silently the winner: it is skipped for "lowest" unless every
     candidate is over, and then the winner says so. A place with unknown cost parts is skipped unless every candidate
     has them."""
+    places = _live(places)
     priced = [p for p in places if p["cost_total"] is not None]
     eligible = [p for p in priced if not _ineligible(p, True) and _fits(p)]  # only places that fully fit; a near miss never wins
     base = [p for p in eligible if not over_limit_text(p)] or eligible
@@ -546,10 +565,12 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
             out["blocked"].append((p, "check it first: possible scam"))
         elif ai_text_only(p):
             out["blocked"].append((p, "check it first: text aimed at AI tools in the listing"))
+        elif p["score"].get("rent_check"):
+            out["blocked"].append((p, "check the rent first: the saved rent looks too low to be right"))
         elif p["score"].get("fit") == "near_miss":
             out["blocked"].append((p, "it is a near miss"))
         else:
-            out["blocked"].append((p, "it doesn't fit what you asked for"))
+            out["blocked"].append((p, _fail_text(p)))
     return out
 
 
@@ -595,7 +616,7 @@ def _fit_cell(p: dict[str, Any]) -> dict[str, Any]:
     reasons = "; ".join(p["score"].get("fit_reasons") or [])
     if fit == "fits" and p["score"].get("fit_label") == "Fits, but check":
         concerns = "; ".join(p["score"].get("concerns") or [])
-        return _cell("Fits, but check" + (f" ({concerns})" if concerns else ""))
+        return _cell(("Check the rent first" if p["score"].get("rent_check") else "Fits, but check") + (f" ({concerns})" if concerns else ""))
     if fit == "fits" and ai_text_only(p):
         return _cell(AI_TEXT_FIT)
     if fit == "near_miss" and not reasons:
@@ -609,7 +630,7 @@ def _score_cell(p: dict[str, Any]) -> dict[str, Any]:
     cell = _num(p["score_total"])
     if cell["value"] is not None:
         fit = p["score"].get("fit", "fits")
-        label = p["score"].get("fit_label") if fit == "fits" and p["score"].get("fit_label") == "Fits, but check" \
+        label = ("Check the rent first" if p["score"].get("rent_check") else "Fits, but check") if fit == "fits" and p["score"].get("fit_label") == "Fits, but check" \
             else ({"near_miss": "near miss", "doesnt_fit": "doesn't fit", "check_first": "check first"}.get(fit) or "")
         if label:
             cell["text"] += f", {label[0].lower() + label[1:]}"
@@ -999,6 +1020,7 @@ def lowest_cost_sentences(places: list[dict[str, Any]], name) -> list[str]:
     """The At a glance sentences for the lowest cost. ``name(place)`` is how a place is called (its title on the web)."""
     r = lowest_cost(places)
     out: list[str] = []
+    places = _live(places)
     priced = [p for p in places if p["cost_total"] is not None]
     if priced and all(p["score"].get("fit") == "check_first" or p.get("possible_scam") or has_ai_text(p) for p in priced):
         # every priced place has a check-first flag: none is "cheapest", and the price is not a fair comparison yet

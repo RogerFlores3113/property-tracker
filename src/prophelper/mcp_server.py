@@ -40,7 +40,7 @@ from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
 from .store import (AI_EVENT_TEXT_MAX, AI_NEVER_ENTERS, COMMUTE_MODES, CONTACT_LOG_KINDS, CONTACT_ROLES, CRITERION_KINDS, MAX_PEOPLE, NotFound,
-                    PARKING_VALUES, Store, _clean_target, clean_people_names, ai_move_problem, normalize_url, encode_link, to_utc_iso, link_host_private, PRIVATE_LINK_REASON)
+                    PARKING_VALUES, Store, _clean_target, clean_people_names, ai_move_problem, normalize_url, encode_link, to_utc_iso, link_host_private, link_host_problem, PRIVATE_LINK_REASON)
 
 INSTRUCTIONS = """\
 Property Helper keeps the user's own apartment or house hunt on their computer: every place they found, where it
@@ -473,6 +473,8 @@ def _fit_text(e: dict[str, Any]) -> str:
         # a nice-to-have a little over its limit (a commute of 24 min against 20) is named here, not only in the score reason
         return "Fit: Yes" + (f" (with a note: {'; '.join(_t(n, 'fit note', 160) for n in notes)})" if notes else "")
     label = s.get("fit_label") or scoring.FIT_LABELS.get(fit, "Yes")
+    if fit == "fits" and s.get("rent_check"):
+        label = "Check the rent first"  # never "Fits": the saved rent looks wrong
     if fit == "near_miss" and s.get("near_parts"):
         return f"Fit: {label} ({_near_line(e)})"
     reasons = s.get("fit_reasons") if fit != "fits" else s.get("concerns")
@@ -539,10 +541,20 @@ def _commute_text(e: dict[str, Any]) -> str:
     return "; ".join(_commute_list(e))
 
 
+def _cost_word(e: dict[str, Any]) -> str:
+    """'/mo, not complete', '/mo as listed, not checked' (a place marked check first or with a rent that looks wrong), or '/mo true cost'."""
+    cost = e.get("cost") or {}
+    if cost.get("uncounted") or cost.get("all_in") is False or (cost.get("cash_to_close") or {}).get("left_out"):
+        return "/mo, not complete"
+    if e.get("check_first") or e.get("possible_scam") or (e.get("score") or {}).get("scam") or (e.get("score") or {}).get("rent_check"):
+        return "/mo as listed, not checked"
+    return "/mo true cost"
+
+
 def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
     """One short line for a list: id, title, stage, cost, score, top commute."""
     score = "no score" if e["score_total"] is None else f"score {e['score_total']}" + (" (check first, do not trust this score)" if e.get("check_first") else "")
-    bits = [f"#{e['id']} {_title(e)} [{e['stage']}]", _money(e["cost_total"]) + ("/mo, not complete" if (e.get("cost") or {}).get("uncounted") or (e.get("cost") or {}).get("all_in") is False else "/mo true cost") if e["cost_total"] is not None else "cost unknown", score]
+    bits = [f"#{e['id']} {_title(e)} [{e['stage']}]", _money(e["cost_total"]) + _cost_word(e) if e["cost_total"] is not None else "cost unknown", score]
     if _per_person_text(e):
         bits.insert(2, _per_person_text(e))
     if e["score"].get("fit") == "check_first":
@@ -555,7 +567,7 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
     elif e["score"]["fails_dealbreaker"]:
         bits.append("FAILS " + _labs(e["score"]["failed"]))
     elif e["score"].get("fit_label") == "Fits, but check":
-        bits.append("Fits, but check: " + "; ".join(_t(c, "fit reason", 120) for c in e["score"]["concerns"]))
+        bits.append(("Check the rent first: " if e["score"].get("rent_check") else "Fits, but check: ") + "; ".join(_t(c, "fit reason", 120) for c in e["score"]["concerns"]))
     if e["score"].get("fit") == "fits" and e["score"].get("fit_label") != "Fits, but check" and e["score"].get("notes"):
         bits.append("Fits, with a note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
     if compare_mod.ai_text_only(e):
@@ -792,6 +804,9 @@ def build_server(store: Store) -> FastMCP:
         upgraded = 0
         for item in items:
             link = str(item or "").strip()
+            if re.match(r"^https?://[^\s/]", link, re.I) and (problem := link_host_problem(link)):
+                notes.append(f"{where}I did not save the photo link \"{_clip(link, 40)}\": {problem}")
+                continue
             if re.match(r"^https?://[^\s/]", link, re.I):
                 link = encode_link(link)  # a space in a photo link is written %20, like a listing link
             if not re.match(r"^https?://[^\s/]+\S*$", link, re.I):
@@ -1628,7 +1643,7 @@ def build_server(store: Store) -> FastMCP:
         lines.append("Differences: " + (", ".join(differ) if differ else "none"))
         # Best-of lines never name a possible scam or a place that doesn't fit: only places that fit can win. The lowest
         # cost is the one rule in compare.lowest_cost, the same as the Compare page's At a glance.
-        fitting = [e for e in es if e["score"].get("fit", "fits") == "fits" and not compare_mod.ai_text_only(e) and not e.get("possible_scam")]
+        fitting = [e for e in compare_mod._live(es) if e["score"].get("fit", "fits") == "fits" and not compare_mod.ai_text_only(e) and not e.get("possible_scam")]
         scored = [e for e in fitting if e["score_total"] is not None and not compare_mod.unpriced(e)]
         left_out = [e for e in es if e not in fitting]
         lc = compare_mod.lowest_cost(es)
@@ -1649,7 +1664,7 @@ def build_server(store: Store) -> FastMCP:
             lines.append(f"#{e['id']} is cheapest, but {why}.")
         if not tail:
             lines.extend(compare_mod.skipped_unknown_sentences(lc, ref))
-        priced_ = [e for e in es if e["cost_total"] is not None]
+        priced_ = [e for e in compare_mod._live(es) if e["cost_total"] is not None]
         if priced_ and all(e["score"].get("fit") == "check_first" or e.get("possible_scam") or compare_mod.has_ai_text(e) for e in priced_):
             lines.append("Every place has something to check first, so none of them can be compared on price until you have checked them.")
         elif lc["blocked"]:
@@ -1690,7 +1705,7 @@ def build_server(store: Store) -> FastMCP:
         lines.append("Best fits right now:" + (" none yet." if not fits else ""))
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
-            lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}{'/mo, not complete' if (p.get('cost') or {}).get('uncounted') or (p.get('cost') or {}).get('all_in') is False else '/mo true cost'}{each}"
+            lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}{_cost_word(p)}{each}"
                          + (", no address yet" if not str(p.get("address") or "").strip() else "")
                          + (f". {p['caution']}" if p.get("caution") else ""))
         if not fits and data.get("unconfirmed"):

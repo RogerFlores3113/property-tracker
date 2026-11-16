@@ -26,6 +26,7 @@ import re
 import socket
 import sqlite3
 import threading
+import unicodedata
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -638,7 +639,34 @@ def private_host(host: str, one_word: bool = False) -> bool:
     return any(addr in net for net in _PRIVATE_NETS if net.version == addr.version)
 
 
+HOST_CONTROL_REASON = ("That link's website name has a hidden or direction-changing character in it (like a right-to-left override), so it can show "
+                       "one site and open another. I won't save it. Copy the link again from the listing page.")
+HOST_PERCENT_REASON = ("That link's website name is written with percent codes (like %61 for a letter). A real listing site is written in plain letters, "
+                       "so I won't save it. Use the plain listing address.")
+
+
+def link_host_text(link: Any) -> str:
+    """The host part of a web link exactly as typed (no user name, no port), or ''."""
+    rest = re.sub(r"^[a-z][a-z0-9+.-]*://", "", str(link or "").strip(), flags=re.I)
+    auth = re.split(r"[/?#\\]", rest, 1)[0].rsplit("@", 1)[-1]
+    if auth.startswith("["):
+        return auth.split("]", 1)[0] + "]"
+    return auth.rsplit(":", 1)[0] if re.search(r":\d*$", auth) else auth
+
+
+def link_host_problem(link: Any) -> str:
+    """A plain reason when a link's host has a control, bidi or invisible character, or percent codes. '' when it is fine."""
+    host = link_host_text(link)
+    if any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Co", "Cn") or c in "\u00ad\u180e\u2060" for c in host):
+        return HOST_CONTROL_REASON
+    if "%" in host and not host.startswith("["):
+        return HOST_PERCENT_REASON
+    return ""
+
+
 def link_host_private(link: Any) -> bool:
+    if "%" in link_host_text(link) and not link_host_text(link).startswith("["):
+        return False  # percent codes in the host have their own reason
     text = str(link or "").strip()
     if not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I):
         text = "https://" + text
@@ -671,7 +699,7 @@ def _normalize_url(url: Any) -> str:
             return ""
         text = "https://" + text
     parts = urlsplit(text)
-    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname or link_host_problem(text):
         return ""
     host = parts.hostname.lower()
     if private_host(host, one_word=True):
@@ -1546,6 +1574,8 @@ class Store:
                 # normalized form. A link typed without http(s):// gets https:// so it still opens.
                 if text and has_userinfo(text):
                     raise ValueError("That link has a user name or password in it, so I won't save it. Use the plain listing address without it.")
+                if text and (problem := link_host_problem(text)):
+                    raise ValueError(problem)
                 if text and link_host_private(text):
                     raise ValueError(PRIVATE_LINK_REASON)
                 if text and not normalize_url(text):

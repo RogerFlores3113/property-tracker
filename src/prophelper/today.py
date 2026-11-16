@@ -117,18 +117,12 @@ LOW_RENT_MONTHLY = 200  # a rental is never listed for less than about this much
 
 
 def low_rent(place: dict[str, Any], mode: str | None = None) -> str:
-    """'' or a plain check note when a rental's monthly rent is far below normal (under about $200): a typo or a placeholder."""
+    """'' or a plain check note when a rental's monthly rent is implausibly low (under about $200, or low for its bed count, the
+    search's limit or the place's other monthly costs): a typo, a misread or a placeholder. The same rule as the score's ``rent_check``."""
     mode = mode or (place.get("cost") or {}).get("mode") or "rent"
     if mode == "buy":
         return ""
-    try:
-        rent = float(place.get("price"))
-    except (TypeError, ValueError):
-        return ""
-    if rent <= 0 or rent >= LOW_RENT_MONTHLY:
-        return ""
-    return (f"the rent of ${rent:,.0f} a month is far below normal for a rental, so the monthly cost looks too low. "
-            "Confirm the real rent before you count on it")
+    return str((place.get("score") or {}).get("rent_check") or "") or scoring.rent_looks_low(place, place.get("cost"), None, mode)
 
 
 def cost_unsettled(place: dict[str, Any]) -> str:
@@ -294,7 +288,7 @@ def near_miss_text(place: dict[str, Any]) -> str:
     if not text and not fails_dealbreakers(place) and (over := over_budget(place)):
         cost = place.get("cost") or {}
         lead = "at least " if cost.get("uncounted") or cost.get("missing") else ""
-        text = f"{lead}${over:,.0f} over your budget (price is not a must-have for you)"  # a place over budget is never a best fit
+        text = f"{lead}${over:,.0f} over your budget{scoring._still_unknown(cost) if lead else ''} (price is not a must-have for you)"  # a place over budget is never a best fit
     return text
 
 
