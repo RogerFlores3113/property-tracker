@@ -148,9 +148,9 @@ def test_parking_options_save_the_best_kind(text):
 
 
 def test_garage_beats_surface_lot_in_options():
-    r = rent("Parking: surface lot $0, garage $90")
-    assert r["parking"] == "garage" and r["parking_cost"] == 90
-    assert "surface lot for free" in notes(r) and "not counted" not in notes(r)
+    r = rent("Parking: surface lot $0, garage $90")  # cycle 25: the free spot is the parking, the priced garage is an optional upgrade
+    assert r["parking"] == "lot" and r["parking_cost"] == 0
+    assert "garage ($90 a month)" in notes(r) and "optional" in notes(r)
 
 
 def test_same_kind_options_keep_the_cheapest():

@@ -68,6 +68,8 @@ def test_yard_question_sets_nothing():
     "Free parking in the lot. Garage spaces $65 per month.",
     "Parking: lot (free), premium garage spot $65/mo",
     "- Parking: Open lot, no charge\n- Reserved spot: $65/mo",
+    "Parking: garage $65/mo or surface lot (free)",
+    "Free parking in a surface lot (garage spaces also offered for $65).",
 ])
 def test_free_spot_beside_priced_upgrade_is_the_parking(text):
     r = read(text)

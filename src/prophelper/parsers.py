@@ -2072,6 +2072,7 @@ def _drop_question_sentences(text: str) -> tuple[str, list[str]]:
     """Cycle 25: a sentence that ends in "?" or says "please ask" about parking, pets or a yard is a question, not a fact. It is
     blanked before the parking, pet and yard readers run, so it sets nothing. Returns (the text, one short note per topic)."""
     topics: list[str] = []
+    quoted: list[str] = []
 
     def blank(m: re.Match[str]) -> str:
         sentence = m.group(0)
@@ -2082,13 +2083,17 @@ def _drop_question_sentences(text: str) -> tuple[str, list[str]]:
         for t in ("parking", "pets", "yard"):
             if t in found and t not in topics:
                 topics.append(t)
+        q = " ".join(sentence.split()).strip(" -*\u2022:")
+        if q and len(q) <= 90 and q not in quoted:
+            quoted.append(q)
         return " " * len(sentence)
 
     cleaned = _Q_SENTENCE.sub(blank, text)
     if not topics:
         return text, []
     names = " and ".join(topics) if len(topics) < 3 else "parking, pets and yard"
-    return cleaned, [f"The listing only asks about {names} (a question, not an answer), so nothing is saved for {'it' if len(topics) == 1 else 'them'}. Ask the landlord."]
+    said = (" (" + ", ".join(f'"{q}"' for q in quoted[:3]) + ")") if quoted else ""
+    return cleaned, [f"The listing only asks about {names}{said}, a question and not an answer, so nothing is saved for {'it' if len(topics) == 1 else 'them'}. Ask the landlord."]
 
 
 _UPGRADE_WORDS = re.compile(r"\b(?:reserved|covered|garage|carport|premium|heated|underground|indoor|upgrade|private|assigned|attached)\b", re.I)
@@ -2102,7 +2107,8 @@ def _parking_free_plus_upgrade(text: str) -> tuple[str, float, list[str]] | None
     upgrade (reserved, covered, garage, premium) is the parking (cost $0) and the upgrade is optional: one note names it, it is never counted."""
     free: list[str] = []
     upgrades: list[tuple[str, float, bool]] = []
-    for raw in re.split(r"\n|\s\|\s|;|\.(?=\s|$)|,(?!\d{3})(?=[^,;|\n.]*(?:\$|\b(?:reserved|covered|garage|carport|premium|heated|underground|indoor|upgrade|private|assigned|attached)\b))|\s+-\s+", text):
+    text = re.sub(r"\(\s*(?:free|included|no[ \t]+(?:extra[ \t]+)?(?:charge|cost|fee))\b[^()\n]*\)", " free ", text, flags=re.I)  # "surface lot (free)"
+    for raw in re.split(r"[()]|\s+or\s+|\n|\s\|\s|;|\.(?=\s|$)|,(?!\d{3})(?=[^,;|\n.]*(?:\$|\b(?:reserved|covered|garage|carport|premium|heated|underground|indoor|upgrade|private|assigned|attached)\b))|\s+-\s+", text):
         item = re.sub(r"^[\s\-*\u2022]*(?:parking(?:\s+(?:options?|types?))?\s*[:\-]\s*)?", "", raw.strip(), flags=re.I)
         if not item or not re.search(r"\bparking\b|\bspots?\b|\bspaces?\b|\blot\b|\bgarage\b|\bcarport\b|\bstreet\b|\bdriveway\b", item, re.I):
             continue
@@ -2192,14 +2198,14 @@ def _parking_detail_inner(text: str) -> tuple[str, float | None, list[str]]:
     if rng:
         return rng
     upg = _parking_free_plus_upgrade(text)
-    if upg:
-        return upg
     rent_garage = _rent_with_garage(text)
     if rent_garage:
         text = rent_garage[0]
     text, extras = _parking_extras(text)  # cycle 23: an extra, second or "or rent a space" price is optional in every layout; it is taken out before the rest is read
     low = text.lower()
     kind, cost, notes = _parking_detail_core(text, low)
+    if upg and not (cost == 0 and kind in ("lot", "street")):
+        return upg  # cycle 25: the free spot is the parking and the priced upgrade is optional (an older reading that already ended at the free spot is kept)
     if extras:
         notes = [n for n in notes if "gives no price" not in n] + [_parking_extras_note(extras, kind, cost, low)]  # the price that note missed is in the extras note
     if rent_garage:

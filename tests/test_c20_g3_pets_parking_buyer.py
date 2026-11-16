@@ -27,9 +27,9 @@ UIUC_L15 = ("Quiet 1 bedroom, newer build (2018), 1 bath, $1,340 per month, 1401
 
 def test_uiuc_l15_garage_keeps_its_own_price():
     r = read(UIUC_L15)
-    assert r["parking"] == "garage"
-    assert r["parking_cost"] == 75
-    assert "surface lot for free" in notes(r)
+    assert r["parking"] == "lot"  # cycle 25: the free lot is the parking, the priced garage is an optional upgrade
+    assert r["parking_cost"] == 0
+    assert "$75" in notes(r) and "optional" in notes(r)
 
 
 @pytest.mark.parametrize("text", [
@@ -40,14 +40,14 @@ def test_uiuc_l15_garage_keeps_its_own_price():
 ])
 def test_free_lot_and_priced_garage_in_any_layout(text):
     r = read(HEAD + text)
-    assert (r["parking"], r["parking_cost"]) == ("garage", 75)
-    assert "surface lot for free" in notes(r)
+    assert (r["parking"], r["parking_cost"]) == ("lot", 0)  # cycle 25: the free lot is the parking, the garage is an optional upgrade
+    assert notes(r).count("$75") == 1 and "optional" in notes(r)
 
 
 def test_three_kinds_with_prices_keep_the_best_kinds_price():
     r = read(HEAD + "Parking: covered $45/mo or surface lot (free) or garage $90/mo")
-    assert (r["parking"], r["parking_cost"]) == ("garage", 90)
-    assert "covered parking for $45 a month" in notes(r) and "surface lot for free" in notes(r)
+    assert (r["parking"], r["parking_cost"]) == ("lot", 0)  # cycle 25: the free lot is the parking; covered and garage are optional upgrades
+    assert "$45" in notes(r) and "$90" in notes(r) and "optional" in notes(r)
 
 
 def test_same_kind_two_prices_keeps_the_cheapest():
