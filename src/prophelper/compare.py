@@ -377,7 +377,11 @@ def listing_notes_text(p: dict[str, Any], limit: int = 110) -> str:
     units = sorted(money_mod.note_units(text), key=_note_rank)  # stable: the order they were written inside each group
     shown: list[str] = []
     cut = 0
-    for u in units[:NOTES_SHOWN]:  # up to three whole notes; one very long note keeps only its first whole sentence
+    used = 0
+    for i, u in enumerate(units):  # at least three whole notes (more while they fit ``limit``); one very long note keeps only its first sentence
+        if i >= NOTES_SHOWN and used + len(u) + 1 > limit:
+            break
+        used += len(u) + 1
         if len(u) > limit * 2:
             sentences = re.split(r"(?<=[.!?])\s+", u)
             u = sentences[0]

@@ -77,14 +77,12 @@ def test_photo_urls_rejected_and_http_upgraded(store):
     srv = server(store)
     store.add_search("A", "rent")
     for bad in ("data:text/html,<b>x</b>", "javascript:alert(1)", "ftp://x.com/a.jpg"):
-        with pytest.raises(Exception) as e:
-            call(srv, "add_place", title="T", photo_urls=[bad])
-        assert "isn't a web address" in str(e.value)
-        with pytest.raises(Exception):
-            call(srv, "add_places", places=[{"title": "T", "photo_urls": [bad]}])
+        out = text(call(srv, "add_place", title=f"T{bad[:4]}", address=f"{bad[:4]} A St", photo_urls=[bad]))  # cycle 23: the photo is dropped, the place is saved
+        assert "isn't a web address" in out and out.startswith("Added")
+        assert "isn't a web address" in text(call(srv, "add_places", places=[{"title": f"U{bad[:4]}", "address": f"{bad[:4]} B St", "photo_urls": [bad]}]))
     out = text(call(srv, "add_place", title="T", photo_urls=["http://cdn.example.com/a.jpg"]))
     assert "saved it as https://" in out
-    p = store.list_places(store.current_search()["id"])[0]
+    p = next(x for x in store.list_places(store.current_search()["id"]) if x["title"] == "T")
     assert p["photo_urls"] == ["https://cdn.example.com/a.jpg"]
     out = text(call(srv, "add_places", places=[{"title": "U", "photo_urls": ["http://a.example.com/x.jpg"]}]))
     assert "https://" in out and "plain http" in out

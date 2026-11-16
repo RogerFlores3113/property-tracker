@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from mcp_util import call, server
+from mcp_util import call, server, text
 from prophelper import csv_io, share, enrich
 
 
@@ -73,9 +73,8 @@ def test_link_grammar_singular_and_plural(store, client):
 def test_photo_links_import_and_mcp(store, client):
     srv = server(store)
     store.add_search("A", "rent")
-    with pytest.raises(Exception) as e:
-        call(srv, "add_place", title="T", photo_urls=["https://user:pw@cdn.example/a.jpg"])
-    assert "user name or password" in str(e.value) and "pw" not in str(e.value)
+    out = text(call(srv, "add_place", title="T", photo_urls=["https://user:pw@cdn.example/a.jpg"]))  # cycle 23: only the photo is dropped
+    assert "user name or password" in out and "pw" not in out and out.startswith("Added")
     doc = _doc([{"title": "P", "photo_urls": ["https://user:pw@cdn.example/a.jpg", "http://cdn.example/b.jpg", "https://cdn.example/c.jpg"]}])
     r = client.post("/searches/import", files={"file": ("s.json", doc, "application/json")})
     t = r.text.replace("&#39;", "'")

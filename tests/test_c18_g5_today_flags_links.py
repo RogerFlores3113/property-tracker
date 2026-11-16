@@ -135,9 +135,9 @@ def test_private_links_refused(store, u):
     with pytest.raises(ValueError) as ei:
         store.add_place(title="L", address="1 A St", url=u)
     assert "private network" in str(ei.value)
-    with pytest.raises(Exception) as ei2:
-        call(server(store), "add_place", title="P", address="2 A St", photo_urls=[u])
-    assert "private network" in str(ei2.value) and "Nothing was saved" in str(ei2.value)
+    out = text(call(server(store), "add_place", title="P", address="2 A St", photo_urls=[u]))  # cycle 23: only the photo is dropped
+    assert "private network" in out and "I did not save the photo link" in out
+    assert store.list_places(store.current_search()["id"])[0]["photo_urls"] == []
     with pytest.raises(Exception) as ei3:
         call(server(store), "add_place", title="P", address="2 A St", url=u)
     assert "private network" in str(ei3.value)
