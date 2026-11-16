@@ -357,9 +357,17 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -
     keys = [("deposit", "Deposit"), ("application_fee", "Application fee"), ("move_in_fees", "Move-in fees"),
             ("broker_fee", "Broker fee")]
     if pets:
-        keys += [("pet_fee", "Pet fee"), ("pet_deposit", "Pet deposit (comes back)")]
+        keys += [("pet_fee", "Pet fee"), ("pet_deposit", "Pet deposit")]
     for key, label in keys:
         v = num(place.get(key))
+        if key == "pet_deposit" and v:
+            # cycle 22: only say "comes back" when the listing says the pet deposit is refundable (the reader's note says not to count on it otherwise)
+            try:
+                from .parsers import _pet_deposit_says_refundable
+                if _pet_deposit_says_refundable(str(place.get("listing_text") or ""), float(v)):
+                    label = "Pet deposit (comes back)"
+            except Exception:
+                pass
         if key == "application_fee" and v:
             total_fee = application_fee_total(place, adults)
             if total_fee != v:
@@ -633,6 +641,7 @@ _NO_AMOUNT_OPTIONAL = re.compile(r"gives no price|no price is given|looks option
 # A note that names the other parking choices of a place that is already counted at one of them, and a warning about a wire: neither is a cost left out.
 _NOTE_CHOICE = re.compile(r"gives more than one parking choice|more than one parking (?:choice|option)|also offers another parking choice", re.I)
 _NOTE_WARNING = re.compile(r"can't be taken back|don't send money|do not send money", re.I)
+_NOTE_BUY_PARKING = re.compile(r"The cost of buying does not count (?:parking|it)\b")
 _RENT_RANGE_NOTE = re.compile(r"\brent range of \$", re.I)
 RENT_RANGE_LABEL = "the rent (the listing gives a range)"
 
@@ -659,6 +668,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
+        if _NOTE_BUY_PARKING.search(note):
+            continue  # cycle 22: parking is never part of the cost of buying, so it is not a missing cost part there
         if _NOTE_WARNING.search(note) or (_NOTE_CHOICE.search(note) and place is not None and num(place.get("parking_cost")) is not None):
             continue  # a wire warning, or the other parking choices of a place whose parking is counted: not a cost left out of the number
         if re.search(r"\boptional\b", note, re.I) and not re.search(r"\b(?:required|mandatory)\b", note, re.I):
