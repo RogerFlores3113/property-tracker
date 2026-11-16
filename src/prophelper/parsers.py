@@ -1441,7 +1441,7 @@ def _parking_per_car(low: str) -> tuple[float, float | None, str] | None:
 
 _PARK_ONE_INCLUDED = re.compile(r"\b(?:1|one|a|single)[ \t]+(?:(?:assigned|reserved|covered|private|surface|off[- ]?street|deeded|garage|parking|lot)[ \t]+){0,3}(?:spaces?|spots?|stalls?|cars?)[ \t]+(?:is[ \t]+|are[ \t]+)?(?:included|free)\b"
                                 r"|\bincluded[ \t]*[:\-]?[ \t]*(?:1|one)[ \t]+(?:spaces?|spots?|stalls?)\b")
-_PARK_SECOND_PRICE = re.compile(r"\b(?:2nd|second|additional|extra|another)(?:[ \t]+(?:car|vehicle|space|spot|stall|parking))*[ \t:\-=]*(?:is[ \t]+|are[ \t]+|at[ \t]+|for[ \t]+|costs?[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?(?!\d)(?!,\d)"
+_PARK_SECOND_PRICE = re.compile(r"\b(?:2nd|second|another)(?:[ \t]+(?:car|vehicle|space|spot|stall|parking))*[ \t:\-=]*(?:is[ \t]+|are[ \t]+|at[ \t]+|for[ \t]+|costs?[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?(?!\d)(?!,\d)"
                                 r"(?![ \t]*(?:/[ \t]*y|per[ \t]+y|a[ \t]+y|yearly|annual))")
 
 
