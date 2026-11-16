@@ -822,17 +822,24 @@ def _parking_kind_words(low: str) -> str:
     return ""
 
 
+_PARKING_COUNT_PRICE_RE = re.compile(r"\b(?:\d|one|two|three|four)[ \t]+(?:(?:assigned|reserved|covered|private|surface|off[- ]?street|parking)[ \t]+)*(?:spots?|spaces?|stalls?)\b[^.\n;$]{0,30}?\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))")
+_PARKING_NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4}
+_PARKING_YEARLY_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*(?:yr|year|annum|y)\b|per[ \t]+(?:year|yr|annum)\b|a[ \t]+year\b|annually\b|yearly\b|annual\b|each[ \t]+year\b|every[ \t]+year\b)")
+_PARKING_EACH_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?[ \t,]*(?:each|apiece|per[ \t]+(?:parking[ \t]+)?(?:spot|space|stall)s?)\b")
 _PARKING_PRICE_RES = (
-    re.compile(r"(?:garage|carport|covered parking|reserved parking|parking(?: fee| rate| cost)?|parking space|parking spot)s?[ \t]*(?:space|spot|stall|fee|rental|rent)?s?[ \t:\-=(,]{0,6}(?:(?:is|are|from|starting at|for|at|only|available|offered)[ \t,]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
+    re.compile(r"(?:garage|carport|covered parking|reserved parking|parking(?: fee| rate| cost)?|parking space|parking spot|parking permit|street permit)s?[ \t]*(?:space|spot|stall|fee|rental|rent|permit)?s?[ \t:\-=(,]{0,6}(?:(?:is|are|from|starting at|for|at|only|available|offered)[ \t,]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
     # "Parking: assigned covered spot $60/mo", "garage parking available for $110 a month": a few describing words in between
     re.compile(r"\b(?:garage|carport|parking)s?\b[ \t:\-=(]{0,4}(?:(?:assigned|reserved|covered|private|underground|heated|attached|detached|surface|lot|street|"
-               r"spots?|spaces?|stalls?|available|offered|for|at|is|are|from|only|each|per|one|a|an|the|rental|rate|fee|cost|\d-car|off[- ]?street|on[- ]?site|garage|carport|parking|required|mandatory|optional|-)[ \t:,]+){1,6}"
+               r"spots?|spaces?|stalls?|permits?|available|offered|for|at|is|are|from|only|each|per|one|a|an|the|rental|rate|fee|cost|\d-car|off[- ]?street|on[- ]?site|garage|carport|parking|required|mandatory|optional|-)[ \t:,]+){1,6}"
                r"\$\s?(\d{2,4})(?:\.\d\d)?(?=[ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month))(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
     re.compile(r"\$\s?(\d{2,4})\s*(?:/\s*mo(?:nth)?|per month|a month|monthly)?\s*(?:for |per )?(?:a |the )?(?:reserved |covered |garage |private )?(?:parking|garage|carport)\b(?!\s*deposit)"),
     # "1 spot $50/mo", "Parking: 1 spot, $50/month", "2 spaces at $40 a month"
     # "Parking required for all residents $120/month", "Garage optional $100"
     re.compile(r"\b(?:garage|carport|parking)s?[ \t:\-]+(?:is[ \t]+|are[ \t]+)?(?:required|mandatory|optional|additional|extra)\b[^.\n;$]{0,30}?\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
     re.compile(r"\b\d\s*(?:parking\s+)?(?:spots?|spaces?|stalls?)\s*[,:\-]?\s*(?:for |at |is |are |only )?\$\s?(\d{2,4})(?:\.\d\d)?(?=[ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month|\b))(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
+    _PARKING_COUNT_PRICE_RE,
+    # "additional spaces $60": an extra space (optional, so it never counts)
+    re.compile(r"\b(?:additional|extra)[ \t]+(?:parking[ \t]+)?(?:spots?|spaces?|stalls?|cars?|vehicles?)[ \t:\-=,]*(?:are[ \t]+|is[ \t]+|for[ \t]+|at[ \t]+|cost[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
 )
 _PARKING_OPTIONAL = re.compile(r"\boptional\b|\bavailable\b|\badditional\b|\bextra (?:parking|spaces?|spots?|cars?|vehicles?|garage)\b|\bupgrade\b|\bif (?:you )?(?:need|want)\b|\bwaitlist\b|\bon request\b|\bfor an? fee\b", re.I)
 _PARKING_REQUIRED = re.compile(r"\brequired\b|\bmandatory\b|\bmust\b", re.I)
@@ -845,17 +852,21 @@ _PARKING_FREE = re.compile(r"\bfree (?:off[- ]?street |on[- ]?street |street |on
                            r"\bparking\b[^.\n;$]{0,30}\b(?:at|for|with)\s+no\s+(?:extra\s+|additional\s+)?(?:charge|cost|fee)\b|\bno\s+(?:extra\s+|additional\s+)?(?:charge|cost|fee)\s+for\s+(?:\w+\s+){0,2}parking\b", re.I)
 
 
-def _parking_prices(low: str) -> list[tuple[float, bool, str]]:
-    """Every parking price in the text as (amount, optional, clause). A price that is only offered ("available", "additional",
-    "optional", or a different spot than the free one) is optional and never counts toward the monthly cost."""
+def _parking_prices(low: str) -> list[tuple[float, bool, str, str]]:
+    """Every parking price in the text as (amount a month, optional, clause, unit). A price that is only offered ("available", "additional",
+    "optional", or a different spot than the free one) is optional and never counts toward the monthly cost. A yearly price ("street permit
+    $25/yr") comes back as its monthly share with unit "year" (the clause holds the yearly words); a price "each" for 2 required spaces comes
+    back as the total with unit "each"."""
     seen: set[int] = set()
-    out: list[tuple[float, bool, str]] = []
+    out: list[tuple[float, bool, str, str]] = []
     free_anywhere = bool(_PARKING_FREE.search(low))
     for rx in _PARKING_PRICE_RES:
         for m in rx.finditer(low):
             at = m.start(1)
             if any(abs(at - x) < 2 for x in seen):
                 continue
+            if rx is _PARKING_COUNT_PRICE_RE and not re.search(r"\bparking\b|\bgarage\b|\bcarport\b|\b(?:assigned|reserved|covered|surface|off[- ]?street)\b", low[max(0, m.start() - 40):m.end()]):
+                continue  # "1 space $40" with nothing saying it is parking
             seen.add(at)
             a = max(low.rfind(x, 0, m.start()) for x in (".", "\n", ";", ",")) + 1  # from the start of the match: "garage available, $90" is one clause
             b = min([x for x in (low.find(". ", at), low.find("\n", at), low.find(";", at), low.find(",", at), m.end() + 14) if x != -1])
@@ -868,7 +879,17 @@ def _parking_prices(low: str) -> list[tuple[float, bool, str]]:
                 clause = low[a:m.end(1) + len(after_amount)]
             if not optional and not required and free_anywhere and not _PARKING_FREE.search(clause):
                 optional = True  # free parking is listed elsewhere, so this priced one is a different, extra choice
-            out.append((float(m.group(1)), optional, clause))
+            value, unit = float(m.group(1)), ""
+            if _PARKING_YEARLY_AFTER.match(after_amount):
+                value, unit = round(value / 12, 2), "year"
+                clause = low[a:m.end(1) + len(after_amount)]
+            elif not optional and _PARKING_EACH_AFTER.match(after_amount):
+                sentence = low[max(low.rfind(x, 0, m.start(1)) for x in (".", "\n", ";")) + 1:m.end(1) + len(after_amount)]
+                cm = re.search(r"\b(\d|one|two|three|four)[ \t]+(?:(?:assigned|reserved|covered|private|surface|off[- ]?street|required|parking)[ \t,]+)*(?:spots?|spaces?|stalls?|cars?|vehicles?)\b", sentence)
+                n = (_PARKING_NUM_WORDS.get(cm.group(1)) or int(cm.group(1))) if cm else 1
+                if n > 1:
+                    value, unit = value * n, "each"
+            out.append((value, optional, clause, unit))
     return out
 
 
@@ -897,10 +918,13 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
     prices = _parking_prices(low)
     notes: list[str] = []
     rest = low
-    for value, optional, clause in prices:
+    for value, optional, clause, unit in prices:
         if optional:
             what = _parking_what(clause)
-            notes.append(f"{_a(what)} is available for ${value:,.0f} a month. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
+            if unit == "year":
+                notes.append(f"{_a(what)} is available for ${value * 12:,.0f} a year. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
+            else:
+                notes.append(f"{_a(what)} is available for ${value:,.0f} a month. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
             rest = rest.replace(clause, " ")
     for m in list(_OPTIONAL_GARAGE_CLAUSE.finditer(rest)):  # "Garage space available": offered, so not the place's parking
         clause = m.group(0)
@@ -910,11 +934,16 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
             if not any(what in n for n in notes):
                 notes.append(f"{_a(what)} is available but the listing gives no price. It looks optional, so it is not counted as the place's parking. Ask if it costs extra.")
             rest = rest.replace(clause, " ")
-    required = [v for v, o, _c in prices if not o]
+    required = [v for v, o, _c, _u in prices if not o]
     kind, cost = _parking_kind_cost(rest, required[0] if required else None)
     if cost is None and required:
         cost = required[0]
-    if cost is None and any(o for _v, o, _c in prices) and _PARKING_FREE.search(low):
+    for value, optional, _clause, unit in prices:
+        if not optional and value == required[0] and unit == "year":
+            notes.append(f"The listing gives the parking as ${value * 12:,.0f} a year, so ${value:,.2f} a month is counted. Check that the yearly amount is right.")
+        elif not optional and value == required[0] and unit == "each":
+            notes.append(f"The listing says the parking is required at that price for each space, so ${value:,.0f} a month (all the spaces) is counted.")
+    if cost is None and any(o for _v, o, _c, _u in prices) and _PARKING_FREE.search(low):
         cost = 0.0
     if not kind and cost == 0 and _PARKING_FREE.search(low):
         kind = "lot"  # "Parking included (garage $90 optional)": the included spot, whose type the listing does not give, is a plain lot spot; the garage is the extra
@@ -936,6 +965,11 @@ def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | No
     label = re.search(r"\bparking(?: features?| type)?\s*[:\-]\s*([^\n.;]{0,40})", low)
     if label and not re.search(r"\bgarage\b", low):
         v = label.group(1)
+        segs = re.split(r"[,/]|\bor\b|\band\b", v)
+        if len(segs) > 1 and re.search(r"\b(?:surface|lot|street|off[- ]?street|driveway)\b", segs[0]):
+            # "Parking: surface lot included, covered $35": the first part is the parking, a later priced or optional part is an extra
+            keep = [segs[0]] + [x for x in segs[1:] if not re.search(r"\$|\b(?:optional|available|extra|additional|upgrade)\b", x)]
+            v = ",".join(keep)
         if re.search(r"\bcarport|\bcovered", v):
             kind = "covered"
         elif re.search(r"\bstreet\b", v) and not re.search(r"off[- ]?street", v):
