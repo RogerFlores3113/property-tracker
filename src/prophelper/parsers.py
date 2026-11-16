@@ -4162,6 +4162,8 @@ def _internet_bills(text: str) -> list[dict[str, Any]]:
             continue  # another bill sits between the word and the figure ("Internet and electric $120")
         if re.search(r"(?:electric\w*|gas|water|sewer|trash|garbage|heat\w*)[ \t]*(?:,|&|\+|/|\band\b)[ \t]*(?:the[ \t]+)?$", before_sent, re.I):
             continue  # the last name of a list ("electric, gas and internet $120"): the figure is the list's
+        if re.search(r"\b(?:fees?|charges|monthly(?:[ \t]+extras)?)[ \t]*:", before_sent, re.I):
+            continue  # "Monthly fees: Pest control $5, valet trash $25, internet $60 required": a list of fees, the fee readers count each once
         if _NET_NOT_OWNED_AFTER.match(text[a1:a1 + 40]) or re.search(r"\b(?:deposit|one[- ]time|set-?up fee|install\w*|activation)\b", clause, re.I):
             continue
         if re.search(r"\b(?:included|incl\.?|free|no charge|not required|optional)\b", clause, re.I) or h["amount"] <= 0:
