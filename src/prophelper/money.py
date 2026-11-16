@@ -475,6 +475,38 @@ def _listing_estimate_note(place: dict[str, Any], total: float | None, lines: li
             "Listings often count costs we don't know yet, so ask what theirs includes.")
 
 
+def _assessment_payer_of(place: dict[str, Any]) -> str:
+    """Who pays the special assessment: the saved payer, else what the saved listing text says outright ("Buyer to pay special assessment of
+    $3,000 at closing", "due from buyer at close", "paid by the seller"). "" when neither says."""
+    saved = str(place.get("special_assessment_payer") or "")
+    if saved in ("buyer", "seller") or not num(place.get("special_assessment")):
+        return saved
+    text = str(place.get("listing_text") or "")
+    if not text:
+        return saved
+    try:
+        from .parsers import _special_assessment_facts
+        _amount, payer, _sentence = _special_assessment_facts(text, True)
+    except Exception:  # the listing text is only a hint
+        return saved
+    return payer or saved
+
+
+def _listing_closing_percent(place: dict[str, Any], price: float) -> tuple[float, float] | None:
+    """(percent, dollars) when the saved listing text gives the closing costs as a percent of the price and no dollar figure was saved."""
+    text = str(place.get("listing_text") or "")
+    if not text:
+        return None
+    try:
+        from .parsers import _closing_costs_percent
+        got = _closing_costs_percent(text, price)
+    except Exception:  # the listing text is only a hint
+        return None
+    if not got or not got[0]:
+        return None
+    return round(got[0] / price * 100, 4), got[0]
+
+
 def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) -> dict[str, Any] | None:
     """Cash a buyer needs at closing: down payment, closing costs (entered, else a guess of closing_cost_pct of the
     price, marked ``estimated``) and a special assessment when the buyer pays it. None without a price."""
@@ -485,13 +517,17 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
     down = price * cfg["down_payment_pct"] / 100
     parts: list[dict[str, Any]] = [{"label": "Down payment", "amount": _r(down), "estimated": False}]
     closing = num(place.get("closing_costs"))
-    if closing is None:
+    from_listing = _listing_closing_percent(place, price) if closing is None else None
+    if closing is None and from_listing:  # cycle 25: the listing itself gives a percent of the price ("Estimated closing: 3% of price"): not the app's guess
+        parts.append({"label": f"Closing costs ({from_listing[0]:g}% of the price, from the listing)", "amount": _r(from_listing[1]), "estimated": False})
+    elif closing is None:
         pct = cfg.get("closing_cost_pct", DEFAULT_BUY["closing_cost_pct"])
         parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price)", "amount": _r(price * pct / 100), "estimated": True})
     else:
         parts.append({"label": "Closing costs", "amount": _r(closing), "estimated": False})
     sa = num(place.get("special_assessment"))
-    if sa and str(place.get("special_assessment_payer") or "") == "buyer":
+    payer = _assessment_payer_of(place)
+    if sa and payer == "buyer":
         parts.append({"label": "Special assessment (you pay it)", "amount": _r(sa), "estimated": False})
     left_out: list[str] = []
     try:  # one-time fees the listing says the buyer pays at closing (capital improvement, reserve contribution, move-in fee)
@@ -503,7 +539,7 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
         parts.append({"label": f"One-time fee at closing ({label})", "amount": _r(amount), "estimated": False})
     for label, amount in unclear:
         left_out.append(f"a {_dollars(amount)} {label} isn't counted because who pays it isn't known")
-    if sa and str(place.get("special_assessment_payer") or "") not in ("buyer", "seller"):
+    if sa and payer not in ("buyer", "seller"):
         left_out.append(f"a {_dollars(sa)} special assessment isn't counted because who pays it isn't known")
     credit = num(place.get("seller_credit"))
     if credit and credit > 0:
@@ -586,7 +622,7 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
         lines.append(_line("other", "Other monthly fees", other_fees))
     total = None if pi is None else _r(sum(l["amount"] or 0 for l in lines))
     cash = cash_to_close(place, cfg)
-    sa, payer = num(place.get("special_assessment")), str(place.get("special_assessment_payer") or "")
+    sa, payer = num(place.get("special_assessment")), _assessment_payer_of(place)
     if sa and payer == "buyer":
         notes.append(f"The special assessment ({_dollars(sa)}, paid by you) is counted once in the cash to close, not in the monthly cost.")
     elif sa and payer == "seller":
