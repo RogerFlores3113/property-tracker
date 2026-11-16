@@ -63,9 +63,12 @@ def test_insurance_warning_in_add_place_and_docs(store):
     assert "YEARLY" in desc and "180" in desc
 
 
-def test_buy_place_gets_no_insurance_warning(store):
+def test_buy_place_insurance_warning_uses_the_homeowner_threshold(store):
+    # changed in cycle 16: a homeowner's policy under about $300 a year is almost surely monthly, so it warns; a real yearly amount does not
     store.add_search("S", "buy")
     out = text(call(server(store), "add_place", title="House", address="3 Oak St", price=400000, insurance=15))
+    assert "YEAR" in out
+    out = text(call(server(store), "add_place", title="House2", address="4 Oak St", price=400000, insurance=1200))
     assert "YEAR" not in out
 
 

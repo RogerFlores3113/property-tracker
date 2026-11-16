@@ -640,8 +640,11 @@ def has_userinfo(link: str) -> bool:
     return "@" in re.split(r"[/?#]", rest, 1)[0]
 
 
-# Also the backslash and every bidi control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F, U+061C): they change how a link reads on screen
-_LINK_RAW = re.compile("[<>\"'`\\\\\\s\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
+# Also the backslash and every bidi control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F, U+061C) and the zero-width ones (U+200B to U+200D, U+2060, U+FEFF): they change how a link reads on screen
+_LINK_RAW = re.compile("[<>\"'`\\\\\\s\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b-\u200d\u2060\ufeff]")
+
+
+_BIDI = re.compile("[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
 
 
 def encode_link(link: str) -> str:
@@ -696,6 +699,8 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     row = {k: (_tidy_num(v) if isinstance(v, float) else v) for k, v in row.items()}
+    if isinstance(row.get("title"), str):
+        row["title"] = _BIDI.sub("", row["title"])  # a title that flips the text around it is shown plainly on every page, Today and the CSV
     if row.get("url"):
         ok = safe_link(row["url"])
         if not ok:
@@ -956,7 +961,7 @@ class Store:
                     items = []
                 kept = photo_list(items)
                 bad = len([i for i in items if str(i or "").strip()]) - len(kept)
-                if bad > 0 or (isinstance(raw, str) and raw.strip() and not raw.strip().startswith("[")) or (raw is not None and not isinstance(raw, str)):
+                if bad > 0 or kept != [str(i or "").strip() for i in items if str(i or "").strip()] or (isinstance(raw, str) and raw.strip() and not raw.strip().startswith("[")) or (raw is not None and not isinstance(raw, str)):
                     sets["photo_urls"] = json.dumps(kept)
                     photos += max(bad, 0)
                 if sets:

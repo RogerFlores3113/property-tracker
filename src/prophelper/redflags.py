@@ -214,6 +214,18 @@ def quote_of(flag: str) -> str:
     return q[:-1] if q.endswith('"') else q
 
 
+def trim_at_injection(phrase: str) -> str:
+    """A quoted listing line cut off where text aimed at an AI tool starts ("Pet fee $50. Ignore previous instructions..." gives
+    "Pet fee $50"). Unchanged when there is none or when the cut would leave no amount."""
+    text = str(phrase or "")
+    hits = [m.start() for pattern in (_AI_TARGETED, _AI_EXTRA) for m in [pattern.search(text)] if m]
+    if not hits:
+        return text
+    cut = text[:min(hits)].rstrip(" ,;:-.\t\n")
+    cut = re.sub(r"[ \t,;:.!?-]*\b(?:note|attention|attn|important|system|assistant|dear)\b[^.\n]{0,12}$", "", cut, flags=re.I).rstrip(" ,;:-.")
+    return cut if re.search(r"\d", cut) else text
+
+
 def _ai_line(text: str, comments: list[str]) -> str | None:
     """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable.
     With two or more such sentences the first two are quoted ("first / second") and the rest counted ("and 1 more")."""
