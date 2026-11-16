@@ -9561,7 +9561,7 @@ def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str], skip_util:
             phrase = _tidy_quote(phrase, text, hit["start"], hit["end"])
         if phrase and _quotes_title(phrase, out.get("title")) and item and len(item) < len(phrase):
             phrase = item  # the figure sits in the title line, so only its own item is quoted
-        if phrase and _quotes_title(phrase, out.get("title")):
+        if phrase and _quotes_title(phrase, out.get("title")) and out.get("price") is None:
             tight = _hostile_figure_quote(text, hit["start"], hit["end"])  # cycle 24: a one-line listing whose title holds the figure: the figure with a few clean words beside it
             if tight and not _quotes_title(tight, out.get("title")):
                 phrase = tight
