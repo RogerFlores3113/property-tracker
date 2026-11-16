@@ -167,7 +167,7 @@ def test_family_l12_saved_listing():
 def test_all_except_with_a_price_for_a_left_out_one_stays_unknown(text):
     r = read(text)
     assert r.get("utilities_estimate") is None
-    assert pays_set(r) == {"electric", "gas", "water", "sewer", "trash", "internet", "heat"}
+    assert pays_set(r) == {"gas", "water", "sewer", "trash", "heat"}  # cycle 25: the two left-out ones are unknown, not tenant-paid
     assert not included_set(r)
     assert "counted as your utilities estimate" not in notes(r) and "don't agree" in notes(r)
     c, missing = cost_of(r, HEAD + " " + text)
@@ -176,7 +176,7 @@ def test_all_except_with_a_price_for_a_left_out_one_stays_unknown(text):
 
 def test_family_l7_saved_listing():
     r, t = saved("r23-family-l7")
-    assert r.get("utilities_estimate") is None and "gas" in pays_set(r) and "internet" in pays_set(r) and "electric" in pays_set(r)
+    assert r.get("utilities_estimate") is None and "gas" in pays_set(r) and "internet" not in pays_set(r) and "electric" not in pays_set(r)
     c, missing = cost_of(r, t)
     assert missing and not c["all_in"]
 

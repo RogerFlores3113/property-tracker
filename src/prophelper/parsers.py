@@ -4312,7 +4312,7 @@ def _both_or_electric(m: re.Match[str], word: str) -> str:
 _NET_WORD_RE = re.compile(r"\b(?:internet|wi-?fi|broadband)\b", re.I)
 _NET_OPTIONAL_RE = re.compile(r"\b(?:optional|your choice|if you (?:want|need|choose|like|prefer)(?: it)?|if desired|at your option|up to you|not (?:required|mandatory)|(?:by|on|upon) request)\b|\bextra if\b", re.I)
 _NET_AVAILABLE_RE = re.compile(r"\bavailable\b", re.I)
-_NET_PAYER_RE = re.compile(r"\b(?:tenants?|residents?|renters?|you|lessees?)\b[^.\n;]{0,30}\b(?:pays?|responsible|handles?|sets? up|arranges?|will pay|must pay)\b|\b(?:required|mandatory|must|billed back|resident responsibility|tenant responsibility|responsibility of)\b", re.I)
+_NET_PAYER_RE = re.compile(r"\b(?:tenants?|residents?|renters?|you|lessees?)\b[^.\n;]{0,30}\b(?:pays?|responsible|handles?|sets? up|arranges?|will pay|must pay)\b|\b(?:required|mandatory|must|billed back|resident responsibility|tenant responsibility|responsibility of)\b|\b(?:paid|billed|covered|handled|arranged|set[ \t]+up)[ \t]+by[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?|you)\b|\b(?:tenants?|residents?|renters?)[- ]paid\b|\bon[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?|you)\b", re.I)
 _NET_BRAND_RE = re.compile(r"\b(?:comcast|xfinity|spectrum|verizon|fios|cox|centurylink|frontier|google fiber|at&t|att|optimum|rcn|wow|astound|mediacom|windstream)\b", re.I)
 _NET_AMOUNT_RE = re.compile(r"\$[ \t]?((?:\d{1,3}(?:,\d{3})+|\d{1,5})(?:\.\d{1,2})?)(?![\d])")
 
@@ -4507,7 +4507,8 @@ def _util_tail(text: str, est: Any, pays: str, included: str, counted: set[str],
     ep = _except_priced(text)
     if ep:
         left, rest = ep["left"], ep["rest"]
-        add_pay(*rest, *left)
+        add_pay(*rest)
+        pay_l = [w for w in pay_l if w not in left]  # cycle 25: "all except internet and electric": those two are unknown, not something the renter pays
         inc_l = [w for w in (list(_ALL_UTILITIES) if all_inc else inc_l) if w not in left and w not in rest]
         all_inc = False
         if cur is not None and abs(cur - ep["amount"]) < 0.01:
@@ -4590,11 +4591,21 @@ _HOA_COVERS_RE = re.compile(r"[^.\n;]*\b(?:hoa|h\.o\.a|association|assoc)\b[^.\n
                             r"|[^.\n;]*\b(?:covered|included|paid)[ \t]+(?:for[ \t]+)?by[ \t]+(?:the[ \t]+)?(?:hoa|h\.o\.a|association|assoc)\b[^.\n;]*[.;]?", re.I)
 
 
+_HOA_COMMA_AND = re.compile(r"(\b(?:hoa|h\.o\.a|association|assoc)\b[^.\n;$]{0,40}\b(?:covers?|includes?|pays?|paid)\b[^.\n;,$]*?)[ \t]*,[ \t]*(?:and|but|plus|also)[ \t]+(?=[^.\n;]*\$)", re.I)
+
+
+def _hoa_clause_split(text: str) -> str:
+    """Cycle 25: "HOA covers water, and there is also a $25 water charge each month" is two statements: the HOA part ends at the comma, so the
+    figure after it is read as its own sentence and can be compared with what the HOA covers."""
+    return _HOA_COMMA_AND.sub(r"\1. ", text)
+
+
 def _strip_hoa_covers(text: str) -> str:
     """"HOA covers trash and water" next to "Tenant pays all utilities" (a rental): what a building fee covers is not a bill the renter pays and not a
     second answer about who pays it, so the utility readers do not see it. A home for sale, or a listing with no renter-pays line, keeps it."""
     if not _HOA_COVERS_RE.search(text) or _is_sale_text(text):
         return text
+    text = _hoa_clause_split(text)
     conflicts = _hoa_price_conflicts(text)
     if conflicts:
         # cycle 23: "water $25 | HOA covers water": the two lines disagree. The HOA line goes (a building fee is not a bill), and so does the
@@ -4618,7 +4629,10 @@ _PIPE_SPLIT = re.compile(r"[ \t]+[|*\u2022\u00b7][ \t]+")
 def _UTIL_PRICE_SEG(name: str) -> re.Pattern[str]:
     """"water $25 (water is $25 flat)" / "Water: $25/mo": a utility word with its own figure, so the figure can be taken out."""
     return re.compile(r"\b" + name + r"\b(?:[ \t]+(?:charges?|fees?|bills?|costs?|rates?))?[ \t]*[:\-]?[ \t]*\(?[ \t]*(?:(?:is|are|about|around|approx\w*|roughly|est\w*|avg\.?|average|~)[ \t]*)*\$[ \t]?\d[\d,]*(?:\.\d\d)?"
-                      r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b|flat\b))*[ \t]*\)?(?:[ \t]*\([^)\n]{0,30}\$[ \t]?\d[^)\n]{0,20}\))?", re.I)
+                      r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b|flat\b))*[ \t]*\)?(?:[ \t]*\([^)\n]{0,30}\$[ \t]?\d[^)\n]{0,20}\))?"
+                      # cycle 25: the figure first, "a $25 water charge each month", "$25/mo water fee"
+                      r"|(?:\b(?:an?|the)[ \t]+)?\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b))?[ \t]+(?:(?:flat|extra|separate|additional)[ \t]+)?" + name
+                      + r"\b(?:[ \t]+(?:charges?|fees?|bills?|costs?|rates?))?(?:[ \t]+(?:each|per|every|a)[ \t]+month\b|[ \t]*/[ \t]*mo(?:nth)?\b|[ \t]+monthly\b)?", re.I)
 
 
 def _money_cents(v: float) -> str:
@@ -4630,6 +4644,7 @@ def _hoa_price_conflicts(text: str) -> list[tuple[str, float]]:
     """Rental text where "HOA covers water" and "water $25" both appear: [("water", 25.0)]. Two lines that disagree about the same utility."""
     if not _HOA_COVERS_RE.search(text) or _is_sale_text(text):
         return []
+    text = _hoa_clause_split(text)
     text = _PIPE_SPLIT.sub(". ", text)
     rest = _HOA_COVERS_RE.sub(" ", text)
     out: list[tuple[str, float]] = []
@@ -4713,8 +4728,10 @@ def _util_text(text: str) -> str:
     _un = r"(?:electric\w*|gas|water|sewer|trash|garbage|internet|wi-?fi|heat\w*)"
     text = re.sub(r"(\b" + _un + r")[ \t]+[|\u2022\u00b7][ \t]+(?=" + _un + r"\b)", r"\1, ", text, flags=re.I)  # cycle 20: "Electric | Gas | Internet - about $140 combined" is one list of names, not three sentences
     text = re.sub(r"[ \t]+[|*\u2022\u00b7][ \t]+", ". ", text)  # "Heat + water included | Gas cooking, electric tenant" and "Water included * Electric not included, budget about $75 * pets": a pipe or bullet ends the sentence
+    text = _ONLY_SCOPE.sub(lambda m: "/".join(_only_scope_split(m)[0]) if _only_scope_split(m) else m.group(0), text)  # cycle 25: "Water/sewer/trash (water and trash only) $60" is "water/trash $60"
     text = _UTIL_PAREN.sub(lambda m: m.group(1), text)  # "Electric (PG&E), gas" -> "Electric, gas"
     text = re.sub(r"\(\s*(?:comcast|xfinity|spectrum|verizon|fios|cox|centurylink|frontier|google fiber|at&t|att)\b[ \t,:-]*(?=[~$]|about|approx|around|roughly|est|avg|\d)", "(", text, flags=re.I)  # "internet (Comcast ~$70)": the company name is not a utility
+    text = re.sub(r"(\b(?:internet|wi-?fi|broadband)[ \t]*[:\-][ \t]*)(?:comcast|xfinity|spectrum|verizon|fios|cox|centurylink|frontier|google fiber|at&t|att|optimum)\b[ \t,:-]*(?=[~$]|about|approx|around|roughly|est|avg|\d)", r"\1", text, flags=re.I)  # cycle 25: "Internet: Spectrum, approx $65": the company name between the word and its figure is not a utility
     text = re.sub(r"\belec\b(?=[ \t]*(?:[+/&,:(]|and\b|\$|~|about|avg|approx|around|\d|incl|paid|tenant|extra))", "electric", text, flags=re.I)  # "elec + gas (avg $155 total)"
     text = re.sub(r"\bpower\b(?:[ \t]+bills?)?(?=[ \t]*(?:\(?[ \t]*(?:~|about|around|approx\w*|roughly|est\w*|avg\.?|average)?[ \t]*\$|[,/&+][ \t]*(?:gas|water|sewer|trash|internet)\b|and[ \t]+(?:gas|water|sewer|trash|internet)\b|(?:is|are)[ \t]+(?:not[ \t]+)?(?:incl|paid|extra|tenant)))", "electric", text, flags=re.I)  # "you pay power ($90ish)"
     text = re.sub(r"(?<=\bpays )(?:the[ \t]+)?power\b|(?<=\bpay )(?:the[ \t]+)?power\b|(?<=\btenant pays )power\b|(?<=\bresponsible for )power\b", "electric", text, flags=re.I)
@@ -4748,7 +4765,121 @@ def _util_text(text: str) -> str:
     text = re.sub(r"\b(trash|garbage|waste)[ \t]+(?:pick-?ups?|collection|removal|disposal|services?)\b(?![ \t]+(?:fee|charge))", "trash", text, flags=re.I)  # "Trash pickup included" is the trash being included
     # "Tenant pays PG&E, water and trash included": the last comma part is the included one, so it is its own sentence
     text = _PAYS_THEN_INCLUDED.sub(r"\1. \2", text)
+    text = _scope_util_figures(text)
     return text
+
+
+_ONLY_NAME = r"(?:hot water|water|sewer|trash|garbage|gas|electric|heat|internet)"
+_ONLY_LIST = r"(?:" + _ONLY_NAME + r"[ \t]*(?:,|/|&|\+|\band\b)?[ \t]*(?:and[ \t]+)?)"
+_ONLY_SCOPE = re.compile(r"(?P<grp>\b" + _ONLY_LIST + r"{2,6}?)[ \t]*[(\[][ \t]*(?P<br>[^()\[\]\n$]{3,50}?)[ \t]*[)\]]", re.I)
+
+
+def _only_scope_split(m: re.Match[str]) -> tuple[list[str], list[str]] | None:
+    """"Water/sewer/trash (water and trash only) $60/mo flat": the bracket narrows the group to the names it lists. (kept, left out) or None
+    when the bracket is not a narrowing ("only" or "just" must be in it and every name in it must be in the group)."""
+    br = m.group("br").lower()
+    if not re.search(r"\b(?:only|just)\b", br):
+        return None
+    kept = [w for w in re.findall(_ONLY_NAME, br)]
+    grp = [w for w in re.findall(_ONLY_NAME, m.group("grp").lower())]
+    if not kept or not set(kept) < set(grp) or re.search(r"\$|\d", br):
+        return None
+    kept = list(dict.fromkeys("trash" if w == "garbage" else w for w in kept))
+    grp = list(dict.fromkeys("trash" if w == "garbage" else w for w in grp))
+    return kept, [w for w in grp if w not in kept]
+
+
+def _only_scope_notes(text: str) -> list[str]:
+    """Cycle 25: the left-out part of "Water/sewer/trash (water and trash only) $60/mo flat" is unknown: one note says so."""
+    out: list[str] = []
+    for m in _ONLY_SCOPE.finditer(text):
+        got = _only_scope_split(m)
+        if got and got[1]:
+            kept, left = got
+            out.append(f"The listing says its figure covers {_join_names(kept)} only, so {_join_names(left)} {'is' if len(left) == 1 else 'are'} left unknown. "
+                       f"Ask who pays {'it' if len(left) == 1 else 'them'} and what {'it costs' if len(left) == 1 else 'they cost'}.")
+    return out
+
+
+# cycle 25: a flat or estimated figure covers only the utilities in its own item (the words touching it, its slash group, its brackets), never the
+# other utilities that sit in the same sentence. "Tenant pays gas, electric, water flat $40/mo" is a $40 for the water; "gas, electric and water
+# about $40" (one list joined by "and") and "Water, sewer, trash $65/month" (a label list with no payer words) still cover the whole list.
+_SCOPE_NAME = re.compile(r"\b(?:hot water|water|sewer|sewage|trash removal|trash|garbage|gas|electricity|electric|heat|internet|wi-?fi|cable)\b(?!\s+(?:stove|range|oven|fireplace|cooktop|grill|appliances?|water heater|pump|bill\b|meter))", re.I)
+_SCOPE_PAYER = re.compile(r"\b(?:tenants?|residents?|renters?|lessees?|you)\b[^.\n;$]{0,14}\b(?:pays?|responsible|will pay|must pay|handles?|covers?)\b|\bpay[ \t]+for\b|\bpays?\b", re.I)
+_SCOPE_TOTAL = re.compile(r"\b(?:total|combined|altogether|all[ \t-]*in|together|bundle[ds]?|package|per[ \t]+person|each[ \t]+person|between)\b|\bboth\b|\ball[ \t]+(?:the[ \t]+)?utilit", re.I)
+_SCOPE_MONEY = re.compile(r"(?<![\w$])[$\uff04][ \t]?\d")
+_SCOPE_FEE = re.compile(r"deposit|one[- ]time|set[- ]?up|application|activation|move[- ]in|\bpets?\b|parking|insurance|\bfee\b(?<!flat fee)", re.I)
+
+
+def _scope_top_commas(clause: str) -> list[str]:
+    """The clause cut at its top-level commas (not inside brackets, not inside a number like 1,200)."""
+    parts, depth, prev = [], 0, 0
+    for i, ch in enumerate(clause):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0 and not (i > 0 and clause[i - 1].isdigit() and i + 1 < len(clause) and clause[i + 1].isdigit()):
+            parts.append(clause[prev:i])
+            prev = i + 1
+    parts.append(clause[prev:])
+    return parts
+
+
+def _scope_names(seg: str) -> list[str]:
+    seg = re.sub(r"\([^)]*\)", " ", seg)
+    return sorted({m.group(0).lower() for m in _SCOPE_NAME.finditer(seg)})
+
+
+def _scope_util_figures(text: str) -> str:
+    """Cut a clause between the plain list of utilities before a figure and the item the figure belongs to, so the readers see "tenant pays gas,
+    electric. water flat $40/mo". Only done when the figure's own item names fewer utilities than the list before it and either a payer
+    word leads the list or an earlier part is already a joined group ("electric and gas, water ... $30"). A serial list closed by "and"
+    ("gas, electric and water $40") and a label list without payer words ("Water, sewer, trash $65/month") are left alone."""
+    out: list[str] = []
+    for part in re.split(r"(\n|;|\.(?=\s|$))", text):
+        if not part or part in ("\n", ";", ".") or not _SCOPE_MONEY.search(part) or not _SCOPE_NAME.search(part) or _SCOPE_TOTAL.search(part):
+            out.append(part)
+            continue
+        segs = _scope_top_commas(part)
+        if len(segs) < 2:
+            out.append(part)
+            continue
+        cut_before: set[int] = set()
+        for i, seg in enumerate(segs):
+            if not _SCOPE_MONEY.search(seg) or _SCOPE_FEE.search(seg):
+                continue
+            start = i
+            if not _scope_names(seg) and i > 0 and _scope_names(segs[i - 1]) and not _SCOPE_MONEY.search(segs[i - 1]):
+                start = i - 1  # "water is split with the other half, usually around $30": the figure's own words are the part before it
+            own = ",".join(segs[start:i + 1])
+            own_names = _scope_names(own)
+            if not own_names or start == 0 or own_names == ["trash"]:
+                continue  # a lone trash figure after a payer list ("Resident pays: Electric, Gas, Trash $18") is read as it was
+            if re.fullmatch(r"\s*(?:" + _SCOPE_NAME.pattern + r")\s*\([^)]*\)\s*", own, re.I):
+                continue  # "..., internet ($60)": the bracket right after one name is that name's, read by the partial rule
+            back = []
+            j = start - 1
+            while j >= 0 and _scope_names(segs[j]) and not _SCOPE_MONEY.search(segs[j]):
+                back.append(j)
+                j -= 1
+            if not back:
+                continue
+            serial = len(own_names) >= 2 and all(len(_scope_names(segs[k])) == 1 for k in back)
+            if serial:
+                continue
+            payer = bool(_SCOPE_PAYER.search(",".join(segs[:start])))
+            prev_group = any(len(_scope_names(segs[k])) >= 2 for k in back)
+            if payer or prev_group:
+                cut_before.add(start)
+        if not cut_before:
+            out.append(part)
+            continue
+        built = segs[0]
+        for k in range(1, len(segs)):
+            built += (". " if k in cut_before else ",") + segs[k].lstrip() if k in cut_before else "," + segs[k]
+        out.append(built)
+    return "".join(out)
 
 
 def _except_price_split(text: str) -> str:
@@ -8119,6 +8250,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if weight_note:
         facts.append(weight_note)
     utext = _util_text(text)
+    facts.extend(_try(lambda: _only_scope_notes(text)) or [])
     included = _try(lambda: _utilities(utext)) or ""
     pays = _try(lambda: _tenant_pays(utext)) or ""
     roles = _try(lambda: _utility_roles(utext)) or {"tenant": [], "landlord": [], "billed": [], "amount": None, "per": None}
@@ -8487,6 +8619,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             and not re.search(r"\bheat", utext, re.I):
         # cycle 20: "Tenant pays all utilities ... Nicor $95 winter": the gas bill is the heat, so heat is not a second unknown
         pays = _ordered_utilities([w.strip() for w in pays.split(",") if w.strip() and w.strip() != "heat"])
+    pay_words_now = {w.strip() for w in pays.split(",") if w.strip()}
+    if {"gas", "heat"} <= pay_words_now and "heat" not in priced_now and re.search(r"\bgas\b", text, re.I) and not re.search(r"\bheat", text, re.I):
+        # cycle 25: the listing names gas ("gas incl. in rent?") and never says heat, so it does not separate the two: one unknown (the gas), not gas and heat
+        pays = _ordered_utilities([w for w in (x.strip() for x in pays.split(",")) if w and w != "heat"])
     for hw, hamt in (_try(lambda: _hoa_price_conflicts(text)) or []):
         # cycle 23: "HOA covers water" and "water $25" disagree: water is neither counted nor called included, it stays unknown
         inc_left = [w.strip() for w in included.split(",") if w.strip() and w.strip() != hw] if included != "all" else [w for w in _ALL_UTILITIES if w != hw]
@@ -8768,7 +8904,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                          + ("" if has_period else " The listing does not say how often, so it is counted as monthly. Ask if that is right."))
             covered_utils = [w for w in re.findall(r"hot water|water|sewer|sewage|trash|garbage|waste", label) if w not in ("garbage", "waste", "sewage")]
             tenant_list = [w.strip() for w in str(out.get("tenant_pays") or "").split(",")]
-            if covered_utils and has_period and not any(w in tenant_list or (w == "hot water" and "water" in tenant_list) for w in covered_utils):  # cycle 17: those utilities are paid through the flat fee, so they are not counted again
+            paid_here = [w for w in dict.fromkeys("water" if u == "hot water" else u for u in covered_utils) if w in tenant_list]
+            if paid_here:
+                # cycle 25: a utility whose flat figure is counted in other monthly fees is no longer "not counted yet" in the utilities line
+                left_pay = [w for w in tenant_list if w and w not in paid_here]
+                if left_pay:
+                    out["tenant_pays"] = ", ".join(left_pay)
+                else:
+                    out.pop("tenant_pays", None)
+                facts.append(f"{', '.join(paid_here).capitalize()} {'is' if len(paid_here) == 1 else 'are'} paid through that flat fee, so {'it is' if len(paid_here) == 1 else 'they are'} not counted again in your utilities estimate.")
+            elif covered_utils and has_period and not any(w in tenant_list or (w == "hot water" and "water" in tenant_list) for w in covered_utils):  # cycle 17: those utilities are paid through the flat fee, so they are not counted again
                 facts.append(f"{', '.join(dict.fromkeys(covered_utils)).capitalize()} {'is' if len(set(covered_utils)) == 1 else 'are'} paid through that flat fee, so {'it is' if len(set(covered_utils)) == 1 else 'they are'} not counted again in your utilities estimate.")
         for label, v in _try(lambda: _service_fee_items(text)) or []:  # cycle 18: every named fee of a list counts once, whatever the layout
             if v in added:
@@ -10567,7 +10712,7 @@ def _money_monthly_fees(text: str) -> list[float]:
     found: list[float] = []
     label = r"(?:amenity|trash|valet trash|trash valet|valet waste|pest(?: control)?|package|technology|tech|community|convenience|internet|cable|smart home)(?:\s*(?:fee|fees|charge|package|service))?"
     back = re.compile(r"^[^.\n;$]{0,14}?\b(?:billed|charged|passed)\s*(?:back|through|on)\b", re.I)
-    for m in re.finditer(r"\b" + label + r"(?:[ \t]*\([^)\n$]{1,25}\))?[ \t:\-=]{0,4}\$\s?(\d{1,4}(?:\.\d\d)?)\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)", text, re.I):
+    for m in re.finditer(r"\b" + label + r"(?:[ \t]*\([^)\n$]{1,25}\))?(?:[ \t]+(?:is|are|costs?|runs?|will[ \t]+be)\b)?[ \t:\-=]{0,4}\$\s?(\d{1,4}(?:\.\d\d)?)\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)", text, re.I):
         if re.match(r"(?:trash|internet|cable)", m.group(0), re.I) and (back.match(text[m.end():]) or re.match(r"[ \t,]*(?:is[ \t]+)?flat\b", text[m.end():], re.I)):
             continue  # a billed-back or flat-fee utility is the utilities estimate, never another monthly fee
         found.append(float(m.group(1)))
