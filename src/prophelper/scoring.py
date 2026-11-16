@@ -482,6 +482,17 @@ def _pet_limit_problems(profile: dict[str, Any], place: dict[str, Any]) -> list[
     return out
 
 
+_ALL_SIZES = re.compile(r"\b(?:all|any|every)[ \t]+(?:dog[ \t]+|pet[ \t]+)?sizes?\b|\bsizes?[ \t]+(?:doesn'?t|does not|don'?t)[ \t]+matter\b|\bno[ \t]+(?:weight|size)[ \t]+(?:limits?|restrictions?)\b|\b(?:any|all)[ \t]+weights?\b", re.I)
+
+
+def _says_all_sizes(place: dict[str, Any]) -> bool:
+    """True when a pet sentence of the listing says dogs of every size are fine ("Dogs allowed (all sizes!)", "no weight limit")."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", str(place.get("listing_text") or "")):
+        if _ALL_SIZES.search(sentence) and re.search(r"\b(?:dogs?|pets?|animals?|canines?)\b", sentence, re.I) and not re.search(r"\bexcept|\bunless|\bbreed|\bover\b|\bno[ \t]+(?:pets|dogs)\b", sentence, re.I):
+            return True
+    return False
+
+
 def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """The pet policy, then (when the search says what pets you have) the place's weight and count limits."""
     profile = (ctx or {}).get("pets") or {}
@@ -509,7 +520,9 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
     problems: list[str] = []
     unknown: list[str] = []
     if has_dog and weight:
-        if w_limit is None:
+        if w_limit is None and _says_all_sizes(place):
+            pass  # cycle 21: "dogs allowed (all sizes!)" says there is no weight limit, so it is not unknown
+        elif w_limit is None:
             unknown.append("weight limit")
         elif weight > w_limit:
             problems.append(f"Your dog is {_fmt(weight)} lb; limit {_fmt(w_limit)} lb")
