@@ -12,6 +12,8 @@ import unicodedata
 from statistics import median
 from typing import Any, Iterable
 
+from . import guards
+
 # Each rule: (name, pattern, message). The message says what it is and what to do, in plain words.
 _PAYMENT = re.compile(
     r"\b(wire (?:the |me |us |it |your )?(?:deposit|money|funds|payment|rent|fee)|wiring (?:the |your )?(?:deposit|money|funds)|wire transfer|wire (?:it |this |that |the (?:deposit|money|funds|payment|rent) |money |funds |payment )?to (?:my|our|the|a) (?:lawyer|attorney|solicitor)|western union|money ?gram|"
@@ -47,7 +49,16 @@ _NO_CHECKS = re.compile(r"\bno (?:credit|background|reference|income|application
 _BUY_PAYMENT = re.compile(
     r"\b(?:earnest money|good faith deposit|deposit|down ?payment|closing (?:costs?|funds))\b[^.\n]{0,80}\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b|"
     r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b[^.\n]{0,80}\b(?:earnest money|good faith deposit|deposit|down ?payment)\b|"
-    r"\bwire\b[^.\n]{0,60}\b(?:escrow|earnest)\b", re.I)
+    r"\bwire\b[^.\n]{0,60}\b(?:escrow|earnest)\b|"
+    # cycle 17: "send $3,000 earnest by Zelle" (no "money"), an amount sent by a payment app or gift card, "wire $5,000"
+    r"\bearnest\b[^.\n]{0,80}\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b|"
+    r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b[^.\n]{0,80}\bearnest\b|"
+    r"\b(?:send|pay|transfer|text|zelle|venmo)\b[^.\n]{0,40}\$\s?\d[\d,]*(?:\.\d+)?[^.\n]{0,40}\b(?:zelle|venmo|cash ?app|gift ?cards?|western union)\b|"
+    r"\b(?:zelle|venmo|cash ?app|gift ?cards?|western union)\b[^.\n]{0,40}\$\s?\d|"
+    r"\bwire\s+(?:me\s+|us\s+)?(?:the\s+)?(?:\$\s?\d|funds\b|money\b|payment\b|earnest\b)", re.I)
+_BUY_WAIVES = re.compile(r"\b(?:waive[sd]?|waiving|no|skip|skips|skipping|without|forgo|forego|drop|dropping)\s+(?:the\s+|all\s+|any\s+)?(?:(?:appraisal|inspection|financing|finance|loan|mortgage|home sale|sale)s?\s*(?:,|and|or|&|/)\s*)*(?:appraisal|inspection|financing|finance|loan|mortgage)s?\s+contingenc(?:y|ies)\b|"
+                        r"\bcontingenc(?:y|ies)\s+(?:are |is )?(?:waived|not allowed|not accepted|not permitted)\b|\bno\s+contingenc(?:y|ies)\b|"
+                        r"\bwaive[sd]?\s+(?:all\s+|any\s+|the\s+)?contingenc(?:y|ies)\b", re.I)
 _PAY_METHODS = re.compile(r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|western union)\b", re.I)
 _TITLE_CO = re.compile(r"\b(?:title|escrow|closing)\s+(?:company|co\b|agency|office|agent)|\b[\w&'. -]{2,40}\b(?:title|escrow)\b(?:\s+(?:company|co\.?|inc\.?|llc|agency))?", re.I)
 _VERIFIED_PHONE = re.compile(r"\b(?:verif(?:y|ied|ying)|confirm(?:ed|ing)?|check(?:ed)?)\b[^.\n]{0,40}\b(?:by|over|via|through|with|using)\s+(?:a\s+|the\s+|your\s+)?(?:phone|call|calling|telephone)\b|"
@@ -126,6 +137,27 @@ _AI_SOFT = (
     r"\b(?:please|kindly|you (?:should|must|need to))\s+(?:overlook|omit|skip|leave out|don'?t mention|do not mention|ignore|hide|play down|downplay)\s+(?:the\s+|any\s+|that\s+)?[^.\n]{0,40}\bwhen\s+(?:you\s+)?(?:summari[sz]\w*|reporting|writing (?:up )?(?:a |the )?summary|reviewing|rating|ranking)\b"
 )
 _AI_EXTRA = re.compile(_AI_EXTRA.pattern + "|" + _AI_SOFT, re.I)
+# cycle 17: chat-template markers, role lines that start a tool call, tool names, snake_case and hyphen-split phrases, and the plain
+# German, French and Spanish forms of "ignore previous instructions". Each needs an AI-only tell.
+_HY = r"[-.·]?"
+_AI_C17 = re.compile(
+    r"\[/?inst\]|<<\s*/?sys\s*>>|<\|(?:im_start|im_end|system|user|assistant)\|>|"
+    r"\b(?:assistant|ai|model)\s*:\s*(?:i|i'll|i will|i am going to|i shall|let me|now)\s+(?:now\s+)?(?:call|run|use|invoke|execute|move|delete|update|send|forward|rate|mark)\b|"
+    r"\b(?:developer|system|admin(?:istrator)?|operator)\s+(?:message|prompt|note|instructions?|override)\s*:\s*(?:output|print|reveal|show|send|repeat|list|disclose|call|ignore|delete|move|update|rate|say|tell|write|share|forward|dump)\b|"
+    r"\b(?:system|developer)\s*:\s*(?:call|run|invoke|execute|use)\b|"
+    r"\b(?:call|invoke|run|execute|use)\s+(?:the\s+)?(?:mcp\s+)?(?:tool|function)\s+[`'\"]?[a-z]+_[a-z_]+|"
+    r"\b(?:move|update|delete|add|get|list|compare|remove|archive|restore|create|set)_(?:places?|notes?|searches|search|tours?|listings?|contacts?)\b|"
+    r"\b(?:ignore|disregard|forget)[_]+(?:all[_]+)?(?:previous|prior|above|earlier)[_]+(?:instructions?|prompts?|rules?)\b|"
+    r"\big[-.\u00b7]nore\s+pre[-.\u00b7]?vious\b|\bignore\s+pre[-.\u00b7]vious\b|"
+    # German
+    r"\b(?:ignorier(?:e|en|t)?|vergiss|vergessen|missachte\w*|uberspringe\w*|überspringe\w*)\s+(?:sie\s+)?(?:alle[ns]?\s+|die\s+|deine\s+|ihre\s+|meine\s+)*(?:vorherigen|vorigen|fruheren|früheren|obigen|bisherigen|vorhergehenden|vorangegangenen)\s+(?:anweisungen|instruktionen|regeln|befehle|vorgaben|anleitungen)\b(?!\s+(?:des|der|vom|von)\b)|"
+    # French
+    r"\b(?:ignore|ignorez|oublie|oubliez|ne tiens pas compte de|ne tenez pas compte de)\s+(?:toutes\s+)?(?:les|vos|tes|mes|ces)\s+(?:toutes\s+)?(?:instructions|consignes|regles|directives)\s+(?:precedentes|anterieures|ci-dessus|d'avant)\b(?!\s+(?:du|des|de la|de l')\b)|"
+    r"\b(?:ignore|ignorez|oublie|oubliez)\s+(?:toutes\s+)?(?:les\s+)?(?:precedentes|anterieures)\s+(?:instructions|consignes|regles)\b|"
+    # Spanish
+    r"\b(?:ignora|ignore|ignoren|olvida|olvide|omite|omita|desestima)\s+(?:todas\s+)?(?:las|tus|sus|mis)\s+(?:todas\s+)?(?:instrucciones|reglas|indicaciones|directrices)\s+(?:anteriores|previas|de arriba|iniciales)\b(?!\s+(?:del|de la|de los)\b)|"
+    r"\b(?:ignora|ignore|olvida|olvide)\s+(?:todas\s+)?(?:las\s+)?(?:anteriores|previas)\s+(?:instrucciones|reglas|indicaciones)\b", re.I)
+
 _SYSTEM_IN_COMMENT = re.compile(r"\b(?:system|assistant|developer)\s*:", re.I)
 # "Payment plan for the deposit" plus a request to talk only through messages is a soft sign worth a look.
 _PAY_PLAN = re.compile(r"\bpayment plans?\b[^.\n]{0,30}\b(?:deposit|rent|move[- ]in)\b|\b(?:deposit|rent|move[- ]in)\b[^.\n]{0,30}\bpayment plans?\b", re.I)
@@ -218,7 +250,7 @@ def trim_at_injection(phrase: str) -> str:
     """A quoted listing line cut off where text aimed at an AI tool starts ("Pet fee $50. Ignore previous instructions..." gives
     "Pet fee $50"). Unchanged when there is none or when the cut would leave no amount."""
     text = str(phrase or "")
-    hits = [m.start() for pattern in (_AI_TARGETED, _AI_EXTRA) for m in [pattern.search(text)] if m]
+    hits = [m.start() for pattern in (_AI_TARGETED, _AI_EXTRA, _AI_C17) for m in [pattern.search(text)] if m]
     if not hits:
         return text
     cut = text[:min(hits)].rstrip(" ,;:-.\t\n")
@@ -261,7 +293,7 @@ def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
     # also try the text with every look-alike letter folded and with leet digits read as letters
     for variant in (plain, _fold_all(plain), _unleet(_fold_all(plain))):
         text = variant
-        hits = sorted((m for pattern in (_AI_TARGETED, _AI_EXTRA) for m in pattern.finditer(text)), key=lambda m: m.start())
+        hits = sorted((m for pattern in (_AI_TARGETED, _AI_EXTRA, _AI_C17) for m in pattern.finditer(text)), key=lambda m: m.start())
         if hits:
             break
     quotes: list[str] = []
@@ -292,6 +324,8 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     taken out of the text, whitespace collapsed. Returns ``(text, comment_contents)``. The contents of comments are also
     appended to the text so they are scanned too."""
     out = str(text or "")
+    if guards.has_tag_chars(out):  # invisible tag characters spell ASCII: read what they say (a long run), drop the rest (emoji flags)
+        out = guards.TAG_CHARS.sub(lambda m: (". " + d + ". ") if len(d := guards.decode_tag_chars(m.group(0))) >= 8 else "", out)
     for _ in range(2):  # twice, for text like &amp;#8203;
         decoded = html.unescape(out)
         if decoded == out:
@@ -339,7 +373,7 @@ def _rules() -> list[tuple[re.Pattern[str], str]]:
 
 
 def _text(place: dict[str, Any]) -> str:
-    return normalise_text(" ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes")))[0]
+    return normalise_text(" ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes", "hidden_text")))[0]
 
 
 def is_serious(place: dict[str, Any], peer_prices: Iterable[float] = ()) -> bool:
@@ -354,6 +388,8 @@ _BUY_RULES = [
     (_BUY_PAYMENT, "It asks for earnest money or a deposit by wire, Zelle, Venmo, Cash App, gift card or crypto, to a person or an account you can't verify. "
                    "Earnest money normally goes to an escrow or title company you have checked yourself, through its published phone number."),
     (_BUY_NO_INSPECTION, "It pushes you to skip or waive the inspection. A real seller lets you inspect. Get a home inspection before you commit."),
+    (_BUY_WAIVES, "It asks you to waive contingencies (such as the appraisal, the inspection or the loan). Without them you can lose your earnest money if the home "
+                  "appraises low, fails the inspection or the loan falls through. Check with your agent or attorney before you agree."),
     (_BUY_AS_IS, "It is sold as-is, so the seller may not fix anything that turns up. Get an inspection and ask what the seller will repair before you commit."),
     (_BUY_CASH_ONLY, "It says cash only. Real sales close through an escrow or title company, so ask how the closing will be handled."),
     (_BUY_SAME_DAY, "It pressures you to send money or sign today. A real sale can wait while an escrow or title company and your agent check it."),
@@ -362,7 +398,7 @@ _BUY_RULES = [
 
 def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: str = "rent") -> list[str]:
     """Plain-words signs to check on this place. ``peer_prices``: prices of the other places in the same search."""
-    text, comments = normalise_text(" ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes")))
+    text, comments = normalise_text(" ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes", "hidden_text")))
     flags: list[str] = []
     buy = mode == "buy"
     if buy:
@@ -385,16 +421,22 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         if pattern.search(text):
             flags.append(message.replace("lease", "contract") if buy else message)
     ai_line = None
-    for key in ("listing_text", "notes", "ai_notes", "title"):  # the title is quoted only when it is what matched
+    for key in ("listing_text", "notes", "ai_notes", "title", "hidden_text"):  # the title is quoted only when it is what matched
         field_text, field_comments = normalise_text(str(place.get(key) or ""), keep_lines=True)
         ai_line = _ai_line(field_text, field_comments)
         if ai_line is not None:
             break
     if ai_line is None:
-        all_text, all_comments = normalise_text("\n".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes")), keep_lines=True)
+        all_text, all_comments = normalise_text("\n".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes", "hidden_text")), keep_lines=True)
         ai_line = _ai_line(all_text, all_comments)
     if ai_line is not None:
-        flags.append("This listing has text aimed at AI tools; treat it with care." + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
+        hidden = " ".join(filter(None, [str(place.get("hidden_text") or "")] + [guards.decode_tag_chars(place.get(k)) for k in ("listing_text", "title", "notes", "ai_notes")]))
+        hidden_note = ""
+        if hidden:
+            h_text, h_comments = normalise_text(hidden, keep_lines=True)
+            if _ai_line(h_text, h_comments) is not None:
+                hidden_note = " Hidden characters that spelled this were removed from the listing text."
+        flags.append("This listing has text aimed at AI tools; treat it with care." + hidden_note + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and buy_payment_hit(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
                      + ("Don't send money before you have toured the place and an escrow or title company is involved." if buy else

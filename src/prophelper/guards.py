@@ -19,10 +19,28 @@ _LOOKALIKE = re.compile(r"<(\s*/?\s*untrusted)", re.IGNORECASE)
 _SOURCE_BAD = re.compile(r"[^A-Za-z0-9 ,.'()-]")
 
 
+# Unicode "tag" characters (U+E0000 to U+E007F) are invisible but spell ASCII text a model may read ("ASCII smuggling").
+TAG_CHARS = re.compile("[\U000e0000-\U000e007f]+")
+
+
+def has_tag_chars(text: object) -> bool:
+    return bool(text) and bool(TAG_CHARS.search(str(text)))
+
+
+def decode_tag_chars(text: object) -> str:
+    """The ASCII text hidden in tag characters (U+E0020 to U+E007E), runs joined by a space. '' when there is none."""
+    runs = ["".join(chr(ord(c) - 0xE0000) for c in m.group(0) if 0x20 <= ord(c) - 0xE0000 <= 0x7E) for m in TAG_CHARS.finditer(str(text or ""))]
+    return " ".join(r.strip() for r in runs if r.strip())
+
+
+def strip_tag_chars(text: object) -> str:
+    return TAG_CHARS.sub("", "" if text is None else str(text))
+
+
 def neutralize(text: object) -> str:
     """The text with anything that looks like an untrusted-block tag defused (the ``<`` becomes ``&lt;``), so it
-    cannot close the block it sits in or open a fake one."""
-    return _LOOKALIKE.sub(r"&lt;\1", "" if text is None else str(text))
+    cannot close the block it sits in or open a fake one. Hidden tag characters are removed."""
+    return _LOOKALIKE.sub(r"&lt;\1", strip_tag_chars(text))
 
 
 def inline(text: object, limit: int | None = None) -> str:
