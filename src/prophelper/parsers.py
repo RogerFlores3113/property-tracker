@@ -8154,7 +8154,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         notes.append(f'The listing mentions a free-rent offer ("{_net_clause(text, m.start(), m.end())}"). It is not counted anywhere. Check the terms.')
     m = _NET_BROKER_MONTH.search(text)
     if m and not out.get("broker_fee") and not re.search(r"broker|agent fee|finder", low_facts):
-        notes.append(f'The listing says "{_net_clause(text, m.start(), m.end())}". The fee is given in months of rent, so no amount is saved. Ask what it comes to.')
+        notes.append(f'The listing says "{_net_clause(text, m.start(), m.end())}". The fee is given as {"a share" if "%" in _net_clause(text, m.start(), m.end()) else "months"} of the rent, so no amount is saved. Ask what it comes to.')
     m = re.search(r"\b(?:laundry|washer|dryer|w\s*/\s*d|washing machines?|coin[- ]op)\b", text, re.I)
     if m and not out.get("laundry") and not re.search(r"laundry|washer|dryer|hookup", low_facts) and not any("laundry" in n for n in notes):
         notes.append(f'The listing mentions laundry ("{_net_clause(text, m.start(), m.end())}"), but I could not tell what kind. Ask if it is in the unit, in the building or off site.')
@@ -8392,6 +8392,9 @@ def _broker_fee_percent(text: str) -> tuple[float, str, float] | None:
         pct = float(m.group(1))
         if 0 < pct <= 100:
             return (pct, "a year of rent", 12.0) if m.group(2) else (pct, "one month's rent", 1.0)
+    m = re.search(head + r"(\d{1,3}(?:\.\d)?)[ \t]*%[ \t]*of[ \t]+(?:(?:a|one|1|the)[ \t]+)?(?:full[ \t]+)?(?:year(?:'?s)?|12[ \t]+months'?)[ \t]+(?:of[ \t]+)?rent", text, re.I)
+    if m and 0 < float(m.group(1)) <= 100:  # cycle 21: "Broker fee is 8% of a year of rent", "10% of one year's rent"
+        return float(m.group(1)), "a year of rent", 12.0
     m = re.search(head + r"(half)[ \t]+(?:of[ \t]+)?(?:(?:a|one|1)[ \t]+)?month(?:'?s)?(?:[ \t]+(?:of[ \t]+)?rent)?", text, re.I)
     if m:
         return 50.0, "one month's rent", 1.0
@@ -8520,7 +8523,7 @@ def _is_sale_text(text: str) -> bool:
 
 _ONE_TIME_LABELS = (
     r"admin(?:istrative|istration)?(?:[ \t]+fees?)?", r"lease[- ](?:processing|up|initiation|signing|admin\w*|set-?up|start-?up)(?:[ \t]+fees?)?",
-    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
+    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
     r"(?:amenity|community|technology|tech)[ \t]+fees?",
     r"move[- ]?in(?![ \t]*(?:fees?|total|costs?|specials?|date|day|ready|cash|charges?|money|price|amount|incentive|offer|-)\b)",
 )

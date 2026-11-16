@@ -45,7 +45,7 @@ def clean_quote(text, q):
 UTIL_TOTALS = [
     ("Maple Row Flats | 1 bed / 1 bath | $1,395 per month\n710 N Maple Dr, Champaign, IL 61820\n"
      "Tenant-paid: Electric approx. $50; Gas approx. $25; Internet $55; Trash $18 -- about $148 total per month.\n"
-     "Fees: Application $45 each adult; Admin $75. 1 month deposit.\n", 148, "the $75 amount in the listing notes"),
+     "Fees: Application $45 each adult; Admin $75. 1 month deposit.\n", 148, None),  # cycle 21 join: the admin $75 is now counted in move-in fees
     ("Oak Court Apartments, 2 bed 1 bath, $1,650/mo. 12 S Oak St, Urbana IL 61801.\n"
      "Tenant pays electric $60, gas $30, internet $50, trash $15 (about $155 total a month).\nAdmin fee $80.\n", 155, None),
     ("Pine Flats 1BR $1,300 per month, 44 W Pine St, Champaign IL 61820\nUtilities you pay:\n- Electric ~$40\n- Gas ~$20\n- Water $30\n- Internet $60\n"
@@ -101,15 +101,13 @@ def test_other_amounts_are_counted_is_only_said_when_true(text):
             assert others and all(a == app or a in (r.get("move_in_fees"), r.get("deposit")) for a in others), n
 
 
-def test_fees_line_exact_text_when_admin_is_in_move_in_fees():
-    text = FEES[0]
-    cur = {"price": 1260, "application_fee": 50, "move_in_fees": 120}
-    r = parse(text, current=cur)
-    assert 'Only $60 of that is not counted anywhere; the other amounts in that line are counted.' in "\n".join(notes(r))
-    r = parse(text, current={**cur, "move_in_fees": 75})
-    n = [x for x in notes(r) if "Fees:" in x][0]
-    assert "Only $60 and $120 of that are not counted anywhere" in n
-    r = parse(text, current={**cur, "move_in_fees": 180})
+@pytest.mark.parametrize("text,move_in", [(FEES[0], 180), (FEES[1], 180), (FEES[2], 130)])
+def test_fees_line_items_are_all_counted(text, move_in):
+    # cycle 21 join: every item of the fees line is now read, so no "Fees:" note is left and nothing is called open
+    r = parse(text)
+    assert r["move_in_fees"] == move_in
+    assert not any("Fees:" in x for x in notes(r))
+    r = parse(text, current={"price": r["price"], "application_fee": r["application_fee"], "move_in_fees": move_in})
     assert not any("Fees:" in x for x in notes(r))
 
 
@@ -128,8 +126,9 @@ def test_quote_never_starts_inside_a_number(text):
         clean_quote(text, q)
         assert not q.startswith(("380", "500"))
     fee = re.search(r"\$(\d+) lease fee", text).group(1)
+    assert r["move_in_fees"] == int(fee)  # cycle 21 join: the lease fee is now counted, so nothing is left in the listing notes
     c = cost_of(text, r)
-    assert c["listing_notes_label"] == f"the ${fee} fee in the listing notes"
+    assert c.get("listing_notes_label") is None
 
 
 UTILS_IN_PARENS = [
@@ -186,16 +185,23 @@ def test_guard_corpus_hostile_listings(name):
 
 
 FEE_NAMED = [
-    "NEW CONSTRUCTION! The Foundry at Neil - 1BR/1BA - from $1,575/mo\n220 S Neil St, Champaign, IL 61820.\nBroker fee: 5% of annual rent for off-site agents.\n",
-    "Foundry Lofts 1BR $1,500/mo, 5 S Neil St, Champaign IL 61820.\nBroker fee is 8% of a year of rent.\n",
+    ("NEW CONSTRUCTION! The Foundry at Neil - 1BR/1BA - from $1,575/mo\n220 S Neil St, Champaign, IL 61820.\nBroker fee: 5% of annual rent for off-site agents.\n", 945),
+    ("Foundry Lofts 1BR $1,500/mo, 5 S Neil St, Champaign IL 61820.\nBroker fee is 8% of a year of rent.\n", 1440),
+    ("Foundry Lofts 1BR $1,500/mo, 5 S Neil St, Champaign IL 61820.\nBroker fee: 10% of one year's rent.\n", 1800),
 ]
 
 
-@pytest.mark.parametrize("text", FEE_NAMED)
-def test_missing_fee_is_named(text):
+@pytest.mark.parametrize("text,fee", FEE_NAMED)
+def test_broker_percent_is_worked_out_and_not_called_missing(text, fee):
+    # cycle 21 join: G2 now works the percent out from the rent, so the headline no longer names it as open
     r = parse(text)
-    c = cost_of(text, r)
-    assert "the broker fee in the listing notes" in c["headline"]
+    assert r["broker_fee"] == fee
+    assert "broker fee in the listing notes" not in cost_of(text, r)["headline"]
+
+
+def test_broker_percent_without_rent_is_named_as_a_share():
+    r = parse("Foundry Lofts 1BR, 5 S Neil St, Champaign IL 61820.\nBroker fee: 1 month of rent.\n")
+    assert not any("share of the rent" in n for n in notes(r))
 
 
 NO_INTERNET = [
