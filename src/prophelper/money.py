@@ -541,6 +541,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
             continue
         if re.search(r"\boptional\b", note, re.I) and not re.search(r"\b(?:required|mandatory)\b", note, re.I):
             continue  # an optional carport, garage or pool fee is not a cost you have to pay
+        if re.search(r"\bseller\b[^.]*\b(?:credit|toward closing|concessions?|closing costs?)\b", note, re.I) and not re.search(r"\b(?:parking|garage|fee|deposit|hoa)\b", note, re.I):
+            continue  # what the seller gives toward closing is about the cash to close, not a monthly cost the buyer left out
         if _note_is_stale(note, place):
             continue
         if _NOTE_PLACED.search(note) and not re.search(r"not counted|no amount|not saved", note, re.I):

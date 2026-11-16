@@ -1799,15 +1799,24 @@ def _seller_cap(text: str) -> tuple[float, str] | None:
 
 
 def _closing_costs(text: str) -> float | None:
-    """"Estimated closing costs $9,800" -> 9800. A seller's cap ("seller will pay up to $8,000 in closing costs") is not the closing costs."""
-    m = re.search(r"\bclosing costs?(?:\s+(?:(?:are|is)\s+)?(?:est\w*\.?|estimate[d]?)(?:\s+(?:at|to be|of|around|about))?)?[ \t:\-=]{0,6}(?:of |about |around |approx\.? |~)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", text, re.I) \
-        or re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:in |for )?(?:est\w*\.?[ \t]+)?closing costs?\b", text, re.I)
-    if not m:
-        return None
-    if _CAP_WORDS.search(text[max(0, m.start() - 40):m.start(1)]) and re.search(r"\bseller\b", text[max(0, m.start() - 80):m.end() + 40], re.I):
-        return None
-    value = _num(m.group(1))
-    return value if 100 <= value <= 5_000_000 else None
+    """"Estimated closing costs $9,800" -> 9800. What the seller pays ("Seller will pay $7,000 in closing costs", "seller-paid closing
+    costs $5,000", "closing costs paid by seller") is a credit and never the buyer's closing costs, and neither is a seller's cap."""
+    pats = (r"\bclosing costs?(?:\s+(?:(?:are|is)\s+)?(?:est\w*\.?|estimate[d]?)(?:\s+(?:at|to be|of|around|about))?)?[ \t:\-=]{0,6}(?:of |about |around |approx\.? |~)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)",
+            r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:in |for )?(?:est\w*\.?[ \t]+)?closing costs?\b")
+    for pat in pats:
+        for m in re.finditer(pat, text, re.I):
+            clause_start = max(text.rfind(".", 0, m.start()), text.rfind("\n", 0, m.start()), text.rfind(";", 0, m.start())) + 1
+            before = text[clause_start:m.start()]
+            if re.search(r"\b(?:seller|owner)(?:'s)?\b", before, re.I) and not re.search(r"\bbuyer(?:'s)?[ \t]+(?:own[ \t]+)?closing\b", before, re.I):
+                continue  # what the seller pays is a credit, not the buyer's closing costs
+            if re.match(r"[^.\n;]{0,40}\b(?:paid|covered|credited|funded|contributed|provided)[ \t]+by[ \t]+(?:the[ \t]+)?(?:seller|owner)\b|[ \t,]*(?:from|by)[ \t]+(?:the[ \t]+)?(?:seller|owner)\b", text[m.end():m.end() + 70], re.I):
+                continue
+            if _CAP_WORDS.search(text[max(0, m.start() - 40):m.start(1)]) and re.search(r"\bseller\b", text[max(0, m.start() - 80):m.end() + 40], re.I):
+                continue
+            value = _num(m.group(1))
+            if 100 <= value <= 5_000_000:
+                return value
+    return None
 
 
 def _seller_credit(text: str) -> float | None:
@@ -1824,7 +1833,11 @@ def _seller_credit(text: str) -> float | None:
             r"\bseller(?:'s)?[ \t]+(?:is[ \t]+|will[ \t]+be[ \t]+)?(?:offering|giving|providing|contributing|paying|covering)\b[^$\n.]{0,40}?" + amt,
             r"\bclosing[ \t]+costs?[ \t]+(?:credits?|concessions?|contributions?|assistance)\b[^$\n.]{0,30}?" + amt + r"(?=[^\n.]{0,40}\bseller\b)",
             # "Closing cost help from seller: $3,000", "Closing cost assistance from the seller $3,000"
-            r"\bclosing[ \t]+costs?[ \t]+(?:help|assistance|credits?|concessions?|contributions?|money|support)[ \t]+(?:from|by|paid by)[ \t]+(?:the[ \t]+)?seller\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt)
+            r"\bclosing[ \t]+costs?[ \t]+(?:help|assistance|credits?|concessions?|contributions?|money|support)[ \t]+(?:from|by|paid by)[ \t]+(?:the[ \t]+)?seller\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt,
+            # "Seller closing help: $4,500", "Seller help with closing $4,500", "Seller-paid closing costs: $3,500"
+            r"\bseller(?:'s)?[ \t]+(?:closing(?:[ \t]+costs?)?[ \t]+)?(?:help|assistance|aid|support|allowance)\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt,
+            r"\bseller(?:'s)?[ \t]+(?:help|assistance|aid|support)(?:[ \t]+(?:with|toward|towards|for))?[ \t]+closing(?:[ \t]+costs?)?\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt,
+            r"\bseller[- ]paid[ \t]+closing(?:[ \t]+costs?)?\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt)
     for pat in pats:
         for m in re.finditer(pat, text, re.I):
             if re.search(r"assessment", m.group(0), re.I):
@@ -1869,6 +1882,12 @@ def _seller_credit_detail(text: str, price: float | None) -> tuple[float | None,
     return None, []
 
 
+def _seller_gives_toward_closing(text: str) -> bool:
+    """True when the listing has the seller paying or crediting something toward the buyer's closing costs."""
+    return bool(_seller_credit(text) or _seller_cap(text) or _seller_credit_percent(text)[0] is not None
+                or re.search(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:pays?|paid|covers?|contribut\w*|concessions?|credits?)\b[^.\n]{0,40}\bclosing[ \t]+costs?\b", text, re.I))
+
+
 def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
     """For a buy search. Parking cost and move-in fees are rent-side money: the buy cost and the cash to close do not count
     them, so they are not filled in (the reader never says "filled in" for money that is not counted). Each becomes a plain
@@ -1899,15 +1918,19 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
         or re.search(r"\b(\d{1,2}(?:\.\d+)?)[ \t]*%[ \t]+(?:buyer'?s?|buying)[ \t]+agent'?s?[ \t]+(?:commission|fee|compensation)\b", text, re.I)
     if cm:
         notes.append(f"The listing mentions a buyer agent commission of {float(cm.group(1)):g}%. No amount is saved and it is not counted anywhere. Ask who pays it and whether it changes what you owe.")
-    for pat in (r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]+(?:\w+[ \t]+)?transfer[ \t]+fee\b", r"\btransfer[ \t]+fee\b[ \t:\-=]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)"):
+    for pat in (r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]+(?:\w+[ \t]+)?transfer[ \t]+fee\b", r"\btransfer[ \t]+fee\b[ \t:\-=]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)", r"\btransfer[ \t]+fee\b[^.\n;$]{0,30}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)"):
+
         t = re.search(pat, text, re.I)
         if t:
             amount = _num(t.group(1))
             sent = next((x for x in re.split(r"[.\n;]", text) if t.group(0) in x), "")
             buyer_pays = bool(_PAYER_BUYER.search(sent) or re.search(r"\bbuyer'?s?\b[^.\n]{0,30}\btransfer[ \t]+fee", sent, re.I)) and not _PAYER_SELLER.search(sent)
-            if buyer_pays and re.search(r"\bclosing\b|\bone[- ]time\b", sent, re.I):
+            if buyer_pays and re.search(r"\bclosing\b|\bone[- ]time\b|\bpaid[ \t]+by[ \t]+(?:the[ \t]+)?buyer\b|\bbuyer[ \t]+pays?\b", sent, re.I):
                 prior = out.get("closing_costs")
-                if prior in (None, ""):
+                if prior in (None, "") and _seller_gives_toward_closing(text):
+                    notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. It is not saved as the closing costs, because the seller is also paying toward closing "
+                                 "and the fee alone would make the cash to close look too low. The cash to close uses an estimate of the closing costs. Ask for the full closing cost estimate.")
+                elif prior in (None, ""):
                     out["closing_costs"] = _tidy_number(float(amount))
                     notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. It is counted in the closing costs, so it is in the cash to close. "
                                  "That is the only closing cost the listing gives, so the real total is likely higher. Ask for the full closing cost estimate.")
@@ -2009,13 +2032,17 @@ def _buyer_closing_note(text: str) -> str:
             "and counted in the cash to close. Ask the seller's agent to confirm it.")
 
 
+# A sentence about a special assessment, or about "seller-paid assessments" (the seller pays it: not a credit to the buyer).
+_SPECIAL_SENTENCE = r"[^.\n]*\b(?:special assessments?|(?:seller|owner)[- ]paid[ \t]+(?:(?:condo|hoa|association|building)[ \t]+)?assessments?)\b[^.\n]*"
+
+
 def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | None, str, str]:
     """(one-time amount or None, payer "seller" / "buyer" / "", the matching sentence) for a special assessment.
     An amount quoted per month is left out of the amount (it is not one-time), but the sentence still comes back."""
     if re.search(r"\bno (?:known |pending |current )?special assessments?\b", text, re.I):
         return None, "", ""
     sentence = None
-    for m in re.finditer(r"[^.\n]*\bspecial assessments?\b[^.\n]*", text, re.I):
+    for m in re.finditer(_SPECIAL_SENTENCE, text, re.I):
         sentence = m.group(0)
         if re.search(r"\$\s?\d", sentence):
             break
@@ -2083,7 +2110,7 @@ def _special_assessment(text: str) -> str:
     if re.search(r"\bno (?:known |pending |current )?special assessments?\b", text, re.I):
         return ""
     sentence = None
-    for m in re.finditer(r"[^.\n]*\bspecial assessments?\b[^.\n]*", text, re.I):
+    for m in re.finditer(_SPECIAL_SENTENCE, text, re.I):
         sentence = m.group(0)
         if re.search(r"\$\s?\d", sentence):
             break
@@ -3523,7 +3550,7 @@ def _hoa(text: str) -> float | None:
         m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|\w+ly|annual\w*)?\s*(?:hoa|association) (?:fee|dues)?", text, re.I)
     if not m:
         # "Monthly condo fee 385", "Condo fee: 385/mo": a plain number with no dollar sign counts only when the listing says monthly
-        nm = re.search(r"\b(monthly[ \t]+)?(?:hoa|condo|association)[ \t]+(?:fees?|dues)[ \t:\-=]{0,4}(\d{2,4})(?:\.\d\d)?(?![\d,.]|[ \t]*(?:%|sq|sf|/[ \t]*(?:br|bd|bed)))"
+        nm = re.search(r"\b(monthly[ \t]+)?(?:hoa|condo|association)[ \t]+(?:fees?|dues)[ \t:\-=]{0,4}(\d{2,4})(?:\.\d\d)?(?![\d,]|\.\d|[ \t]*(?:%|sq|sf|/[ \t]*(?:br|bd|bed)))"
                        r"([ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b))?", text, re.I)
         if nm and (nm.group(1) or nm.group(3)) and not re.search(r"quarter|annual|year", text[max(0, nm.start() - 12):nm.end() + 20], re.I):
             return float(nm.group(2))
