@@ -1800,7 +1800,7 @@ def build_server(store: Store) -> FastMCP:
             clean.append(a)
         return clean, problems, notes
 
-    def check_criteria(items: Any, pending: set[str], where: str = "Criterion", search_id: int | None = None) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    def check_criteria(items: Any, pending: set[str], where: str = "Criterion", search_id: int | None = None, pet_kind: Any = None) -> tuple[list[dict[str, Any]], list[str], list[str]]:
         """Every criterion checked without saving anything: (clean items, problems, gentle notes). ``pending`` are the
         lower-case names of anchors that will be saved first, so a criterion may point at them."""
         clean: list[dict[str, Any]] = []
@@ -1896,6 +1896,12 @@ def build_server(store: Store) -> FastMCP:
             if not bad and kind == "pets":
                 had = any(x["kind"] == "pets" for x in clean) or (
                     search_id is not None and any(x["kind"] == "pets" for x in store.list_criteria(search_id)))
+                have_kind = str(pet_kind if pet_kind is not None else (store.get_search(search_id).get("pet_kind") if search_id is not None else "") or "").strip().lower()
+                if not bad and not had and have_kind not in ("cat", "dog", "both") and str((target or {}).get("want") or "") not in ("cats", "dogs", "both") \
+                        and not (target or {}).get("auto"):
+                    problems.append(f"{at}: a pets rule needs to know which pets. Give target {{\"want\": \"cats\"}}, {{\"want\": \"dogs\"}} or {{\"want\": \"both\"}}, "
+                                    "or set pet_kind on the search (cat, dog or both) so the rule follows it. Nothing was saved")
+                    bad = True
                 if had:
                     problems.append(f"{at}: there is already a pets rule. A search has one pets rule, and it follows the search's pets setting (pet_kind). Change that one with reweight instead")
                     bad = True
@@ -1965,7 +1971,7 @@ def build_server(store: Store) -> FastMCP:
         except ValueError as exc:
             problems.append(str(exc))
         a_clean, a_probs, a_notes = check_anchors(anchors)
-        c_clean, c_probs, c_notes = check_criteria(criteria, {str(a["name"]).strip().lower() for a in a_clean})
+        c_clean, c_probs, c_notes = check_criteria(criteria, {str(a["name"]).strip().lower() for a in a_clean}, pet_kind=pet_kind or "")
         stop_with(problems + a_probs + c_probs, "saved")
         s = store.add_search(name, mode, **fields)
         a_lines = add_anchors(a_clean, s["id"])
@@ -2026,7 +2032,7 @@ def build_server(store: Store) -> FastMCP:
         except ValueError as exc:
             problems.append(str(exc))
         a_clean, a_probs, a_notes = check_anchors(add_anchors_list)
-        c_clean, c_probs, c_notes = check_criteria(add_criteria_list, {str(a["name"]).strip().lower() for a in a_clean}, search_id=s["id"])
+        c_clean, c_probs, c_notes = check_criteria(add_criteria_list, {str(a["name"]).strip().lower() for a in a_clean}, search_id=s["id"], pet_kind=fields.get("pet_kind", s.get("pet_kind") or ""))
         problems += a_probs + c_probs
         valid = {c["id"]: c for c in store.list_criteria(s["id"])}
         r_clean: list[dict[str, Any]] = []
