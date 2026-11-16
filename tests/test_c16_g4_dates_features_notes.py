@@ -97,11 +97,11 @@ def test_open_note_is_named():
     assert "the $75 amenity fee in the listing notes" in compare.cost_unknowns(place)
 
 
-def test_two_open_notes_stay_generic():
+def test_two_open_notes_name_both_amounts():  # c17: the label names the amounts instead of staying generic
     notes = ('The listing also says "Pool fee $25/month required". It is a monthly fee and it is not counted anywhere. Check what it is for. '
              'The listing also says "Valet trash $30/month required". It is a monthly fee and it is not counted anywhere. Check what it is for.')
     c = money.true_monthly_cost({"price": 1500, "reader_notes": notes})
-    assert c["listing_notes_label"] == money.LISTING_NOTES_UNCOUNTED
+    assert c["listing_notes_label"] == "the $25 and $30 amounts in the listing notes"
 
 
 def test_no_open_note_no_tag():

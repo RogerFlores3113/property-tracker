@@ -338,7 +338,7 @@ def _note_rank(unit: str) -> int:
 def listing_notes_text(p: dict[str, Any], limit: int = 110) -> str:
     """The reader's saved notes from the listing, short. Money notes come first and the offer boilerplate last. Whole notes
     only: when they do not all fit, it ends after the last whole note with "and N more on the place page"."""
-    text = " ".join(str(p.get("reader_notes") or "").split())
+    text = str(p.get("reader_notes") or "").strip()  # one note per line: note_units keeps each line whole
     if not text:
         return ""
     units = sorted(money_mod.note_units(text), key=_note_rank)  # stable: the order they were written inside each group

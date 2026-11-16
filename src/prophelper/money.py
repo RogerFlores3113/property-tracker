@@ -501,11 +501,23 @@ _NOTE_PLACED = re.compile(r"so nothing is counted for you|\bis saved as the\b|\b
 _NOTE_CONTINUES = re.compile(r"(?:It|No|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
 
 
+_NOTE_CONTINUES_LEFT = re.compile(r"[A-Z][\w' ]{0,30}\b(?:is|are) (?:left (?:empty|blank)|not filled)\b")
+
+
+def join_notes(notes: Any) -> str:
+    """The notes as saved text: one note per line (a note keeps its own sentences together)."""
+    return "\n".join(" ".join(str(n).split()) for n in notes if str(n).strip())
+
+
 def note_units(text: str) -> list[str]:
-    """The saved reader notes as whole notes: a sentence plus the sentences that carry on from it ("It is not counted.")."""
+    """The saved reader notes as whole notes. Notes are saved one per line, and then each line is one note. A paragraph saved
+    the old way (or a single note) is cut into a sentence plus the sentences that carry on from it ("It is not counted.")."""
+    lines = [" ".join(x.split()) for x in str(text or "").splitlines() if x.strip()]
+    if len(lines) > 1:
+        return lines
     units: list[str] = []
     for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", " ".join(str(text or "").split())):
-        if units and _NOTE_CONTINUES.match(sentence):
+        if units and (_NOTE_CONTINUES.match(sentence) or _NOTE_CONTINUES_LEFT.match(sentence)):
             units[-1] += " " + sentence
         elif sentence:
             units.append(sentence)
@@ -547,7 +559,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
             continue  # "The $25 credit check fee is saved as the application fee. Ask if each adult pays it.": the amount is placed
         if _NO_AMOUNT_OPTIONAL.search(note) and not re.search(r"\$\s?\d", note):
             continue  # an optional carport with no price: nothing to add up
-        if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(note):
+        probe = note if re.search(r"\$\s?\d", note) else re.sub(r"\b(?:what|how much)\b[^.]{0,30}\bcosts?\b", " ", note, flags=re.I)  # "ask what they cost" is no amount
+        if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(probe):
             out.append(note)
     return out
 
@@ -564,16 +577,47 @@ _OPEN_KIND = re.compile(r"\b(flat fee|amenity fee|pool fee|pool|trash fee|parkin
 _OPEN_KIND_WORDS = {"parking": "parking cost", "garage": "garage cost", "pool": "pool fee", "hoa": "HOA", "assessment": "assessment", "deposit": "deposit"}
 
 
+def _amount_list(amounts: list[str]) -> str:
+    return amounts[0] if len(amounts) == 1 else ", ".join(amounts[:-1]) + " and " + amounts[-1]
+
+
 def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> str:
-    """A few words for what is open in the notes: "the $75 flat fee in the listing notes" when one note holds one amount,
-    else the generic "some amounts in the listing notes"."""
+    """A few words for what is open in the notes, naming the amounts: "the $75 flat fee in the listing notes" for one amount,
+    "the $96 and $40 amounts in the listing notes" for several (up to four), else the generic "some amounts in the listing notes"."""
     notes = open_listing_notes(reader_notes, place)
-    if len(notes) == 1:
-        amounts = re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", notes[0])
-        if len({a.replace(" ", "") for a in amounts}) == 1:
-            kind = _OPEN_KIND.search(notes[0])
-            amount = amounts[0].replace(" ", "")
-            return f"the {amount} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
+    if not notes:
+        return LISTING_NOTES_UNCOUNTED
+    used: set[float] = set()
+    if place:
+        try:
+            from .parsers import _field_sums, _net_used_numbers
+            used = {round(u, 2) for u in _net_used_numbers({k: v for k, v in place.items() if v is not None}, [], str(place.get("listing_text") or "")) | _field_sums(place)}
+        except Exception:
+            used = set()
+    seen: dict[float, str] = {}
+    unplaced: dict[float, str] = {}
+    for note in notes:
+        for raw in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", note):
+            amount = raw.replace(" ", "")
+            value = float(amount.lstrip("$").replace(",", ""))
+            seen.setdefault(value, amount)
+            if round(value, 2) not in used:
+                unplaced.setdefault(value, amount)
+    amounts = list((unplaced or seen).values())
+    if len(amounts) == 1 and len(notes) == 1:
+        kind = _OPEN_KIND.search(notes[0])
+        return f"the {amounts[0]} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
+    if 1 <= len(amounts) <= 4:
+        return f"the {_amount_list(amounts)} amount{'s' if len(amounts) > 1 else ''} in the listing notes"
+    if not amounts:
+        kinds = []
+        for note in notes:
+            kind = _OPEN_KIND.search(note)
+            word = _OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else ""
+            if word and word not in kinds:
+                kinds.append(word)
+        if kinds and len(kinds) <= 3:
+            return f"the {_amount_list(kinds)} in the listing notes"
     return LISTING_NOTES_UNCOUNTED
 
 

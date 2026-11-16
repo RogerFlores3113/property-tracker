@@ -670,6 +670,17 @@ def _beds_conflict(text: str) -> str:
     return f"The listing says {said}, so I could not tell how many bedrooms it has. The bedroom count is left empty. Ask which layout you would get."
 
 
+# "LUXE 1x1", "2x2 apartment": beds by baths. Single digits only and never a size ("2x4 beams", "3x3 ft"), a count ("2x rent") or a date.
+_BEDS_X_BATHS = re.compile(r"(?<![\w.,$/#-])([0-6])[ \t]?[xX\u00d7][ \t]?([1-4](?:\.5)?)(?![\w.,/$%'\"-]|[ \t]*(?:ft|feet|foot|in\b|inch|sq|sf|x\b|\u00d7|mm|cm|m\b|%|\(|lumber|beams?|boards?|studs?|posts?|fenc))")
+
+
+def _beds_x_baths(text: str) -> tuple[float, float] | None:
+    m = _BEDS_X_BATHS.search(text)
+    if not m:
+        return None
+    return float(m.group(1)), float(m.group(2))
+
+
 def _beds(text: str) -> float | None:
     conv = _beds_converted(text)
     if conv:
@@ -694,6 +705,9 @@ def _beds(text: str) -> float | None:
     studio = re.search(r"\bstudio\b(?!\s*(?:apartments?\s*)?(?:are|is|also|available)\b)", low)
     if studio and not re.search(r"\bno studio\b", low) and not [h for h in hits if h[1] >= 1]:
         hits.append((studio.start(), 0.0))  # "Studio-plus ... 1 bed" is a 1 bedroom; only a plain studio is 0
+    xb = _beds_x_baths(text)
+    if xb:
+        hits.append((_BEDS_X_BATHS.search(text).start(), xb[0]))  # type: ignore[union-attr]
     hits = [h for h in hits if h[1] <= 20]
     return min(hits)[1] if hits else None
 
@@ -743,6 +757,9 @@ def _baths(text: str) -> float | None:
         hits.append((m.start(), float(m.group(1))))
     for m in re.finditer(r"\b\d\s*(?:bd|br|bed)\s*[/|]\s*(\d(?:\.\d)?)\s*(?:ba|bth|bath)", low):
         hits.append((m.start(), float(m.group(1))))
+    xb = _beds_x_baths(text)
+    if xb:
+        hits.append((_BEDS_X_BATHS.search(text).start(), xb[1]))  # type: ignore[union-attr]
     hits = [h for h in hits if h[1] <= 15]
     return min(hits)[1] if hits else None
 
@@ -3321,9 +3338,60 @@ def _whole_months(start: str, end: str) -> int | None:
     return None
 
 
+_ORDINALS = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9,
+             "tenth": 10, "fifteenth": 15, "twentieth": 20, "thirtieth": 30}
+_MONTH_WORD = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_ORDINAL_DATE = re.compile(r"\b(?:the[ \t]+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|fifteenth|twentieth|thirtieth|\d{1,2}(?:st|nd|rd|th))"
+                           r"(?:[ \t]+day)?[ \t]+of[ \t]+(" + _MONTH_WORD + r")\b(\.?,?[ \t]*\d{4}\b)?", re.I)
+
+
+def _ordinal_dates(text: str) -> str:
+    """"starts the first of April 2027" -> "starts April 1 2027" (same length-free rewrite), so the date readers see a plain date."""
+    def fix(m: re.Match[str]) -> str:
+        w = m.group(1).lower()
+        day = _ORDINALS.get(w) or int(re.sub(r"\D", "", w))
+        return f"{m.group(2)} {day}" + (f" {re.sub(r'[^0-9]', '', m.group(3))}" if m.group(3) else "")
+    return _ORDINAL_DATE.sub(fix, text)
+
+
+# "Lease begins 12/1 ends 11/30/2027": a start with no year and an end with a year. The start is the day that makes whole months.
+_LEASE_BEGIN_END = re.compile(r"\blease[ \t]+(?:starting|starts?|begins?|beginning|commenc\w+)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<s_") + r"[ \t]*[,;.-]?[ \t]*(?:and[ \t]+)?"
+                              r"(?:ends?|ending|expires?|through|thru|until)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<e_"), re.I)
+
+
+def _lease_begin_end(text: str) -> tuple[str, str] | None:
+    m = _LEASE_BEGIN_END.search(text)
+    if not m:
+        return None
+    end = _dated_with_year(m, "e_")
+    if not end:
+        return None
+    start = _dated_with_year(m, "s_")
+    if not start:
+        keys = {k[2:]: v for k, v in m.groupdict().items() if k.startswith("s_") and v}
+        if "mdy" not in keys:
+            return None
+        parts = re.split(r"[/.-]", keys["mdy"])
+        if len(parts) != 2:
+            return None
+        e = date.fromisoformat(end)
+        try:
+            cand = date(e.year, int(parts[0]), int(parts[1]))
+        except ValueError:
+            return None
+        if cand >= e:
+            cand = date(e.year - 1, cand.month, cand.day)
+        start = cand.isoformat()
+    return (start, end) if _whole_months(start, end) else None
+
+
 def _lease_phrases(text: str) -> tuple[str | None, str | None]:
     """"12 month lease starting 3/1/2027" -> start; "Lease through 2/28/2028", "Lease ends Feb 28, 2027" -> end. Each needs a year."""
     start = end = None
+    text = _ordinal_dates(text)
+    both = _lease_begin_end(text)
+    if both:
+        return both
     m = _LEASE_START_PHRASE.search(text)
     if m:
         start = _dated_with_year(m, "s_")
@@ -3395,8 +3463,24 @@ def _lease_pair_at(low: str, pos: int) -> bool:
     return False
 
 
+_LEASE_ALSO = re.compile(r"(?<![\d,$/-])(\d{1,2})[- ]?(?:months?|mos?)\b[- ]?(?:leases?|terms?|contracts?)?(?:[ \t]+(?:available|offered|option|possible))?[ \t]*[,;.]?[ \t]*"
+                         r"(?:or[ \t]+)?(?:and[ \t]+)?(?:also|plus|as well)[ \t,:]*(?:a[ \t]+|an[ \t]+)?(\d{1,2})[- ]?(?:months?|mos?)\b(?![ \t]*(?:free|off|discount|of[ \t]+rent|rent\b|concession))", re.I)
+
+
+def _lease_also(text: str) -> tuple[int, int] | None:
+    """"11-month lease available, also 12-month": the two lengths the listing offers (first, second)."""
+    m = _LEASE_ALSO.search(text)
+    if not m:
+        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    return (a, b) if a != b and 3 <= a <= 60 and 3 <= b <= 60 else None
+
+
 def _lease_months(text: str) -> int | None:
     low = text.lower()
+    also = _lease_also(low)
+    if also:
+        return 12 if 12 in also else None  # a plain year is the one that is saved; two other lengths stay unknown (see _lease_choices)
     found: list[tuple[int, int]] = []  # (where it is written, months): the one stated first wins
     for pat in (r"(?<![\d,-])(\d{1,2})[- ](?:month|mo\b)[- ]?(?:minimum |min\.? )?(?:lease|term|contract)",
                 r"\b(?:lease|term|contract)s?(?: terms?| length| duration| options?)?\s*[:\-]?\s*(?:of |is |are )?(?<![-,\d] )(\d{1,2})\s*(?:months?|mos?\b)(?!\s*(?:,|and|or|/|to|-)\s*\d)",
@@ -3430,6 +3514,9 @@ _LEASE_CHOICES = (
 
 def _lease_choices(text: str) -> str:
     low = text.lower()
+    also = _lease_also(low)
+    if also:
+        return f"{also[0]} or {also[1]} months"
     for m in _LEASE_PAIR.finditer(low):
         a, b = int(m.group(1)), int(m.group(2))
         if a != b and 3 <= a <= 60 and 3 <= b <= 60 and re.search(r"leases?|terms?|contracts?", m.group(0)):
@@ -3463,6 +3550,10 @@ _OFFER_LEASE_AFTER = re.compile(r"\b(?:free|off|discount|concession|special|ince
 
 def _lease_offer_note(text: str, lease: int | None) -> list[str]:
     """A deal that needs a different lease length than the one saved ("One month free on a 13-month lease")."""
+    also = _lease_also(text.lower())
+    if also and lease is not None and lease in also:
+        other = also[0] if also[1] == lease else also[1]
+        return [f"The listing also offers {'an' if other in (8, 11, 18) else 'a'} {other} month lease. The {lease} month lease is what is saved. Ask which one you would get."]
     m = _OFFER_LEASE_AFTER.search(text)
     if not m:
         # "Lease 12 months, or sign a 18 month lease and get $100 off a month"
@@ -3702,6 +3793,25 @@ def split_full_address(address: Any, unit: Any = None, city: Any = None, state: 
     return out
 
 
+def _city_after_street(text: str, street: str) -> str:
+    """"FOR RENT - 2207 Philo Rd, Urbana - 1BR": a city right after the street, ended by a dash, a bar, a comma or the line end, with no state."""
+    at = text.find(street)
+    if at < 0:
+        return ""
+    m = re.match(r"(?:[ \t]+(?:" + _UNIT + r"))?[ \t]*,[ \t]*(?P<city>[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2})[ \t]*(?=$|\n|[|,.\u2013\u2014]|[ \t]-[ \t])", text[at + len(street):at + len(street) + 80], re.M)
+    if not m:
+        return ""
+    city = m.group("city").strip()
+    if _NOT_A_PLACE_WORD.search(city) or _FEATURE_WORD.search(city) or _PROPERTY_NOUN.search(city) or city.lower() in _UI_WORDS \
+            or {w.lower().strip(".") for w in city.split()} & (_NOT_STREET_WORDS | _CITY_STOP):
+        return ""
+    return city
+
+
+_CITY_STOP = {"unit", "apt", "apartment", "suite", "call", "text", "email", "contact", "near", "walk", "close", "washer", "dryer", "garage",
+              "parking", "heat", "water", "gas", "electric", "deposit", "rent", "lease", "tour", "showing", "view", "built", "pool", "gym"}
+
+
 def _address(text: str) -> dict[str, str]:
     out = _address_raw(text)
     for key in ("address", "city"):
@@ -3741,6 +3851,14 @@ def _address_raw(text: str) -> dict[str, str]:
         for m in _CITY_LINE.finditer(text):
             if m.group(2) in _STATES:
                 out["city"], out["state"], out["zip"] = m.group(1), m.group(2), m.group(3)
+                lead = re.search(r"(?<![\w$.,/#-])(\d{1,6}[ \t]+(?:[NSEW]{1,2}\.?[ \t]+)?)$", text[:m.start()])
+                if lead:  # "4700 N Broadway Chicago IL 60640": the first word of the "city" is the street name
+                    words = m.group(1).split()
+                    if len(words) == 2:
+                        out.setdefault("address", " ".join((lead.group(1) + words[0]).split()))
+                        out["city"] = words[1]
+                    else:
+                        out.pop("city")  # which words are the street and which the city is not clear, so the city is left empty
                 break
     if "city" not in out:
         for m in _CITY_LINE_NAME.finditer(text):  # "Columbus, Ohio 43201"
@@ -3754,6 +3872,13 @@ def _address_raw(text: str) -> dict[str, str]:
             if m.group(2) in _STATES and not re.match(r"(?:Rent|Price|Beds?|Baths?|Bed|Bath|Sq|Unit|Apt)$", m.group(1)):
                 out["city"], out["state"] = m.group(1), m.group(2)
                 break
+    if "city" not in out and "address" in out:
+        bare = _city_after_street(text, out["address"])
+        if bare:
+            out["city"] = bare
+            same = re.search(r"\b" + re.escape(bare) + r",?[ \t]+([A-Z]{2})\b", text)
+            if same and same.group(1) in _STATES:
+                out["state"] = same.group(1)  # the same city is written with its state somewhere else in the listing
     if "address" in out and "unit" not in out:
         um = re.search(r"(?<![\w-])" + _UNIT, text[max(0, text.find(out["address"])):][:300], re.I)
         if um and not re.match(r"[A-Z]$", um.group(1)) and _unit_ok(um.group(1)):
@@ -3792,7 +3917,7 @@ def _is_fact_line(line: str) -> bool:
 
 
 _LABEL_PREFIX = re.compile(r"^(?:fb marketplace|facebook marketplace|fb|facebook|marketplace|craigslist|zillow|trulia|redfin|hotpads|zumper|apartments\.com|realtor\.com|"
-                           r"rentals?|rental listing|for rent|for lease|listing|new listing|just listed)[ \t]*(?::|[-|\u2013\u2014])[ \t]+(?=\S)", re.I)
+                           r"rentals?|rental listing|for rent|for lease|listing|new listing|just listed)(?:[ \t]+(?:style|listing|post|ad))?[ \t]*(?::|[-|\u2013\u2014])[ \t]+(?=\S)", re.I)
 _SITE_LINE = re.compile(r"^(?:fb marketplace|zillow|realtor\.com|apartments\.com|trulia|redfin|craigslist|facebook(?: marketplace)?|hotpads|zumper|rent\.com|"
                         r"apartment ?list|padmapper|streeteasy|homes\.com|loopnet|forrent|apartmentguide|marketplace|mls)\b[^a-z]{0,3}(?:\w{0,12})?[^\n]{0,40}$", re.I)
 _BUILDING = re.compile(
@@ -3870,6 +3995,21 @@ def _craigslist_headline(text: str) -> tuple[str, str]:
     return "", ""
 
 
+_NOT_A_PLACE_WORD = re.compile(r"\b(?:ok|okay|call|text|now|obo|firm|negotiable|pets?|no|available|utilities|incl\w*|free|off|deal|only|furnished|sublease|new|great|nice|cute)\b", re.I)
+
+
+def _paren_area(text: str) -> str:
+    """"Craigslist - 2br - $1,200 (Linden)": the area in brackets at the end of a priced headline line."""
+    for raw in text.splitlines()[:3]:
+        line = " ".join(raw.strip(" \t|*#").split())
+        if "$" not in line:
+            continue
+        m = re.search(r"\(([A-Z][A-Za-z .'-]{2,30})\)\s*$", line)
+        if m and not _NOT_A_PLACE_WORD.search(m.group(1)) and not _is_fact_line(m.group(1)) or (m and m.group(1).count(" ") == 0 and not _NOT_A_PLACE_WORD.search(m.group(1))):
+            return m.group(1).strip()
+    return ""
+
+
 def _name_segment(line: str) -> str:
     """The name part of a long first line: "Riverside Lofts Unit 4B - 2 bed 2 bath ..., 123 Main St" gives "Riverside Lofts Unit 4B"."""
     if len(line) <= 90:
@@ -3898,6 +4038,7 @@ def _ai_aimed(line: str) -> bool:
 def _building_name(text: str) -> str:
     for line in text.splitlines()[:30]:
         line = _name_segment(" ".join(line.strip(" \t|\u2022\u00b7*#").split()))
+        line = _LABEL_PREFIX.sub("", line, count=1)  # "Apartments.com style: Maple Court Apartments": the site label is not the name
         if not line or len(line) > 90 or _SITE_LINE.match(line) or _STATUS_LINE.match(line):
             continue
         m = _BUILDING.match(line)
@@ -3943,7 +4084,7 @@ _LABEL_LINE = re.compile(
     r"^(?:rent|monthly rent|deposit|security deposit|price|asking price|list price|taxes|tax|property tax(?:es)?|hoa(?: fees?| dues)?|pets?|pet policy|"
     r"pet rent|pet fee|utilities|utils|fees?|application fee|admin fee|parking|lease|lease term|term|available|availability|laundry|sq\.? ?ft|"
     r"square feet|beds?|baths?|contact|phone|year built|move[- ]in|cost|total|amenities|features|description|location|address|city|"
-    r"neighborhood|heat|cooling|appliances|rates?)\b[ \t]*(?::|=|\$|-[ \t])", re.I)
+    r"neighborhood|heat|cooling|appliances|rates?|pricing|prices|details|overview|summary|info|information|about|highlights)\b[ \t]*(?::|=|\$|-[ \t])", re.I)
 _LABEL_NUMBER = re.compile(r"^(?:rent|deposit|security deposit|price|taxes|hoa|fees?)\b[ \t]+[\d$]", re.I)
 _MONEY_LINE = re.compile(r"^(?:\$|\u20ac|\u00a3|\d[\d,.]*[ \t]*(?:/|per|a)[ \t]*(?:mo|month)|\d[\d,.]*[ \t]*(?:dollars|bucks)\b)", re.I)
 _RULE_LINE = re.compile(r"^seller(?:'s)?[ \t]+(?:to|will|pays?|concessions?|credits?|contribut\w*)\b|^no[ \t]+(?:smoking|pets?|dogs?|cats?|animals?|section[ \t]*8|vouchers?|students?|roommates?|co-?signers?|evictions?|felon\w*)\b|"
@@ -3971,17 +4112,57 @@ def _date_only_line(line: str) -> bool:
     return bool(_DATE_ONLY.match(line.strip()))
 
 
+# a section label is never the name of a place ("Rent. 4120 Indianola Ave", "Pricing: 2BR Plan A ...")
+_SECTION_LABELS = frozenset("""rent rental rentals pricing price prices rates rate details description overview summary info information about amenities features
+contact location availability lease terms pets parking fees utilities floor plans floorplans highlights""".split())
+_GREETING_TITLE = re.compile(r"^(?:hi|hello|hey|hiya|howdy|dear|greetings|good (?:morning|afternoon|evening)|welcome|attention)\b", re.I)
+
+
+_NAME_STOP_WORDS = re.compile(r"\b(?:beautiful|charming|spacious|sunny|cozy|newly|new|renovated|large|lovely|gorgeous|brand|luxury|nice|great|huge|amazing|updated|modern)\b", re.I)
+
+
+def _chatty_title(title: str, found: dict[str, Any]) -> str:
+    """A greeting or a long sentence that holds the street address ("Hi Beautiful newly built 1 bed 1 bath at 88 Prospect Ave Champaign")
+    is not a name: the street address is the title. A real name in front of the address ("Pilsen Courtyard 3BR/2BA 1700 S Racine Ave") stays."""
+    addr = str(found.get("address") or "")
+    if not addr:
+        return title
+    if _GREETING_TITLE.match(title):
+        return addr
+    at = title.lower().find(addr.lower())
+    if at >= 0:
+        others = title[:at].split() + title[at + len(addr):].split()
+        if len(others) >= 7:
+            return addr
+    return title
+
+
+def fallback_title(found: dict[str, Any]) -> str:
+    """No name and no street address in the paste: "2 bed in Linden", else "2 bed place", else "Rental in Linden". Used when a pasted listing is saved and the reader found no name and no street address."""
+    city = str(found.get("city") or "").strip()
+    beds = found.get("beds")
+    if isinstance(beds, (int, float)) and not isinstance(beds, bool) and 0 <= beds <= 20:
+        what = "Studio" if beds == 0 else f"{beds:g} bed"
+        return f"{what} in {city}" if city else (what if beds == 0 else f"{what} place")
+    return f"Rental in {city}" if city else ""
+
+
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
     letters = [c for c in title if c.isalpha()]
     if len(letters) >= 4 and title.upper() == title:
         title = re.sub(r"\d*[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in _ALL_CAPS_KEEP or re.fullmatch(r"\d+(?:BR|BA|BD)", m.group(0)) else m.group(0).capitalize(), title)
         title = re.sub(r"^The\b", "The", title)
-    return _finish_title(title, text)
+    title = _finish_title(title, text)
+    return _chatty_title(title, found)
 
 
 _FEATURE_WORD = re.compile(r"\b(?:garage|carport|laundry|w/d|w&d|washer|dryer|dishwasher|renovated|remodeled|updated|stainless|hardwood|balcony|patio|a/c|central air|parking|in[- ]unit|coin|fireplace|granite|appliances?)\b|w/d|w&d", re.I)
 _PROPERTY_NOUN = re.compile(r"(?:\b|(?<=\d))(?:apartments?|apts?|house|home|condo|townhome|townhouse|duplex|studio|loft|flat|cottage|bungalow|villa|bed(?:room)?s?|br|bd|bdrm|rooms?|suite|unit [a-z0-9]+|place|lofts|residences?|community)\b", re.I)
+
+
+# a brand with a plan after it ("LUXE 1x1", "Aspen 2BR") is a name, even though the rest is a bed/bath word
+_PLAN_NAME = re.compile(r"^[A-Z][A-Za-z'&.-]{2,}(?:[ \t]+[A-Za-z'&.-]+){0,2}[ \t]+(?:\d[xX]\d(?:\.\d)?|\d[ \t]?(?:br|bd|bed)\w*)$")
 
 
 def _feature_line(line: str) -> bool:
@@ -4052,7 +4233,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
             continue
         if " | " in line:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
             parts = [x.strip() for x in line.split(" | ")]
-            line = next((x for x in parts if len(x) >= 3 and not _not_a_name(x) and not _is_fact_line(x)), "")
+            line = next((x for x in parts if len(x) >= 3 and not _not_a_name(x) and (not _is_fact_line(x) or _PLAN_NAME.match(x))), "")
         for _ in range(2):  # "FB Marketplace - 2 bedroom ...", "Rental: 3 Bedroom Home in Belmont": the label is not the title
             line = _LABEL_PREFIX.sub("", line, count=1)
         line = _name_segment(line)
@@ -4072,17 +4253,23 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
             return head[0].strip()  # "Name - Unit 4C, 3329 N Broadway": the name is the title, the street is the address
         if found.get("address") and _only_address_left(line, found):
             return found["address"]  # "Unit 3B, 500 Main St, Austin TX 78701": the street is the title, the unit has its own field
-        if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or (_is_fact_line(line) and not re.search(r"\b(?:apartment|condo|house|townhome|townhouse|duplex|loft)\b", line, re.I)):
+        if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or (_is_fact_line(line) and not _PLAN_NAME.match(line) and not re.search(r"\b(?:apartment|condo|house|townhome|townhouse|duplex|loft)\b", line, re.I)):
             continue
-        if re.search(r"\b(?:call|text|email|contact|apply|posted|updated|listed|published)\b.*(?:\d{3}|ago|on\b)", low):
-            continue
+        if re.search(r"\b(?:call|text|email|contact|apply|posted|updated|listed|published)\b.*(?:\d{3}|ago|on\b)", low) \
+                or re.search(r"\b(?:call|text|email|message|msg|dm|reach|contact)\s+(?:me|us)\b|\bwhatsapp\b", low):
+            continue  # "Nice place, text me" is a contact line, not a name
         if re.fullmatch(r"[A-Za-z .'-]+,\s*[A-Z]{2}(?:\s+\d{5})?", line):  # just "Champaign, IL"
             continue
         if len(line.split()) >= 6 and line.endswith((".", "?")) and not marked:
             continue  # a sentence, not a name
         if marked and line.endswith("."):
             line = line[:-1].rstrip()
-        return re.split(r"(?<=[a-z])(?<!\bincl)(?<!\bapt)(?<!\bbldg)[.!]\s", line)[0]
+        head = re.split(r"(?<=[a-z])(?<!\bincl)(?<!\bapt)(?<!\bbldg)[.!]\s", line)[0]
+        if head.lower().strip(" .:") in _SECTION_LABELS:
+            if found.get("address") and found["address"] in line:
+                return found["address"]  # "Rent. 4120 Indianola Ave, Call for price": the label is not the name
+            continue
+        return head
     addr = found.get("address", "")
     return addr.split(",")[0] if addr else ""
 
@@ -4488,7 +4675,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         mapped = _tenant_pays_choices(pays)
         if mapped:
             put("tenant_pays", mapped)
-    avail_read = _try(lambda: _available(text))
+    avail_read = _try(lambda: _available(_ordinal_dates(text)))
     lease_read = _try(lambda: _lease_months(text))
     range_start, range_months, range_note = _try(lambda: _lease_dates(text)) or (None, None, "")
     if avail_read is None and range_start:
@@ -4793,6 +4980,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         hint = _try(lambda: _craigslist_headline(text)) or ("", "")
         if hint[1]:
             put("city", hint[1])
+        elif _try(lambda: _paren_area(text)):
+            put("city", _paren_area(text))
     title = _try(lambda: _title(text, out))
     if title:
         out["title"] = title
@@ -4803,7 +4992,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
     facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
     if facts:
-        out["found_in_listing"] = " ".join(facts)
+        out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
             out["found_in_listing"] = re.sub(r"\b([Aa]sk|[Cc]heck with) the landlord\b", r"\1 the seller or listing agent", out["found_in_listing"])
     return out
@@ -4873,7 +5062,35 @@ def _drop_placed_facts(facts: list[str], out: dict[str, Any], follow: bool = Fal
             if not f:
                 continue
         kept.append(_one_time_wording(f))
-    return kept
+    return [f for f in kept if not _quote_repeat(f, kept, out)]
+
+
+_BARE_PET_QUOTE = re.compile(r"(?=[A-Z])(?!(?:The|A|An|It|This|That|Ask|Pets? is|Check|No amount)\b)[^.]*?\b(?:cats?|dogs?|pets?|animals?)", re.I)
+
+
+def _quote_repeat(f: str, notes: list[str], out: dict[str, Any]) -> bool:
+    """True when a note only says again what the notes or the fields already hold: a bare copy of the listing line that another note
+    already quotes ("Pet limit 25 lbs, can be waived." beside the note that says ("Pet limit 25 lbs, can be waived")), a pet line the pet
+    breed note field already holds, or a pet line whose quoted part another note gives and whose numbers are all in fields."""
+    core = f.strip().rstrip(".!").strip(' "').lower()
+    if len(core) < 8:
+        return False
+    quoted = [q.strip(" .").lower() for g in notes if g is not f for q in re.findall(r'"([^"]{6,})"', g)]
+    if core in quoted:
+        return True
+    if not _BARE_PET_QUOTE.match(f):
+        return False
+    amounts = _dollar_values(f)
+    if amounts and not amounts_all_placed(amounts, _net_used_numbers(out, []), _field_sums(out)):
+        return False
+    held = out.get("pet_weight_limit")
+    for w in re.findall(r"(\d{1,3})[ \t]*[- ]?(?:lbs?\b|pounds?\b)", f, re.I):
+        if not isinstance(held, (int, float)) or float(held) != float(w):
+            return False
+    breed = str(out.get("pet_breed_note") or "").strip().rstrip(".").strip().lower()
+    if breed and core == breed:
+        return True
+    return any(len(q) >= 12 and q in core for q in quoted)
 
 
 def _restates_field(note: str, out: dict[str, Any]) -> bool:
@@ -5018,7 +5235,7 @@ def drop_filled_notes(notes: str, place: dict[str, Any]) -> str:
         unit = _follow_fields(unit, out)
         if unit:
             kept.append(unit)
-    return " ".join(kept)
+    return "\n".join(kept)
 
 
 _PET_LINE_WORDS = frozenset("""pets pet cats cat dogs dog allowed allow ok okay welcome accepted max maximum limit limits lbs lb pound pounds per mo month
@@ -5112,8 +5329,8 @@ def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
     """The short phrase around text[start:end]: the clause it sits in. A clause that fits ``limit`` is quoted whole, never
     cut in the middle; a longer one is narrowed to the comma-separated piece that holds the match, and only a piece that is
     still too long is cut at a word edge."""
-    left = max(text.rfind(c, 0, start) for c in _NET_ENDS) + 1
-    rights = [i for i in (text.find(c, end) for c in _NET_ENDS) if i >= 0]
+    left = max(max(text.rfind(c, 0, start) for c in _NET_ENDS) + 1, text.rfind(" * ", 0, start) + 3 if text.rfind(" * ", 0, start) >= 0 else 0)  # " * " is a bullet
+    rights = [i for i in (text.find(c, end) for c in (*_NET_ENDS, " * ")) if i >= 0]
     right = min(rights) if rights else len(text)
     lo, hi = left, right
     if hi - lo > limit:

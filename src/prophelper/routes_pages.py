@@ -710,6 +710,8 @@ def _read_pasted(store: Store, text: str, url: str, sid: Any) -> dict[str, Any]:
         values["listing_text"] = text
     if not values.get("title") and values.get("address"):
         values["title"] = str(values["address"]).split(",")[0]
+    if not values.get("title") and not url:
+        values["title"] = parsers.fallback_title(values)  # no name and no address ("2 bed in Linden"), so the paste can still be saved
     if chosen and int(chosen.get("adults") or chosen.get("people") or 1) > 1:
         parsers.app_fee_note_for_people(values, int(chosen.get("adults") or chosen["people"]))
     if chosen and chosen.get("mode") == "buy" and values.get("found_in_listing"):
@@ -741,7 +743,10 @@ async def add_save(request: Request):
     if values.get("listing_text", "").strip():
         # The reader's "Also in the listing" notes are kept with the place (made again here, never taken from the form).
         try:
-            values["reader_notes"] = str(_read_pasted(store, values["listing_text"], "", sid).get("found_in_listing") or "")
+            read = _read_pasted(store, values["listing_text"], "", sid)
+            values["reader_notes"] = str(read.get("found_in_listing") or "")
+            if not (values.get("title") or values.get("address") or values.get("url")):
+                values["title"] = read.get("title") or ""  # a paste with no name and no address still saves
         except Exception:  # noqa: BLE001 - a reader failure must not stop the save
             pass
     try:
