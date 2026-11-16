@@ -110,8 +110,13 @@ def test_only_the_open_amounts_are_named_and_grammar_agrees():
 
 
 def test_one_open_amount_keeps_singular_grammar():
+    # cycle 19 join: G1's reader now counts the budget-billing electric too ($75 + $30), so nothing is left open here;
+    # the singular grammar itself is pinned through the helper.
     place, _c, _m = read("Pine Row 1 bed $1,400. 5 Pine St Champaign IL. Tenant pays gas $30. Electric budget billing $75, gas $30.")
-    assert "Only $75 of that is" in place["reader_notes"]
+    assert place["utilities_estimate"] == 105
+    assert "not counted" not in (place["reader_notes"] or "")
+    from prophelper.parsers import _only_unplaced
+    assert _only_unplaced("It is not counted anywhere.", "electric $75, gas $30", {30.0}) == "Only $75 of that is not counted anywhere."
 
 
 # ---- item 3: titles
