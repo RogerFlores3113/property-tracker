@@ -108,3 +108,13 @@ def test_correction_cut_and_parking_is_no_address():
     r = parse_listing("Gorgeous 3 bedroom house near Lincoln Elementary! No: rent 3,240 -- no wait, 2,340.\nParking: garage OR 2 driveway spots OR street permit.", "")
     assert r["title"] == "Gorgeous 3 bedroom house near Lincoln Elementary"
     assert "address" not in r
+
+
+def test_corrected_size_is_not_kept_in_the_title():
+    # cycle 20 join: "1x1? no 3x2" corrects the size, so the wrong size is cut with the correction
+    from prophelper.parsers import parse_listing
+    for text in ("Albany Park 1x1? no 3x2. Rent $2,900. 4410 N Kedzie Ave Chicago IL",
+                 "Albany Park 1 x 1? no 3x2\nRent $2,900\n4410 N Kedzie Ave Chicago IL"):
+        r = parse_listing(text, "")
+        assert r["title"] == "Albany Park"
+        assert r["beds"] == 3

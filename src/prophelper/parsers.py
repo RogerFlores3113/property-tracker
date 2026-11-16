@@ -5795,6 +5795,8 @@ def _policy_title_line(line: str) -> bool:
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
     cut = _CORRECTION_CUT.sub("", title).strip(" ,;:-|\u2013\u2014")
+    if cut != title:  # "Albany Park 1x1? no 3x2": the size before the correction is the wrong one, so it goes too
+        cut = re.sub(r"\s+\d+\s*x\s*\d+\s*\??$", "", cut).strip(" ,;:-|?\u2013\u2014")
     if len(cut) >= 8:
         title = cut  # "Gorgeous 3 bedroom house near Lincoln Elementary! No: rent 3,240 -- no wait": the correction is not part of the name
     letters = [c for c in title if c.isalpha()]
