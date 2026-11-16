@@ -53,7 +53,7 @@ def _P():
     return parsers
 
 
-_ITEM_SEP = re.compile(r"[,;|\n]|\.(?=\s|$)|\bplus\b|\band\b|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|\([^)]*\)")
+_ITEM_SEP = re.compile(r"[,;|\n]|\.(?=\s|$)|\bplus\b|[ \t]\+[ \t]|\band\b|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|\([^)]*\)")
 _SUMMED = ("other_monthly_fees", "move_in_fees")
 _CATS = (
     ("app", re.compile(r"application|\bapp\.? fee|applicants?\b|screening|credit check|background", re.I), ("application_fee",)),
