@@ -123,7 +123,7 @@ def test_open_money_notes_show_the_tag(note):
     assert money.listing_notes_uncounted(note)
     cost = money.true_monthly_cost({"price": 1500, "reader_notes": note}, "rent")
     assert money.LISTING_NOTES_UNCOUNTED in cost["uncounted"]
-    assert "things in the listing" not in cost["headline"] and "some amounts in the listing notes not counted yet" in cost["headline"]
+    assert "things in the listing" not in cost["headline"] and "in the listing notes not counted yet" in cost["headline"]  # c16: names the one open amount when there is one
 
 
 def test_notes_with_nothing_open_show_no_tag():

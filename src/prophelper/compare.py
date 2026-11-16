@@ -152,7 +152,8 @@ def _missing_names(p: dict[str, Any]) -> list[str]:
     if paid and not any(w in " ".join(out).lower() for w in paid):
         out.append(f"utilities you pay ({_join_and(paid)})")  # named, so the row never says "Nothing unknown" for them
     if money_mod.LISTING_NOTES_UNCOUNTED in ((p.get("cost") or {}).get("uncounted") or []):
-        out.append("amounts in the listing notes")
+        label = (p.get("cost") or {}).get("listing_notes_label") or ""
+        out.append(label if label and label != money_mod.LISTING_NOTES_UNCOUNTED else "amounts in the listing notes")
     return list(dict.fromkeys(out))
 
 
@@ -160,7 +161,8 @@ def _tenant_paid_unpriced(p: dict[str, Any]) -> list[str]:
     """Utilities the listing says the tenant pays when no utilities amount is filled in (rent only), whatever else the cost math decided."""
     if (p.get("cost") or {}).get("mode") in (None, "buy") or money_mod.num(p.get("utilities_estimate")) is not None:
         return []
-    return [w for w in money_mod.tenant_pays_list(p) if w not in money_mod.NOTHING_WORDS]
+    done = {"internet"} if money_mod._internet_counted(p) else set()  # internet counted in other monthly fees is not unknown
+    return [w for w in money_mod.tenant_pays_list(p) if w not in money_mod.NOTHING_WORDS and w not in done]
 
 
 def cost_unknowns(p: dict[str, Any]) -> list[str]:
