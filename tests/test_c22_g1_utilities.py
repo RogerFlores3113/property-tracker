@@ -259,7 +259,7 @@ def test_a_tilde_before_a_figure_is_not_a_bullet():
 def test_reviewer_listings_plain_totals():
     assert saved("r21-nontech-l8")["utilities_estimate"] == 175
     r = saved("r21-nontech-l5")
-    assert r["utilities_estimate"] == 145 and "unclear about" not in notes(r)
+    assert r["utilities_estimate"] == 120 and "unclear about" not in notes(r)  # cycle 23: HOA covers water + water $25 is a conflict, water stays unknown
     assert not [n for n in notes(r).split("\n") if "not counted anywhere" in n and re.search(r"water|electric|gas|utilit", n, re.I)]
     assert saved("r21-nontech-l3")["utilities_estimate"] == 145
 
