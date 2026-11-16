@@ -880,11 +880,12 @@ def build_server(store: Store) -> FastMCP:
             except Exception:  # noqa: BLE001 - no search yet: read it as the default
                 buying = False
             try:
-                pet_kind = str(_search_for(store, fields.get("search_id")).get("pet_kind") or "")
+                _srch = _search_for(store, fields.get("search_id"))
+                pet_kind, pet_count = str(_srch.get("pet_kind") or ""), _srch.get("pet_count")
             except Exception:  # noqa: BLE001
-                pet_kind = ""
+                pet_kind, pet_count = "", None
             known = {k: fields[k] for k in ("price", "seller_credit", "beds", "baths") if not _is_blank(fields.get(k))}
-            found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying, pet_kind=pet_kind, current=known or None)
+            found = parsers.parse_listing(text, str(fields.get("url") or ""), buying=buying, pet_kind=pet_kind, pet_count=pet_count, current=known or None)
         except Exception:  # noqa: BLE001 - a reader failure must not lose the place
             fields["_text_notes"] = ["The listing text was saved but not read (the reader could not make sense of it), so no facts were filled from it. "
                                      "Send the facts you can read yourself."]

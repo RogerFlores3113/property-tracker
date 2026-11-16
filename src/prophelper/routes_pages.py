@@ -703,7 +703,7 @@ def _read_pasted(store: Store, text: str, url: str, sid: Any) -> dict[str, Any]:
         chosen = store.get_search(int(sid)) if str(sid or "").isdigit() else store.current_search()
     except NotFound:
         chosen = store.current_search()
-    values = parsers.parse_listing(text, url, buying=bool(chosen and chosen.get("mode") == "buy"), pet_kind=str((chosen or {}).get("pet_kind") or ""))
+    values = parsers.parse_listing(text, url, buying=bool(chosen and chosen.get("mode") == "buy"), pet_kind=str((chosen or {}).get("pet_kind") or ""), pet_count=(chosen or {}).get("pet_count"))
     if url:
         values["url"] = url
     if text.strip():
