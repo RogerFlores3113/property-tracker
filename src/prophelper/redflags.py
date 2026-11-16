@@ -464,7 +464,7 @@ def _verbatim(original: str, plain: str, variant: str, begin: int, end: int) -> 
             stop += 1
         piece = original[start:stop]
         if _built(normalise_text(piece, keep_lines=True)[0]).strip() == fallback.strip() and _light(piece) == fallback.strip():
-            return " ".join(piece.split())
+            return " ".join(_ZERO_WIDTH.sub("", piece).split())
     except Exception:  # noqa: BLE001 - the matching text is always a safe quote
         pass
     return fallback
