@@ -28,6 +28,14 @@ def possible_scam(place: dict[str, Any], high_messages: Any = None) -> bool:
     return redflags.is_serious(place)
 
 
+def scam_hint_or_low_rent(place: dict[str, Any]) -> bool:
+    """True when a place has any scam hint (a "check first" sign, serious or not) or the very-low-rent warning. Such a place is
+    never listed as a "fit so far" under a cost check: it shows under Check first or New places instead."""
+    if possible_scam(place) or redflags.scam_sign_flags(place.get("flags") or []):
+        return True
+    return bool(low_rent(place))
+
+
 def fails_dealbreakers(place: dict[str, Any]) -> bool:
     score = place.get("score") or {}
     if score.get("passes") is False or score.get("dealbroken"):
@@ -330,7 +338,7 @@ def unconfirmed(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
     out = []
     for p in rows:
         score = p.get("score") or {}
-        if (not _open(p) or not fits(p) or score.get("fit") != "fits" or ai_text_only(p) or no_price(p) or is_best_fit(p) or over_budget(p)
+        if (not _open(p) or not fits(p) or score.get("fit") != "fits" or ai_text_only(p) or scam_hint_or_low_rent(p) or no_price(p) or is_best_fit(p) or over_budget(p)
                 or (p["score_total"] >= MIN_FIT_SCORE and not is_near(p) and (cost_unsettled(p) or unknown_cost_parts(p)))):  # these show under "Needs a cost check"
             continue
         bits = [f"{n} not known yet" for n in score.get("unknown") or []] + [str(c) for c in score.get("concerns") or []]
@@ -348,7 +356,7 @@ def cost_check(rows: list[dict[str, Any]], also: Any = ()) -> list[dict[str, Any
     out = []
     also = set(also)
     for p in rows:
-        if not _open(p) or p.get("score_total") is None or possible_scam(p) or ai_text_only(p) or no_price(p):
+        if not _open(p) or p.get("score_total") is None or possible_scam(p) or ai_text_only(p) or no_price(p) or scam_hint_or_low_rent(p):
             continue
         if fails_dealbreakers(p) or over_budget(p) or hard_limit_failed(p):
             continue  # a place that already fails a must-have or the budget is no "fit so far": it can only be a near miss
