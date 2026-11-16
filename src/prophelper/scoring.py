@@ -178,7 +178,7 @@ def _score_price(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) 
         else:
             have, unit = cost.get("total"), " a month"
             if have is not None and parts and rent is not None:
-                shown = f"{_fmt(have, '$')} a month all in (rent {_fmt(rent, '$')} + {' + '.join(parts)})"
+                shown = f"{_fmt(have, '$')} a month{'' if cost.get('uncounted') else ' all in'} (rent {_fmt(rent, '$')} + {' + '.join(parts)})"
             else:
                 shown = f"{_fmt(have, '$')} a month" if have is not None else ""
         target = (f"at most {_fmt(limit, '$')} a month" + (", rent only" if rent_only else " all in")) if limit else "no limit set"

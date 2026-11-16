@@ -514,7 +514,7 @@ _NOTE_MONEY = re.compile(r"\$\s?\d|\b(?:fee|fees|deposit|assessment|parking|gara
 _NOTE_PLACED = re.compile(r"so nothing is counted for you|\bis saved as the\b|\bso it is counted\b|\bcounted as your\b|\bcounted in (?:other monthly fees|the monthly cost)\b", re.I)
 
 
-_NOTE_CONTINUES = re.compile(r"(?:It|No|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
+_NOTE_CONTINUES = re.compile(r"(?:It|Only|No|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
 
 
 _NOTE_CONTINUES_LEFT = re.compile(r"[A-Z][\w' ]{0,30}\b(?:is|are) (?:left (?:empty|blank)|not filled)\b")
@@ -538,6 +538,21 @@ def note_units(text: str) -> list[str]:
         elif sentence:
             units.append(sentence)
     return units
+
+
+_CLOSING_ESTIMATE_SENTENCE = re.compile(r"[ \t]*The cash to close uses an estimate of the closing costs\.")
+
+
+def without_stale_estimate(note: str, place: dict[str, Any] | None) -> str:
+    """"The cash to close uses an estimate of the closing costs" stops being true once the closing costs are filled in: the sentence goes."""
+    if place and num(place.get("closing_costs")) is not None and _CLOSING_ESTIMATE_SENTENCE.search(note):
+        return "\n".join(" ".join(_CLOSING_ESTIMATE_SENTENCE.sub("", line).split()) for line in note.splitlines()).strip()
+    return note
+
+
+def display_note_units(place: dict[str, Any]) -> list[str]:
+    """The saved reader notes as shown on the place page: each note, with a sentence about a field that is filled in now dropped."""
+    return [n for n in note_units(without_stale_estimate(str(place.get("reader_notes") or ""), place)) if n]
 
 
 # One-time amounts (a move-in total, a holding fee, a price cut, a one-time deal) are not in the monthly cost, so they never
@@ -660,6 +675,10 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
         out["listing_notes_label"] = open_notes_label(place.get("reader_notes"), place)
         out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
         out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
+    # "all in" is only said when nothing the listing gave is left out: a buyer's one-time fee that is not counted keeps it from reading "all in" too
+    one_time_left = mode == "buy" and any(ONE_TIME_NOTE.search(u) and re.search(r"not counted|not saved|not used", u, re.I) and re.search(r"\$\s?\d", u)
+                                          and not _note_is_stale(u, place) for u in note_units(place.get("reader_notes")))
+    out["all_in"] = not out.get("uncounted") and not one_time_left
     out["people"] = n
     out["split_noun"] = noun
     out["per_person"] = _r(out["total"] / n) if out["total"] is not None and n > 1 else None

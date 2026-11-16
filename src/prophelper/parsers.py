@@ -711,11 +711,31 @@ def _beds_conflict(text: str) -> str:
 _BEDS_X_BATHS = re.compile(r"(?<![\w.,$/#-])([0-6])[ \t]?[xX\u00d7][ \t]?([1-4](?:\.5)?)(?![\w.,/$%'\"-]|[ \t]*(?:ft|feet|foot|in\b|inch|sq|sf|x\b|\u00d7|mm|cm|m\b|%|\(|lumber|beams?|boards?|studs?|posts?|fenc))")
 
 
+# "1x1? no 2x1" and "Actually: Campustown Flats 1x1": the listing corrects its own layout, so the later one is the one it means
+_XB_CORRECT = re.compile(r"(?<![\w.,$/#-])[0-6][ \t]?[xX\u00d7][ \t]?[1-4](?:\.5)?[ \t]*[?.,;!]*[ \t]*(?:no|nope|actually|wait|sorry)\b[ \t,.:;-]*(?:(?:no|wait|actually|sorry)\b[ \t,.:;-]*)?(?:it'?s[ \t]+|its[ \t]+|it[ \t]+is[ \t]+|a[ \t]+)?(?:[a-z]+[ \t]+)?"
+                         r"(?P<xb>(?<![\w.,$/#-])([0-6])[ \t]?[xX\u00d7][ \t]?([1-4](?:\.5)?)(?![\w,/$%'\"-]|\.\d))", re.I)
+_XB_ACTUALLY = re.compile(r"\b(?:actually|correction|corrected)[ \t]*[:,-][ \t]*(?P<head>[^\n$.]{0,50}?)(?<![\w.,$/#-])([0-6])[ \t]?[xX\u00d7][ \t]?([1-4](?:\.5)?)(?![\w,/$%'\"-]|\.\d)", re.I)
+
+
+def _beds_x_corrected(text: str) -> tuple[float, float] | None:
+    m = _XB_CORRECT.search(text)
+    if m:
+        return float(m.group(2)), float(m.group(3))
+    m = _XB_ACTUALLY.search(text)
+    if m:
+        return float(m.group(2)), float(m.group(3))
+    return None
+
+
 def _beds_x_baths(text: str) -> tuple[float, float] | None:
     m = _BEDS_X_BATHS.search(text)
     if not m:
         return None
     return float(m.group(1)), float(m.group(2))
+
+
+# "3BR2BA", "2bd1.5ba": beds and baths written together with no space
+_BEDS_GLUED = re.compile(r"(?<![\w.,$/#-])(\d)[ \t]?(?:bed(?:room)?s?|bds?|brs?|bdrms?)[ \t]?(\d(?:\.5)?)[ \t]?(?:bath(?:room)?s?|bths?|ba)\b", re.I)
 
 
 def _beds(text: str) -> float | None:
@@ -725,11 +745,16 @@ def _beds(text: str) -> float | None:
     corrected = _beds_corrected(text)
     if corrected:
         return corrected[1]
+    xc = _beds_x_corrected(text)
+    if xc:
+        return xc[0]
     if _beds_conflict(text):
         return None
     low = text.lower()
     hits: list[tuple[int, float]] = []
-    for m in re.finditer(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)[ \t]*(?:-[ \t]*\d{1,2}(?:\.\d)?[ \t]*)?(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b(?!\s*(?:and breakfast|room only))", low):
+    for m in re.finditer(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)(?:[ \t]*|-)(?:-[ \t]*\d{1,2}(?:\.\d)?[ \t]*)?(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b(?!\s*(?:and breakfast|room only))", low):
+        hits.append((m.start(), float(m.group(1))))
+    for m in _BEDS_GLUED.finditer(text):
         hits.append((m.start(), float(m.group(1))))
     for m in re.finditer(r"\b(?:bed(?:room)?s?|bds?)\s*[:\-]\s*(\d{1,2}(?:\.\d)?)\b", low):
         hits.append((m.start(), float(m.group(1))))
@@ -770,6 +795,9 @@ def _baths(text: str) -> float | None:
     corrected = _baths_corrected(text)
     if corrected:
         return corrected[1]
+    xc = _beds_x_corrected(text)
+    if xc:
+        return xc[1]
     low = text.lower()
     m = re.search(r"(\d{1,2})\s*full\s*(?:bath(?:room)?s?|ba)\b[^.\n]{0,25}?(\d)\s*(?:half|1/2|partial)\s*(?:bath(?:room)?s?|ba)", low)
     if m:
@@ -778,7 +806,9 @@ def _baths(text: str) -> float | None:
     if m:
         return int(m.group(1)) + 0.5 * int(m.group(2))
     hits: list[tuple[int, float]] = []
-    for m in re.finditer(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)[ \t]*(?:-[ \t]*\d(?:\.\d)?[ \t]*)?(?:full[ \t]+)?(?:bath(?:room)?s?|bths?|ba)\b", low):
+    for m in _BEDS_GLUED.finditer(text):
+        hits.append((m.start(), float(m.group(2))))
+    for m in re.finditer(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)(?:[ \t]*|-)(?:-[ \t]*\d(?:\.\d)?[ \t]*)?(?:full[ \t]+)?(?:bath(?:room)?s?|bths?|ba)\b", low):
         if re.search(r"\b(?:bed(?:room)?s?|bds?|brs?)[ \t]*[:\-][ \t]*$", low[max(0, m.start() - 14):m.start()]):
             continue  # "Beds: 3 Baths: 1.5": the 3 belongs to the beds label
         hits.append((m.start(), float(m.group(1))))
@@ -3643,8 +3673,8 @@ def _ordinal_dates(text: str) -> str:
 
 
 # "Lease begins 12/1 ends 11/30/2027": a start with no year and an end with a year. The start is the day that makes whole months.
-_LEASE_BEGIN_END = re.compile(r"\blease[ \t]+(?:starting|starts?|begins?|beginning|commenc\w+)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<s_") + r"[ \t]*[,;.-]?[ \t]*(?:and[ \t]+)?"
-                              r"(?:ends?|ending|expires?|through|thru|until)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<e_"), re.I)
+_LEASE_BEGIN_END = re.compile(r"\blease[ \t]+(?:starting|starts?|begins?|beginning|commenc\w+)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<s_") + r"[ \t]*[,;.-]?\s*(?:and[ \t]+)?"
+                              r"(?:lease[ \t]+)?(?:ends?|ending|expires?|through|thru|until)[ \t]*(?:on|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<e_"), re.I)
 
 
 def _lease_begin_end(text: str) -> tuple[str, str] | None:
@@ -3718,6 +3748,38 @@ def _lease_bare_months(text: str, other: bool) -> int | None:
     if len(found) == 1 and 6 <= found[0] <= 36 and len(re.findall(r"\b\d{1,2}[- ]?months?\b", text, re.I)) == 1:
         return found[0]
     return None
+
+
+# "Starts 3-1-27", "Begins March 1, 2027": a bare start word with a date. The date needs a year or a month name, so "starts 3.5" is no date.
+_BARE_START = re.compile(r"(?<![\w$])(?:starts?|starting|begins?|beginning)(?:[ \t]+date)?[ \t]*(?:on|at|:|-|=)?[ \t]*" + _DATE.replace("(?P<", "(?P<b_"), re.I)
+
+
+def _bare_start_date(text: str) -> str | None:
+    for m in _BARE_START.finditer(_ordinal_dates(text)):
+        if re.search(r"\b(?:rent|payments?|billing|interest)[ \t]*$", text[max(0, m.start() - 12):m.start()], re.I):
+            continue
+        d = _dated_with_year(m, "b_")
+        if d:
+            return d
+        keys = {k[2:]: v for k, v in m.groupdict().items() if k.startswith("b_") and v}
+        if keys.get("mon") and not keys.get("year"):
+            class _M:
+                def group(self, name: str) -> str | None:
+                    return keys.get(name)
+            return _read_date(_M(), _today())  # type: ignore[arg-type]
+    return None
+
+
+_MONTH_TO_MONTH = re.compile(r"\bmonth[- ]to[- ]month\b[^.\n;]{0,30}", re.I)
+
+
+def _month_to_month_note(text: str, lease: Any = None) -> list[str]:
+    m = _MONTH_TO_MONTH.search(text)
+    if not m:
+        return []
+    said = " ".join(m.group(0).split()).strip(" ,-")
+    keep = "" if lease else " No lease length is saved from that."
+    return [f'The listing says "{said}".{keep} Ask what the month to month terms and rent are.']
 
 
 _COMMUTE_CLAIM = re.compile(
@@ -4256,11 +4318,11 @@ def _headline_clean(line: str) -> str:
             line = before
         else:
             line = line[:m.start()] + " " + line[m.end():]
-    line = " ".join(line.split()).strip(" ,;:-|/\u2013\u2014")
-    line = re.sub(r"[ \t]*(?:[-|:,\u2013\u2014][ \t]*)?\b(?:starting(?:[ \t]+at)?|starts?[ \t]+at|from|only|just|asking)[ \t]*$", "", line, flags=re.I)
+    line = " ".join(line.split()).strip(" ,;:-|/\\\u2013\u2014")
+    line = re.sub(r"[ \t]*(?:[-|:,\u2013\u2014][ \t]*)?\b(?:starting(?:[ \t]+at)?|starts?[ \t]+at|from|only|just|asking(?:[ \t]+price)?|(?:monthly[ \t]+)?rent(?:al)?(?:[ \t]+(?:is|of))?[ \t]*[:=]?|priced?(?:[ \t]+at)?|price[ \t]+is|for[ \t]+only)[ \t]*$", "", line, flags=re.I)
     line = re.sub(r"\s+for\s+(?:rent|lease)$", "", line, flags=re.I)
     line = re.sub(r"(?:\s+(?:a|an|the|and|with|of|in|at|for|to|incl|inc))+\.?$", "", line, flags=re.I)
-    return _word_cut(line.strip(" ,;:-|/\u2013\u2014"), 70)
+    return _word_cut(line.strip(" ,;:-|/\\\u2013\u2014"), 70)
 
 
 def _craigslist_headline(text: str) -> tuple[str, str]:
@@ -4378,6 +4440,11 @@ _MONEY_LINE = re.compile(r"^(?:\$|\u20ac|\u00a3|\d[\d,.]*[ \t]*(?:/|per|a)[ \t]*
 _RULE_LINE = re.compile(r"^seller(?:'s)?[ \t]+(?:to|will|pays?|concessions?|credits?|contribut\w*)\b|^no[ \t]+(?:smoking|pets?|dogs?|cats?|animals?|section[ \t]*8|vouchers?|students?|roommates?|co-?signers?|evictions?|felon\w*)\b|"
                         r"^(?:first|last|one|two|three|\d{1,2})(?:st)?[ \t]+(?:month|week)s?\b[^.\n]{0,15}\bfree\b", re.I)
 _PET_LINE = re.compile(r"^(?:no[ \t]+)?(?:pets?|dogs?|cats?|animals?)\b", re.I)
+# a policy or money sentence is never the name of a place ("Landlord pays all utilities", "Deposit one month", "Tenant pays electric", "Utilities included")
+_POLICY_LINE = re.compile(r"^(?:(?:landlord|owner|owners|tenant|tenants|renter|renters|resident|residents)(?:'s)?[ \t]+(?:pays?|paying|covers?|is|are|responsible|provides?|total)\b"
+                          r"|(?:security[ \t]+|refundable[ \t]+)?deposits?\b|(?:all[ \t]+)?utilit(?:y|ies)\b|(?:application|admin|move[- ]in|pet|parking|lease|rent)[ \t]+(?:fees?|terms?|total|due|cost|is|are)\b"
+                          r"|(?:water|sewer|trash|gas|electric(?:ity)?|heat|internet|wifi|cable)\b[^.\n]{0,40}\b(?:included|extra|separate|not included|paid|billed)\b"
+                          r"|available[ \t]+(?:now|immediately|today|\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*)", re.I)
 
 
 _HEDGE_END = re.compile(r"\b(?:about|around|approx\.?|approximately|roughly|avg\.?|average|estimated|est\.?|costs?|totals?|due|is|are|of)[ \t:=~]*$|[:=~][ \t]*$", re.I)
@@ -4388,6 +4455,9 @@ def _money_line_cut(line: str) -> bool:
     """A money line with its amount cut off ("Quarterly utility bill about", "Quarterly utility bill about $210"): never a title."""
     m = _PRICE_IN_TITLE.search(line)
     if m:
+        before = line[:m.start()]
+        if len(before.split()) >= 5 and re.search(r"[,|\u2013\u2014-][ \t]*(?:monthly[ \t]+)?(?:rent|price|asking)[ \t]*[:=]?[ \t]*$", before, re.I):
+            return False  # "Hazel Lane 3bd townhouse in Menlo Park - rent: $2,390": a headline that ends in its rent, not a cut-off money line
         return bool(_HEDGE_END.search(line[:m.start()].rstrip()) or _HEDGE_END.search(line[:m.start()]))
     return bool(_HEDGE_ONLY_END.search(line.strip()))
 
@@ -4450,6 +4520,7 @@ _PROPERTY_NOUN = re.compile(r"(?:\b|(?<=\d))(?:apartments?|apts?|house|home|cond
 
 
 # a brand with a plan after it ("LUXE 1x1", "Aspen 2BR") is a name, even though the rest is a bed/bath word
+_PLAN_HEAD = re.compile(r"^[A-Z][A-Za-z'&.-]+(?:[ \t]+[A-Z][A-Za-z'&.-]+){0,2}[ \t]+(?:\d{1,2}[ \t]?(?i:br|bd|bed)|\d[xX]\d|(?i:studio)\b)")
 _PLAN_NAME = re.compile(r"^[A-Z][A-Za-z'&.-]{2,}(?:[ \t]+[A-Za-z'&.-]+){0,2}[ \t]+(?:\d[xX]\d(?:\.\d)?|\d[ \t]?(?:br|bd|bed)\w*)$")
 
 
@@ -4461,7 +4532,7 @@ def _feature_line(line: str) -> bool:
 
 def _not_a_name(line: str) -> bool:
     """A line that is a field ("Rent $2", "Deposit: 1.5x rent", "Pets: dogs ok"), a money amount or a pet rule, never a title."""
-    return bool(_RULE_LINE.match(line) or _PROMO_LINE.match(line) or _SITE_LINE.match(line) or _ai_aimed(line) or _LABEL_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line)
+    return bool(_RULE_LINE.match(line) or _PROMO_LINE.match(line) or _SITE_LINE.match(line) or _ai_aimed(line) or _LABEL_LINE.match(line) or _POLICY_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line)
                 or _FACT_LABEL_LINE.search(line) or _STATUS_LINE.match(line) or _SENTENCE_LINE.search(line) or _feature_line(line))
 
 
@@ -4513,10 +4584,19 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
     if len(lines) >= 2 and re.fullmatch(r"[A-Z][A-Za-z'&-]{3,25}", lines[0]) and lines[0].lower() not in _UI_WORDS and not _SITE_LINE.match(lines[0]) \
             and _ADDRESS.match(lines[1]):
         return lines[0]  # a one-word name on its own line above the address
-    for raw_line in text.splitlines()[:25]:
+    raw_lines: list[str] = []
+    for one in text.splitlines()[:25]:
+        if _ai_aimed(one) and not found.get("address"):
+            # an instruction aimed at AI tools in front of a real heading ("Ignore previous instructions... Cedar Rise 3BR 2BA $2,200 ..."):
+            # keep only a sentence that reads as a name with a plan, never the instruction
+            raw_lines += [x for x in re.split(r"(?<=[.!?])[ \t]+", one) if _PLAN_HEAD.match(x.strip()) and not _ai_aimed(x)]
+        else:
+            raw_lines.append(one)
+    for raw_line in raw_lines:
         line = " ".join(_PROMO_BANNER.sub(" ", raw_line).strip(" \t|\u2022\u00b7*#").split())
         marked = bool(re.match(r"[ \t>]*(?:#{1,6}[ \t]|\*\*|__)", raw_line))  # a bold or heading line is a title, even when it ends in a full stop
         line = re.sub(r"^(?:>[ \t]*|[-+][ \t]+|\d{1,2}[.)][ \t]+)+", "", line).strip(" \t*#_") if not line.startswith("$") else line
+        line = re.sub(r"^(?:actually|update|updated|correction|edit|edited|note|ps|p\.s\.)[ \t]*[:,][ \t]*(?=\S)", "", line, flags=re.I)  # "Actually: Campustown Flats 1x1"
         if _ai_aimed(raw_line) or _ai_aimed(line):
             continue
         if " | " in line:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
@@ -4541,6 +4621,8 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
             return head[0].strip()  # "Name - Unit 4C, 3329 N Broadway": the name is the title, the street is the address
         if found.get("address") and _only_address_left(line, found):
             return found["address"]  # "Unit 3B, 500 Main St, Austin TX 78701": the street is the title, the unit has its own field
+        if found.get("address") and found["address"].lower() in line.lower() and _is_fact_line(line) and not _PLAN_NAME.match(line):
+            return found["address"]  # "Beautiful updated 2 bed 1 bath in Beechwold, 4410 Indianola Ave, Columbus": a headline with an address
         if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or (_is_fact_line(line) and not _PLAN_NAME.match(line) and not re.search(r"\b(?:apartment|condo|house|townhome|townhouse|duplex|loft)\b", line, re.I)):
             continue
         if re.search(r"\b(?:call|text|email|contact|apply|posted|updated|listed|published)\b.*(?:\d{3}|ago|on\b)", low) \
@@ -4674,6 +4756,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append(f"The listing gives two different bedroom counts ({was}, then {now}) and corrects itself. The bedroom count that was already saved was kept, so check it.")
         else:
             facts.append("The listing gives two different bedroom counts and corrects itself. The later count is saved, so check the bedroom count.")
+    xb_fix = None if (conv or corrected or not _XB_CORRECT.search(text)) else _try(lambda: _beds_x_corrected(text))
+    if xb_fix:
+        facts.append(f"The listing gives two different layouts and corrects itself. The later one ({xb_fix[0]:g} bed, {xb_fix[1]:g} bath) is saved, so check the layout.")
     beds_conflict = _try(lambda: _beds_conflict(text)) or ""
     if beds_conflict:
         facts.append(beds_conflict)
@@ -5073,6 +5158,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         lease_end_read = None
         facts.append(f"The listing offers two lease lengths ({two_lengths}), so the lease length is left empty. Ask which one you would get.")
 
+    if avail_read is None and lease_start_read:
+        avail_read = lease_start_read  # "12 month lease starting 1/1/27": the lease start is the date it is available
+    if avail_read is None:
+        avail_read = _try(lambda: _bare_start_date(text))  # "Starts 3-1-27"
     if avail_read is None:
         month_only = _try(lambda: _available_month_only(text))
         if month_only:  # "Move in Aug 2027": no day is given, so none is made up
@@ -5086,6 +5175,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if choices:
             facts.append(f"The listing gives more than one lease length ({choices}), so the lease length is left empty. Ask which one you would get.")
     facts.extend(_try(lambda: _lease_offer_note(text, lease_read)) or [])
+    facts.extend(_try(lambda: _month_to_month_note(text, lease_read)) or [])
     facts.extend(_try(lambda: _commute_claims(text)) or [])
     put("year_built", _try(lambda: _year_built(text)))
     facts += [f"{line.rstrip('.')}." for line in (_try(lambda: _pet_limits(text)) or [])
@@ -5451,7 +5541,19 @@ def _drop_placed_facts(facts: list[str], out: dict[str, Any], follow: bool = Fal
             if not f:
                 continue
         kept.append(_one_time_wording(f))
-    return [f for f in kept if not _quote_repeat(f, kept, out)]
+    return _dedupe_totals([f for f in kept if not _quote_repeat(f, kept, out)])
+
+
+_SUBTOTAL_NOTE = re.compile(r"The utilities estimate is the two together, \$[\d,]+ a month\.")
+_TOTAL_NOTE = re.compile(r"The utilities estimate adds all the figures the listing gives, \$[\d,]+ a month\.")
+
+
+def _dedupe_totals(notes: list[str]) -> list[str]:
+    """A total that is already summed is said once: when the notes give both a running subtotal ("the two together, $137") and the
+    total of all the figures ("adds all the figures, $169"), only the total stays."""
+    if any(_TOTAL_NOTE.search(n) for n in notes):
+        return [x for x in (" ".join(_SUBTOTAL_NOTE.sub("", n).split()) for n in notes) if x]
+    return notes
 
 
 _BARE_PET_QUOTE = re.compile(r"(?=[A-Z])(?!(?:The|A|An|It|This|That|Ask|Pets? is|Check|No amount)\b)[^.]*?\b(?:cats?|dogs?|pets?|animals?)", re.I)
@@ -5489,7 +5591,7 @@ def _restates_field(note: str, out: dict[str, Any]) -> bool:
         return _filled(out, "special_assessment") and _filled(out, "special_assessment_payer")
     if re.match(r"The listing says renter's insurance is required", note):
         return _filled(out, "insurance") or _filled(out, "other_monthly_fees")
-    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It is not counted anywhere\. Check what it is for\.|It is a one-time cost, so it is not in the monthly cost\. Check what it is for\.|It is a monthly fee and it is not counted anywhere\. Check what it is for\.)', note)
+    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It|Only [^"]{1,80} of that) (?:is not counted anywhere|is a one-time cost, so it is not in the monthly cost|is a monthly fee and it is not counted anywhere|looks like a utility cost and it is not counted anywhere)\. Check what it is for\.', note)
     if m:
         return amounts_all_placed(_dollar_values(m.group(1)), _net_used_numbers(out, []), _field_sums(out))
     return False
@@ -5557,6 +5659,8 @@ def _follow_fields(note: str, out: dict[str, Any]) -> str:
     only part of it is settled). Special assessment notes depend on both the amount and who pays."""
     if _restates_field(note, out):
         return ""
+    from .money import without_stale_estimate
+    note = without_stale_estimate(note, out)  # "The cash to close uses an estimate of the closing costs" is false once they are filled in
     for pat, keys in _FIELD_NOTES:
         if pat.search(note) and all(_filled(out, k) for k in keys):
             if keys == ("utilities_estimate",) and "internet" in note.lower():
@@ -5619,6 +5723,8 @@ def drop_filled_notes(notes: str, place: dict[str, Any]) -> str:
     For a place that has notes but no listing text to read again."""
     from .money import note_units
     out = {k: v for k, v in place.items() if k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
+    from .money import without_stale_estimate
+    notes = without_stale_estimate(notes, out)
     kept = []
     for unit in note_units(notes):
         unit = _follow_fields(unit, out)
@@ -5714,6 +5820,24 @@ def _uncounted_kind_sentence(phrase: str) -> str:
             return "It looks like a utility cost and it is not counted anywhere."  # cycle 17: a utility amount is never called "a monthly fee"
         return "It is a monthly fee and it is not counted anywhere."
     return "It is not counted anywhere."
+
+
+def _only_unplaced(sentence: str, phrase: str, used: set[float]) -> str:
+    """When a quoted line holds some amounts a field already counts and some it does not, the "not counted" sentence names only the
+    amounts that are not placed ("Only $4 of that is a monthly fee and it is not counted anywhere."), never the whole line. The kind
+    (monthly, one-time) is read from the words around the unplaced amounts, not from the placed ones."""
+    amounts = sorted(_dollar_values(phrase))
+    left = [a for a in amounts if round(a, 2) not in {round(u, 2) for u in used}]
+    if len(amounts) < 2 or not left or len(left) == len(amounts):
+        return sentence
+    shown = [f"${a:,.0f}" if float(a).is_integer() else f"${a:,.2f}" for a in left]
+    names = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+    pieces = [x for x in re.split(r"[,;\n]|\bplus\b|\band\b|\*", phrase) if x.strip()]
+    mine = " ".join(x for x in pieces if any(a in _dollar_values(x) for a in left))
+    kind = _uncounted_kind_sentence(mine) if mine else "It is not counted anywhere."
+    if kind == "It is not counted anywhere." and _ONE_TIME_WORDS.search(phrase) and not _MONTHLY_WORDS.search(mine):
+        kind = "It is a one-time cost, so it is not in the monthly cost."
+    return re.sub(r"^It (?:is|looks)", lambda m: f"Only {names} of that " + ("is" if m.group(0) == "It is" else "looks"), kind, count=1)
 
 
 def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
@@ -5868,7 +5992,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         elif re.search(r"\boptional\b", near, re.I) and not re.search(r"\b(?:required|mandatory|must)\b", phrase, re.I):
             notes.append(f'The listing says "{phrase}". It looks optional, so it is not counted in the monthly cost. Ask if it is required.')
         else:
-            notes.append(f'The listing also says "{phrase}". {_uncounted_kind_sentence(phrase)} Check what it is for.')
+            notes.append(f'The listing also says "{phrase}". {_only_unplaced(_uncounted_kind_sentence(phrase), phrase, used)} Check what it is for.')
     low_facts = " ".join(facts).lower()
     limit = out.get("pet_weight_limit")
     seen_w: set[int] = set()
