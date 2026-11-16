@@ -335,7 +335,7 @@ async def delete_place(request: Request, place_id: int):
 
 # --------------------------------------------------------------------------- Search
 KIND_TARGET_KEYS = {"price": ("max",), "beds": ("min",), "baths": ("min",), "sqft": ("min",),
-                    "commute": ("anchor_id", "mode", "minutes"), "laundry": ("want",), "parking": ("want",),
+                    "commute": ("anchor_id", "mode", "minutes", "hard"), "laundry": ("want",), "parking": ("want",),
                     "pets": ("want",), "newer": ("year",), "fenced_yard": (), }
 KIND_TARGET_KEYS["price"] = ("max", "count")
 

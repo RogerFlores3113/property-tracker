@@ -149,7 +149,7 @@ PLACE_KEYS = {n for n, _, _ in PLACE_PARAMS}
 # Money fields an explicit null clears on update_place (the value goes back to unknown, and the old one stays on the timeline).
 CLEARABLE = ("hoa", "property_tax", "insurance", "other_monthly_fees", "move_in_fees", "broker_fee", "application_fee", "deposit",
              "utilities_estimate", "special_assessment", "closing_costs", "seller_credit", "pet_fee", "pet_deposit", "pet_rent", "parking_cost")
-UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: guess (default, shown as a guess), billed back or from the listing "
+UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: left out (shown as added by Claude), guess (shown as a guess), billed back or from the listing "
                          "(the listing itself gives that monthly amount, so it is shown as from the listing). Send it only together with a "
                          "utilities_estimate amount, for example utilities_estimate 120 with utilities_source \"from the listing\". "
                          "utilities_included is a different field: the words for what the rent already covers, such as \"heat, water\" or \"all\"")
@@ -557,9 +557,11 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
         bits.append("Fits, with a note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
     if compare_mod.ai_text_only(e):
         bits.append(compare_mod.AI_TEXT_FIT)
-    elif [f for f in e["flags"] if not redflags.is_hidden_note(f)] and e["score"].get("fit") != "check_first":
-        n_ = len([f for f in e["flags"] if not redflags.is_hidden_note(f)])
+    elif redflags.scam_sign_flags(e["flags"]) and e["score"].get("fit") != "check_first":
+        n_ = len(redflags.scam_sign_flags(e["flags"]))
         bits.append(f"{n_} thing{'s' if n_ != 1 else ''} to check (possible scam signs)")
+    if any(redflags.is_plain_hint(f) for f in e["flags"]) and not compare_mod.ai_text_only(e):
+        bits.append("no address yet" if not str(e.get("address") or "").strip() else "address has no street number")
     if e.get("is_sample"):
         bits.append("sample")
     return ", ".join(bits)
@@ -806,6 +808,12 @@ def build_server(store: Store) -> FastMCP:
         The last two are recorded in AI notes so the cost line is labelled right, and only when the listing text agrees."""
         raw = fields.pop("utilities_source", None)
         if raw in (None, ""):
+            if not _is_blank(fields.get("utilities_estimate")):  # no source sent: the amount is Claude's own, and it is labelled that way
+                try:
+                    given = float(str(fields.get("utilities_estimate")).replace("$", "").replace(",", ""))
+                except (TypeError, ValueError):
+                    return
+                fields["ai_notes"] = " ".join(filter(None, [str(fields.get("ai_notes") or ""), f"Utilities estimate ${given:,.0f}/month: added by Claude."]))
             return
         word = " ".join(str(raw).replace("_", " ").lower().split())
         if word in ("guess", "a guess", "estimate", "my guess"):
@@ -868,6 +876,7 @@ def build_server(store: Store) -> FastMCP:
                                      "Send the facts you can read yourself."]
             return
         if found.get("found_in_listing"):
+            found["found_in_listing"] = parsers.reconcile_seller_credit_note(str(found["found_in_listing"]), fields.get("seller_credit"))
             fields["reader_notes"] = str(found["found_in_listing"])  # kept on the place so the notes outlive the add reply
             fields["reader_notes"] = parsers.reconcile_insurance_note(fields["reader_notes"], fields.get("insurance"))  # Claude's own value is what counts
         filled: list[str] = []
@@ -1692,11 +1701,11 @@ def build_server(store: Store) -> FastMCP:
         return reply("\n".join(lines), tours=len(tours), waiting=len(waiting), dates=len(dates), new_places=len(new), best_fits=[p["id"] for p in fits])
 
     # ------------------------------------------------------------ searches
-    TARGET_KEYS = ("max", "min", "minutes", "anchor", "anchor_id", "mode", "want", "year")
-    KIND_TARGET = {"price": ("max",), "beds": ("min",), "baths": ("min",), "sqft": ("min",), "commute": ("anchor", "anchor_id", "mode", "minutes"),
+    TARGET_KEYS = ("max", "min", "minutes", "anchor", "anchor_id", "mode", "want", "year", "hard")
+    KIND_TARGET = {"price": ("max",), "beds": ("min",), "baths": ("min",), "sqft": ("min",), "commute": ("anchor", "anchor_id", "mode", "minutes", "hard"),
                    "laundry": ("want",), "parking": ("want",), "pets": ("want",), "newer": ("year",), "dishwasher": (), "fenced_yard": (), "custom": ()}
     TARGET_EXAMPLE = {"max": "1600", "min": "1", "minutes": "15", "anchor": '"Campus"', "anchor_id": "1", "mode": '"bike"',
-                      "want": '"in_unit"', "year": "2015"}
+                      "want": '"in_unit"', "year": "2015", "hard": "true"}
     CRIT_EXAMPLE = ('[{"kind": "price", "label": "Rent at most $1600", "weight": 80, "dealbreaker": true, "target": {"max": 1600}}, '
                     '{"kind": "commute", "label": "Campus by bike", "weight": 60, "target": {"anchor": "Campus", "mode": "bike", "minutes": 15}}]')
     WEIGHT_NOTE = ("weight is optional (10 when left out) and is a number from 0 to 100. "
@@ -1707,7 +1716,7 @@ def build_server(store: Store) -> FastMCP:
                    "Right, a price rule: {\"kind\": \"price\", \"label\": \"Rent at most $1600\", \"weight\": 80, \"dealbreaker\": true, \"target\": {\"max\": 1600}}. "
                    "Wrong: {\"kind\": \"price\", \"max\": 1600}. ")
     CRIT_DOC = (TARGET_RULE + "criteria: list of {kind, label?, weight? (0-100, optional), dealbreaker?, target}. Kinds and targets: price {max}, beds/baths {min}, sqft {min}, "
-                "commute {anchor: name or id, mode, minutes}, laundry {want: in_unit|in_building}, dishwasher, parking {want?}, pets {want?}, fenced_yard (no target; it reads the place's fenced_yard), "
+                "commute {anchor: name or id, mode, minutes, hard? (true makes the limit a hard one: over it, the place fails the rule like any deal-breaker; default false)}, laundry {want: in_unit|in_building}, dishwasher, parking {want?}, pets {want?}, fenced_yard (no target; it reads the place's fenced_yard), "
                 "newer {year}, custom (the user scores it by hand). target is an OBJECT with only that kind's keys, not extra keys on the criterion. "
                 "label may also be passed as name, and kind as field. Price is checked against true monthly cost, so include utilities and fees. Example: " + CRIT_EXAMPLE)
 

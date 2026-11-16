@@ -725,6 +725,16 @@ def safe_link(value: Any) -> str:
     return text
 
 
+def _restored_link(url: Any) -> str:
+    """A stored link as it should stay after a restore: the same cleaning a typed link gets (a space or a quote is written %XX), or ''
+    when it isn't a safe web address at all (not http or https, a user name or password, a private network, a control character)."""
+    text = str(url or "").strip()[:2000]
+    if not text or has_userinfo(text) or link_host_private(text) or not normalize_url(text):
+        return ""
+    candidate = encode_link(text)  # a link typed without a scheme stays as it was (it gets https:// when shown)
+    return candidate if safe_link(candidate) else ""
+
+
 def photo_list(value: Any) -> list[str]:
     """A list of http(s) photo links from a list, a JSON list or lines of text. At most PHOTOS_MAX. Never fetched."""
     if value is None or value == "":
@@ -752,6 +762,17 @@ def _dict_factory(cursor: sqlite3.Cursor, row: tuple) -> dict[str, Any]:
     return {col[0]: row[i] for i, col in enumerate(cursor.description)}
 
 
+def _hidden_sentence(v: str, m: re.Match[str]) -> str:
+    """The sentence (or line) around the first hidden character, cleaned, and at most about 60 characters each side: the check-first note
+    quotes only this, never the whole listing."""
+    clean = _INVISIBLE.sub("", v)
+    pos = len(_INVISIBLE.sub("", v[:m.start()]))
+    begin = max([clean.rfind(sep, 0, pos) + len(sep) for sep in (". ", "! ", "? ", "\n") if clean.rfind(sep, 0, pos) != -1] or [0])
+    ends = [i + 1 for i in (clean.find(sep, pos) for sep in (". ", "! ", "? ")) if i != -1] + [i for i in [clean.find("\n", pos)] if i != -1]
+    end = min(ends) if ends else len(clean)
+    return clean[max(begin, pos - 60):min(end, pos + 60)].strip()
+
+
 def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -766,7 +787,7 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
         v = row.get(k)
         m = _INVISIBLE_NOISY.search(v) if isinstance(v, str) else None
         if m:
-            row["hidden_chars_context"] = _INVISIBLE.sub("", v[max(0, m.start() - 40):m.end() + 40])
+            row["hidden_chars_context"] = _hidden_sentence(v, m)
             break
     row = {k: (_INVISIBLE.sub("", v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
     if isinstance(row.get("title"), str):
@@ -827,6 +848,8 @@ def _clean_target(kind: str, target: Any) -> dict[str, Any]:
         if clean_bool(target.get("all_anchors")) and "anchor_id" not in out:  # check every important place, one per person
             out["all_anchors"] = True
         out["mode"] = mode
+        if clean_bool(target.get("hard")):  # a hard limit: over it, the place fails this rule like any deal-breaker
+            out["hard"] = True
         n = to_number(target.get("minutes"), "minutes")
         if n is not None:
             out["minutes"] = _tidy_num(n)
@@ -1017,11 +1040,12 @@ class Store:
             for row in self._rows("SELECT id, url, photo_urls FROM places"):
                 sets: dict[str, Any] = {}
                 url = row["url"]
-                if url and not safe_link(url):
+                fixed = _restored_link(url) if url else ""
+                if url and not fixed:
                     sets["url"] = ""
                     links += 1
-                elif url and encode_link(url) != url:
-                    sets["url"] = encode_link(url)  # a restored link gets the same cleaning as a typed one
+                elif url and fixed != url:
+                    sets["url"] = fixed  # a restored link gets the same cleaning as a typed one
                 raw = row["photo_urls"]
                 try:
                     items = json.loads(raw) if isinstance(raw, str) and raw.strip().startswith("[") else (re.split(r"[\s,]+", raw.strip()) if isinstance(raw, str) and raw.strip() else [])

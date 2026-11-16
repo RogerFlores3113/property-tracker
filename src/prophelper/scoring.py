@@ -347,6 +347,10 @@ def _score_commute(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]
     if missing:
         detail += " No time yet for " + ", ".join(a["name"] for a in missing) + "."
     gap = "; ".join(who) if over else ""
+    hard = bool(t.get("hard"))
+    if over and hard:  # a hard limit: name each place and how far over it is
+        gap = "; ".join(f"{a['name']}: {f['minutes']:.0f} min, {f['minutes'] - mins:.0f} min over the hard limit of {mins:.0f}" for a, f in over)
+        detail = gap + "."
     # A miss that rests only on a time the app worked out (a straight-line estimate) is a near miss to check, never a hard fail.
     est_only = bool(over) and all(f["source"] == "estimate" for _, f in over)
     if est_only:
@@ -554,6 +558,8 @@ def _score_custom(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any])
 def score_criterion(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """One criterion against one place. ``ctx``: cost, budget_max, anchors ({id: anchor}), commutes, custom_scores."""
     kind = c["kind"]
+    if kind == "commute" and (c.get("target") or {}).get("hard"):
+        c = {**c, "dealbreaker": True}  # a hard commute limit fails like any other deal-breaker
     if kind == "price":
         r = _score_price(c, place, ctx)
     elif kind == "beds":

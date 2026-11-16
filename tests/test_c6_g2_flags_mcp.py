@@ -60,6 +60,9 @@ def test_utilities_source_labels_the_cost(srv, store):
     assert "guess" not in line["note"].lower() and line["label"] == "Utilities"
     r = call(srv, "add_place", title="B", price=1000, utilities_estimate=60)
     line = next(x for x in money.rent_cost(store.get_place(structured(r)["place_id"]))["lines"] if x["key"] == "utilities")
+    assert "added by claude" in line["note"].lower() and line["label"] == "Utilities (added by Claude)"  # cycle 20: no source sent means Claude's own amount
+    r = call(srv, "add_place", title="B2", price=1000, utilities_estimate=60, utilities_source="guess")
+    line = next(x for x in money.rent_cost(store.get_place(structured(r)["place_id"]))["lines"] if x["key"] == "utilities")
     assert "guess" in line["note"].lower()
 
 

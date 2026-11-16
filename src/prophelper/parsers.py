@@ -6952,7 +6952,29 @@ def reader_notes_for(place: dict[str, Any], buying: bool = False, pet_kind: str 
     """The "Also in the listing" notes for a saved place: its listing text read again, with what is filled on the place
     counted as placed. One rule for add, edit and update: a note about something that is filled in now is not kept."""
     found = parse_listing(str(place.get("listing_text") or ""), str(place.get("url") or ""), current=place, buying=buying, pet_kind=pet_kind)
-    return reconcile_insurance_note(str(found.get("found_in_listing") or ""), place.get("insurance"))
+    return reconcile_seller_credit_note(reconcile_insurance_note(str(found.get("found_in_listing") or ""), place.get("insurance")), place.get("seller_credit"))
+
+
+def reconcile_seller_credit_note(notes: str, saved: Any) -> str:
+    """When the place holds a seller credit that differs from the percent the listing states (Claude or the user sent one, even 0), that
+    saved value is what counts, so a note must not say the listing's amount was 'saved as the seller credit'. It says what was kept."""
+    if saved is None or saved == "" or isinstance(saved, bool):
+        return notes
+    try:
+        mine = float(str(saved).replace("$", "").replace(",", ""))
+    except (TypeError, ValueError):
+        return notes
+    kept = f"${mine:,.0f}"
+
+    def fix(m: re.Match[str], shown: str) -> str:
+        if abs(float(m.group(2).replace(",", "")) - mine) < 0.5:
+            return m.group(0)  # the listing's own figure is what is saved: the note is right
+        return (f"The listing mentions a {m.group(1)}% seller credit ({shown}${m.group(2)}) that was not saved because the value given was {kept}. "
+                f"The seller credit stays {kept}." + (" Ask the seller's agent to confirm." if "Ask the seller's agent" in m.group(0) else ""))
+    notes = re.sub(r"The listing says the seller gives ([\d.]+)% of the price toward closing\.\s+At a price of \$[\d,]+ that is \$([\d,]+) \([^)]*\), saved as the seller credit\.(?: Ask the seller's agent to confirm\.)?",
+                   lambda m: fix(m, "about "), notes)
+    return re.sub(r"The listing says the seller gives ([\d.]+)% toward closing and states it as \$([\d,]+), so the seller credit is saved as \$[\d,]+\.",
+                  lambda m: fix(m, ""), notes)
 
 
 _INSURANCE_COUNTED = re.compile(r"Renter's insurance is required and counted in the monthly cost \(\$([\d,]+) a month, saved as \$([\d,]+) a year\)\.")
