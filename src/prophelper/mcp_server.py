@@ -39,7 +39,7 @@ from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
 from .store import (AI_EVENT_TEXT_MAX, AI_NEVER_ENTERS, COMMUTE_MODES, CONTACT_LOG_KINDS, CONTACT_ROLES, CRITERION_KINDS, MAX_PEOPLE, NotFound,
-                    PARKING_VALUES, Store, _clean_target, clean_people_names, ai_move_problem, normalize_url, to_utc_iso)
+                    PARKING_VALUES, Store, _clean_target, clean_people_names, ai_move_problem, normalize_url, to_utc_iso, link_host_private, PRIVATE_LINK_REASON)
 
 INSTRUCTIONS = """\
 Property Helper keeps the user's own apartment or house hunt on their computer: every place they found, where it
@@ -395,6 +395,8 @@ def _extra_facts(p: dict[str, Any]) -> list[str]:
         buy.append(f"special assessment {_money(p['special_assessment'])} ({who})")
     if p.get("closing_costs") is not None:
         buy.append(f"closing costs {_money(p['closing_costs'])}")
+    if p.get("seller_credit") not in (None, "", 0):
+        buy.append(f"seller credit {_money(p['seller_credit'])}")
     if p.get("listing_agent"):
         buy.append("listing agent " + _t(p["listing_agent"], "listing agent", 120))
     if buy:
@@ -555,8 +557,9 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
         bits.append("Fits, with a note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
     if compare_mod.ai_text_only(e):
         bits.append(compare_mod.AI_TEXT_FIT)
-    elif e["flags"] and e["score"].get("fit") != "check_first":
-        bits.append(f"{len(e['flags'])} thing{'s' if len(e['flags']) != 1 else ''} to check (possible scam signs)")
+    elif [f for f in e["flags"] if f != redflags.HIDDEN_REMOVED_NOTE] and e["score"].get("fit") != "check_first":
+        n_ = len([f for f in e["flags"] if f != redflags.HIDDEN_REMOVED_NOTE])
+        bits.append(f"{n_} thing{'s' if n_ != 1 else ''} to check (possible scam signs)")
     if e.get("is_sample"):
         bits.append("sample")
     return ", ".join(bits)
@@ -788,6 +791,8 @@ def build_server(store: Store) -> FastMCP:
             if re.match(r"^https?://[^/?#\s]*@", link, re.I):
                 raise ValueError(f"{where}photo link \"{_clip(link.split('@')[-1], 40)}\" has a user name or password in it, so I won't save it. "
                                  f"Send the plain photo address without it. Nothing was saved.")
+            if link_host_private(link):
+                raise ValueError(f"{where}photo link \"{_clip(link, 40)}\": {PRIVATE_LINK_REASON} Nothing was saved.")
             if link[:5].lower() == "http:":
                 link = "https:" + link[5:]
                 upgraded += 1
@@ -1612,6 +1617,10 @@ def build_server(store: Store) -> FastMCP:
                 lines.append("Highest score: " + ", ".join(f"#{e['id']}" for e in best_all) + f" are tied at {top}, of the places that fit.")
             else:
                 lines.append(f"Highest score: #{best_all[0]['id']} at {top}, of the places that fit.")
+            for e in best_all:
+                higher = compare_mod.cost_may_be_higher(e)
+                if higher:
+                    lines.append(f"#{e['id']}: {higher}")
         lines.extend(compare_mod.unpriced_sentences(es, ref))
         if left_out:
             lines.append("Left out of the best-of lines because they don't fit or need a check first: " + ", ".join(f"#{e['id']}" for e in left_out) + ".")

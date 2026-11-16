@@ -20,8 +20,10 @@ Conventions (they hold for every method):
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
+import socket
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -582,6 +584,54 @@ _TRACKING = re.compile(r"^(utm_.*|fbclid|gclid|mc_cid|mc_eid|ref|ref_src|referre
                        r"igshid|_hsenc|_hsmi|trk|trkid|spm|share|from)$", re.I)
 
 
+def clean_document_kind(kind: Any) -> str:
+    """A document kind typed any way ("Loan estimate", "loan_estimate", " LEASE ") as the stored one; the text unchanged when it is none of them."""
+    text = re.sub(r"[\s_-]+", " ", str(kind or "").strip().lower())
+    return text if text in DOCUMENT_KINDS else str(kind or "")
+
+
+PRIVATE_LINK_REASON = ("That link points to this computer or a private network (like localhost, 127.0.0.1, 192.168.x.x or 10.x.x.x), "
+                       "not to a listing on the web, so I won't save it.")
+_PRIVATE_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
+    "::/128", "::1/128", "fc00::/7", "fe80::/10"))
+
+
+def private_host(host: str) -> bool:
+    """True for a host that is this computer or a private network: localhost, 127.0.0.0/8, ::1, 10/8, 172.16/12, 192.168/16,
+    169.254/16 and the other spellings of those numbers (127.1, 2130706433, 0x7f.0.0.1, ::ffff:127.0.0.1). Never looks anything up."""
+    h = str(host or "").strip().strip("[]").rstrip(".").lower()
+    if not h:
+        return False
+    if h == "localhost" or h.endswith(".localhost"):
+        return True
+    h = h.split("%", 1)[0]  # an IPv6 zone like fe80::1%eth0
+    addr: Any = None
+    try:
+        addr = ipaddress.ip_address(h)
+    except ValueError:
+        if re.fullmatch(r"(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+)){0,3}", h):
+            try:
+                addr = ipaddress.ip_address(socket.inet_aton(h))  # the short, hex and whole-number spellings a browser also accepts
+            except (OSError, ValueError):
+                addr = None
+    if addr is None:
+        return False
+    if addr.version == 6 and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return any(addr in net for net in _PRIVATE_NETS if net.version == addr.version)
+
+
+def link_host_private(link: Any) -> bool:
+    text = str(link or "").strip()
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I):
+        text = "https://" + text
+    try:
+        return private_host(urlsplit(text).hostname or "")
+    except ValueError:
+        return False
+
+
 def normalize_url(url: Any) -> str:
     """A listing link in one shape: https, lower-case host without www, no #fragment, no tracking parameters, no
     trailing slash. '' for blank or something that is not a web address. Never fetches anything and never raises."""
@@ -606,6 +656,8 @@ def _normalize_url(url: Any) -> str:
     if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
         return ""
     host = parts.hostname.lower()
+    if private_host(host):
+        return ""  # this computer or a private network is never a listing on the web
     host = host[4:] if host.startswith("www.") else host
     port = parts.port  # ValueError for a port that isn't a number (caught by normalize_url)
     if port and port not in (80, 443):
@@ -645,6 +697,7 @@ def has_userinfo(link: str) -> bool:
 _LINK_RAW = re.compile("[<>\"'`\\\\\\s\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b-\u200d\u2060\ufeff\u00ad\u180e\ue000-\uf8ff\U000e0000-\U000e007f\U000f0000-\U000ffffd\U00100000-\U0010fffd]")
 
 
+_INVISIBLE = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u061c\u00ad\ufeff\u180e]")
 _BIDI = re.compile("[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
 
 
@@ -704,6 +757,8 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if hidden:  # invisible tag characters are removed from every text; what they spelled is kept apart so the flags can still see it
         row = {k: (guards.strip_tag_chars(v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
         row["hidden_text"] = " ".join(h for h in hidden if h) or "(hidden characters)"
+    # zero-width and bidi controls are removed from every text on read, like tag characters (a link is left to its own cleaning)
+    row = {k: (_INVISIBLE.sub("", v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
     if isinstance(row.get("title"), str):
         row["title"] = _BIDI.sub("", row["title"])  # a title that flips the text around it is shown plainly on every page, Today and the CSV
     if row.get("url"):
@@ -1435,6 +1490,8 @@ class Store:
                 # normalized form. A link typed without http(s):// gets https:// so it still opens.
                 if text and has_userinfo(text):
                     raise ValueError("That link has a user name or password in it, so I won't save it. Use the plain listing address without it.")
+                if text and link_host_private(text):
+                    raise ValueError(PRIVATE_LINK_REASON)
                 if text and not normalize_url(text):
                     raise ValueError("That link doesn't look like a web address (it should start with https://).")
                 out[key] = encode_link(text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text)
@@ -2304,6 +2361,7 @@ class Store:
     # ------------------------------------------------------------------ documents (rows only; files are the page's job)
     def add_document(self, place_id: int, stored_name: str, original_name: str, kind: str = "other", size: int = 0) -> dict[str, Any]:
         self._require_place(place_id)
+        kind = clean_document_kind(kind)
         if kind not in DOCUMENT_KINDS:
             raise ValueError(f"A document is one of: {', '.join(DOCUMENT_KINDS)}.")
         if size < 0 or size > UPLOAD_LIMIT_BYTES:

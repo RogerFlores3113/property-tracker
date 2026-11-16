@@ -202,6 +202,16 @@ def _uncounted(p: dict[str, Any]) -> list[str]:
     return out
 
 
+def cost_may_be_higher(p: dict[str, Any]) -> str:
+    """'Cost may be higher: the $96 amount in the listing notes not counted yet.' when the listing notes hold amounts that are
+    not in the monthly number (so the place is only as cheap as it looks until they are read). '' when complete."""
+    cost = p.get("cost") or {}
+    if money_mod.LISTING_NOTES_UNCOUNTED not in (cost.get("uncounted") or []):
+        return ""
+    label = cost.get("listing_notes_label") or money_mod.LISTING_NOTES_UNCOUNTED
+    return f"Cost may be higher: {label} not counted yet."
+
+
 def pet_charges_unknown_text(p: dict[str, Any]) -> list[str]:
     return ["pet charges"] if (p.get("cost") or {}).get("mode") == "rent" and _pet_charges_unknown(p) else []
 

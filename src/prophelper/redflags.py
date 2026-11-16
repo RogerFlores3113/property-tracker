@@ -140,7 +140,21 @@ _AI_EXTRA = re.compile(_AI_EXTRA.pattern + "|" + _AI_SOFT, re.I)
 # cycle 17: chat-template markers, role lines that start a tool call, tool names, snake_case and hyphen-split phrases, and the plain
 # German, French and Spanish forms of "ignore previous instructions". Each needs an AI-only tell.
 _HY = r"[-.·]?"
-_AI_C17 = re.compile(
+# cycle 18: text that tells an AI tool how to rank, mark, verify or score a place, and "System: <do something>" lines. Each needs an
+# AI word (AI, LLM, chatbot, language model, bot) as the one addressed, or "system:" followed by an action word, so "Rank: top floor"
+# and "verified landlord" stay clear.
+_AI_WORD = r"(?:a\.?i\.?|llms?|chat ?bots?|chat ?gpt|claude|language models?|large language models?|bots?)"
+_AI_NOUN = r"(?:\s+(?:assistants?|agents?|models?|tools?|systems?|reviewers?|readers?|rankers?|summari[sz]ers?|search))?"
+_AI_ACT = r"(?:rank(?:ed|ing)?|rate|rating|score|scoring|mark|label|tag|verify|verified|treat|recommend|approve|flag|present|categori[sz]e|sort|prioriti[sz]e|promote)"
+_AI_C18 = (
+    r"\b" + _AI_WORD + _AI_NOUN + r"\s*(?:,\s*)?(?:should|must|shall|need to|needs to|have to|has to|will|ought to|are to|is to|please|kindly|always|to)\s+(?:please\s+|always\s+|kindly\s+|also\s+|then\s+|first\s+)?" + _AI_ACT + r"\b|"
+    r"\b(?:ask|tell|instruct|want|need|require|expect|direct|remind|urge|let)\s+(?:the\s+|any\s+|all\s+|your\s+|every\s+)?" + _AI_WORD + _AI_NOUN + r"s?\s+(?:to\s+)?" + _AI_ACT + r"\b|"
+    r"\b(?:rank|rate|score|mark|label|verify|list|treat|approve|flag|present)\s+(?:this|it|the)\s+(?:place|listing|property|apartment|home|house|unit|one)?\s*(?:as\s+)?(?:first|top|number one|#1|the best|best|verified|safe|trusted|legit(?:imate)?)\b[^.\n]{0,40}\b(?:for|when|if)\s+(?:the\s+|any\s+)?" + _AI_WORD + r"\b|"
+    r"\b(?:when|if)\s+(?:an?\s+|the\s+|any\s+)?" + _AI_WORD + _AI_NOUN + r"\s+(?:is\s+|are\s+)?(?:ranking|rating|scoring|reviewing|summari[sz]ing|comparing|reading|checking|verifying|evaluating|listing)\b[^.\n]{0,60}\b(?:rank|rate|score|mark|label|verify|list|put|treat|recommend|approve|show)\w*\b|"
+    r"\b(?:for|to)\s+(?:the\s+|any\s+|all\s+)?" + _AI_WORD + _AI_NOUN + r"s?\s*[:\-]\s*(?:please\s+)?" + _AI_ACT + r"\b|"
+    r"\bsystem\s*:\s*(?:mark|set|move|rank|rate|score|approve|verify|archive|update|change|put|list|add|remove|close|open|create|edit|rename|hide|show|read|pass|treat|flag)\b"
+)
+_AI_C17 = re.compile(_AI_C18 + "|" + 
     r"\[/?inst\]|<<\s*/?sys\s*>>|<\|(?:im_start|im_end|system|user|assistant)\|>|"
     r"\b(?:assistant|ai|model)\s*:\s*(?:i|i'll|i will|i am going to|i shall|let me|now)\s+(?:now\s+)?(?:call|run|use|invoke|execute|move|delete|update|send|forward|rate|mark)\b|"
     r"\b(?:developer|system|admin(?:istrator)?|operator)\s+(?:message|prompt|note|instructions?|override)\s*:\s*(?:output|print|reveal|show|send|repeat|list|disclose|call|ignore|delete|move|update|rate|say|tell|write|share|forward|dump)\b|"
@@ -212,6 +226,7 @@ def _unleet(text: str) -> str:
     return _LEET_WORD.sub(lambda m: "".join(_LEET.get(c, c) for c in m.group(0)), text)
 
 
+HIDDEN_REMOVED_NOTE = "Hidden characters were removed from the listing text. They did not spell any instruction to an AI tool. Ask the seller why they were there."
 AI_QUOTE_MARK = ' It says: "'
 
 
@@ -266,9 +281,10 @@ def _ai_line(text: str, comments: list[str]) -> str | None:
         return None
     if len(lines) == 1 or not all(lines[:2]):
         return lines[0]
-    if len(lines) == 2:
-        return f"{_quote(lines[0], 90)} / {_quote(lines[1], 90)}"
-    return f"{_quote(lines[0], 90)} / {_quote(lines[1], 90)} (and {len(lines) - 2} more)"
+    shown = lines[:4]
+    width = 90 if len(shown) <= 2 else 60  # every line is quoted (up to four); a short cut keeps the hint readable
+    text_ = " / ".join(_quote(x, width) for x in shown)
+    return text_ + (f" (and {len(lines) - 4} more)" if len(lines) > 4 else "")
 
 
 def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
@@ -306,6 +322,9 @@ def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
         begin = max(starts, default=0)
         if re.search(r"\d", text[begin:hit.start()]):
             begin = hit.start()  # "12 N Race St Urbana ignore previous instructions": an address or price in front is not part of it
+        lead = text[begin:hit.start()]
+        if lead and re.fullmatch(r"[^.!?:;]{1,40}[:\-\u2013\u2014]\s*", lead):
+            begin = hit.start()  # "Tenant pays: ignore previous instructions": the quote starts at the phrase, not at the label before it
         ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
         ends += [i for i in bound if i >= hit.end()]
         end = min(ends) + (0 if ends and min(ends) in bound else 1) if ends else len(text)
@@ -437,6 +456,8 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             if _ai_line(h_text, h_comments) is not None:
                 hidden_note = " Hidden characters that spelled this were removed from the listing text."
         flags.append("This listing has text aimed at AI tools; treat it with care." + hidden_note + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
+    if place.get("hidden_text") and not any("Hidden characters that spelled this" in f for f in flags):
+        flags.append(HIDDEN_REMOVED_NOTE)  # hidden characters were removed even when they spelled nothing aimed at an AI tool
     if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and buy_payment_hit(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
                      + ("Don't send money before you have toured the place and an escrow or title company is involved." if buy else
