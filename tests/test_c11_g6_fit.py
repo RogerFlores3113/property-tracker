@@ -67,7 +67,7 @@ def test_utilities_row_never_plain_zero_when_some_unknown(store):
     oak = rows["cost-utilities"]["cells"][0]
     assert oak["text"] == "$0 for what is listed, electric, gas and internet not known" and oak["value"] is None
     assert rows["cost-utilities"]["cells"][1]["text"] == "$0"
-    assert rows["missing"]["cells"][0]["text"] == "Unknown: electric, gas and internet (not listed)"
+    assert rows["missing"]["cells"][0]["text"] == "Unknown: electric, gas and internet (not listed), parking, other monthly fees"  # cycle 24: the cost rows read Not known for parking and other fees, so this row names them
 
 
 def test_no_address_place_is_not_top_best_fit_when_another_has_one(store):

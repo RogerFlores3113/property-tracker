@@ -67,10 +67,13 @@ _NOT_STREET_WORDS = {"bed", "beds", "bedroom", "bedrooms", "bath", "baths", "bat
                      "floor", "floors", "car", "cars", "pet", "pets", "story", "stories", "block", "blocks", "min."}
 # words that make "2 driveway spots OR street" or "1 car garage or street" a parking phrase, never a street address
 _PARKING_ADDRESS_WORDS = frozenset("driveway driveways spot spots garage garages parking permit permits or and covered stall stalls space spaces either free included carport carports".split())
+_ADDRESS_NOT_NAME = frozenset("near next with by off behind beside across".split())  # "1 ... near High St": a place described, not a street name
 _UNIT = r"(?:#|apt\.?|apartment|unit|suite|ste\.?)\s*#?\s*([A-Za-z]?\d{1,5}[A-Za-z]?(?:-\d{1,3})?|[NS][EW]\b|[A-Z])\b"
 _ADDRESS = re.compile(
-    r"(?<![\w$.,/-])(\d{1,6}(?:-\d{1,6})?\s+(?:[NSEW]\.?\s+|(?:North|South|East|West)\s+)?"
-    r"(?:(?:\d{1,3}(?:st|nd|rd|th)|[A-Za-z][A-Za-z.'-]*)\s+){0,4}?" + _STREET + r"\b\.?"
+    r"(?<![\w$.,/-])(\d{1,6}(?:-\d{1,6})?[ \t]+(?:[NSEW]\.?[ \t]+|(?:North|South|East|West)[ \t]+)?"
+    r"(?:(?:\d{1,3}(?:st|nd|rd|th)|[A-Za-z][A-Za-z.'-]*)[ \t]+){0,4}?" + _STREET + r"\b\.?"
+    r"(?:(?<=[Cc][Tt])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd)\b\.?|(?<=[Cc]ourt)[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd)\b\.?|"
+    r"(?<=[Cc][Ii][Rr])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd)\b\.?|(?<=[Pp][Ll])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|blvd)\b\.?)?"
     r"(?:[ \t]+(?:NE|NW|SE|SW|N|S|E|W)\b\.?(?=[ \t]*(?:[,\n#\d]|$|(?:apt|apartment|unit|suite|ste|near|with|and|\$)\b|\$|(?-i:[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3},?[ \t]+[A-Z]{2}\b))))?)"
     r"(?:,?\s+" + _UNIT + r")?", re.I)
 _CITY_LINE = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),?\s+([A-Z]{2}),?\s+(\d{5})(?:-\d{4})?\b")
@@ -175,6 +178,11 @@ def normalize_money(text: str) -> str:
         text = re.sub(r"\bUS\s?\$\s?(?=\d)", "$", text, flags=re.I)
         text = re.sub(r"\bUSD\s?\$?\s?(?=\d)", "$", text, flags=re.I)
         text = re.sub(r"(?<![\w$.,])(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?\s?(?:USD|US dollars?|dollars?|bucks)\b", lambda m: "$" + m.group(1) + (m.group(2) or ""), text, flags=re.I)
+
+        # cycle 24: a European thousands dot ("$1.700", "$1.700,50", "$12.500") is $1,700 / $1,700.50 / $12,500, never $1.70 (a dot with exactly three digits after it
+        # and no more is a thousands mark: nobody writes a thousandth of a dollar)
+        text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+),(\d{2})(?!\d)", lambda m: "$" + m.group(1).replace(".", ",") + "." + m.group(2), text)
+        text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+)(?![\d.]|,\d)", lambda m: "$" + m.group(1).replace(".", ","), text)
 
         def _k(m: re.Match[str]) -> str:
             n = float(m.group(1).replace(",", "")) * 1000
@@ -7110,8 +7118,11 @@ def _address_raw(text: str) -> dict[str, str]:
     candidates: list[tuple[str, str | None, int]] = []
     for m in _ADDRESS.finditer(text):
         street = " ".join(m.group(1).split()).rstrip(",.")
-        words = {w.lower().strip(".,") for w in street.split()[1:-1]}
-        if words & _NOT_STREET_WORDS or words & _PARKING_ADDRESS_WORDS:
+        parts = street.split()
+        words = {w.lower().strip(".,") for w in parts[1:-1]}
+        if "sq" in words and re.fullmatch(_STREET, parts[-1].strip(".,"), re.I) and parts[-2].lower().strip(".,") == "sq":
+            words.discard("sq")  # cycle 24: "4100 Easton Sq Pl": Sq is part of the street name when a suffix follows it
+        if words & _NOT_STREET_WORDS or words & _PARKING_ADDRESS_WORDS or words & _ADDRESS_NOT_NAME:
             continue
         candidates.append((street, m.group(2) if _unit_ok(m.group(2)) else None, m.end()))
         break
@@ -7366,9 +7377,17 @@ def _clean_title(title: str) -> str:
         out = cut
     # "2 bedroom duplex 1400 dollars a month": a price written in words is a fact, not part of the name
     cut = re.sub(r"[ \t,\-|]*\$?\d[\d,]*[ \t]*(?:dollars|bucks)\b(?:[ \t]*(?:a|per|/)[ \t]*(?:month|mo)\b)?.*$", "", out, flags=re.I).strip(" -|:,")
-    return cut if len(cut) >= 3 else out
+    cut = cut if len(cut) >= 3 else out
+    # cycle 24: "Hilltop 2BR Condo 2 bed 1 bath": the beds and baths said a second time at the end are facts the name already has
+    again = _TITLE_BEDBATH_AGAIN.search(cut)
+    if again and _TITLE_BED_CUE.search(cut[:again.start()]) and len(cut[:again.start()].strip(" -|:,")) >= 3:
+        cut = cut[:again.start()].strip(" -|:,")
+    return cut
 
 
+_TITLE_BED_CUE = re.compile(r"\b\d(?:\.\d)?[ \t]*(?:br|bd|bdrm|bed(?:room)?s?)\b|\b[1-4][xX][1-3]\b|\b(?:one|two|three|four)[- ]bed", re.I)
+_TITLE_BEDBATH_AGAIN = re.compile(r"[ \t,/|]+(?:\d(?:\.\d)?[ \t]*(?:bed(?:room)?s?|bdrms?|bds?|brs?)|studio)(?:[ \t,/|]+\d(?:\.\d)?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)?[ \t]*$"
+                                  r"|[ \t,/|]+\d(?:\.\d)?[ \t]*(?:bath(?:room)?s?|bths?|ba)[ \t]*$", re.I)
 _ALL_CAPS_KEEP = ("LLC", "II", "III", "IV", "NE", "NW", "SE", "SW", "UIUC", "BR", "BA", "HOA", "USA", "UW", "UC", "MIT", "NYC", "SF", "LA")
 _LABEL_LINE = re.compile(
     r"^(?:rent|monthly rent|deposit|security deposit|price|asking price|list price|taxes|tax|property tax(?:es)?|hoa(?: fees?| dues)?|pets?|pet policy|"
@@ -9583,7 +9602,8 @@ _NET_REAL_FIELDS = ("price", "parking_cost", "pet_rent", "pet_fee", "utilities_e
 _NET_ENDS = ".;!?\n|•"
 
 
-_ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|non[- ]?refundable", re.I)
+_ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|non[- ]?refundable|\bclosing\b|\blender\b|\btitle (?:fees?|insurance|company)\b|\bescrow (?:fee|deposit)|\borigination\b|\brecording fees?\b|transfer tax", re.I)
+_DEAL_WORDS = re.compile(r"\bconcessions?\b|\bfree rent\b|\bmonths? free\b|\bweeks? free\b|\bmove-in special\b|\brent credit\b", re.I)
 _MONTHLY_WORDS = re.compile(r"/\s*(?:mo|month)\b|\bper month\b|\ba month\b|\bmonthly\b|\bmo\.", re.I)
 
 
@@ -9591,6 +9611,8 @@ def _uncounted_kind_sentence(phrase: str) -> str:
     """What the safety-net note says about a quoted amount that no field holds: a one-time cost is not in the monthly cost, a
     monthly fee is not counted, and when the line does not say, the generic sentence."""
     one, monthly = bool(_ONE_TIME_WORDS.search(phrase)), bool(_MONTHLY_WORDS.search(phrase))
+    if _DEAL_WORDS.search(phrase) and not monthly:
+        return "It is a one-time deal, so it is not in the monthly cost."  # cycle 24: a concession is a deal, never a missing monthly cost
     if monthly and not one:
         pieces = [x for x in re.split(r"[,;\n]|\bplus\b|\band\b|\*|\s~\s", phrase) if _dollar_values(x)]
         if len(pieces) > 1 and not all(_MONTHLY_WORDS.search(x) for x in pieces):
@@ -9856,7 +9878,8 @@ def _net_component_numbers(text: str) -> set[float]:
 
 def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> set[float]:
     """Every number a field or a note already carries, and the parts and conversions behind a field."""
-    used: set[float] = _net_component_numbers(text) if text else set()
+    comps: set[float] = _net_component_numbers(text) if text else set()
+    used: set[float] = set(comps)
     for key in _NET_REAL_FIELDS:
         v = out.get(key)
         if isinstance(v, (int, float)) and not isinstance(v, bool) and v:
@@ -9869,6 +9892,9 @@ def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> 
                     used.update({round(float(v) / 2, 2)})  # "$175 each, 2 required" saved as $350
                 if key in ("property_tax", "insurance"):  # saved per year: the monthly share is the same figure ("$3,100 a year ($258/mo)")
                     used.update({round(float(v) / 12, 2), float(round(float(v) / 12)), float(int(float(v) / 12)), float(round(float(v) / 4)), float(round(float(v) / 2))})
+    # cycle 24 join: a part read with cents ("Application fee $42.50") is not placed by a field that holds only its whole dollars ($42): the cents were lost
+    fields = {float(out[k]) for k in _NET_REAL_FIELDS if isinstance(out.get(k), (int, float)) and not isinstance(out.get(k), bool) and out.get(k)}
+    used -= {c for c in comps if c != int(c) and c not in fields and any(f == int(f) and 0 < abs(c - f) < 1 for f in fields)}
     price = out.get("price")
     if isinstance(price, (int, float)) and price:
         used.update({float(price) * 2, float(price) * 3})  # first and last month, three months up front
@@ -9903,6 +9929,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         rent_read = isinstance(out.get("price"), (int, float))  # with no rent read, a rent-looking amount is still worth a line
         if _NET_SKIP_NEAR.search(near):
             continue
+        from . import dropguard
         from .dropguard import is_non_cost
         if is_non_cost(text, m.start(), m.end(), amount):
             continue  # cycle 20: a penalty, a replaced figure, an old price, the low of a seasonal pair: never a cost "not counted"
@@ -9939,6 +9966,8 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
             notes.append(f'The listing says "{phrase}". A second vehicle is optional, so it is not counted in the monthly cost. Ask the price if you will have two cars.')
         elif re.search(r"\boptional\b|\balso (?:offered|available)\b|\b(?:garage|carport|covered|reserved)\b[^.\n]{0,25}\b(?:offered|available) (?:for|at)\b", near, re.I) and not re.search(r"\b(?:required|mandatory|must)\b", phrase, re.I):
             notes.append(f'The listing says "{phrase}". It looks optional, so it is not counted in the monthly cost. Ask if it is required.')
+        elif (nk := dropguard.not_cost_kind(text, m.start(), m.end(), amount, out.get("price"))):
+            notes.append(f'The listing also says "{phrase}". {dropguard.not_cost_sentence(nk)}')  # cycle 24: another plan, an older price, a deposit alternative, another lease length: kept as a note, never "missing"
         else:
             notes.append(f'The listing also says "{phrase}". {_with_rest_counted(_only_unplaced(_uncounted_kind_sentence(phrase), phrase, used_fields, out))} Check what it is for.')
     low_facts = " ".join(facts).lower()
@@ -10077,7 +10106,15 @@ def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str], skip_util:
             phrase = _tidy_quote(phrase, text, hit["start"], hit["end"])
         if phrase and _quotes_title(phrase, out.get("title")) and item and len(item) < len(phrase):
             phrase = item  # the figure sits in the title line, so only its own item is quoted
+        if phrase and _quotes_title(phrase, out.get("title")) and out.get("price") is None:
+            tight = _hostile_figure_quote(text, hit["start"], hit["end"])  # cycle 24: a one-line listing whose title holds the figure: the figure with a few clean words beside it
+            if tight and not _quotes_title(tight, out.get("title")):
+                phrase = tight
         if not phrase or _quotes_title(phrase, out.get("title")) or any(f'"{phrase}"' in n for n in [*facts, *notes]):
+            continue
+        nk = dropguard.not_cost_kind(text, hit["start"], hit["end"], hit["amount"], out.get("price"))
+        if nk:
+            notes.append(f'The listing also says "{phrase}". {dropguard.not_cost_sentence(nk)}')
             continue
         notes.append(f'The listing also says "{phrase}". {_uncounted_kind_sentence(phrase)} Check what it is for.')
     if len(notes) > 8:

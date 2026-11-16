@@ -16,7 +16,8 @@ from prophelper import dropguard
 from prophelper import parsers as P
 
 PANEL = os.environ.get("PH_PANEL", "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
-_NAME = re.compile(r"r\d+-[a-z]+-(?:l|listing|L|paste|p)\d+[a-z]?\.txt$")
+# cycle 24: the r23 variants too (privacy-lmoney, privacy-v*, buyer-doc), not only the numbered listings
+_NAME = re.compile(r"r\d+-[a-z]+-(?:(?:l|listing|L|paste|p)\d+[a-z]?|lmoney|doc|v[a-z0-9_]+)\.txt$")
 
 
 # Cycle 23: money in other spellings (fullwidth dollar, USD, "30 dollars"), a fee inside a stripped fake closing tag, and a feature line with a bracketed
