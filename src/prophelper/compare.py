@@ -94,7 +94,9 @@ def _cell(text: Any, value: float | None = None, unknown_text: str = UNKNOWN) ->
             "unknown": unknown, "incomplete": False}
 
 
-def _money(v: Any, cents: bool = False) -> dict[str, Any]:
+def _money(v: Any, cents: bool = False, exact: bool = False) -> dict[str, Any]:
+    if exact and v is not None:  # cycle 25: a figure the listing gave or a sum of them keeps its cents ($2,182.50, never $2,182)
+        return _cell(helpers.money_exact(v), float(v), NOT_KNOWN)
     return _cell(helpers.money(v, cents=cents) if v is not None else None, float(v) if v is not None else None, NOT_KNOWN)
 
 
@@ -362,7 +364,7 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     buyer pays; for a renter, the move-in cash (at least that much when the deposit is not known, so it can't win)."""
     buy = p["cost"].get("mode") == "buy"
     c = p["cost"].get("cash_to_close") if buy else p["cost"].get("cash_at_move_in")
-    cell = _money(c["total"]) if c else _cell(None, unknown_text=NOT_KNOWN)
+    cell = _cell(helpers.money_exact(c["total"]), float(c["total"]), NOT_KNOWN) if c else _cell(None, unknown_text=NOT_KNOWN)
     if not c:
         return cell
     notes = []
@@ -371,12 +373,12 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     notes.extend(c.get("left_out") or [])
     sa = next((x for x in c.get("parts") or [] if str(x.get("label", "")).startswith("Special assessment")), None)
     if sa:
-        notes.append(f"includes a {helpers.money(sa['amount'])} special assessment you pay")
+        notes.append(f"includes a {helpers.money_exact(sa['amount'])} special assessment you pay")
     if notes:
         cell["text"] += f" ({', '.join(notes)})"
     unknown = (["deposit"] if _deposit_unknown(p, c) else []) + cash_unknown_names(p)
     if unknown:
-        cell["text"] = f"at least {helpers.money(c['total'])} ({_join_and(unknown)} not known)"
+        cell["text"] = f"at least {helpers.money_exact(c['total'])} ({_join_and(unknown)} not known)"
         cell["incomplete"] = True
     return cell
 
@@ -856,8 +858,8 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
              "low" if len({p["cost"].get("mode") for p in places}) == 1 else None, only_if_any=True),
         row("days_on_market", "Days on the market", [_num(p.get("days_on_market")) for p in places], only_if_any=True)
         if any(p["cost"].get("mode") == "buy" for p in places) else None,
-        row("deposit", "Deposit (comes back)", [_money(p.get("deposit")) for p in places], "low", only_if_any=True),
-        row("upfront", "Fees paid once (application, move-in, broker, pet)", [_money(None if _one_time_unset(p) else p["cost"].get("one_time_total")) if p["cost"].get("mode") == "rent" else _cell(None) for p in places], "low", only_if_any=True),
+        row("deposit", "Deposit (comes back)", [_money(p.get("deposit"), exact=True) for p in places], "low", only_if_any=True),
+        row("upfront", "Fees paid once (application, move-in, broker, pet)", [_money(None if _one_time_unset(p) else p["cost"].get("one_time_total"), exact=True) if p["cost"].get("mode") == "rent" else _cell(None) for p in places], "low", only_if_any=True),
     ])
 
     # ---- commutes: one row per anchor, using the mode of that anchor's commute criterion

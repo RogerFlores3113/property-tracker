@@ -56,7 +56,7 @@ def make_templates(store: Store) -> Jinja2Templates:
                       autoescape=select_autoescape(["html", "xml"], default_for_string=True), trim_blocks=False)
     env.filters.update({
         "local": helpers.local_time, "clock": helpers.clock_text, "day": helpers.day_text, "date": helpers.local_date,
-        "num": helpers.number_text, "ago": helpers.ago, "until": helpers.until, "money": helpers.money,
+        "num": helpers.number_text, "ago": helpers.ago, "until": helpers.until, "money": helpers.money, "money_exact": helpers.money_exact,
         "stage_slug": helpers.stage_slug, "beds": helpers.beds_text, "host": helpers.host_of,
         "dt_input": helpers.input_datetime, "street_unit": street_with_unit,
         "note_lines": money.note_units, "place_note_lines": lambda place: money.display_note_units({**place, "reader_notes": redflags.clean_reader_notes(place.get("reader_notes"), place)}),

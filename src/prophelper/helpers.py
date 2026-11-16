@@ -169,6 +169,18 @@ def money(amount: int | float | None, cents: bool = False) -> str:
     return f"{sign}${abs(n):,.2f}" if cents else f"{sign}${abs(n):,.0f}"
 
 
+def money_exact(amount: int | float | None) -> str:
+    """Cycle 25: money shown the way the value is: $1,200 for a whole number, $38.50 and $2,182.50 when it has cents (never rounded to $38 or $2,182).
+    Used for amounts the listing gave and for sums of them; estimates worked out over a period use ``money``."""
+    if amount is None or amount == "":
+        return ""
+    try:
+        n = float(amount)
+    except (TypeError, ValueError):
+        return str(amount)
+    return money(n, cents=abs(n - round(n)) >= 0.005)
+
+
 def beds_text(beds: Any) -> str:
     if beds is None or beds == "":
         return ""
