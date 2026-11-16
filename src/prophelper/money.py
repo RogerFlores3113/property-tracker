@@ -616,7 +616,7 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
     unplaced: dict[float, str] = {}
     for note in notes:
         for raw in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", note):
-            amount = raw.replace(" ", "")
+            amount = raw.replace(" ", "").rstrip(",.")  # "$3,400," is $3,400 (a comma after the amount is not part of it)
             value = float(amount.lstrip("$").replace(",", ""))
             seen.setdefault(value, amount)
             if round(value, 2) not in used:

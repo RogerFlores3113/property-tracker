@@ -278,6 +278,12 @@ def _price(text: str) -> float | None:
     m = re.search(r"(?<![\d.,$#/-])\b(\d{1,2},\d{3}|\d{3,5})[ \t]*(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?)\b", text, re.I)
     if m and 300 <= _num(m.group(1)) <= 30000 and not _SALE_WORDS.search(text):  # "1,299 a month": a rent written without a dollar sign
         return _num(m.group(1))
+    m = re.search(r"(?<![\w.,$#/-])(\d(?:\.\d{1,2})?)[ \t]?k[ \t]*(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?|monthly)\b", text, re.I)
+    if m and 0.3 <= float(m.group(1)) <= 30 and not _SALE_WORDS.search(text):  # cycle 18: "1.5k a month" is 1,500
+        return float(m.group(1)) * 1000
+    bare = _bare_labelled_rent(text)
+    if bare is not None and not sale_text:
+        return bare
     # cycle 16: a bare number is a rent only with an explicit period right after it (above). "HOUSE FOR RENT. 612 Mohawk St" and
     # "Rent. 4120 Indianola Ave" are street numbers, never a rent, so a number that only follows the word "rent" is not read.
     if _RENT_WORDS.search(text) and not sale_text:
@@ -287,6 +293,70 @@ def _price(text: str) -> float | None:
     m = re.search(r"^[ \t*#]*no[ \t]+(?:pets?|smoking|dogs?|cats?|animals?)\b[^\n$]*?[-|][ \t]*\$\s?(\d{1,2},\d{3}|\d{3,5})(?:\.\d\d)?[ \t]*$", text, re.I | re.M)
     if m and not sale_text and 300 <= _num(m.group(1)) <= 20000:  # "NO PETS ALLOWED EXCEPT SERVICE ANIMALS - $2,100"
         return _num(m.group(1))
+    return None
+
+
+_NET_EFFECTIVE = re.compile(r"\(?\b(?:net[ \t-]+effective|effective|after[ \t-]+concessions?)(?:[ \t]+(?:rent|price|monthly(?:[ \t]+rent)?))?[ \t]*(?:is|of|:|=|about|around|approx\.?|~)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\)?", re.I)
+_NET_EFFECTIVE_AFTER = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?[ \t]*)?(?:net[ \t-]+effective|effective(?:[ \t]+rent)?|after[ \t-]+concessions?)\b", re.I)
+_AMT_G = r"\$\s?(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?"
+_OLD_NEW = (
+    ("arrow", re.compile(_AMT_G + r"[ \t]*(?:/mo)?[ \t]*(?:-+>|=+>|\u2192|\u279c|\u2794|>>|to|now|then)[ \t]*" + _AMT_G + r"(?![\d,])", re.I)),
+    ("was", re.compile(r"\b(?:was|previously|formerly|originally|old[ \t]+price|before)[ \t:]*" + _AMT_G + r"[ \t]*[,;:()\-\u2013\u2014]*[ \t]*(?:now|today|currently|new[ \t]+price|now[ \t]+only)[ \t:]*" + _AMT_G, re.I)),
+    ("reduced", re.compile(r"\b(?:reduced|dropped|lowered|cut|marked[ \t]+down|price[ \t]+drop(?:ped)?)[ \t]+from[ \t]+" + _AMT_G + r"[ \t]+to[ \t]+" + _AMT_G, re.I)),
+    ("struck", re.compile(r"(?:~~|<s>|<del>)[ \t]*" + _AMT_G + r"[ \t]*(?:/mo)?[ \t]*(?:~~|</s>|</del>)[ \t,:-]*" + _AMT_G, re.I)),
+)
+
+
+def _rent_two_prices(text: str) -> tuple[float, float, str] | None:
+    """A listing that gives two rents. Returns (the rent to save, the other figure, kind) or None.
+    kind "net" = "Starting at $3,400 ... (net effective $3,138)": the quoted rent is saved and the net effective figure is a note.
+    kind "drop" = "$3,350 -> $3,200 price drop", "was $X now $Y", "reduced from $X to $Y", "~~$X~~ $Y": the current (lower) price is
+    saved and the old one is a note. Only a lower new figure counts as a drop (a higher one could be a rise or a different unit)."""
+    if _SALE_WORDS.search(text):
+        return None
+    for kind, pat in _OLD_NEW:
+        for m in pat.finditer(text):
+            old, new = _num(m.group(1)), _num(m.group(2))
+            if 300 <= new < old <= 30000:
+                return new, old, kind
+    m = _NET_EFFECTIVE.search(text) or _NET_EFFECTIVE_AFTER.search(text)
+    if m:
+        net = _num(m.group(1))
+        rest = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+        base = _price(rest)
+        if base is None:
+            base = _bare_starting_rent(rest)
+        if base is not None and base > net and 300 <= base <= 30000:
+            return base, net, "net"
+    return None
+
+
+def _rent_two_prices_note(price: float, other: float, kind: str) -> str:
+    if kind == "net":
+        return (f"The listing gives ${price:,.0f} a month as the rent and a net effective rent of ${other:,.0f}. The net effective figure only spreads a free-rent deal over the lease, "
+                f"so ${price:,.0f} is saved as the rent. Ask what you pay each month.")
+    return f"The listing says the rent dropped from ${other:,.0f} to ${price:,.0f}. The current ${price:,.0f} is saved as the rent and the old ${other:,.0f} is not used."
+
+
+_STREET_WORD = re.compile(r"(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|way|cir|circle|pkwy|parkway|hwy|highway|terrace|ter|trail)\b\.?", re.I)
+
+
+def _bare_labelled_rent(text: str) -> float | None:
+    """Cycle 18: "Rent 1,480 plus parking", "Rent: 1480", "monthly rent 1,250": a rent written without a dollar sign right after the word
+    rent. A number followed by a street word or a capitalised word is a street number ("For rent 612 Mohawk St"), never a rent."""
+    for m in re.finditer(r"(?<![\w$])(?:monthly[ \t]+)?rent(?:[ \t]*(?:is|of|:|=|-))?[ \t]*(\d{1,2},\d{3}|\d{3,5})(?![\d,.]*\d)(?:\.\d\d)?", text, re.I):
+        value = _num(m.group(1))
+        if not 300 <= value <= 30000:
+            continue
+        after = text[m.end():m.end() + 40]
+        if re.match(r"[ \t]*(?:sq|sf|ft|bed|br|bd|bath)", after, re.I):
+            continue
+        nxt = re.match(r"[ \t]+([A-Za-z]+)(?:[ \t]+([A-Za-z]+))?", after)
+        if nxt:
+            w1, w2 = nxt.group(1), nxt.group(2) or ""
+            if w1[0].isupper() or _STREET_WORD.fullmatch(w1) or (w2 and _STREET_WORD.fullmatch(w2)):
+                continue
+        return value
     return None
 
 
@@ -1894,6 +1964,8 @@ def _deposit_in_months(text: str) -> float:
     m = re.search(r"\b(?:security |damage )?deposits?\b[ \t:\-]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(\d(?:\.\d{1,2})?)[ \t]*(?:x|times|months?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?rent)?)(?:[ \t]+(?:the[ \t]+|of[ \t]+|monthly[ \t]+)*rent)?\b", text, re.I)
     if m and 0 < float(m.group(1)) <= 6:
         return float(m.group(1))
+    if re.search(r"\b(?:security |damage )?deposits?\b[ \t:\-]{0,4}(?:is |are |will be )?(?:the )?(?:same as|same amount as|equal to|equals|equivalent to|matches|=)[ \t]+(?:the |your |one |1 )?(?:monthly |first month'?s? )?rent\b", text, re.I):
+        return 1  # cycle 18: "deposit same as rent"
     for pat in (r"\b(?:security |damage )?deposits?\b[ \t:\-]{0,4}(?:is |of |equal to |equals |equivalent to |=)?[ \t]*(one|two|a|1|2)[- ]months?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?rent)?\b",
                 r"\b(one|two|1|2)[- ]months?(?:'s?)?[ \t]+(?:security |damage )deposit\b",
                 r"\b(one|two|1|2)[- ]months?(?:'s?)?[ \t]+(?:security|damage)\b(?![ \t]+(?:camera|cameras|cam|system|guard|gate|door|lock|patrol|alarm|building))"):
@@ -4632,6 +4704,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append(worded_note)
     if price_read is None and not price_range and not buying:
         price_read = _try(lambda: _bare_starting_rent(text))  # "Starting at $3,250": the lowest unit, read with a note below
+    two_prices = None if buying or price_range else _try(lambda: _rent_two_prices(text))
+    if two_prices:  # cycle 18: two rents in one listing: the quoted or current one is saved, the other is named in a note
+        price_read = two_prices[0]
+        if two_prices[2] == "net" or not (_REDUCED_FROM.search(text) or _WAS_PRICE.search(text)):  # those two already get a "price was cut" note
+            facts.append(_rent_two_prices_note(*two_prices))
     if buying and isinstance(price_read, (int, float)) and price_read < 20000:
         # A monthly figure ("monthly cost about $1,988") is not the asking price of a home for sale.
         if not (current or {}).get("price"):  # a price the caller already has needs no "check the asking price" note
@@ -5879,7 +5956,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         seen_w.add(w)
         notes.append(f'The listing says "{_net_clause(text, m.start(), m.end())}". I could not tell what this limit is for, so it is not used anywhere. Check it.')
     m = _free_rent_match(text)
-    if m and not re.search(r"free rent|months? free|weeks? free|concession", low_facts):
+    if m and not re.search(r"free rent|months? free|weeks? free|concession|net effective", low_facts):
         notes.append(f'The listing mentions a free-rent offer ("{_net_clause(text, m.start(), m.end())}"). It is not counted anywhere. Check the terms.')
     m = _NET_BROKER_MONTH.search(text)
     if m and not out.get("broker_fee") and not re.search(r"broker|agent fee|finder", low_facts):
