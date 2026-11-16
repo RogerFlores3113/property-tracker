@@ -40,7 +40,7 @@ from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
 from .store import (AI_EVENT_TEXT_MAX, AI_NEVER_ENTERS, COMMUTE_MODES, CONTACT_LOG_KINDS, CONTACT_ROLES, CRITERION_KINDS, MAX_PEOPLE, NotFound,
-                    PARKING_VALUES, Store, _clean_target, clean_people_names, ai_move_problem, normalize_url, to_utc_iso, link_host_private, PRIVATE_LINK_REASON)
+                    PARKING_VALUES, Store, _clean_target, clean_people_names, ai_move_problem, normalize_url, encode_link, to_utc_iso, link_host_private, PRIVATE_LINK_REASON)
 
 INSTRUCTIONS = """\
 Property Helper keeps the user's own apartment or house hunt on their computer: every place they found, where it
@@ -779,32 +779,43 @@ def build_server(store: Store) -> FastMCP:
                              f"and {used} were already added in the last hour. Nothing was saved. {STRICT_OFF_HOW}")
 
     def check_photos(fields: dict[str, Any], where: str = "") -> list[str]:
-        """Photo links must be http(s) web addresses (data:, javascript: and the like are refused, nothing saved). A plain http:
-        link is upgraded to https:// (the app's pages only load https pictures), and the reply says so."""
+        """Photo links follow the listing-link rule: a space or quote is written %XX, a plain http: link is upgraded to https://
+        (the app's pages only load https pictures). A link that is not a web address, has a user name or password in it or points
+        at a private network is dropped on its own, with a note saying which; the rest of the add is still saved."""
         if fields.get("photo_urls") is None:
             return []
         items = fields["photo_urls"]
         if not isinstance(items, list):
             raise ValueError(f"{where}photo_urls must be a list of web addresses. Nothing was saved.")
         out: list[str] = []
+        notes: list[str] = []
         upgraded = 0
         for item in items:
             link = str(item or "").strip()
+            if re.match(r"^https?://[^\s/]", link, re.I):
+                link = encode_link(link)  # a space in a photo link is written %20, like a listing link
             if not re.match(r"^https?://[^\s/]+\S*$", link, re.I):
-                raise ValueError(f"{where}photo link \"{_clip(link, 40)}\" isn't a web address. Photo links must start with https:// "
-                                 f"(or http://). Nothing was saved.")
+                notes.append(f"{where}I did not save the photo link \"{_clip(link, 40)}\": it isn't a web address. Photo links must start with https:// (or http://).")
+                continue
             if re.match(r"^https?://[^/?#\s]*@", link, re.I):
-                raise ValueError(f"{where}photo link \"{_clip(link.split('@')[-1], 40)}\" has a user name or password in it, so I won't save it. "
-                                 f"Send the plain photo address without it. Nothing was saved.")
+                notes.append(f"{where}I did not save the photo link \"{_clip(link.split('@')[-1], 40)}\": it has a user name or password in it. "
+                             f"Send the plain photo address without it.")
+                continue
             if link_host_private(link):
-                raise ValueError(f"{where}photo link \"{_clip(link, 40)}\": {PRIVATE_LINK_REASON} Nothing was saved.")
+                notes.append(f"{where}I did not save the photo link \"{_clip(link, 40)}\": {PRIVATE_LINK_REASON}")
+                continue
             if link[:5].lower() == "http:":
                 link = "https:" + link[5:]
                 upgraded += 1
             out.append(link)
-        fields["photo_urls"] = out
-        return [f"{upgraded} photo link{'s were' if upgraded != 1 else ' was'} plain http://, so I saved {'them' if upgraded != 1 else 'it'} as https:// "
-                f"(pictures only load over https). If a photo doesn't show, the site may not offer it over https."] if upgraded else []
+        if out or not items:
+            fields["photo_urls"] = out
+        else:
+            fields.pop("photo_urls")  # every link was bad: leave the saved photos as they were
+        if upgraded:
+            notes.append(f"{upgraded} photo link{'s were' if upgraded != 1 else ' was'} plain http://, so I saved {'them' if upgraded != 1 else 'it'} as https:// "
+                         f"(pictures only load over https). If a photo doesn't show, the site may not offer it over https.")
+        return notes
 
     def apply_utilities_source(fields: dict[str, Any], where: str = "") -> None:
         """utilities_source says where utilities_estimate came from: "guess" (the default), "billed back" or "from the listing".
@@ -1011,6 +1022,11 @@ def build_server(store: Store) -> FastMCP:
                 if not (x.split(" $")[0].lower() in notes and x.split(" ")[-1].split("/")[0].lower() in notes)]  # not again what a note already says
         return [f"Seen but not counted: {', '.join(seen)} (looks optional; add it to other monthly fees if you need it)."] if seen else []
 
+    def rent_warning(place: dict[str, Any]) -> list[str]:
+        """A rent far below normal on a rental (a typo or a placeholder): warn the same way as a low insurance figure."""
+        text = today_view.low_rent(place, store.place_mode(place["id"]))
+        return [f"Warning: {text}."] if text else []
+
     def insurance_warning(place: dict[str, Any]) -> list[str]:
         """The insurance field is a yearly amount. A small number on a rent place looks like a monthly price, so say so."""
         try:
@@ -1033,7 +1049,7 @@ def build_server(store: Store) -> FastMCP:
                 else f"Updated {_title(e)} (id {e['id']}).")
         if search.get("mode") == "buy":
             notes = [compare_mod.for_buyer(n) for n in notes]
-        lines = [head, *notes, *insurance_warning(place), *_card(e)[1:], *seen_not_counted(place)]
+        lines = [head, *notes, *insurance_warning(place), *rent_warning(place), *_card(e)[1:], *seen_not_counted(place)]
         if not place.get("listing_text"):
             lines.append("No listing text is saved yet. If you can, call update_place with listing_text so the details survive when the listing comes down.")
         if place.get("lat") is None:
@@ -1257,7 +1273,7 @@ def build_server(store: Store) -> FastMCP:
                 lines.append(("Added " if created else "Already saved, updated ") + _line(e) + ("" if created else " (filled only empty fields)"))
                 lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "Read from the listing text", "The listing text was saved", "Also in the listing"))]
                 lines += ["  " + n for n in seen_not_counted(place)]
-                lines += ["  " + n for n in insurance_warning(place)]
+                lines += ["  " + n for n in insurance_warning(place) + rent_warning(place)]
                 out.append({"id": place["id"], "created": created})
         added = sum(1 for o in out if o["created"])
         lines.insert(0, f"Added {added}, updated {len(out) - added}.")
@@ -1304,6 +1320,8 @@ def build_server(store: Store) -> FastMCP:
                              "Tell the user to add it to their own budget.")
         if "insurance" in fields:
             lines += insurance_warning(after)
+        if "price" in fields:
+            lines += rent_warning(after)
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
 

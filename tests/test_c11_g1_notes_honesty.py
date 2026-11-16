@@ -148,8 +148,8 @@ MONEY2 = 'The listing also says "Parking $75". It is not counted anywhere. Check
 def test_money_notes_come_first_and_nothing_is_cut_mid_sentence():
     t = compare.listing_notes_text({"reader_notes": CONC + " " + MONEY + " " + MONEY2}, 150)
     assert t.startswith("The listing also says \"Amenity fee $300 one-time\".")
-    assert "free-rent" not in t.split(" and ")[0] and t.endswith("more on the place page.")
-    assert "..." not in t
+    assert t.index("Parking $75") < t.index("free-rent")  # cycle 23: up to three notes show, the one-time deal last
+    assert "more on the place page" not in t and "..." not in t
     assert "\"Amenity fee $300 one-time\". It is not counted anywhere. Check what it is for." in t
 
 

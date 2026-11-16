@@ -1050,8 +1050,14 @@ class Store:
         isn't one. Returns ``{"links": n, "photos": n}``, the counts of what was dropped. Never raises on odd values."""
         links = photos = 0
         with self._write():
-            for row in self._rows("SELECT id, url, photo_urls FROM places"):
+            from . import redflags
+            for row in self._rows("SELECT id, url, photo_urls, reader_notes FROM places"):
                 sets: dict[str, Any] = {}
+                notes = row["reader_notes"]
+                if isinstance(notes, str) and notes:  # old notes get the same cleaning as new ones: no invisible characters or hidden tag text
+                    clean = redflags._ZERO_WIDTH.sub("", guards.strip_tag_chars(notes))
+                    if clean != notes:
+                        sets["reader_notes"] = clean
                 url = row["url"]
                 fixed = _restored_link(url) if url else ""
                 if url and not fixed:
@@ -1763,6 +1769,10 @@ class Store:
                 fresh = self._fresh_reader_notes({**existing, **values})
                 if fresh is not None and fresh != (existing.get("reader_notes") or ""):
                     changed["reader_notes"] = fresh
+            if "reader_notes" not in values:
+                kept = self._notes_without_corrected(changed.get("reader_notes", existing.get("reader_notes") or ""), existing, values)
+                if kept != changed.get("reader_notes", existing.get("reader_notes") or ""):
+                    changed["reader_notes"] = kept  # a corrected figure no longer keeps a note about the old one
             if changed:
                 changed["updated_at"] = now_iso()
                 self._exec(f"UPDATE places SET {', '.join(f'{k} = ?' for k in changed)} WHERE id = ?",
@@ -1772,6 +1782,39 @@ class Store:
             if stage is not None and stage != "" and stage != existing["stage"]:
                 self.move_stage(place_id, stage, by_ai=(by == "ai"))
         return self.get_place(place_id)
+
+    _CORRECTED_WORDS = {"price": r"rent|price|starting at|lowest", "deposit": r"deposit", "application_fee": r"application", "parking_cost": r"parking|garage",
+                        "hoa": r"hoa|dues|assessment"}
+
+    @classmethod
+    def _notes_without_corrected(cls, notes: str, existing: dict[str, Any], values: dict[str, Any]) -> str:
+        """Reader notes with the notes dropped that are only about a figure that was just corrected: a note whose one dollar amount
+        is the old value of a money field the call changed ("starting at $1,250" after the price became $1,395), or a "starting at"
+        note whose amount is no longer the saved price. A note with other amounts stays, so no stated figure is lost."""
+        if not str(notes or "").strip():
+            return notes
+        from .money import note_units
+        money = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
+        units = note_units(notes)
+        if not units:
+            return notes
+        out = []
+        for unit in units:
+            amounts = {float(x.replace(",", "")) for x in money.findall(unit)}
+            drop = False
+            if len(amounts) == 1:
+                amount = next(iter(amounts))
+                for key, words in cls._CORRECTED_WORDS.items():
+                    old, new = existing.get(key), values.get(key)
+                    if key in values and old not in (None, "") and new not in (None, "") and float(old) == amount and float(new) != amount \
+                            and re.search(words, unit, re.I):
+                        drop = True
+                price = values.get("price", existing.get("price"))
+                if price not in (None, "") and re.search(r"\bstarting at\b", unit, re.I) and float(price) != amount:
+                    drop = True
+            if not drop:
+                out.append(unit)
+        return "\n".join(out) if len(out) != len(units) else notes
 
     def _fresh_reader_notes(self, place: dict[str, Any]) -> str | None:
         """The "Also in the listing" notes made again from the saved listing text and the place's current facts, so a note

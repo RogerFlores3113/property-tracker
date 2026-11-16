@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 
 from typing import Any, Iterable
 
@@ -686,6 +687,66 @@ def _unknown_price_concerns(place: dict[str, Any], cost: dict[str, Any], mode: s
     return None
 
 
+_MONTH_NUM = {m: i + 1 for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))}
+_MONTH_RE = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
+_SHORT_LEASE_WORD = re.compile(r"\b(?:sub-?let(?:ting)?|sub-?leas(?:e|es|ing)|short[- ]term (?:lease|rental|stay))\b", re.I)
+_MONTH_RANGE = re.compile(r"\b" + _MONTH_RE + r"(?:\s+(\d{4}))?\s*(?:-|\u2013|to|through|thru|until)\s*" + _MONTH_RE + r"\s+(\d{4})\b", re.I)
+
+
+def _short_lease_dates(place: dict[str, Any]) -> tuple[date | None, date | None]:
+    """(start, end) of a sublet or short-term lease: the saved lease dates first, else a 'June - Aug 2027' range in the listing."""
+    try:
+        start = date.fromisoformat(str(place.get("lease_start") or ""))
+    except ValueError:
+        start = None
+    try:
+        end = date.fromisoformat(str(place.get("lease_end") or ""))
+    except ValueError:
+        end = None
+    if start and end:
+        return start, end
+    m = _MONTH_RANGE.search(str(place.get("listing_text") or ""))
+    if m and not (start or end):
+        year_end = int(m.group(4))
+        m1, m2 = _MONTH_NUM[m.group(1)[:3].lower()], _MONTH_NUM[m.group(3)[:3].lower()]
+        year_start = int(m.group(2)) if m.group(2) else (year_end if m1 <= m2 else year_end - 1)
+        try:
+            return date(year_start, m1, 1), date(year_end + (m2 == 12), m2 % 12 + 1, 1) - timedelta(days=1)
+        except ValueError:
+            return start, end
+    return start, end
+
+
+def lease_coverage_note(place: dict[str, Any], search: dict[str, Any] | None, mode: str) -> str:
+    """The plain reason when a rental is a sublet or a short-term lease that does not cover the search's move-in date and a
+    lease year ('' when it does, or when nothing says it is short). Uses the lease dates the reader saved; a "June - Aug 2027"
+    range in the listing is read when no dates were saved."""
+    if mode == "buy":
+        return ""
+    text = " ".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes"))
+    start, end = _short_lease_dates(place)
+    months = _num(place.get("lease_months"))
+    word = bool(_SHORT_LEASE_WORD.search(text))
+    short = bool(start and end and (end - start).days < 330) or (months is not None and months < 11)
+    if not (word or short):
+        return ""
+    kind = "a sublet" if word else "a short lease"
+    try:
+        move_in = date.fromisoformat(str((search or {}).get("move_in") or ""))
+    except ValueError:
+        move_in = None
+    if start and end:
+        span = f"{start.strftime('%b')} {start.day}, {start.year} to {end.strftime('%b')} {end.day}, {end.year}"
+        if move_in and start <= move_in + timedelta(days=7) and end >= move_in + timedelta(days=330):
+            return ""  # it covers the move-in date and a lease year
+        if move_in:
+            return f"This is {kind} ({span}) and does not cover a lease year from your move-in date. Ask whether it can be extended"
+        return f"This is {kind} ({span}), shorter than a normal lease year. Ask whether it can be extended"
+    if months is not None and months < 11:
+        return f"This is {kind} of {months:g} months, shorter than a normal lease year. Ask whether it can be extended"
+    return f"This listing says it is {kind}. Check that the dates cover your move-in date and a whole lease year"
+
+
 def _late_opening(place: dict[str, Any], search: dict[str, Any] | None, mode: str) -> str:
     """The plain reason when a rental opens well after the move-in date ('' otherwise). Early openings are only a note."""
     if not search or mode == "buy":
@@ -742,6 +803,9 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
         if "can be waived or needs approval" in str(i.get("detail") or "") and i["dealbreaker_status"] != "fail" and i["detail"] not in concerns:
             concerns.append(i["detail"])
     far_commute = any(i.get("concern") and (i.get("over_pct") or 0) > 0.25 for i in items)
+    lease_gap = lease_coverage_note(place, search, mode)
+    if lease_gap:
+        concerns.append(lease_gap)
     late = _late_opening(place, search, mode)
     if late:
         concerns.append(late)
@@ -799,7 +863,7 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
             "failed": failed, "near": near, "concerns": concerns, "caps": caps, "check": check, "fails_dealbreaker": bool(failed), "needs_check": bool(check),
             "fit": fit, "fit_label": fit_label, "fit_reasons": reasons, "near_texts": near_texts, "near_parts": parts_ if fit == "near_miss" else [], "conditional": conditional,
             "conditional_costs": [i["conditional"] for i in items if i.get("conditional") and i["dealbreaker_status"] == "pass"],
-            "late_penalty": LATE_PENALTY if late else 0, "late_note": late, "notes": notes,
+            "late_penalty": LATE_PENALTY if late else 0, "late_note": late, "lease_gap": lease_gap, "notes": notes,
             "scam": scam, "sort_group": SORT_GROUPS[fit], "cost": ctx["cost"]}
 
 
