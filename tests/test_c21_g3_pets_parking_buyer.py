@@ -75,7 +75,8 @@ def test_l1_whole_listing():
     r = parse_listing(LISTING_L1, buying=True)
     assert (r["hoa"], r["property_tax"], r["closing_costs"], r["seller_credit"], r["insurance"]) == (310, 3400, 6900, 7812.5, 660)
     n = notes(r)
-    assert "utility" not in n.lower()
+    assert r.get("utilities_estimate") is None  # the $310 HOA is never read as a utility amount
+    assert "$310" not in n and "not counted anywhere" not in n
     assert "Monthly HOA assessment" not in n and "Property taxes run" not in n and "Closing costs for the buyer" not in n
 
 
