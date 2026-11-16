@@ -225,8 +225,9 @@ def test_a_utility_package_fee_is_not_the_utilities_total():
     "HOA covers trash and water. Tenant pays all utilities, water is $25, electric and gas about $120 total.",
 ])
 def test_hoa_covering_water_is_not_a_conflict_with_tenant_paid_items(text):
+    # cycle 23 changed this on purpose: "HOA covers water" next to "water is $25" IS a conflict, so the $25 is not counted (see test_c23_g1_*)
     r = read(text)
-    assert r.get("utilities_estimate") == 145, (r.get("utilities_estimate"), notes(r))
+    assert r.get("utilities_estimate") == 120, (r.get("utilities_estimate"), notes(r))
     assert "unclear about" not in notes(r)
     assert {"electric", "gas", "water"} <= pays_set(r)
     assert "not counted anywhere" not in notes(r)
@@ -258,7 +259,7 @@ def test_a_tilde_before_a_figure_is_not_a_bullet():
 def test_reviewer_listings_plain_totals():
     assert saved("r21-nontech-l8")["utilities_estimate"] == 175
     r = saved("r21-nontech-l5")
-    assert r["utilities_estimate"] == 145 and "unclear about" not in notes(r)
+    assert r["utilities_estimate"] == 120 and "unclear about" not in notes(r)  # cycle 23: HOA covers water + water $25 is a conflict, water stays unknown
     assert not [n for n in notes(r).split("\n") if "not counted anywhere" in n and re.search(r"water|electric|gas|utilit", n, re.I)]
     assert saved("r21-nontech-l3")["utilities_estimate"] == 145
 

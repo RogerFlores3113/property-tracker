@@ -3650,11 +3650,12 @@ def _internet_choice_notes(text: str, facts: list[str]) -> list[str]:
         elif h["kind"] == "starting":
             notes.append(f"The listing gives internet from {amt} a month, which is only a starting price, so it is not counted. Ask what you would really pay.")
         else:
-            notes.append(f"The listing gives internet at about {amt} a month but does not say you must pay it, so it is not counted. Ask if it is required.")
+            notes.append(f"The listing gives internet at about {amt} a month but does not say you must pay it, so it is not counted. Ask if it is required. The listing says \"{h['quote'][:80]}\".")
     return notes
 
 
-_HOA_COVERS_RE = re.compile(r"[^.\n;]*\b(?:hoa|h\.o\.a|association|assoc)\b[^.\n;]{0,40}\b(?:covers?|includes?|pays?|paid)\b[^.\n;]*[.;]?", re.I)
+_HOA_COVERS_RE = re.compile(r"[^.\n;]*\b(?:hoa|h\.o\.a|association|assoc)\b[^.\n;]{0,40}\b(?:covers?|includes?|pays?|paid)\b[^.\n;]*[.;]?"
+                            r"|[^.\n;]*\b(?:covered|included|paid)[ \t]+(?:for[ \t]+)?by[ \t]+(?:the[ \t]+)?(?:hoa|h\.o\.a|association|assoc)\b[^.\n;]*[.;]?", re.I)
 
 
 def _strip_hoa_covers(text: str) -> str:
@@ -3662,6 +3663,14 @@ def _strip_hoa_covers(text: str) -> str:
     second answer about who pays it, so the utility readers do not see it. A home for sale, or a listing with no renter-pays line, keeps it."""
     if not _HOA_COVERS_RE.search(text) or _is_sale_text(text):
         return text
+    conflicts = _hoa_price_conflicts(text)
+    if conflicts:
+        # cycle 23: "water $25 | HOA covers water": the two lines disagree. The HOA line goes (a building fee is not a bill), and so does the
+        # figure for that utility: nothing counts it, and the reader adds a note and leaves it unknown.
+        rest = _HOA_COVERS_RE.sub(" ", _PIPE_SPLIT.sub(". ", text))
+        for name, _amt in conflicts:
+            rest = _UTIL_PRICE_SEG(name).sub(" ", rest)
+        return rest
     rest = _HOA_COVERS_RE.sub(" ", text)
     named = {w for m in _HOA_COVERS_RE.finditer(text) for w in re.findall(_ROLE_WORD, m.group(0).lower())}
     pays_all = re.search(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n;]{0,20}\b(?:pays?|responsible)\b[^.\n;]{0,12}\ball\b[^.\n;]{0,12}\butilit", rest, re.I)
@@ -3669,6 +3678,33 @@ def _strip_hoa_covers(text: str) -> str:
     if not (pays_all or priced):
         return text  # "HOA covers water and trash. Tenant pays electric and gas": nothing in the renter's lines disagrees, so the HOA line stands
     return rest
+
+
+_PIPE_SPLIT = re.compile(r"[ \t]+[|*\u2022\u00b7][ \t]+")
+
+
+def _UTIL_PRICE_SEG(name: str) -> re.Pattern[str]:
+    """"water $25 (water is $25 flat)" / "Water: $25/mo": a utility word with its own figure, so the figure can be taken out."""
+    return re.compile(r"\b" + name + r"\b[ \t]*[:\-]?[ \t]*\(?[ \t]*(?:(?:is|are|about|around|approx\w*|roughly|est\w*|avg\.?|average|~)[ \t]*)*\$[ \t]?\d[\d,]*(?:\.\d\d)?"
+                      r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b|flat\b))*[ \t]*\)?(?:[ \t]*\([^)\n]{0,30}\$[ \t]?\d[^)\n]{0,20}\))?", re.I)
+
+
+def _hoa_price_conflicts(text: str) -> list[tuple[str, float]]:
+    """Rental text where "HOA covers water" and "water $25" both appear: [("water", 25.0)]. Two lines that disagree about the same utility."""
+    if not _HOA_COVERS_RE.search(text) or _is_sale_text(text):
+        return []
+    text = _PIPE_SPLIT.sub(". ", text)
+    rest = _HOA_COVERS_RE.sub(" ", text)
+    out: list[tuple[str, float]] = []
+    for m in _HOA_COVERS_RE.finditer(text):
+        for w in re.findall(_ROLE_WORD, m.group(0).lower()):
+            if w in dict(out) or w in ("internet", "cable", "wifi", "wi-fi"):
+                continue
+            pm = _UTIL_PRICE_SEG(w).search(rest)
+            if pm:
+                am = re.search(r"\$[ \t]?(\d[\d,]*(?:\.\d\d)?)", pm.group(0))
+                out.append((w, float(am.group(1).replace(",", "")) if am else 0.0))
+    return out
 
 
 def _tilde_items(text: str) -> str:
@@ -3769,9 +3805,45 @@ def _util_text(text: str) -> str:
             text = re.sub(pat, lambda m, w=word: _both_or_electric(m, w), text, flags=re.I)  # cycle 19: "PG&E (about $80), gas about $30" names gas again with its own figure
         else:
             text = re.sub(pat, word, text, flags=re.I)
+    text = _except_price_split(text)
+    text = re.sub(r"\b(trash|garbage|waste)[ \t]+(?:pick-?ups?|collection|removal|disposal|services?)\b(?![ \t]+(?:fee|charge))", "trash", text, flags=re.I)  # "Trash pickup included" is the trash being included
     # "Tenant pays PG&E, water and trash included": the last comma part is the included one, so it is its own sentence
     text = _PAYS_THEN_INCLUDED.sub(r"\1. \2", text)
     return text
+
+
+def _except_price_split(text: str) -> str:
+    """"All utilities included except internet and electric (electric avg $40)": the figure in the brackets (or after "which averages") is the
+    price of the utility it sits next to, so it becomes its own sentence, "Tenant pays electric about $40/month", and the readers see the
+    except list and the renter's price apart. A clause with no single utility the figure can belong to is left as it was."""
+    def fix(clause: str) -> str:
+        if not re.search(r"\b(?:all|every)[ \t]+(?:the[ \t]+)?utilit|\beverything\b|\bpays?[ \t]+all\b", clause, re.I):
+            return clause
+        m = re.search(r"\b(?:except(?:[ \t]+for)?|other[ \t]+than|besides)[ \t]+", clause, re.I)
+        if not m:
+            return clause
+        tail = clause[m.end():]
+        lst = _ROLE_LIST.match(tail)
+        if not lst:
+            return clause
+        rest = tail[lst.end():]
+        fm = _GEN_MONEY.search(rest)
+        if not fm or len(rest[:fm.start()]) > 45 or re.search(r"quarter|annual|year|yr\b|every|bi-?monthly|deposit|fee|one[ \t-]time", rest, re.I):
+            return clause
+        _noise = r"(?:is|are|runs?|avg\.?|averages?|average|about|around|approx\w*|roughly|est\w*|typically|usually|typical|~)"
+        if not re.fullmatch(r"[ \t,:(\-]*(?:which|that|it)?[ \t]*(?:" + _noise + r"[ \t]*)*(?:" + _ROLE_WORD + r")?[ \t]*(?:" + _noise + r"[ \t]*)*", rest[:fm.start()], re.I):
+            return clause  # "all utilities except electric included, electric about $65": the words before the figure are not just its label
+        raw_amt = fm.group(0)
+        near = [w for w in re.findall(_ROLE_WORD, rest[:fm.start()].lower())]
+        listed = [w for w in re.findall(_ROLE_WORD, lst.group(0).lower())]
+        target = near[-1:] or (listed if len(listed) == 1 else [])
+        if not target or (near and near[-1] not in listed):
+            return clause
+        return f"{clause[:m.end()]}{lst.group(0)}. Tenant pays {target[0]} about {raw_amt}/month"
+    out = []
+    for part in re.split(r"(\n|;|\.(?=\s|$))", text):
+        out.append(fix(part) if part and part not in ("\n", ";", ".") else part)
+    return "".join(out)
 
 
 _INCL_EXCEPT = (re.compile(r"\ball\s+(?:the\s+)?utilities\s+(?:are\s+)?(?:included|paid|covered|provided)\b[^.\n;]{0,20}?\b(?:except(?:\s+for)?|other than|besides|but(?!\s+not))\s+([^.\n;]{0,60})", re.I),
@@ -3991,7 +4063,7 @@ _PAYS_THEN_INCLUDED = re.compile(
     r"[ \t]*,[ \t]*(" + _ROLE_LIST_RAW + r"[ \t]+(?:(?:is|are)[ \t]+)?(?:all[ \t]+)?(?:included|covered|provided)\b)", re.I)
 _ROLE_LIST = re.compile(_ROLE_ITEM + r"(?:\s*(?:,|/|&|\+|\band\b|\bor\b)\s*" + _ROLE_ITEM + r")*", re.I)
 _TENANT_SUFFIX = re.compile(
-    r"^(?:\s*(?:[:\-]|through|via|thru|from|with)\s*[a-z][\w&'.]*(?:\s+[a-z][\w&'.]*){0,2}\s*,)?[\s,\-]*(?:(?:is|are)\s+)?(?:(?:the\s+)?(?:tenants?|residents?|renters?)\s+(?:pays?|sets?\s+up|signs?\s+up|arranges?|opens?\s+(?:the|an?)\s+account)\b|(?:you|(?:the\s+)?(?:tenants?|residents?|renters?))\s+(?:will\s+)?(?:sets?|opens?)\s+(?:it\s+|them\s+)?up\b|set\s+up\s+by\s+(?:you|(?:the\s+)?(?:tenants?|residents?|renters?))\b|paid\s+(?:for\s+)?by\s+(?:the\s+)?(?:tenants?|residents?|renters?)\b|(?:tenants?|residents?|renters?)[- ]paid\b|(?:the\s+)?(?:tenants?|residents?|renters?)'?s?\s+(?:responsibility|expense)\b|"
+    r"^(?:\s*(?:[:\-]|through|via|thru|from|with)\s*[a-z][\w&'.]*(?:\s+[a-z][\w&'.]*){0,2}\s*,)?[\s,\-]*(?:(?:is|are)\s+)?(?:[:\-]\s*(?:the\s+)?(?:tenants?|residents?|renters?|you)(?:'?s?\s+(?:responsibility|expense|cost))?\b(?!\s+(?:pays?|is|are)\b[^,.;]{0,12}\b(?:included|landlord)\b)|(?:the\s+)?(?:tenants?|residents?|renters?)\s+(?:pays?|sets?\s+up|signs?\s+up|arranges?|opens?\s+(?:the|an?)\s+account)\b|(?:you|(?:the\s+)?(?:tenants?|residents?|renters?))\s+(?:will\s+)?(?:sets?|opens?)\s+(?:it\s+|them\s+)?up\b|set\s+up\s+by\s+(?:you|(?:the\s+)?(?:tenants?|residents?|renters?))\b|paid\s+(?:for\s+)?by\s+(?:the\s+)?(?:tenants?|residents?|renters?)\b|(?:tenants?|residents?|renters?)[- ]paid\b|(?:the\s+)?(?:tenants?|residents?|renters?)'?s?\s+(?:responsibility|expense)\b|"
     r"on\s+(?:you|(?:the\s+)?(?:tenants?|residents?|renters?))\b|on\s+rubs\b|"
     r"(?:also\s+)?(?:the\s+)?(?:tenants?|residents?|renters?)\.?[ \t]*(?=,|$)|"
     r"extra\b|not\s+(?:included|covered|provided)\b|(?:paid\s+|billed\s+|metered\s+)?separate(?:ly)?\b|billed\b|charged\b|passed\s+through\b|"
@@ -4333,7 +4405,7 @@ def _gen_months(phrase: str) -> int | None:
     if re.search(r"\b(?:each|per|a)[ \t]+year\b|\bannual(?:ly)?\b|\byearly\b|/[ \t]*yr\b", p):
         return 12
     return None
-_GEN_AFTER_PERIOD = re.compile(r"^[ \t]*(?:(?:/|per|a|each|every)[ \t]*)?(?:(?P<mo>mo(?:nth)?\b|month\b|monthly\b|every[ \t]+month)|(?P<q>quarter(?:ly)?\b|qtr\b|every[ \t]+(?:3|three)[ \t]+months\b)|(?P<h>every[ \t]+(?:6|six)[ \t]+months\b|semi-?annual(?:ly)?\b)|(?P<y>year(?:ly)?\b|yr\b|annual(?:ly)?\b))", re.I)
+_GEN_AFTER_PERIOD = re.compile(r"^[ \t]*(?:(?:/|per|a|each|every)[ \t]*)?(?:(?P<b>(?:2|two)[ \t]*mo(?:nth)?s?\b|(?:every[ \t]+)?other[ \t]+month\b)|(?P<mo>mo(?:nth)?\b|month\b|monthly\b|every[ \t]+month)|(?P<q>quarter(?:ly)?\b|qtr\b|every[ \t]+(?:3|three)[ \t]+months\b)|(?P<h>every[ \t]+(?:6|six)[ \t]+months\b|semi-?annual(?:ly)?\b)|(?P<y>year(?:ly)?\b|yr\b|annual(?:ly)?\b))", re.I)
 _GEN_TENANT = re.compile(r"\b(?:tenants?|residents?|renters?|lessees?)\b|\b(?:billed|charged|invoiced)[ \t]+(?:by|from)[ \t]+(?:the[ \t]+)?(?:landlord|owner|management|property[ \t]+manager)\b|\byou[ \t]+(?:pay|are[ \t]+responsible|handle)\b|\bon[ \t]+you\b|\b(?:billed|charged)[ \t]+(?:back|through|to)\b|\brubs\b|\bsub-?meter\w*|\bpassed[ \t]+through\b|\bextra\b|\bseparate\b|(?:\bnot|n't)[ \t]+included\b|\bexcluded\b|\bplus\b", re.I)
 _GEN_LANDLORD = re.compile(r"(?<!billed by )(?<!charged by )(?<!invoiced by )(?<!billed from )(?<!billed by the )(?<!charged by the )\b(?:landlord|owners?|management|property[ \t]+manager)\b|(?<!not )(?<!n't )\b(?:included|covered|provided)\b", re.I)
 
@@ -4351,7 +4423,7 @@ def _gen_period(seg: str, start: int, end: int, nxt: int, single: bool, after_li
     else (one figure only) anywhere in the line."""
     m = _GEN_AFTER_PERIOD.match(seg[end:nxt])
     if m:
-        return 3 if m.group("q") else 6 if m.group("h") else 12 if m.group("y") else 1
+        return 2 if m.group("b") else 3 if m.group("q") else 6 if m.group("h") else 12 if m.group("y") else 1
     m = re.match(r"^[ \t]*[)(,]*[ \t]*((?:every[ \t]+(?:other[ \t]+)?(?:\d{1,2}|two|three|four|six|twelve)?[ \t]*(?:months?|quarters?|years?)|bi-?monthly|quarterly))\b", seg[end:nxt], re.I)
     if m and _gen_months(m.group(1)) and not re.match(r"[ \t:]*(?:~|about|around|approx\w*|roughly|est\w*)?[ \t]*\$", seg[end + m.end():], re.I):
         return _gen_months(m.group(1)) or 1  # "($70 bi-monthly)" and "$90 (quarterly)"; not "$55 (bi-monthly $110)": there the period word labels the next figure, which restates this one
@@ -4383,6 +4455,7 @@ def _gen_period(seg: str, start: int, end: int, nxt: int, single: bool, after_li
 _GEN_ROLE_ITEM = r"\b(?:" + _ROLE_WORD + r")\b(?!\s+(?:stove|range|oven|fireplace|cooktop|grill|appliances?|water heater|pump|meter))"
 _GEN_ROLE_LIST = re.compile(_GEN_ROLE_ITEM + r"(?:(?:\s*(?:,|/|&|\+|\band\b|\bor\b)\s*|(?<=\w)-(?=\w))" + _GEN_ROLE_ITEM + r")*", re.I)
 _GEN_SEASON = r"(?:winter|summer|spring|fall|autumn|peak|off-?peak|cold|hot|heating|cooling|high|low)(?:[ \t]+(?:months?|season|bills?))?"
+_GEN_UPTO = re.compile(r"\b(?:up[ \t]+to|as[ \t]+(?:much|high)[ \t]+as|max(?:imum)?(?:[ \t]+of)?|peaks?[ \t]+(?:at|of)|tops?[ \t]+out[ \t]+at|can[ \t]+(?:reach|hit))[ \t~]*$", re.I)
 _GEN_TOTAL_WORD = re.compile(r"\b(?:total|combined|altogether|all[ -]in|together|bundle\w*|package|each|split|per[ \t]+person)\b", re.I)
 
 
@@ -4407,6 +4480,7 @@ def _util_general(text: str, pipes: bool = False) -> dict[str, Any] | None:
     restated: list[float] = []  # "$130 combined (billed quarterly: ~$390)": the same bill said again for the whole period
     stated_totals: list[float] = []  # "-- budget roughly $170 a month total" after a priced list
     variable: list[dict[str, Any]] = []  # "Electric $45 seasonal (more in summer)": the figure is a floor, not the high bill
+    peaks: list[dict[str, Any]] = []  # "winter higher up to $260", "up to $200 a month": the highest figure the listing admits to, which is the one counted
     deferred: list[tuple[int, dict[str, Any]]] = []  # a lone internet or trash figure, kept only when a neighbouring sentence is a priced utility (a pipe list)
     priced_sents: set[int] = set()
     carry_group: tuple[list[str], int] | None = None  # tenant-paid names with no figure in sentence N; a total in sentence N+1 is theirs ("Tenant pays electric, gas and internet. Typical total is $175/mo")
@@ -4494,6 +4568,7 @@ def _util_general(text: str, pipes: bool = False) -> dict[str, Any] | None:
             paired_l = {id(p[0]) for p in pairs}
             paired_m = {id(p[1]) for p in pairs}
             alts: dict[int, list[tuple]] = {}
+            chain_end: dict[int, int] = {}
             season_ids: set[int] = set()
             for mt in moneys:
                 if id(mt) in paired_m:
@@ -4502,16 +4577,19 @@ def _util_general(text: str, pipes: bool = False) -> dict[str, Any] | None:
                 if not before_m:
                     continue
                 base_m = max(before_m, key=lambda x: x[1])
-                between = seg[base_m[1]:mt[0]]
+                between = seg[chain_end.get(id(base_m), base_m[1]):mt[0]]  # "$80-$120 winter, $25 summer": the third figure follows the second one
                 if re.match(r"^[ \t,/;&(]*(?:(?:mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly)[ \t,;]*)?(?:in[ \t]+)?(?:the[ \t]+)?(?:" + _GEN_SEASON + r")?[ \t,/;&)(]*(?:(?:and|or|then|but)[ \t]*)?(?:(?:in|the|~|about|around|approx\w*|avg\.?|average|est\w*|roughly|up[ \t]+to)[ \t]*)*$", between, re.I) \
                         and re.search(_GEN_SEASON, between + " " + seg[mt[1]:mt[1] + 16], re.I):
                     alts.setdefault(id(base_m), []).append(mt)  # "gas (~$110 winter, $30 summer)"
                     season_ids.add(id(mt))
+                    chain_end[id(base_m)] = mt[1]
                 elif re.match(r"^[ \t]*(?:\([ \t]*(?:in[ \t]+)?" + _GEN_SEASON + r"[ \t]*\)|(?:in[ \t]+)?" + _GEN_SEASON + r")?[ \t]*(?:-|\u2013|\u2014|to|up[ \t]+to)[ \t]*$", between, re.I) and mt[3] > base_m[3] and id(base_m) not in alts:
                     alts.setdefault(id(base_m), []).append(mt)  # "$85-$95 (seasonal)": a range, the higher end counts
                     season_ids.add(id(mt))
+                    chain_end[id(base_m)] = mt[1]
             restate_ids: set[int] = set()
             total_ids: set[int] = set()
+            peak_ids: set[int] = set()
             for mt in moneys:
                 if id(mt) in paired_m or id(mt) in season_ids:
                     continue
@@ -4531,12 +4609,16 @@ def _util_general(text: str, pipes: bool = False) -> dict[str, Any] | None:
                         restated.append(mt[3])
                         continue
                 near_t = seg[max(0, mt[0] - 30):mt[1] + 25]
+                if _GEN_UPTO.search(seg[max(0, mt[0] - 24):mt[0]]) and (pairs or si in priced_sents or stated_totals) and not _gen_fee_owned(seg, mt):
+                    peak_ids.add(id(mt))
+                    peaks.append({"amount": round(mt[3] / _gen_period(seg, mt[0], mt[1], len(seg), True), 2), "names": []})  # "approx $215 total, winter higher up to $260"
+                    continue
                 if re.search(r"\b(?:total|combined|altogether|budget|overall|all[ -]in)\b", near_t) and not re.search(r"\b(?:rent|deposit|fees?|move-?in|parking|pets?)\b", near_t) \
                         and not re.search(r"\b(?:everything|all[ \t]+(?:the[ \t]+)?utilit|other|else|remaining|including|both)\b|\bfor\b", seg[mt[1]:mt[1] + 40]) \
                         and (pairs or si in priced_sents or (si - 1 in priced_sents and sent_line.get(si, 0) - sent_line.get(si - 1, 0) <= 1)):
                     total_ids.add(id(mt))  # "-- budget roughly $170 a month total": checked against the items once they are all read
                     stated_totals.append(round(mt[3] / _gen_period(seg, mt[0], mt[1], len(seg), True), 2))
-            if any(id(m) not in paired_m and id(m) not in season_ids and id(m) not in restate_ids and id(m) not in total_ids and not _gen_fee_owned(seg, m) and _util_money_context(seg, m) for m in moneys):
+            if any(id(m) not in paired_m and id(m) not in season_ids and id(m) not in restate_ids and id(m) not in total_ids and id(m) not in peak_ids and not _gen_fee_owned(seg, m) and _util_money_context(seg, m) for m in moneys):
                 return None  # a figure next to utility words that no utility owns: leave it to the older readers
             # items in text order
             elems: list[dict[str, Any]] = []
@@ -4642,6 +4724,8 @@ def _util_general(text: str, pipes: bool = False) -> dict[str, Any] | None:
                 if not 1 <= monthly <= 3000:
                     return None
                 item = {"names": names_here, "raw": raw_amt, "div": div, "monthly": monthly}
+                if id(e["money"]) not in alts and _GEN_UPTO.search(seg[max(0, e["money"][0] - 24):e["money"][0]]):
+                    peaks.append({"amount": monthly, "names": list(names_here)})  # "Electric and gas up to $200 a month": the top figure is the one counted
                 if id(e["money"]) not in alts and e["money"][0] >= e["list"][1] and re.match(r"^[ \t]*(?:seasonal(?:ly)?[ \t]*)?\(?[ \t]*(?:(?:more|higher|up|goes[ \t]+up)[ \t]+(?:in|during)[ \t]+\w+|(?:winter|summer)[ \t]+(?:is[ \t]+)?(?:higher|more)|higher[ \t]+in[ \t]+\w+|varies)", seg[e["money"][1]:e["money"][1] + 40]):
                     variable.append({"names": list(names_here), "amount": monthly})
                 if len(names_here) > 1 and _GEN_GROUP_TOTAL.search(seg[min(e["list"][0], e["money"][0]):max(e["list"][1], e["money"][1]) + 16]):
@@ -4680,11 +4764,19 @@ def _util_general(text: str, pipes: bool = False) -> dict[str, Any] | None:
         return None
     amount = round(sum(s["monthly"] for s in seen), 2)
     stated_total = None
+    base_amount = amount
     if stated_totals and not partials:
         stated_total = max(stated_totals)
         if stated_total > amount:
             amount = stated_total  # the listing's own total is higher than the items it lists: the higher one is the cost it admits to
-    return {"amount": amount, "stated_total": stated_total, "restated": restated, "optional": optional, "variable": [v for v in variable if any(set(v["names"]) == set(i["names"]) for i in seen)], "tenant": [w for w in _ordered_utilities(tenant_names).split(", ") if w],
+            base_amount = amount
+    peaks = [pk for pk in peaks if pk["names"] or items]
+    top = max((pk["amount"] for pk in peaks if not pk["names"]), default=0)
+    if top and top > amount:
+        amount = top  # "approx $215 total, winter higher up to $260": the winter figure is what a high month costs
+    elif top:
+        peaks = [pk for pk in peaks if pk["names"]]
+    return {"amount": amount, "stated_total": stated_total, "peaks": peaks, "base_amount": base_amount, "restated": restated, "optional": optional, "variable": [v for v in variable if any(set(v["names"]) == set(i["names"]) for i in seen)], "tenant": [w for w in _ordered_utilities(tenant_names).split(", ") if w],
             "landlord": [w for w in _ordered_utilities(landlord_names).split(", ") if w and w not in tenant_names],
             "items": seen, "conflict": None, "only": only, "all_landlord": all_landlord,
             "partials": [pt for pt in partials if any(pt["last"] in it["names"] for it in seen)], "seasonal": [sz for sz in seasonal if any(set(sz["names"]) == set(it["names"]) for it in seen)]}
@@ -4744,7 +4836,7 @@ def _util_general_differs(gen: dict[str, Any], est: Any, pays: str, included: st
     """True when the general reader's figure, payers or included list are not what the older readers ended with."""
     if gen["conflict"]:
         return included == "all"
-    if gen.get("partials") or gen.get("seasonal") or gen.get("optional") or gen.get("variable") or gen.get("restated") or gen.get("stated_total") or any(it.get("group") for it in gen["items"]):
+    if gen.get("partials") or gen.get("seasonal") or gen.get("peaks") or gen.get("optional") or gen.get("variable") or gen.get("restated") or gen.get("stated_total") or any(it.get("group") for it in gen["items"]):
         return True  # one figure for several names, or two seasonal figures: the older readers' note would claim more than the listing says
     have_pays = {w.strip() for w in pays.split(",") if w.strip()}
     inc = set(_ALL_UTILITIES) if included == "all" else {w.strip() for w in included.split(",") if w.strip()}
@@ -4757,12 +4849,12 @@ def _util_general_note(gen: dict[str, Any]) -> str:
     groups = [it for it in gen["items"] if it.get("group")]
     if len(groups) == 1 and len(gen["items"]) == 1:
         g = groups[0]
-        return (f"The listing gives about ${g['monthly']:,.0f} a month as the total for {_join_names(g['names'])}, counted as your utilities estimate."
+        text = (f"The listing gives about ${g['monthly']:,.0f} a month as the total for {_join_names(g['names'])}, counted as your utilities estimate."
                 if g["div"] == 1 else
                 f"The listing gives ${g['raw']:,.0f} for {_join_names(g['names'])} as one total for {g['div']} months, about ${g['monthly']:,.0f} a month, counted as your utilities estimate.")
-    if all(it["div"] == 1 for it in gen["items"]) and not groups:
+    elif all(it["div"] == 1 for it in gen["items"]) and not groups:
         names = _ordered_utilities([w for it in gen["items"] for w in it["names"]]).split(", ")
-        text = f"{_join_names(names).capitalize()} {_util_verb(', '.join(names))} about ${gen['amount']:,.0f} a month from the listing, counted as your utilities estimate."
+        text = f"{_join_names(names).capitalize()} {_util_verb(', '.join(names))} about ${gen.get('base_amount', gen['amount']):,.0f} a month from the listing, counted as your utilities estimate."
     else:
         parts = []
         for it in gen["items"]:
@@ -4791,11 +4883,49 @@ def _util_general_note(gen: dict[str, Any]) -> str:
         text += f" {_join_names(op['names']).capitalize()} is listed as optional at ${op['amount']:,.0f}, so it is not counted. Ask if you need it."
     if gen.get("stated_total") and abs(gen["stated_total"] - gen["amount"]) < 0.01:
         text += f" The listing also gives ${gen['stated_total']:,.0f} a month as the total, which is the figure counted."
+    for pk in gen.get("peaks") or []:
+        if pk["names"]:
+            text += f" The listing says up to ${pk['amount']:,.0f} for {_join_names(pk['names'])} in a high month, so the higher figure, ${pk['amount']:,.0f}, is counted. Ask what a typical month costs."
+        else:
+            text += f" The listing also says up to ${pk['amount']:,.0f} in a high month, so the higher figure, ${pk['amount']:,.0f}, is counted instead. Ask what a typical month costs."
     for sz in gen.get("seasonal") or []:
         shown = f": {sz['quote']}" if "(" in sz["quote"] else f" ({sz['quote']})"  # a bracket inside the quote would nest
-        text += (f" The listing gives {_join_names(sz['names'])} two figures{shown}. The higher one, ${sz['figures'][0]:,.0f}, is counted. "
+        how_many = {2: "two", 3: "three"}.get(len(sz["figures"]), "several")
+        text += (f" The listing gives {_join_names(sz['names'])} {how_many} figures{shown}. The higher one, ${sz['figures'][0]:,.0f}, is counted. "
                  "Ask what a typical month costs.")
     return text
+
+
+_RANGE_FIG = re.compile(r"\$[ \t]?(\d[\d,]*)(?:\.\d\d)?[ \t]*(?:-|\u2013|\u2014|to|or)[ \t]*\$?[ \t]?(\d[\d,]*)(?:\.\d\d)?(?![\d,])", re.I)
+_TOTAL_FIG = re.compile(r"\b(?:typical|average|avg\.?|estimated|est\.?|approx\w*|about|around|roughly|usually|monthly)?[ \t]*(?:utilit\w*[ \t]+)?\btotal\b[ \t]*(?:is|of|:|-|=|runs)?[ \t]*(?:(?:about|around|approx\w*|roughly|est\w*|avg\.?|average|typically|~)[ \t]*)*\$[ \t]?(\d[\d,]*)(?:\.\d\d)?(?![\d,])", re.I)
+_RANGE_SKIP = re.compile(r"deposit|one[- ]time|set[- ]?up|application|move[- ]in|\blate\b|\bpets?\b|parking|insurance|\brent\b|\bfees?\b|quarter|annual|yearly|\byear\b|every|bi-?monthly|\bflat\b|included|covered|provided|landlord pays|owner pays", re.I)
+
+
+def _util_range(utext: str) -> dict[str, Any] | None:
+    """Cycle 23: a utilities figure written as a range ("Typical total $135-$160 per month", "Utilities average $135 to $160 a month") or as a plain
+    "total" line under a renter-pays line ("Tenant pays all utilities. Typical total $135"). The higher figure is the one counted.
+    Returns {"amount": high, "low": low or None, "names": [...], "quote": "..."} or None."""
+    prev = ""
+    for clause in re.split(r"\n|;|\.(?=\s|$)", utext.lower()):
+        before, prev = prev, clause
+        if not clause.strip() or _RANGE_SKIP.search(clause) or _NOT_UTILITY_LINE.search(clause):
+            continue
+        names = [w for w in _ordered_utilities(re.findall(_ROLE_WORD, clause)).split(", ") if w and w != "cable"]
+        has_util = bool(re.search(r"\butilit(?:y|ies)\b", clause)) or bool(names)
+        rm = _RANGE_FIG.search(clause)
+        if rm:
+            lo, hi = float(rm.group(1).replace(",", "")), float(rm.group(2).replace(",", ""))
+            if not (has_util or _TOTAL_FIG.search(clause[:rm.end()] + "$0")) and not re.search(r"\btotal\b", clause):
+                continue
+            if 10 <= lo < hi <= 3000 and hi <= 4 * lo:
+                return {"amount": hi, "low": lo, "names": names if not re.search(r"\ball\b[^.\n]{0,12}utilit", clause) else [], "quote": " ".join(clause.split())}
+            continue
+        tm = _TOTAL_FIG.search(clause)
+        if tm and not has_util and re.search(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n]{0,40}\b(?:pays?|responsible)\b[^.\n]{0,40}\butilit|\butilit\w*[^.\n]{0,30}\b(?:tenants?|residents?|renters?|you)\b", before):
+            amt = float(tm.group(1).replace(",", ""))
+            if 10 <= amt <= 3000 and not _RANGE_SKIP.search(before.split("utilit")[0] if False else ""):
+                return {"amount": amt, "low": None, "names": [], "quote": " ".join(clause.split())}
+    return None
 
 
 def _utility_component_numbers(text: str, skip_internet: bool = False) -> set[float]:
@@ -4803,6 +4933,9 @@ def _utility_component_numbers(text: str, skip_internet: bool = False) -> set[fl
     With ``skip_internet`` an internet-only figure is left out (the fee readers own a required internet fee)."""
     utext = _util_text(_tidy(text or ""))
     nums = {float(i["amount"]) for i in _estimate_items(utext) if not (skip_internet and set(i.get("names") or []) == {"internet"})}
+    rng = _util_range(utext)
+    if rng:
+        nums |= {rng["amount"]} | ({rng["low"]} if rng["low"] else set())
     per = _periodic_named(utext)
     if per:
         nums |= {per["raw"], per["monthly"]}
@@ -4817,6 +4950,7 @@ def _utility_component_numbers(text: str, skip_internet: bool = False) -> set[fl
         nums |= {float(f) for f in gen.get("restated") or []}
         if gen.get("stated_total"):
             nums.add(float(gen["stated_total"]))
+        nums |= {float(pk["amount"]) for pk in gen.get("peaks") or []}
         for sz in gen.get("seasonal") or []:
             nums |= {float(f) for f in sz["figures"]}  # both seasonal figures are quoted in the estimate's note, so neither is "not counted"
     return nums
@@ -7215,6 +7349,28 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             counted = {w for it in gen["items"] for w in it["names"]}
     if gen and not gen["conflict"] and isinstance(out.get("utilities_estimate"), (int, float)) and abs(float(out["utilities_estimate"]) - gen["amount"]) < 0.01:
         util_taken = [v for it in gen["items"] if set(it["names"]) != {"internet"} for v in (it["raw"], it["monthly"])]
+    rng = None if buying or included == "all" else _try(lambda: _util_range(utext))
+    if rng and not (pays or not included):
+        rng = None
+    if rng:
+        cur_est = out.get("utilities_estimate")
+        lo_hit = isinstance(cur_est, (int, float)) and rng["low"] is not None and abs(float(cur_est) - rng["low"]) < 0.01
+        if cur_est is None or lo_hit or (isinstance(cur_est, (int, float)) and abs(float(cur_est) - rng["amount"]) < 0.01):
+            if cur_est is None or lo_hit:
+                if lo_hit:
+                    facts[n_facts_pre:] = [f for f in facts[n_facts_pre:] if "utilities estimate" not in f and "of that" not in f]
+                put("utilities_estimate", rng["amount"])
+                if rng["names"]:
+                    pays = _ordered_utilities([w.strip() for w in (pays + ", " + ", ".join(rng["names"])).split(",") if w.strip()])
+                    counted |= set(rng["names"])
+            said_already = any(f"${rng['amount']:,.0f}" in f and re.search(r"higher|range|up to|total", f) for f in facts[n_facts_pre:])
+            if said_already:
+                pass  # an older reader already said it ("two figures ($40-$60). The higher one, $60, is counted")
+            elif rng["low"] is not None:
+                facts.append(f"The listing gives {_join_names(rng['names']) if rng['names'] else 'the utilities'} "
+                             f"as a range, ${rng['low']:,.0f} to ${rng['amount']:,.0f} a month. The higher figure, ${rng['amount']:,.0f}, is counted as your utilities estimate. Ask what a typical month costs.")
+            elif not any(f"${rng['amount']:,.0f}" in f and "utilities estimate" in f for f in facts[n_facts_pre:]):
+                facts.append(f"The listing gives about ${rng['amount']:,.0f} a month in total for the utilities you pay, counted as your utilities estimate.")
     if not util_taken and not buying and isinstance(out.get("utilities_estimate"), (int, float)) and not isinstance(out.get("utilities_estimate"), bool):
         # cycle 22: whichever reader built the estimate, its figures are counted once: never also in other monthly fees ("Water/sewer/trash $35" next to "electric & gas (budget $80)")
         util_taken = [v for v in (_try(lambda: _utility_component_numbers(text, True)) or set()) if 0 < v <= float(out["utilities_estimate"]) + 0.5]
@@ -7242,6 +7398,20 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             and not re.search(r"\bheat", utext, re.I):
         # cycle 20: "Tenant pays all utilities ... Nicor $95 winter": the gas bill is the heat, so heat is not a second unknown
         pays = _ordered_utilities([w.strip() for w in pays.split(",") if w.strip() and w.strip() != "heat"])
+    for hw, hamt in (_try(lambda: _hoa_price_conflicts(text)) or []):
+        # cycle 23: "HOA covers water" and "water $25" disagree: water is neither counted nor called included, it stays unknown
+        inc_left = [w.strip() for w in included.split(",") if w.strip() and w.strip() != hw] if included != "all" else [w for w in _ALL_UTILITIES if w != hw]
+        included = _ordered_utilities(inc_left) if inc_left else ""
+        pays = _ordered_utilities([w.strip() for w in (pays + ", " + hw).split(",") if w.strip()])
+        facts.append(f"The listing says the HOA covers {hw}, but it also gives {hw} at ${hamt:,.0f}. Those two lines don't agree, so {hw} is not counted and not marked included. "
+                     f"Ask {_ask_who(text)} what you really pay for {hw}.")
+    if "heat" in {w.strip() for w in pays.split(",")} and (_HEAT_IS_GAS.search(utext) or _HEAT_IS_GAS.search(text)):
+        # cycle 23: "Heat is gas. Tenant pays gas, electric": the gas is the heat, so heat is not a second utility the renter pays
+        keep_pay = [w.strip() for w in pays.split(",") if w.strip() and w.strip() != "heat"]
+        inc_words = set(_ALL_UTILITIES) if included == "all" else {w.strip() for w in included.split(",") if w.strip()}
+        if "gas" not in keep_pay and "gas" not in inc_words:
+            keep_pay.append("gas")
+        pays = _ordered_utilities(keep_pay)
     facts[:] = _try(lambda: _heat_is_gas_words(facts, text)) or facts
     put("utilities_included", included)
     if pays:

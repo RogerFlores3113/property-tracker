@@ -139,7 +139,7 @@ def test_quarterly_water_with_trash_billed_back_and_estimates():
 def test_quarterly_water_plus_budget_for_both_family_beech():
     out = read(FAM_L3)
     assert out["utilities_estimate"] == 120
-    assert out["tenant_pays"] == "electric, gas, water, heat"
+    assert out["tenant_pays"] == "electric, gas, water"  # cycle 23: the listing says heat is gas, so heat is not a second utility
     assert cost(FAM_L3)["missing"] == []
 
 
