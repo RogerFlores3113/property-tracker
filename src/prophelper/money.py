@@ -75,6 +75,22 @@ def tenant_pays_list(place: dict[str, Any]) -> list[str]:
     return [w.strip().lower() for w in raw.replace(";", ",").replace(" and ", ",").split(",") if w.strip()]
 
 
+def _cost_pays(place: dict[str, Any]) -> list[str]:
+    """What the tenant pays, as the cost uses it. When the saved listing text is there, a utility the listing never mentions is not
+    listed as missing: "internet" when no internet, wifi or cable word is in the text, and "gas" when the heat is included and
+    the listing never talks about gas (a gas bill that is only for the heat is part of the heat)."""
+    pays = tenant_pays_list(place)
+    text = str(place.get("listing_text") or "")
+    if not text or not pays:
+        return pays
+    if "internet" in pays and not re.search(r"\b(?:internet|wi-?fi|broadband|cable|fiber|fibre|isp)\b", text, re.I):
+        pays = [w for w in pays if w != "internet"]
+    inc = [w.strip().lower() for w in str(place.get("utilities_included") or "").split(",") if w.strip()]
+    if "gas" in pays and ("heat" in inc or "heating" in inc) and not re.search(r"\bgas\b", re.sub(r"\bgas[ \t]+(?:heat(?:ing)?|furnace)\b|\bheat(?:ing)?[ \t]*(?:is|:|\()?[ \t]*(?:by[ \t]+)?gas\b", " ", text, flags=re.I), re.I):
+        pays = [w for w in pays if w != "gas"]
+    return pays
+
+
 def _internet_counted(place: dict[str, Any]) -> bool:
     """True when the saved notes say the internet is counted in other monthly fees and that field holds an amount."""
     fees = num(place.get("other_monthly_fees"))
@@ -119,7 +135,7 @@ def _unpriced_tenant_utilities(place: dict[str, Any]) -> list[str]:
     priced = {"water" if w == "hot water" else w for w in _billed_names(place) + rough}
     if not priced:
         return []
-    return [w for w in tenant_pays_list(place) if w not in priced and w not in NOTHING_WORDS]
+    return [w for w in _cost_pays(place) if w not in priced and w not in NOTHING_WORDS]
 
 
 def has_pets(pet_kind: Any) -> bool:
@@ -148,7 +164,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
 
     util = num(place.get("utilities_estimate"))
     if util is None:
-        pays = tenant_pays_list(place)
+        pays = _cost_pays(place)
         internet_done = bool(pays) and "internet" in pays and _internet_counted(place)
         if internet_done:
             pays = [w for w in pays if w != "internet"]  # the internet is already counted in other monthly fees: not unknown
