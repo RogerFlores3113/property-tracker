@@ -198,6 +198,9 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue
         if cat[0] == "deposit" and re.search(r"\bpets?\b|\bcats?\b|\bdogs?\b", line, re.I):
             cat = ("pet", cat[1], ("pet_deposit", "pet_fee", "pet_rent", "deposit"))
+        if re.search(r"\bpets?\b|\bcats?\b|\bdogs?\b", line, re.I) and any(isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and abs(float(r[k]) - amount) < 0.5
+                                                                                for k in ("pet_deposit", "pet_fee", "pet_rent")):
+            continue  # cycle 21: "Pet policy: Cats only, $35 monthly rent, $200 fee": the pet fields hold both figures
         fieldkv = [(k, r.get(k)) for k in cat[2] if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k) not in (0,)]
         if cat[0] != "util" and any(_matches(amount, float(v), item) or (k in _SUMMED and amount <= float(v) + 0.5) for k, v in fieldkv):
             continue
