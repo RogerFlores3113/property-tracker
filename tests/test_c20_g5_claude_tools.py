@@ -45,3 +45,31 @@ def test_update_place_estimate_also_added_by_claude(store):
     call(server(store), "add_place", title="Flat", address="6 B St", price=1500)
     out = text(call(server(store), "update_place", place_id=1, utilities_estimate=95))
     assert "Utilities guessed" not in text(call(server(store), "get_place", place_id=1))
+
+
+# ---- 6. restore keeps a link with a space, percent-encoded like update_place does
+@pytest.mark.parametrize("link,saved", [("https://ok.example.com/a b", "https://ok.example.com/a%20b"),
+                                         ("https://ok.example.com/a b/c d?x=1 2", "https://ok.example.com/a%20b/c%20d?x=1%202"),
+                                         ("http://ok.example.com/it's here", "http://ok.example.com/it%27s%20here")])
+def test_restore_encodes_a_link_with_a_space_like_update_place(store, link, saved):
+    store.add_search("R", "rent")
+    p, _ = store.add_place(title="A", address="1 A St", price=1000)
+    q, _ = store.add_place(title="B", address="2 A St", price=1000)
+    store.update_place(q["id"], by="user", url=link)
+    via_update = store.get_place(q["id"])["url"]
+    store._conn.execute("UPDATE places SET url = '' WHERE id = ?", (q["id"],))
+    store._conn.execute("UPDATE places SET url = ? WHERE id = ?", (link, p["id"]))
+    store._conn.commit()
+    out = store.clean_stored_links()
+    assert out["links"] == 0
+    assert store.get_place(p["id"])["url"] == saved == via_update
+
+
+@pytest.mark.parametrize("bad", ["javascript:alert(1)", "https://user:pw@ok.example.com/a b", "http://printer.internal/a b", "https://ok.example.com/a\tb"])
+def test_restore_still_drops_unsafe_links(store, bad):
+    store.add_search("R", "rent")
+    p, _ = store.add_place(title="A", address="1 A St", price=1000)
+    store._conn.execute("UPDATE places SET url = ? WHERE id = ?", (bad, p["id"]))
+    store._conn.commit()
+    assert store.clean_stored_links()["links"] == 1
+    assert store.get_place(p["id"])["url"] == ""

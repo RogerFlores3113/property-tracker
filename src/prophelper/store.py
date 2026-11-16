@@ -725,6 +725,16 @@ def safe_link(value: Any) -> str:
     return text
 
 
+def _restored_link(url: Any) -> str:
+    """A stored link as it should stay after a restore: the same cleaning a typed link gets (a space or a quote is written %XX), or ''
+    when it isn't a safe web address at all (not http or https, a user name or password, a private network, a control character)."""
+    text = str(url or "").strip()[:2000]
+    if not text or has_userinfo(text) or link_host_private(text) or not normalize_url(text):
+        return ""
+    candidate = encode_link(text)  # a link typed without a scheme stays as it was (it gets https:// when shown)
+    return candidate if safe_link(candidate) else ""
+
+
 def photo_list(value: Any) -> list[str]:
     """A list of http(s) photo links from a list, a JSON list or lines of text. At most PHOTOS_MAX. Never fetched."""
     if value is None or value == "":
@@ -1030,11 +1040,12 @@ class Store:
             for row in self._rows("SELECT id, url, photo_urls FROM places"):
                 sets: dict[str, Any] = {}
                 url = row["url"]
-                if url and not safe_link(url):
+                fixed = _restored_link(url) if url else ""
+                if url and not fixed:
                     sets["url"] = ""
                     links += 1
-                elif url and encode_link(url) != url:
-                    sets["url"] = encode_link(url)  # a restored link gets the same cleaning as a typed one
+                elif url and fixed != url:
+                    sets["url"] = fixed  # a restored link gets the same cleaning as a typed one
                 raw = row["photo_urls"]
                 try:
                     items = json.loads(raw) if isinstance(raw, str) and raw.strip().startswith("[") else (re.split(r"[\s,]+", raw.strip()) if isinstance(raw, str) and raw.strip() else [])
