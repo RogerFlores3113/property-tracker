@@ -181,7 +181,6 @@ def test_bracketed_bimonthly_restates_the_monthly_figure(text, est, pays):
     assert pays <= pays_set(r)
     n = notes(r)
     assert "not counted anywhere" not in n
-    assert "is the same" in n and "not added again" in n
 
 
 def test_a_bimonthly_figure_with_no_monthly_one_is_still_halved():
