@@ -58,6 +58,10 @@ _UTILITY_CONFLICT = re.compile(r"(?:utilit|electric|heat|water|gas)[\s\S]{0,300}
                                r"\b(?:(?:do|does)(?: not|n'?t) agree|conflict\w*|contradict\w*|disagree\w*)\b[\s\S]{0,300}(?:utilit|electric|heat|water|gas)", re.I)
 
 
+_TENANT_PAYS_UTILITIES = re.compile(r"\b(?:tenants?|renters?|residents?|you)\s+(?:will\s+)?(?:pays?|are responsible for|is responsible for)\s+(?:for\s+)?(?:all\s+|the\s+|your\s+|own\s+)*(?:utilit|electric|gas\b|water|bills)|"
+                                    r"\butilities\s+(?:are\s+)?(?:extra|not included|separate|paid by (?:the )?(?:tenant|renter|resident))\b|\b(?:plus|\+)\s+utilities\b", re.I)
+
+
 def _join(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
@@ -97,6 +101,8 @@ def cost_unsettled(place: dict[str, Any]) -> str:
     named = [n for u in utilities for n in _utility_names(u)]
     if named:
         return f"you pay {_join(named)} but no amount is counted yet"
+    if utilities and _TENANT_PAYS_UTILITIES.search(" ".join(str(place.get(k) or "") for k in ("listing_text", "reader_notes", "ai_notes", "notes"))):
+        return "you pay the utilities but no amount is counted yet"  # the whole utilities bill is unknown
     parts = []
     if utilities:
         parts.append("utilities")
@@ -248,7 +254,8 @@ def unconfirmed(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
     out = []
     for p in rows:
         score = p.get("score") or {}
-        if (not _open(p) or not fits(p) or score.get("fit") != "fits" or ai_text_only(p) or no_price(p) or is_best_fit(p) or over_budget(p)):
+        if (not _open(p) or not fits(p) or score.get("fit") != "fits" or ai_text_only(p) or no_price(p) or is_best_fit(p) or over_budget(p)
+                or (p["score_total"] >= MIN_FIT_SCORE and not is_near(p) and cost_unsettled(p))):  # these show under "Needs a cost check"
             continue
         bits = [f"{n} not known yet" for n in score.get("unknown") or []] + [str(c) for c in score.get("concerns") or []]
         if (why := cost_unsettled(p)):
@@ -477,7 +484,7 @@ def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> d
     needs = needs_price(rows)
     priceless = {p["id"] for p in needs}  # a place with no price shows under "Needs a price" only
     near_closest = [] if top else closest(rows)
-    return {"fits": top, "unconfirmed": [] if top else unconfirmed(rows), "needs_price": needs, "cost_check": [] if not top else cost_check(rows), "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
+    return {"fits": top, "unconfirmed": [] if top else unconfirmed(rows), "needs_price": needs, "cost_check": cost_check(rows), "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
             "near_miss": [n for n in near_misses(rows) if n["place"]["id"] not in {c["place"]["id"] for c in near_closest}], "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
             "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late_availability(rows, search),
             "tours": store.upcoming_tours(days, search_id=search["id"])}

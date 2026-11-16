@@ -173,7 +173,7 @@ def test_conflicting_utilities_not_a_best_fit(store, note):
     a, _ = store.add_place(title="Conflict", address="1 A St", price=1300, beds=1, reader_notes=note)
     rows = enrich.enrich_places(store, store.get_search(s["id"]))
     assert today.best_fits(rows) == []
-    assert [u["place"]["id"] for u in today.unconfirmed(rows)] == [a["id"]]
+    assert [u["place"]["id"] for u in today.cost_check(rows)] == [a["id"]]  # cycle 20: its own list
 
 
 def test_one_unknown_part_still_ranks_after_complete_ones(store):

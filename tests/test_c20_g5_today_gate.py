@@ -61,3 +61,21 @@ def test_buy_sparse_gate(store, fields):
         assert [p["title"] for p in top] == ["Complete"]
         out = text(call(server(store), "todays_list"))
         assert "Ask the listing agent" in out and "Ask the landlord" not in out
+
+
+@pytest.mark.parametrize("words", ["Tenant pays all utilities.", "Renter pays electric, gas and water.", "Rent $1450 plus utilities."])
+def test_tenant_pays_utilities_with_no_amount_needs_cost_check(store, words):
+    s = _rent(store)
+    store.add_place(title="Two bed", address="1 A St", price=1450, beds=2, listing_text="Sunny 2 bed. " + words)
+    rows = _rows(store, s)
+    assert today.best_fits(rows) == []
+    assert [c["place"]["title"] for c in today.cost_check(rows)] == ["Two bed"]
+    assert "Needs a cost check" in text(call(server(store), "todays_list"))
+
+
+def test_cost_check_list_shows_even_with_no_best_fits(store):
+    s = _rent(store)
+    store.add_place(title="Hilltop", address="1 A St", price=1300, beds=1, tenant_pays="electric, gas")
+    data = today.build(store, store.get_search(s["id"]))
+    assert data["fits"] == [] and [c["place"]["title"] for c in data["cost_check"]] == ["Hilltop"]
+    assert data["unconfirmed"] == []
