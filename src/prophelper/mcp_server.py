@@ -149,7 +149,7 @@ PLACE_KEYS = {n for n, _, _ in PLACE_PARAMS}
 # Money fields an explicit null clears on update_place (the value goes back to unknown, and the old one stays on the timeline).
 CLEARABLE = ("hoa", "property_tax", "insurance", "other_monthly_fees", "move_in_fees", "broker_fee", "application_fee", "deposit",
              "utilities_estimate", "special_assessment", "closing_costs", "seller_credit", "pet_fee", "pet_deposit", "pet_rent", "parking_cost")
-UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: guess (default, shown as a guess), billed back or from the listing "
+UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: left out (shown as added by Claude), guess (shown as a guess), billed back or from the listing "
                          "(the listing itself gives that monthly amount, so it is shown as from the listing). Send it only together with a "
                          "utilities_estimate amount, for example utilities_estimate 120 with utilities_source \"from the listing\". "
                          "utilities_included is a different field: the words for what the rent already covers, such as \"heat, water\" or \"all\"")
@@ -808,6 +808,12 @@ def build_server(store: Store) -> FastMCP:
         The last two are recorded in AI notes so the cost line is labelled right, and only when the listing text agrees."""
         raw = fields.pop("utilities_source", None)
         if raw in (None, ""):
+            if not _is_blank(fields.get("utilities_estimate")):  # no source sent: the amount is Claude's own, and it is labelled that way
+                try:
+                    given = float(str(fields.get("utilities_estimate")).replace("$", "").replace(",", ""))
+                except (TypeError, ValueError):
+                    return
+                fields["ai_notes"] = " ".join(filter(None, [str(fields.get("ai_notes") or ""), f"Utilities estimate ${given:,.0f}/month: added by Claude."]))
             return
         word = " ".join(str(raw).replace("_", " ").lower().split())
         if word in ("guess", "a guess", "estimate", "my guess"):
@@ -870,6 +876,7 @@ def build_server(store: Store) -> FastMCP:
                                      "Send the facts you can read yourself."]
             return
         if found.get("found_in_listing"):
+            found["found_in_listing"] = parsers.reconcile_seller_credit_note(str(found["found_in_listing"]), fields.get("seller_credit"))
             fields["reader_notes"] = str(found["found_in_listing"])  # kept on the place so the notes outlive the add reply
             fields["reader_notes"] = parsers.reconcile_insurance_note(fields["reader_notes"], fields.get("insurance"))  # Claude's own value is what counts
         filled: list[str] = []

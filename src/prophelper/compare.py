@@ -119,11 +119,12 @@ def guessed_list(p: dict[str, Any]) -> list[str]:
     for line in (p.get("cost") or {}).get("lines", []):
         if line.get("estimated") and line.get("amount") is not None:
             label = line["label"]
-            out.append(label if "guess" in label.lower() else f"{label} (a guess)")
+            out.append(label if "guess" in label.lower() or "added by claude" in label.lower() else f"{label} (a guess)")
     return out
 
 
 _GUESS_WORDS = re.compile(r"\s*\((?:an? )?(?:guess|estimate)\)|\s+(?:guess|estimate)$", re.IGNORECASE)
+_BY_CLAUDE = re.compile(r"\s*\(added by Claude\)", re.IGNORECASE)
 
 
 def _guessed_names(p: dict[str, Any]) -> list[str]:
@@ -222,8 +223,13 @@ def unknown_text(unknown: list[str], guessed: list[str]) -> str:
     bits = []
     if unknown:
         bits.append("Unknown: " + ", ".join(unknown))
-    if guessed:
-        text = _join_and(guessed) + " guessed"
+    plain = [g for g in guessed if not _BY_CLAUDE.search(g)]
+    by_claude = [_BY_CLAUDE.sub("", g).strip() for g in guessed if _BY_CLAUDE.search(g)]
+    if plain:
+        text = _join_and(plain) + " guessed"
+        bits.append(text[0].upper() + text[1:])
+    if by_claude:
+        text = _join_and(by_claude) + " estimate added by Claude, not from the listing"
         bits.append(text[0].upper() + text[1:])
     return "; ".join(bits) or "Nothing unknown"
 
@@ -243,7 +249,7 @@ def still_unknown_text(p: dict[str, Any], label=lambda x: x) -> str:
 
 def unknown_names(p: dict[str, Any]) -> list[str]:
     """Short names of everything the score and cost rest on a guess or a blank for: 'guessed utilities', 'parking'."""
-    out = [f"guessed {n}" for n in _guessed_names(p)]
+    out = [f"{_BY_CLAUDE.sub('', n).strip()} added by Claude" if _BY_CLAUDE.search(n) else f"guessed {n}" for n in _guessed_names(p)]
     for item in p["score"].get("items") or []:
         if not item.get("known"):
             out.append("commute" if item.get("kind") == "commute" else str(scoring_kind_label(item)).lower())

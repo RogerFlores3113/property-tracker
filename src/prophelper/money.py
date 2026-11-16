@@ -98,6 +98,14 @@ def _internet_counted(place: dict[str, Any]) -> bool:
                              and not re.search(r"not counted", n, re.I) for n in note_units(place.get("reader_notes")))
 
 
+def _added_by_claude(place: dict[str, Any], util: float) -> bool:
+    """True when the AI notes say Claude added this utilities amount itself (no source sent), so it is not called a guess."""
+    for m in re.finditer(r"Utilities estimate \$([\d,]+(?:\.\d+)?)/month: added by Claude\.", str(place.get("ai_notes") or "")):
+        if abs(float(m.group(1).replace(",", "")) - util) < 0.5:
+            return True
+    return False
+
+
 def _estimate_from_listing(place: dict[str, Any], util: float) -> bool:
     """True when the utilities estimate is the monthly bill the saved listing text itself gives (read by the parser), so it
     is not a guess. No stored flag is needed: the listing text is kept, so the same reading is repeated here."""
@@ -201,7 +209,10 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
                 pass
         if place.get("utilities_included"):
             note += f". The listing includes: {place['utilities_included']}"
-        line = _line("utilities", "Utilities" if from_listing else "Utilities (a guess)", util, note)
+        by_claude = not from_listing and _added_by_claude(place, util)
+        if by_claude:
+            note = "Added by Claude, not read from the listing"
+        line = _line("utilities", "Utilities" if from_listing else ("Utilities (added by Claude)" if by_claude else "Utilities (a guess)"), util, note)
         line["estimated"] = not from_listing  # an amount the listing states (or bills back) is not a guess
         unpriced = _unpriced_tenant_utilities(place) if from_listing else []
         if unpriced:
