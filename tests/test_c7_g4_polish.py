@@ -142,8 +142,9 @@ def test_place_page_money_has_no_cents(store):
     s = store.add_search("S", "rent")
     p, _ = store.add_place(search_id=s["id"], title="A", price=1500.83, hoa=0.0)
     html = c.get(f"/places/{p['id']}").text
-    assert "$1,501" in html and "$1,500.83" not in html
-    assert not re.search(r"\$[\d,]+\.\d\d", html.split('id="cost"')[1].split("</section>")[0])
+    # cycle 25: money with cents is shown with its cents (the cost table and cash lines add up exactly); whole dollars never get ".00"
+    assert "$1,500.83" in html
+    assert not re.search(r"\$[\d,]+\.00\b", html.split('id="cost"')[1].split("</section>")[0])
 
 
 def test_compare_money_has_no_cents(store):
@@ -151,7 +152,7 @@ def test_compare_money_has_no_cents(store):
     s = store.add_search("S", "rent")
     ids = [store.add_place(search_id=s["id"], title=t, price=1500.83)[0]["id"] for t in "AB"]
     html = c.get("/compare?ids=" + ",".join(map(str, ids))).text
-    assert "$1,500.83" not in html
+    assert not re.search(r"\$[\d,]+\.00\b", html)  # cycle 25: cents only when the value has cents
 
 
 # ---- 7. spreadsheet link
