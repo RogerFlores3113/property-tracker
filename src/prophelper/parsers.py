@@ -4103,6 +4103,9 @@ def _internet_clauses(text: str, bills: bool = False) -> list[dict[str, Any]]:
         prefix = text[line_start:m.start()]
         cut = list(re.finditer(r"(?<!approx)(?<!avg)(?<!est)(?<!incl)\.[ \t]+(?=[A-Z])", prefix + text[m.start():m.start() + 1]))
         sentence = (prefix[cut[-1].end():] if cut else prefix) + text[m.start():i]  # "Resident pays: Electric ~$40; Internet (Xfinity) approx. $60": the ";" does not end the payer's list
+        after_pay = re.match(r"[ \t]*,[ \t]*[^.\n;|]{0,40}", text[i:])
+        if after_pay:
+            sentence += after_pay.group(0)  # cycle 24: "Internet (Xfinity) $50/mo, you set up": the payer words come after the figure
         flat = " " + clause.lower()
         if _NET_OPTIONAL_RE.search(clause) or re.search(r"\boptional[ \t:]*$", before, re.I) \
                 or (_NET_AVAILABLE_RE.search(clause) and not _NET_PAYER_RE.search(sentence)):  # "available" alone is weak: "available, tenant pays Comcast ~$70" is a bill
@@ -4163,6 +4166,9 @@ def _internet_bills(text: str) -> list[dict[str, Any]]:
             continue
         if re.search(r"\b(?:included|incl\.?|free|no charge|not required|optional)\b", clause, re.I) or h["amount"] <= 0:
             continue
+        line_txt = text[text.rfind("\n", 0, h["start"]) + 1:(text.find("\n", h["end"]) if text.find("\n", h["end"]) != -1 else len(text))]
+        if h["amount"] in (_internet_amenity_fees(line_txt) + _money_monthly_fees(line_txt)):
+            continue  # "Internet required, $60/mo": the fee readers already count it once in other monthly fees (cycle 15), it stays there
         out.append(h)
     return out
 
@@ -5019,7 +5025,7 @@ def _estimate_items(text: str) -> list[dict[str, Any]]:
                     if k == 0 and (m.group(1).rstrip().endswith((",", ":")) or re.search(r"[,:(]", clause[m.end(1):m.start(2)])):
                         # "Tenant pays: electric and gas, avg $65 electric": the list before the figure is a lead-in and the
                         # utility written right after the figure is the one it is for
-                        trail = _ROLE_LIST.match(re.sub(r"^[ \t/]*(?:for[ \t]+)?", "", clause[m.end():]))
+                        trail = _ROLE_LIST.match(re.sub(r"^[ \t/]*(?:(?:mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)[ \t]+)?(?:for[ \t]+)?", "", clause[m.end():]))  # cycle 24: "(about $55/mo water)"
                         if trail and not re.match(r"[ \t]*(?:combined|total)", clause[m.end():]):
                             trail_names = _est_names(trail.group(0), clause)
                             if trail_names:
@@ -5809,8 +5815,6 @@ def listing_estimate_names(text: str) -> list[str]:
         traced = []
     more = [w for w in traced if w not in base]
     names = base + more
-    if traced and len(traced) < len(base) and set(traced) < set(base):
-        names = traced  # cycle 24: "pays gas, electric and water (about $55/mo water)": the final reading priced the water only, the older name list said all three
     if "gas" in names and "heat" not in names and _HEAT_IS_GAS.search(_tidy(text or "")):
         names.append("heat")  # "Heat is gas": the gas bill is the heating bill
     return names
