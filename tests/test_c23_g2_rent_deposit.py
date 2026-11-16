@@ -53,8 +53,9 @@ def test_starting_at_without_plans_unchanged():
 # ---- 2. rent tied to a lease length
 def test_saved_nontech_l7():
     o = _saved("r22-nontech-l7.txt")
-    assert o["price"] == 1490 and o["lease_months"] == 13
-    assert "$1,540" in _notes(o) and "12 months" in _notes(o)
+    # cycle 25: the 12 month price (or the one closest to 12 months) is the rent, never the first one written
+    assert o["price"] == 1540 and o["lease_months"] == 12
+    assert "$1,490" in _notes(o) and "13 months" in _notes(o)
 
 
 @pytest.mark.parametrize("text", [
@@ -65,8 +66,8 @@ def test_saved_nontech_l7():
 ])
 def test_rent_and_lease_from_first_option(text):
     o = parse_listing(B + text)
-    assert o["price"] == 1490 and o["lease_months"] == 13
-    assert "$1,540" in _notes(o) and "12 months" in _notes(o)
+    assert o["price"] == 1540 and o["lease_months"] == 12  # cycle 25: the 12 month option, whichever is written first
+    assert "$1,490" in _notes(o) and "13 months" in _notes(o)
 
 
 @pytest.mark.parametrize("text", [

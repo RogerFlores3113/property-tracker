@@ -494,14 +494,46 @@ def _floor_plan_prices(text: str) -> list[tuple[float, float, float, bool]]:
     return out
 
 
+_STRICT_RENT_LABEL = re.compile(r"(?<![\w-])(?:monthly[ \t]+)?rent(?:[ \t]+is|[ \t]+of)?[ \t]*(?:[:=\-\u2013\u2014][ \t]*)?(?:is[ \t]+)?(?:about[ \t]+|approx\.?[ \t]+|~)?$", re.I)
+_SIDE_KIND = re.compile(r"\b(?:garage|parking|carport|covered[ \t]+parking|pets?|dogs?|cats?|storage|valet|utilit\w*|internet|wifi|cable|amenity|package|pest|trash|laundry|furnish\w*|fees?)\b", re.I)
+_SIDE_CUE = re.compile(r"\b(?:optional|available|extra|additional|add[- ]?on|by[ \t]+request|if[ \t]+(?:you[ \t]+)?(?:want|desired|needed)|per[ \t]+(?:space|pet|car|vehicle)|each|fee|rent|monthly)\b|[:\-\u2013]\s*$", re.I)
+
+
+def _side_clause_amount(text: str, start: int) -> bool:
+    """Cycle 25: the figure sits in a parking, pet, storage or utility clause of its own ("| Garage parking optional, $200/mo",
+    ". Pet rent $35/mo"): the last pipe, bullet, semicolon, line or sentence piece before it names that thing and has no rent label."""
+    seg_start = max(text.rfind("\n", 0, start) + 1, 0)
+    seg = text[seg_start:start]
+    cuts = [m.end() for m in re.finditer(r"[|;\u2022\u00b7]|(?<!approx)(?<!Approx)(?<!est)(?<!Est)(?<!avg)(?<!Avg)(?<!no)(?<!No)[.!?][ \t]+", seg)]
+    if cuts:
+        seg = seg[cuts[-1]:]
+    seg = seg[-70:]
+    if not _SIDE_KIND.search(seg) or _STRICT_RENT_LABEL.search(seg[-22:]):
+        return False
+    if re.search(r"\b(?:bed(?:room)?s?|br|bd|bath|apartment|apt|unit|home|house|studio)\b", seg, re.I) and not re.search(r"\b(?:optional|extra|additional)\b", seg, re.I):
+        return False  # "2 bed with garage, $1,500/mo": the garage is a feature of the place, the figure is its rent
+    return bool(_SIDE_CUE.search(seg))
+
+
+def _real_sale_words(text: str) -> bool:
+    """Cycle 25: sale wording in the text, not counting "open house" (a rental can have an open house, "6 month lease available at $2,550. Open house Sunday")."""
+    return any(m.group(0).lower() != "open house" and not (m.group(0).lower() == "offered at" and re.search(r"\b(?:leases?|terms?)[ \t]+(?:is[ \t]+|also[ \t]+)*$", text[max(0, m.start() - 20):m.start()], re.I))
+               for m in _SALE_WORDS.finditer(text))
+
+
 def _price(text: str) -> float | None:
     """The monthly rent if the text gives one, else the asking price of a home for sale."""
     corrected = None if _SALE_WORDS.search(text) else _corrected_rent(text)
     if corrected:
         return corrected[0]  # cycle 19: a rent the listing takes back ("1.5k a month, no sorry 2,350") never wins
     amounts = [a for a in _amounts(text) if not a["fee"] and a["marker"] != "per bed" and not a.get("conditional")]
+    if not _real_sale_words(text):
+        for a in amounts:  # cycle 25: "Rent: $3,200 | Garage parking optional, $200/mo": a figure labelled rent beats any other figure
+            if a["labelled"] and 200 <= a["value"] < 20000 and _STRICT_RENT_LABEL.search(text[max(0, a["start"] - 22):a["start"]]) \
+                    and not _side_clause_amount(text, a["start"]):
+                return a["value"]
     for a in amounts:  # "$1,495/mo", "$1500 / 1br"
-        if a["marker"] == "monthly" and 200 <= a["value"] <= 30000:
+        if a["marker"] == "monthly" and 200 <= a["value"] <= 30000 and not _side_clause_amount(text, a["start"]):
             return a["value"]
     sale_text = bool(_SALE_WORDS.search(text))
     for a in amounts:  # "Rent: $1,495", "Monthly rent" on the line above
@@ -631,7 +663,7 @@ def _rent_two_prices_note(price: float, other: float, kind: str) -> str:
 _LO_AMT = r"\$[ \t]?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?"
 _LO_LEN = r"(\d{1,2})[ \t-]?(?:months?|mos?)\b"
 _LO_RENT_FIRST = re.compile(_LO_AMT + r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:\(?[ \t]*(?:for|with|on)[ \t]+(?:a[ \t]+|an[ \t]+)?|\([ \t]*)" + _LO_LEN + r"(?![ \t]*(?:free|off|discount))", re.I)
-_LO_LEN_FIRST = re.compile(r"(?<![\d,$/-])" + _LO_LEN + r"[ \t]*(?:leases?|terms?|contracts?)?[ \t]*(?:rent|price)?[ \t]*(?:is|at|for|:|=|-|–|—)?[ \t]*" + _LO_AMT, re.I)
+_LO_LEN_FIRST = re.compile(r"(?<![\d,$/-])" + _LO_LEN + r"[ \t]*(?:leases?|terms?|contracts?)?[ \t]*(?:(?:is[ \t]+)?(?:also[ \t]+)?(?:available|offered)[ \t]+)?(?:rent|price)?[ \t]*(?:is|at|for|:|=|-|–|—)?[ \t]*" + _LO_AMT, re.I)
 _LO_SHOWN = re.compile(r"\b(?:rent|price)[ \t]+(?:shown|listed|quoted|above|advertised|here)?[ \t]*(?:is|are)?[ \t]*(?:for|based[ \t]+on)[ \t]+(?:a[ \t]+|an[ \t]+)?" + _LO_LEN + r"(?![ \t]*(?:free|off|discount))", re.I)
 _LO_FEEDY = re.compile(r"\b(?:deposit|fees?|application|admin\w*|pets?|parking|garage|utilit\w*|hoa|key|cleaning|move[- ]?in)\b", re.I)
 
@@ -640,7 +672,7 @@ def _lease_rent_options(text: str, raw: bool = False) -> list[tuple[float, int, 
     """Cycle 23: the rent written for each lease length ("$1,490 for 13 month lease; 12 month lease $1,540", "12 mo: $1,540 / 13 mo: $1,490",
     "$1,540 (12-month) or $1,490 (13-month)", "Rent shown is for a 13 month lease; 12 month lease $1,540" with the shown rent in the title).
     Returns [(rent, lease months, position)] in the order written, or None unless two different lengths are each tied to a rent."""
-    if _SALE_WORDS.search(text):
+    if _real_sale_words(text):
         return None
     found: dict[int, tuple[float, int, int, int]] = {}  # position of the match -> (rent, months, position, end)
 
@@ -676,10 +708,10 @@ def _lease_rent_options_note(opts: list[tuple[float, int, int]], first_saved: bo
     changed later (update_place) and the note would then be wrong: it lists the options as the listing gave them."""
     listed = "; ".join(f"{_usd(r)} for {mo} months" for r, mo, _p in opts)
     if first_saved:
-        return (f"The listing gives a different rent for each lease length: {listed}. The first one written is used for the rent and the lease length. "
-                "Ask which lease length you would get.")
-    return (f"The listing gives a different rent for each lease length: {listed}. These are lease length options. "
-            "Ask which lease length you would get.")
+        return (f"The listing gives a different rent for each lease length: {listed}. The 12 month one, or the one closest to 12 months, is used for the rent and the lease length, "
+                "and each of the others is another lease length option, so it is not added to the cost. Ask which lease length you would get.")
+    return (f"The listing gives a different rent for each lease length: {listed}. These are lease length options, and each one is another lease length option, "
+            "so it is not added to the cost. Ask which lease length you would get.")
 
 
 def _lease_plan_lowest(text: str, opts: list[tuple[float, int, int]]) -> tuple[float, str] | None:
@@ -705,16 +737,49 @@ def _lease_plan_lowest(text: str, opts: list[tuple[float, int, int]]) -> tuple[f
 def _lease_extra_option(text: str, price: float | None) -> tuple[float, int] | None:
     """Cycle 24: "Rent: $3,200 per month. Lease: 12 months (or 15 months at $3,100)": a rent for another lease length next to the rent the
     listing gives. It is an option, never an amount that is "not counted". Returns (rent, lease months) or None."""
-    if price is None or _SALE_WORDS.search(text):
+    if price is None or _real_sale_words(text):
         return None
     opts = _lease_rent_options(text, raw=True) or []
     if len(opts) != 1 or opts[0][0] == price:
         return None
     a = opts[0][2]
     seg = text[max(text.rfind("\n", 0, a) + 1, text.rfind(";", 0, a) + 1, text.rfind("|", 0, a) + 1, a - 45):a]
+    prev = list(re.finditer(r"\$[ \t]?\d[\d,]*(?:\.\d\d)?", seg))
+    if prev:
+        seg = seg[prev[-1].end():]  # "2.5 bath, 1,380 sqft. $2,360/mo, or $2,310 with 14-month lease": only what sits between the two rents
     if re.search(r"\b(?:sq\.?[ \t]?ft|sqft|sf)\b|\b\d[ \t]?(?:ba|bath)\b", seg, re.I):
         return None  # "3BR/2BA 1,250 sf $2,380 (12 month lease)" is another floor plan, not another lease length of this one
     return opts[0][0], opts[0][1]
+
+
+def _blank_lease_option(text: str, months: int, rent: float) -> str:
+    """The text with the one "$rent ... N months" lease option blanked (used to read the lease length of the rent that is saved)."""
+    for rx in (_LO_RENT_FIRST, _LO_LEN_FIRST):
+        for m in rx.finditer(text):
+            r, mo = (_num(m.group(1)), int(m.group(2))) if rx is _LO_RENT_FIRST else (_num(m.group(2)), int(m.group(1)))
+            if r == rent and mo == months:
+                return text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    return text
+
+
+def lease_months_only_from_plans(listing_text: str, lease_months: Any) -> bool:
+    """Cycle 25 (correction path): True when the saved lease length is the length of one of the rent-for-each-lease-length options in the listing and
+    nothing else in the listing states that length. A rent corrected by hand makes that length unknown ("$1,100 for a 10-month lease" stops being the
+    lease once the rent is $1,260)."""
+    try:
+        months = int(float(lease_months))
+    except (TypeError, ValueError):
+        return False
+    text = str(listing_text or "")
+    if not text.strip() or _real_sale_words(text):
+        return False
+    opts = _lease_rent_options(text, raw=True) or []
+    if not any(o[1] == months for o in opts):
+        return False
+    rest = text
+    for rent, mo, _pos in opts:
+        rest = _blank_lease_option(rest, mo, rent)
+    return _lease_months(rest) != months
 
 
 def _lease_extra_option_note(rent: float, months: int) -> str:
@@ -749,6 +814,29 @@ def _plan_line_prices(text: str, skip: float | None) -> list[tuple[float, float]
         if re.search(_LO_AMT + r"[ \t]*(?:/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person))", seg, re.I):
             continue
         out.append((next(iter(beds)), amts[0]))
+    return out
+
+
+_SAME_PLAN_NAME = re.compile(r"\b(?:plan|floor[ \t]*plan|unit|type|model)[ \t]+[A-Za-z]?\d?[A-Za-z]?\b", re.I)
+
+
+def _same_bed_plans(text: str, beds: float | None) -> list[tuple[str, float]]:
+    """Cycle 25: "Plan A 3BR/2BA 1,180 sqft $3,390. Plan B 3BR/2.5BA $3,640." Returns (plan name, rent) for each named plan piece (one per sentence,
+    line, pipe or semicolon item) with the listing's own bedroom count and one rent-sized amount. A piece with a fee word or a per-bed amount is no plan."""
+    out: list[tuple[str, float]] = []
+    if beds is None:
+        return out
+    for seg in re.split(r"[\n;|]|(?<=[A-Za-z0-9)])\.[ \t]+(?=[A-Z0-9])|,[ \t]+(?=(?:\d[ \t]?(?:br|bd|bed)\w*[ \t]+)?(?:plan|floor[ \t]*plan)\b)", text, flags=re.I):
+        nm = _SAME_PLAN_NAME.search(seg)
+        if not nm or re.search(r"\b(?:starting|starts?|from)\b|" + _LO_FEEDY.pattern, seg, re.I):
+            continue
+        amts = [_num(m.group(1)) for m in re.finditer(_LO_AMT, seg)]
+        pb = {0.0 if m.group(2) else float(m.group(1)) for m in _PLAN_BEDS.finditer(seg)}
+        if len(amts) != 1 or pb != {beds} or not 300 <= amts[0] <= 30000:
+            continue
+        if re.search(_LO_AMT + r"[ \t]*(?:/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person))", seg, re.I):
+            continue
+        out.append((" ".join(nm.group(0).split()).title().replace("Floor Plan", "Floor plan"), amts[0]))
     return out
 
 
@@ -1017,6 +1105,16 @@ def _bare_starting_rent(text: str) -> float | None:
     return None
 
 
+def _range_line(text: str, rng: tuple[float, float]) -> str:
+    """The line (and the one above it) that holds the written range "$1,475 - $1,525", to read the words around it."""
+    m = re.search(r"\$\s?" + re.escape(f"{rng[0]:,.0f}") + r"(?:\.\d\d)?\s*\+?\s*(?:-|\u2013|to)\s*\$\s?" + re.escape(f"{rng[1]:,.0f}"), text)
+    if not m:
+        return ""
+    a = text.rfind("\n", 0, max(0, text.rfind("\n", 0, m.start()))) + 1
+    b = text.find("\n", m.end())
+    return text[a:len(text) if b < 0 else b]
+
+
 def _rent_range(text: str, price: float | None) -> tuple[float, float] | None:
     """(low, high) when the rent that was read is only the low end of a written range ("$1,299 - $1,650 / mo")."""
     if price is None:
@@ -1172,10 +1270,12 @@ def _renters_insurance_note(text: str) -> list[str]:
     return ["The listing says renter's insurance is required. No cost is counted for it. Ask what coverage you need and what it costs."]
 
 
-def _money_after(text: str, label: str, *, lo: float = 0, hi: float = 1_000_000, gap: int = 28, skip_before: str = "") -> list[float]:
-    """Amounts written as "<label> ... $N" or "$N <label>" (labels are regex text). Several matches are all returned."""
+def _money_after(text: str, label: str, *, lo: float = 0, hi: float = 1_000_000, gap: int = 28, skip_before: str = "", verbs: bool = False) -> list[float]:
+    """Amounts written as "<label> ... $N" or "$N <label>" (labels are regex text). Several matches are all returned.
+    Cycle 25: verbs=True also reads "<label> is $N", "<label> of $N", "<label> will be $N", "<label> equals $N" anywhere in a sentence."""
     found: list[float] = []
-    for m in re.finditer(r"(?:" + label + r")[ \t:\-=(]{0,%d}?(\n\s*)?\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?!\d)" % gap, text, re.I):
+    mid = r"(?:[ \t:\-=(]|\b(?:is|are|of|equals?|will[ \t]+be|comes?[ \t]+to|totals?|set[ \t]+at|at)\b)" if verbs else r"[ \t:\-=(]"
+    for m in re.finditer(r"(?:" + label + r")" + mid + r"{0,%d}?(\n\s*)?\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?!\d)" % gap, text, re.I):
         if m.group(1) and text[text.rfind("\n", 0, m.start()) + 1:m.start()].strip():
             continue  # "$1,500 deposit" then "$50 application fee" on the next line: that $50 is not the deposit
         if skip_before and re.search(skip_before, text[max(0, m.start() - 14):m.start()], re.I):
@@ -6471,9 +6571,40 @@ def _first_real_date(rx: re.Pattern[str], low: str) -> re.Match[str] | None:
     return None
 
 
+_DEADLINE_CUE = re.compile(r"\b(?:move[- ]?in|move[- ]?ins|sign(?:ing|s)?|apply|applying|applications?|lease|deposit|book|reserve|tour|submit|commit|order)\b(?:[ \t]+(?:up|a[ \t]+lease|your[ \t]+lease|the[ \t]+lease|it|now|today))?[ \t]*(?:by|before|through|until|no[ \t]+later[ \t]+than|within)\b[ \t:]*", re.I)
+_DEADLINE_DEAL_WORDS = re.compile(r"\b(?:free|off|concessions?|specials?|discounts?|waived?|incentives?|bonus|credit|promo\w*|deal|offer)\b", re.I)
+
+
+def _blank_deal_dates(text: str) -> str:
+    """Cycle 25: a date in a deal or deadline clause ("1 month free if you move in by 2/1", "sign by 1/15", "apply by Dec 1") is when the deal
+    ends, never when the place is available: the clause is blanked before the availability date is read."""
+    out = text
+    sentences = [(sm.start(), sm.end()) for sm in re.finditer(r"[^.!?\n;|]+(?:[.!?](?!\s|$)[^.!?\n;|]*)*", text)]
+    for m in _DEADLINE_CUE.finditer(text):
+        dm = re.compile(_DATE, re.I).match(text, m.end())
+        if dm and re.match(r"move", m.group(0), re.I):
+            # a bare "Move in by 3/15/2027." can be the day the place is ready: it is a deadline only next to a deal ("1 month free", "$300 off")
+            i = next((k for k, (a, b) in enumerate(sentences) if a <= m.start() < b), None)
+            near = " ".join(text[sentences[k][0]:sentences[k][1]] for k in (i - 1, i, i + 1) if i is not None and 0 <= k < len(sentences))
+            if not _DEADLINE_DEAL_WORDS.search(near):
+                continue
+        if dm:
+            out = out[:m.start()] + " " * (dm.end() - m.start()) + out[dm.end():]
+    for sm in re.finditer(r"[^.!?\n;|]+", text):
+        seg = sm.group(0)
+        if not _DEADLINE_DEAL_WORDS.search(seg):
+            continue
+        for m in re.finditer(r"\bmove[- ]?in[ \t]+(?:on[ \t]+)?(?=" + _DATE + r")", seg, re.I):
+            dm = re.compile(_DATE, re.I).match(text, sm.start() + m.end())
+            if dm:
+                a = sm.start() + m.start()
+                out = out[:a] + " " * (dm.end() - a) + out[dm.end():]
+    return out
+
+
 def _available(text: str) -> str | None:
     today = _today()
-    low = text.lower()
+    low = _blank_deal_dates(text).lower()
     m = _first_real_date(re.compile(r"\b(?:date available|availability|available(?: from| on| starting| beginning)?|avail\.?|move[- ]?in(?: date)?|(?:move[- ]?in[- ])?ready(?:[ ]for[ ]move[- ]?in)?(?:[ ]on|[ ]by)?|lease start(?:s| date)?)\b[ \t:\-]{0,6}(?:on |for |by |starting |beginning )?" + _DATE), low)
     if m:
         return _read_date(m, today)
@@ -7830,7 +7961,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts: list[str] = []
     price_range = _try(lambda: _rent_range(text, price_read)) if price_read and not buying else None
     saved_price = (current or {}).get("price")
-    if price_range and isinstance(saved_price, (int, float)) and not isinstance(saved_price, bool) and saved_price > 0:
+    if price_range and isinstance(saved_price, (int, float)) and not isinstance(saved_price, bool) and saved_price > 0 and float(saved_price) != price_range[1]:
         # a rent the caller already saved: keep it, but say the listing gives a range (it must not look like the whole story)
         facts.append(f"The listing shows a rent from ${price_range[0]:,.0f} up to ${price_range[1]:,.0f} a month, so the saved rent may be the low end. "
                      "Ask which rent applies to the unit you want.")
@@ -7846,9 +7977,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             price_range = None
     if price_range:
         # "Rent from $1,299 - $1,650 / mo": the listing gives a range, so no single rent is saved (unknown beats wrong).
-        price_read = None
-        facts.append(f"The listing gives a rent range of ${price_range[0]:,.0f} to ${price_range[1]:,.0f} a month, so the rent is left empty. "
-                     "Ask which rent applies to the unit you want, then fill it in.")
+        wide = price_range[1] > price_range[0] * 1.15 or re.search(r"\b(?:from|starting|starts|ranges?|ranging|depending|depends|varies|vary|as[ \t]+low[ \t]+as|up[ \t]+to)\b", _range_line(text, price_range), re.I)
+        if wide or re.search(r"\b\d(?:\.\d)?[ \t]*(?:-|\u2013|to)[ \t]*\d(?:\.\d)?[ \t]*(?:bd|bds|br|brs|bed|beds|bedrooms?)\b|\b(?:studio|efficiency)[ \t]*(?:-|\u2013|to|/)[ \t]*\d", text, re.I):
+            # the range spans different sizes ("1 - 2 bd"): the higher figure is the bigger unit, so no single rent is saved
+            price_read = None
+            facts.append(f"The listing gives a rent range of ${price_range[0]:,.0f} to ${price_range[1]:,.0f} a month, so the rent is left empty. "
+                         "Ask which rent applies to the unit you want, then fill it in.")
+        else:
+            price_read = price_range[1]  # cycle 25: a range counts the higher number (cycle 23 rule), so the cost is never understated
+            facts.append(f"The listing gives a rent range of ${price_range[0]:,.0f} to ${price_range[1]:,.0f} a month. The higher figure, ${price_range[1]:,.0f}, is saved as the rent "
+                         "so the cost is not understated, and the lower figure is not a cost on top of the rent. Ask which rent applies to the unit you want.")
     if price_read is None and not price_range:
         worded, worded_note = _try(lambda: _worded_price(text)) or (None, "")
         if worded:
@@ -7935,8 +8073,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append(split_note)
     lease_opts = None if buying or price_range or plan_fix else _try(lambda: _lease_rent_options(text))
     lease_plan_pick = None
-    if lease_opts:  # cycle 23: the rent and the lease length come from the same option: the first one written
-        price_read = lease_opts[0][0]
+    lease_chosen = None
+    extra_lease_opt = None
+    if lease_opts:  # cycle 25: the rent and the lease length come from the same option: the one closest to 12 months (the first written on a tie)
+        lease_chosen = min(lease_opts, key=lambda o: abs(o[1] - 12))
+        if price_read != lease_chosen[0]:  # the "starting at" note was about the first rent read, which is no longer the rent saved
+            facts[:] = [f for f in facts if not f.startswith('The listing says "starting at"')]
+        price_read = lease_chosen[0]
         lease_plan_pick = _try(lambda: _lease_plan_lowest(text, lease_opts))
         if lease_plan_pick:  # cycle 24: a cheaper plan for the same bedroom count exists: it is the rent, the lease options are a note
             price_read = lease_plan_pick[0]
@@ -7948,6 +8091,28 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         extra_lease_opt = _try(lambda: _lease_extra_option(text, price_read))
         if extra_lease_opt:
             facts.append(_lease_extra_option_note(*extra_lease_opt))
+    if (price_read is not None or price_range) and not (buying or plan_fix or unit_pick or lease_opts or two):
+        same_plans = _try(lambda: _same_bed_plans(text, _try(lambda: _beds(text)))) or []
+        if len({v for _n, v in same_plans}) >= 2 and (price_read in {v for _n, v in same_plans} or (price_range and price_read is None)) \
+                and (not price_range or {price_range[0], price_range[1]} <= {v for _n, v in same_plans}):
+            if price_range:
+                facts[:] = [f for f in facts if "gives a rent range of" not in f]  # the plan note below names both ends of the range
+            low_name, low_val = min(same_plans, key=lambda x: x[1])
+            others = "; ".join(f"{n} {_usd(v)}" for n, v in same_plans if v != low_val)
+            price_read = low_val
+            facts.append(f"The listing gives more than one plan with the same number of bedrooms ({low_name} {_usd(low_val)}; {others}). The lowest one is saved as the rent. "
+                         "Ask which plan you want and what it costs.")
+    if price_read is not None and not buying and price_read < 1500 and not (price_range or two or unit_pick or plan_fix or lease_opts):
+        # cycle 25: a rent far below another rent-sized figure the reader did not explain is a reading error (an optional parking figure read as the rent)
+        big = [a for a in (_try(lambda: _amounts(text)) or []) if 1000 <= a["value"] <= 30000 and a["value"] >= 3 * price_read and not a["fee"]
+               and not a.get("conditional") and a["marker"] != "per bed" and not any(_usd(a["value"]) in f for f in facts)]
+        if big:
+            lab = [a for a in big if a["labelled"] and not _side_clause_amount(text, a["start"])]
+            if lab:
+                price_read = lab[0]["value"]
+            else:
+                facts.append(f"The listing gives {_usd(price_read)} and also {_usd(big[0]['value'])}, and I could not tell which one is the monthly rent, so the rent is left empty. Ask what the rent is.")
+                price_read = None
     put("price", price_read)
     if plan_fix and plan_fix[0] is None:
         put("beds", _try(lambda: _beds(_text_without_plans(text, None))))  # cycle 23: a bedroom count that only appears in the plan list is not the listing's own
@@ -8520,10 +8685,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         facts.append(range_note)
     phrase_start, phrase_end = _try(lambda: _lease_phrases(text)) or (None, None)
     two_lengths = _try(lambda: _lease_two_lengths(text)) or ""
+    if extra_lease_opt and lease_read == extra_lease_opt[1]:
+        # cycle 25: "$2,360/mo, or $2,310 with 14-month lease": the 14 months belong to the other price, so it is not the lease length of the rent saved
+        lease_read = _try(lambda: _lease_months(_blank_lease_option(text, extra_lease_opt[1], extra_lease_opt[0])))
     if lease_opts and lease_plan_pick:
         lease_read, two_lengths = None, ""  # cycle 24: the plan picked names no lease length, so none is saved
     elif lease_opts:
-        lease_read, two_lengths = lease_opts[0][1], ""  # cycle 23: the lease length of the option whose rent is saved
+        lease_read, two_lengths = lease_chosen[1], ""  # cycle 23: the lease length of the option whose rent is saved
     if lease_read is None and not two_lengths:
         lease_read = _try(lambda: _lease_bare_months(text, bool(_lease_choices(text)) or bool(range_start)))
     lease_start_read = phrase_start or range_start
@@ -8576,7 +8744,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         nonref_dep = None if _SALE_WORDS.search(text) else _try(lambda: _nonrefundable_deposit(dep_src))
         if nonref_dep:  # cycle 23: "Security deposit is $400 (not refundable, it is a cleaning fee)" is money you do not get back: a move-in fee
             dep_src = dep_src.replace(nonref_dep[1], " ") if nonref_dep[1] in dep_src else re.sub(r"\$\s?" + re.escape(f"{nonref_dep[0]:,.0f}") + r"(?![\d,])", " ", dep_src, count=1)
-        dep = _money_after(dep_src, r"(?:security |refundable |damage |rental )?deposits?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage|fob|remote|gate|access|mailbox|storage|bike|locker|lock|card|pool|cleaning)\s*$")
+        dep = _money_after(dep_src, r"(?:security |refundable |damage |rental )?deposits?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage|fob|remote|gate|access|mailbox|storage|bike|locker|lock|card|pool|cleaning|venmo|zelle|paypal|cash\s?app|wire|wired|crypto|bitcoin|gift)\s*$", verbs=True)
         dep = [v for v in dep if v is not None]
         rent_now = out.get("price")
         by_months = _deposit_in_months(text)
@@ -8594,6 +8762,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append(f"The listing gives the deposit as \"{dep_mult[1]}\", {dep_mult[0]:g} month{'s' if dep_mult[0] != 1 else ''} of rent, but the rent was not read, so the deposit is left empty. Fill it in once you know the rent.")
         elif by_months and isinstance(rent_now, (int, float)) and 200 <= rent_now <= 30000 and not _is_sale_text(text):
             put("deposit", by_months * float(rent_now))  # "security deposit one month", "deposit equal to one month's rent"
+            hm = re.search(r"\$[ \t]?\d(?:\.\d+)?[ \t]*months?\b[^.\n;|]{0,30}?\bdeposit\b[^.\n;|]{0,12}", dep_src, re.I)
+            if hm:  # cycle 25: "$1.5 months rent deposit hold": the dollar sign is a typo for the months, so the figure is explained here and no note repeats it
+                facts.append(f'The listing says "{" ".join(hm.group(0).split())}". It is read as a deposit of {by_months:g} months of rent, '
+                             f"{_usd(by_months * float(rent_now))} from the {_usd(float(rent_now))} rent. Ask what the deposit is and whether it is a hold.")
         elif by_months and not _is_sale_text(text):
             facts.append(f"The listing says the security deposit is {by_months:g} month{'s' if by_months != 1 else ''} of rent, but the rent was not read, so the deposit is left empty. Fill it in once you know the rent.")
         elif (bare_sec := _try(lambda: _bare_security_amount(dep_src))) and not _SALE_WORDS.search(text):
@@ -8621,6 +8793,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         elif (bare_app3 := re.search(r"(?<![\w-])app[ \t]*[:\-=]?[ \t]*\$\s?(\d{1,4}(?:\.\d\d)?)(?!\d|,\d)(?![ \t]*(?:/|per\b|each\b|off\b|waived|credit|background|screening))", text, re.I)) and float(bare_app3.group(1)) > 0 \
                 and not re.search(r"\b(?:no|free|zero|waived?)[ \t]*$", text[max(0, bare_app3.start() - 8):bare_app3.start()], re.I):
             put("application_fee", float(bare_app3.group(1)))  # cycle 22: "Fees: App $55, admin $200"
+        elif (bare_app4 := re.search(r"(?<![\w.,$-])\$\s?(\d{1,4}(?:\.\d\d)?)(?!\d|,\d)[ \t]+(?:online[ \t]+)?app\b(?![ \t]*(?:store|download|\-?based|login|portal))(?![ \t]*(?:/[ \t]*(?:mo|month|adult|person|applicant|occupant|tenant|resident|yr|year|each)|per\b|each\b|credit|background|screening))", text, re.I)) and float(bare_app4.group(1)) > 0 \
+                and not re.search(r"\b(?:no|free|zero|waived?)[ \t]*$", text[max(0, bare_app4.start() - 8):bare_app4.start()], re.I):
+            put("application_fee", float(bare_app4.group(1)))  # cycle 25: "Fees: $50 app, $150 admin": "app" is the application fee
         elif re.search(r"\b(?:no|free|zero|\$0|waived)\s+app(?:lication)?[ \t]+(?:fee|processing)|\bapp(?:lication)? fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b|\bapplication fee\s*[:\-]?\s*(?:\$0|none|waived|free)\b", text, re.I):
             put("application_fee", 0.0)
         mi_text = text

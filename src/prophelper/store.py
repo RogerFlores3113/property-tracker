@@ -1765,6 +1765,13 @@ class Store:
             other = self.find_duplicate(None, url=values["url"], exclude_id=place_id)
             if other:
                 raise ValueError(f"Another place already has that link ({other['title']}).")
+        if "price" in values and "lease_months" not in values and existing.get("lease_months") not in (None, "") and self._differs(existing, "price", values["price"]):
+            try:  # cycle 25: a lease length that only the old price's plan gave ("$1,100 for a 10-month lease") is unknown once the rent is corrected
+                from . import parsers
+                if parsers.lease_months_only_from_plans(str(values.get("listing_text", existing.get("listing_text")) or ""), existing["lease_months"]):
+                    values["lease_months"] = None
+            except Exception:  # noqa: BLE001 - a reader failure must not stop a save
+                pass
         changed = {k: v for k, v in values.items() if self._differs(existing, k, v)}
         with self._write():
             if "reader_notes" not in values and set(values) - {"notes", "ai_notes", "photo_urls", "rating", "hidden", "updated_at"}:
