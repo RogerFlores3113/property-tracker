@@ -38,6 +38,9 @@
         {{ field("Bedrooms you need", "bedrooms", "", kind="number", step="1", hint="Optional. A place with fewer bedrooms then shows as not fitting. Leave empty if any size is fine.", id="new-bedrooms") }}
         {{ field("Move in by (renting)", "move_in", "", kind="date") }}
         {{ field("Target close date (buying)", "target_close", "", kind="date") }}
+        {{ select("Your pets", "pet_kind", [("cat", "A cat"), ("dog", "A dog"), ("both", "Cats and dogs")], "", blank="No pets", id="new-pet-kind") }}
+        {{ field("How heavy your dog is (lb)", "pet_weight", "", kind="number", step="any", hint="Optional. A place that only allows smaller dogs then shows as not fitting your pets.", id="new-pet-weight") }}
+        {{ field("How many pets", "pet_count", "", kind="number", step="1", id="new-pet-count") }}
         <div data-buy-only>{{ field("Down payment (percent of the price, buying)", "down_payment_pct", "", kind="number", step="any", hint="Only for buying. From 0 to 100. Leave empty to use the one in Settings.", id="new-down") }}</div>
       </div>
       {{ field("Notes", "notes", "", kind="textarea", rows=2) }}

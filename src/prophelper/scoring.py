@@ -21,6 +21,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from typing import Any, Iterable
 
 from . import commute as commute_mod
@@ -439,6 +441,25 @@ def miss_score(failed_items: list[dict[str, Any]]) -> int:
     return max(1, CAP_DEALBREAKER - int(round(30 * sev)) - 4 * (len(failed_items) - 1))
 
 
+_LIMIT_WORDS = re.compile(r"\b(?:lbs?\.?|pounds?|weight|pets?|dogs?|animals?|breed|limit|over|under|max(?:imum)?)\b", re.I)
+_WAIVABLE = re.compile(r"\b(?:unless|except(?:ion|ions)?|case[- ]by[- ]case|waive[sd]?|waivable|negotiable|at (?:the )?(?:management|landlord|owner|property manager)(?:'s|\u2019s)? (?:discretion|option|approval)|"
+                       r"(?:with|upon|subject to|pending|requires?|needs?|if|once|when)\s+(?:prior\s+|written\s+|special\s+)?(?:approv\w+|permission|consent)|(?:approved|permitted|allowed|cleared|okayed)\s+(?:by|on)\s+(?:the\s+)?(?:management|landlord|owner|office|property manager|case)|"
+                       r"(?:may|can|might|could)\s+(?:be\s+)?(?:made|approved|allowed|considered|granted|reviewed|accepted)|ask (?:about|us|the office|management) (?:an? )?exceptions?|"
+                       r"(?:larger|bigger|heavier|big) (?:dogs?|pets?)[^.\n]{0,30}(?:considered|approved|reviewed|ask))\b", re.I)
+
+
+def _limit_can_be_waived(place: dict[str, Any]) -> bool:
+    """True when a sentence of the listing about a pet weight or count limit also says it can be waived or needs approval
+    ("No dogs over 50 lbs unless approved by management", "case-by-case")."""
+    for key in ("listing_text", "pet_breed_note", "reader_notes", "notes"):
+        text = str(place.get(key) or "")
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+            if _WAIVABLE.search(sentence) and re.search(r"\d", sentence) and _LIMIT_WORDS.search(sentence) \
+                    and re.search(r"\b(?:lbs?\.?|pounds?|weight|limit|max(?:imum)?|(?:one|two|three|\d)\s+(?:pets?|dogs?|cats?|animals?))\b", sentence, re.I):
+                return True
+    return False
+
+
 def _pet_limit_problems(profile: dict[str, Any], place: dict[str, Any]) -> list[str]:
     """Plain reasons the listing's stated weight or count limit is below your pets (used when the pet policy is empty)."""
     kind = profile.get("kind") or ""
@@ -464,6 +485,9 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
         limit_fail = _pet_limit_problems(profile, place) if kind else []
         if limit_fail:
             text = "; ".join(limit_fail)
+            if _limit_can_be_waived(place):
+                return _result(None, "", target, text + ", but the listing says it can be waived or needs approval. Ask the landlord.",
+                               known=False, passes=None)
             return _result(0.0, "", target, text + ".", known=True, passes=False, gap=text)
         return _unknown(target, "The pet policy")
     ok = have in PETS_OK.get(want, ("cats", "dogs", "both"))
@@ -486,6 +510,9 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
                 unknown.append("number of pets allowed")
         elif count > c_limit:
             problems.append(f"You have {_fmt(count)} pets; limit {_fmt(c_limit)}")
+    if problems and _limit_can_be_waived(place):
+        return _result(None, value, target, "; ".join(problems) + ", but the listing says it can be waived or needs approval. Ask the landlord.",
+                       known=False, passes=None)
     if problems:
         return _result(0.0, value, target, "; ".join(problems) + ".", known=True, passes=False, gap="; ".join(problems))
     if unknown:

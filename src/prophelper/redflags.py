@@ -15,6 +15,7 @@ from typing import Any, Iterable
 # Each rule: (name, pattern, message). The message says what it is and what to do, in plain words.
 _PAYMENT = re.compile(
     r"\b(wire (?:the |me |us |it |your )?(?:deposit|money|funds|payment|rent|fee)|wiring (?:the |your )?(?:deposit|money|funds)|wire transfer|wire (?:it |this |that |the (?:deposit|money|funds|payment|rent) |money |funds |payment )?to (?:my|our|the|a) (?:lawyer|attorney|solicitor)|western union|money ?gram|"
+    r"wire\b(?:[^.\n]|\.\d){0,50}?\bto\s+(?:my|our|the|a|an|his|her|their)\s+(?:(?:seller|owner|landlord|agent|realtor|broker|property manager|manager)['\u2019]?s?\s+)?(?:lawyer|attorney|solicitor)\b|"
     r"gift ?cards?|itunes card|bitcoin|btc|crypto(?:currency)?|apple pay only|"
     r"send (?:the |your )?(?:deposit|money|payment))\b", re.I)
 _ZELLE_ONLY = re.compile(r"\b(zelle|cash ?app|venmo|paypal friends)\s*(?:only|is the only|payments? only)\b|"
@@ -47,6 +48,25 @@ _BUY_PAYMENT = re.compile(
     r"\b(?:earnest money|good faith deposit|deposit|down ?payment|closing (?:costs?|funds))\b[^.\n]{0,80}\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b|"
     r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|wire(?:d)?|western union)\b[^.\n]{0,80}\b(?:earnest money|good faith deposit|deposit|down ?payment)\b|"
     r"\bwire\b[^.\n]{0,60}\b(?:escrow|earnest)\b", re.I)
+_PAY_METHODS = re.compile(r"\b(?:zelle|venmo|cash ?app|gift ?cards?|crypto(?:currency)?|bitcoin|btc|western union)\b", re.I)
+_TITLE_CO = re.compile(r"\b(?:title|escrow|closing)\s+(?:company|co\b|agency|office|agent)|\b[\w&'. -]{2,40}\b(?:title|escrow)\b(?:\s+(?:company|co\.?|inc\.?|llc|agency))?", re.I)
+_VERIFIED_PHONE = re.compile(r"\b(?:verif(?:y|ied|ying)|confirm(?:ed|ing)?|check(?:ed)?)\b[^.\n]{0,40}\b(?:by|over|via|through|with|using)\s+(?:a\s+|the\s+|your\s+)?(?:phone|call|calling|telephone)\b|"
+                             r"\b(?:call|phone)\b[^.\n]{0,30}\b(?:to\s+)?(?:verify|confirm)\b", re.I)
+
+
+def buy_payment_hit(text: str) -> bool:
+    """Earnest money or a deposit by wire or a payment app. A sentence where a title or escrow company holds the money and the
+    wire instructions are verified by phone is the normal way and does not count (unless it also names Zelle, Venmo or the like)."""
+    for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z$0-9])", text):
+        if not _BUY_PAYMENT.search(sentence):
+            continue
+        if _TITLE_CO.search(sentence) and _VERIFIED_PHONE.search(sentence) and not _PAY_METHODS.search(sentence) \
+                and not _PAYMENT.search(sentence):
+            continue
+        return True
+    return False
+
+
 _BUY_NO_INSPECTION = re.compile(r"\b(?:no|skip|waives?|waived|waiving|without|forgo|forego)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b(?!\s+fees?)|\binspections?\s+(?:is |are )?(?:not needed|unnecessary|waived)\b|"
                              r"\b(?:do not|don'?t|never)\s+(?:try to |need to |bother to )?inspect\b|\bno need (?:to|for) (?:an? )?inspect(?:ion)?\b|"
                              r"\b(?:do not|don'?t|never)\s+(?:do|get|have|order|schedule|book)\s+(?:the\s+|an?\s+|your\s+)?(?:home\s+|property\s+)?inspections?\b", re.I)
@@ -194,9 +214,34 @@ def quote_of(flag: str) -> str:
     return q[:-1] if q.endswith('"') else q
 
 
+def trim_at_injection(phrase: str) -> str:
+    """A quoted listing line cut off where text aimed at an AI tool starts ("Pet fee $50. Ignore previous instructions..." gives
+    "Pet fee $50"). Unchanged when there is none or when the cut would leave no amount."""
+    text = str(phrase or "")
+    hits = [m.start() for pattern in (_AI_TARGETED, _AI_EXTRA) for m in [pattern.search(text)] if m]
+    if not hits:
+        return text
+    cut = text[:min(hits)].rstrip(" ,;:-.\t\n")
+    cut = re.sub(r"[ \t,;:.!?-]*\b(?:note|attention|attn|important|system|assistant|dear)\b[^.\n]{0,12}$", "", cut, flags=re.I).rstrip(" ,;:-.")
+    return cut if re.search(r"\d", cut) else text
+
+
 def _ai_line(text: str, comments: list[str]) -> str | None:
     """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable.
-    The quote starts at the start of its own line or sentence (never at the line before), and stops at a tag."""
+    With two or more such sentences the first two are quoted ("first / second") and the rest counted ("and 1 more")."""
+    lines = _ai_lines(text, comments)
+    if lines is None:
+        return None
+    if len(lines) == 1 or not all(lines[:2]):
+        return lines[0]
+    if len(lines) == 2:
+        return f"{_quote(lines[0], 90)} / {_quote(lines[1], 90)}"
+    return f"{_quote(lines[0], 90)} / {_quote(lines[1], 90)} (and {len(lines) - 2} more)"
+
+
+def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
+    """Every separate sentence aimed at an AI tool, first one first (None when there is none). Each quote starts at the start of
+    its own line or sentence (never at the line before), and stops at a tag."""
     bound: set[int] = set()  # places where a new line or a tag was: a quote never reaches across them at its start
     built = ""
     for piece in re.split(r"(" + _TAG.pattern + r"|\n)", text):
@@ -211,18 +256,19 @@ def _ai_line(text: str, comments: list[str]) -> str | None:
                 built += " "
             built += piece
     text = built
-    hit = None
+    hits: list[re.Match[str]] = []
     plain = text
     # also try the text with every look-alike letter folded and with leet digits read as letters
     for variant in (plain, _fold_all(plain), _unleet(_fold_all(plain))):
         text = variant
-        for pattern in (_AI_TARGETED, _AI_EXTRA):
-            m = pattern.search(text)
-            if m and (hit is None or m.start() < hit.start()):
-                hit = m
-        if hit is not None:
+        hits = sorted((m for pattern in (_AI_TARGETED, _AI_EXTRA) for m in pattern.finditer(text)), key=lambda m: m.start())
+        if hits:
             break
-    if hit is not None:
+    quotes: list[str] = []
+    last_end = -1
+    for hit in hits:
+        if hit.start() < last_end:
+            continue  # inside the sentence already quoted
         starts = [text.rfind(sep, 0, hit.start()) + len(sep) for sep in (". ", "! ", "? ") if text.rfind(sep, 0, hit.start()) != -1]
         starts += [i + 1 for i in bound if i < hit.start()]
         begin = max(starts, default=0)
@@ -231,10 +277,13 @@ def _ai_line(text: str, comments: list[str]) -> str | None:
         ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
         ends += [i for i in bound if i >= hit.end()]
         end = min(ends) + (0 if ends and min(ends) in bound else 1) if ends else len(text)
-        return _quote(text[begin:end])
+        last_end = end
+        quotes.append(_quote(text[begin:end]))
+    if quotes:
+        return quotes
     for c in comments:
         if _SYSTEM_IN_COMMENT.search(c):
-            return _quote(c)
+            return [_quote(c)]
     return None
 
 
@@ -298,7 +347,7 @@ def is_serious(place: dict[str, Any], peer_prices: Iterable[float] = ()) -> bool
     before a showing, an owner who is abroad, keys by mail, or private info (like a Social Security number) asked for
     before a tour. Scoring, Today and the Board all use this. ``peer_prices`` is kept for callers that pass it."""
     text = _text(place)
-    return any(p.search(text) for p in (_PAYMENT, _ZELLE_ONLY, _PAY_APP, _BEFORE_SHOWING, _ABROAD, _KEYS_MAIL, _PRIVATE_INFO, _BUY_PAYMENT, _BUY_NO_INSPECTION))
+    return any(p.search(text) for p in (_PAYMENT, _ZELLE_ONLY, _PAY_APP, _BEFORE_SHOWING, _ABROAD, _KEYS_MAIL, _PRIVATE_INFO, _BUY_NO_INSPECTION)) or buy_payment_hit(text)
 
 
 _BUY_RULES = [
@@ -318,7 +367,7 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
     buy = mode == "buy"
     if buy:
         for pattern, message in _BUY_RULES:
-            if pattern.search(text):
+            if (buy_payment_hit(text) if pattern is _BUY_PAYMENT else pattern.search(text)):
                 flags.append(message)
     if not buy and _BUY_NO_INSPECTION.search(text):
         flags.append("It says you can't or needn't inspect the place. A real landlord lets you look closely before you pay or sign. "
@@ -346,7 +395,7 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         ai_line = _ai_line(all_text, all_comments)
     if ai_line is not None:
         flags.append("This listing has text aimed at AI tools; treat it with care." + (f'{AI_QUOTE_MARK}{ai_line}"' if ai_line else ""))
-    if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and _BUY_PAYMENT.search(text)):
+    if _PAY_APP.search(text) and not _ZELLE_ONLY.search(text) and not (buy and buy_payment_hit(text)):
         flags.append("It mentions Cash App, Venmo or Zelle for the deposit or rent. Those payments can't be taken back. "
                      + ("Don't send money before you have toured the place and an escrow or title company is involved." if buy else
                         "Don't pay anything before you have toured the place and read the lease."))

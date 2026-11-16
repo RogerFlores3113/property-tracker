@@ -416,7 +416,9 @@ async def create_search(request: Request):
                              **({"people": form.get("people")} if form.get("people") else {}),
                              **({"adults": form.get("adults")} if form.get("adults") else {}),
                              **({"down_payment_pct": form.get("down_payment_pct")} if str(form.get("down_payment_pct", "")).strip() else {}),
-                             **({"pet_kind": form.get("pet_kind")} if form.get("pet_kind") else {}))
+                             **({"pet_kind": form.get("pet_kind")} if form.get("pet_kind") else {}),
+                             **({"pet_weight": form.get("pet_weight")} if str(form.get("pet_weight", "")).strip() else {}),
+                             **({"pet_count": form.get("pet_count")} if str(form.get("pet_count", "")).strip() else {}))
         store.set_current_search(s["id"])
         beds = str(form.get("bedrooms", "")).strip()
         for c in scoring.starter_criteria(s["mode"], s.get("budget_max"), beds, pet_kind=s.get("pet_kind")):

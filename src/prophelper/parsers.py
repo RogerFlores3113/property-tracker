@@ -5126,6 +5126,9 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
                               or re.match(r"\s*(?:-|–|to)\s*\$\s?\d", after)):
             continue  # a floor plan or a rent range, not an extra cost
         phrase = _net_clause(text, m.start(), m.end())
+        if phrase:
+            from .redflags import trim_at_injection
+            phrase = trim_at_injection(phrase)  # a line that runs on into text aimed at an AI is quoted only up to the fee itself
         if not phrase:
             continue
         if _quotes_title(phrase, out.get("title")):
