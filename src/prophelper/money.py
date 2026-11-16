@@ -143,6 +143,8 @@ def _unpriced_tenant_utilities(place: dict[str, Any]) -> list[str]:
     priced = {"water" if w == "hot water" else w for w in _billed_names(place) + rough}
     if not priced:
         return []
+    if priced & {"gas", "heat"}:
+        priced |= {"gas", "heat"}  # a gas bill is the heat bill: a gas figure counts the heat, a heat figure counts the gas
     return [w for w in _cost_pays(place) if w not in priced and w not in NOTHING_WORDS]
 
 
@@ -616,6 +618,13 @@ _NOTE_COST_WORD = re.compile(r"\b(?:fee|fees|deposit|assessment|parking|garage|u
 _NO_AMOUNT_OPTIONAL = re.compile(r"gives no price|no price is given|looks optional|is optional|\boptional\b", re.I)
 
 
+# A note that names the other parking choices of a place that is already counted at one of them, and a warning about a wire: neither is a cost left out.
+_NOTE_CHOICE = re.compile(r"gives more than one parking choice|more than one parking (?:choice|option)|also offers another parking choice", re.I)
+_NOTE_WARNING = re.compile(r"can't be taken back|don't send money|do not send money", re.I)
+_RENT_RANGE_NOTE = re.compile(r"\brent range of \$", re.I)
+RENT_RANGE_LABEL = "the rent (the listing gives a range)"
+
+
 def _note_is_stale(note: str, place: dict[str, Any] | None) -> bool:
     """True when every dollar amount in an "it is not counted" note is a value the place now holds in a field (or part of a sum a
     field holds): the note repeats what was counted, so it must not set the tag."""
@@ -638,6 +647,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
+        if _NOTE_WARNING.search(note) or (_NOTE_CHOICE.search(note) and place is not None and num(place.get("parking_cost")) is not None):
+            continue  # a wire warning, or the other parking choices of a place whose parking is counted: not a cost left out of the number
         if re.search(r"\boptional\b", note, re.I) and not re.search(r"\b(?:required|mandatory)\b", note, re.I):
             continue  # an optional carport, garage or pool fee is not a cost you have to pay
         if re.search(r"\bseller\b[^.]*\b(?:credit|toward closing|concessions?|closing costs?)\b", note, re.I) and not re.search(r"\b(?:parking|garage|fee|deposit|hoa)\b", note, re.I):
@@ -682,6 +693,11 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
     notes = open_listing_notes(reader_notes, place)
     if not notes:
         return LISTING_NOTES_UNCOUNTED
+    ranges = [n for n in notes if _RENT_RANGE_NOTE.search(n)]
+    if ranges:  # a rent range names the rent, not two loose amounts
+        rest = [n for n in notes if n not in ranges]
+        other = open_notes_label("\n".join(rest), place) if rest else ""
+        return RENT_RANGE_LABEL if not other else f"{other} and {RENT_RANGE_LABEL}"
     seen: dict[float, str] = {}
     unplaced: dict[float, str] = {}
     for note in notes:
