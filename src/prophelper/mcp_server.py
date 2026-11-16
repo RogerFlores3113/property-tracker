@@ -33,7 +33,7 @@ from . import commute as commute_mod
 from . import compare as compare_mod
 from . import guards, helpers, redflags, scoring
 from . import stages as st
-from .parsers import split_address_unit, split_full_address, street_with_unit
+from .parsers import fallback_title, split_address_unit, split_full_address, street_with_unit
 from . import money as money_mod
 from . import movein
 from . import today as today_view
@@ -1179,6 +1179,8 @@ def build_server(store: Store) -> FastMCP:
     def add_place(**kw: Any) -> CallToolResult:
         fields = check_fields(kw)
         read_listing_text(fields)
+        if not any(fields.get(k) for k in ("title", "address", "url")) and fields.get("listing_text"):
+            fields["title"] = fallback_title(fields) or None
         if not any(fields.get(k) for k in ("title", "address", "url")):
             raise ValueError("A place needs at least a title, an address or a link. Nothing was saved.")
         need_search(fields.get("search_id"))
@@ -1219,6 +1221,8 @@ def build_server(store: Store) -> FastMCP:
                 raise ValueError(f"Place {i} needs to be an object of fields. Nothing was saved.")
             f = check_fields(item, f"Place {i}{_title_part(item)}: ")
             read_listing_text(f)
+            if not any(f.get(k) for k in ("title", "address", "url")) and f.get("listing_text"):
+                f["title"] = fallback_title(f) or None
             if not any(f.get(k) for k in ("title", "address", "url")):
                 raise ValueError(f"Place {i} needs at least a title, an address or a link. Nothing was saved.")
             if search_id is not None:
