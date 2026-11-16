@@ -235,6 +235,20 @@ def is_hidden_note(flag: str) -> bool:
     return str(flag).startswith(HIDDEN_PREFIX)
 
 
+PLAIN_HINT_STARTS = ("There is no address yet.", "The address has no street number.")
+
+
+def is_plain_hint(flag: str) -> bool:
+    """True for a hint that is only missing information (no address yet), not a scam sign. It is shown as a plain hint, never
+    under "possible scam signs"."""
+    return str(flag).startswith(PLAIN_HINT_STARTS)
+
+
+def scam_sign_flags(flags: Iterable[str]) -> list[str]:
+    """The hints that are real things to check: not the hidden-characters note and not a plain missing-information hint."""
+    return [f for f in flags if not is_hidden_note(f) and not is_plain_hint(f)]
+
+
 AI_QUOTE_MARK = ' It says: "'
 
 

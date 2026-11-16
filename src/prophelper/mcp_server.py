@@ -557,9 +557,11 @@ def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
         bits.append("Fits, with a note: " + "; ".join(_t(n, "fit note", 120) for n in e["score"]["notes"]))
     if compare_mod.ai_text_only(e):
         bits.append(compare_mod.AI_TEXT_FIT)
-    elif [f for f in e["flags"] if not redflags.is_hidden_note(f)] and e["score"].get("fit") != "check_first":
-        n_ = len([f for f in e["flags"] if not redflags.is_hidden_note(f)])
+    elif redflags.scam_sign_flags(e["flags"]) and e["score"].get("fit") != "check_first":
+        n_ = len(redflags.scam_sign_flags(e["flags"]))
         bits.append(f"{n_} thing{'s' if n_ != 1 else ''} to check (possible scam signs)")
+    if any(redflags.is_plain_hint(f) for f in e["flags"]) and not compare_mod.ai_text_only(e):
+        bits.append("no address yet" if not str(e.get("address") or "").strip() else "address has no street number")
     if e.get("is_sample"):
         bits.append("sample")
     return ", ".join(bits)
