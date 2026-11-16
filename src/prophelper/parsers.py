@@ -2714,7 +2714,9 @@ def _estimate_items(text: str) -> list[dict[str, Any]]:
     bill ("roughly $150 a month total", "Gas: roughly $150 a month total for all utilities") has total True and no names. Lines about
     included utilities, fees, parking, pets and renter's insurance are never read."""
     items: list[dict[str, Any]] = []
+    prev_whole = ""
     for whole in re.split(r"\n|;|\.(?=\s|$)", text.lower()):
+        before_whole, prev_whole = prev_whole, whole
         mx = _EXCEPT_EST.search(whole)
         if mx and 10 <= float(mx.group("amt")) <= 2000:
             # "Landlord pays all utilities except they said electric is on you, about $60": the figure is for what is left out
@@ -2753,6 +2755,11 @@ def _estimate_items(text: str) -> list[dict[str, Any]]:
                 if len(names_l) < 2:
                     after = _ROLE_LIST.match(clause[m.end():].lstrip())  # "$90/mo for both gas and electric"
                     names_l = _est_names(after.group(0), clause) if after else []
+                if len(names_l) < 2 and not clause[m.end():].strip(" \t,") \
+                        and re.search(r"\b(?:tenant|resident|renter|you pay|your responsibility|on you)\b", before_whole) \
+                        and not re.search(r"\b(?:included|landlord pays|owner pays|covered)\b", before_whole):
+                    # cycle 16 join: "Gas cooking, electric tenant. Budget around $90/mo for both.": the two named just before
+                    names_l = [w for w in _est_names(" ".join(x.group(0) for x in _ROLE_LIST.finditer(before_whole)), before_whole) if w != "trash"]
                 if len(names_l) >= 2:
                     items.append({"names": names_l, "amount": float(m.group(1)), "total": False})
                     continue
