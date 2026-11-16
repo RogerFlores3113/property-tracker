@@ -1290,8 +1290,26 @@ def build_server(store: Store) -> FastMCP:
         except Exception:  # noqa: BLE001 - the not-found message comes from the lookup below
             current = None
         sent = kw.pop("_sent", None)  # names the caller really sent, so an explicit null can be told from a field left out
+        covers = str(kw.pop("other_monthly_fees_covers", None) or "").strip()
         clear = [k for k in CLEARABLE if sent and k in sent and kw.get(k) is None]
         fields = check_fields(kw, existing=current)
+        covers_lines: list[str] = []
+        if covers:  # cycle 24: what the monthly fee covers. "internet" makes the cost stop calling the internet missing.
+            fee = fields.get("other_monthly_fees", (current or {}).get("other_monthly_fees"))
+            try:
+                fee_n = float(fee) if fee is not None else 0.0
+            except (TypeError, ValueError):
+                fee_n = 0.0
+            said = f"Other monthly fees: the user says they cover {_clip(covers, 80)}."
+            fields["ai_notes"] = (str(fields["ai_notes"]).strip() + " " if fields.get("ai_notes") else "") + said
+            if fee_n > 0 and re.search(r"\binternet\b", covers, re.I):
+                line = f"The internet is counted in other monthly fees (${fee_n:,.2f}".replace(".00", "") + " a month), because the user says the fee covers it."
+                old_notes = str((current or {}).get("reader_notes") or "").strip()
+                if line not in old_notes:
+                    fields["reader_notes"] = (old_notes + "\n" if old_notes else "") + line
+                covers_lines.append("Because the fee covers the internet, the internet is no longer shown as missing.")
+            elif fee_n <= 0:
+                covers_lines.append("The note about what the fee covers was saved, but there is no other monthly fee amount yet, so nothing changes in the cost.")
         for k in clear:
             fields[k] = None  # the caller sent null: clear the value (it is logged on the timeline like any replaced value)
         photo_notes = fields.pop("_photo_notes", [])
@@ -1322,6 +1340,7 @@ def build_server(store: Store) -> FastMCP:
             lines += insurance_warning(after)
         if "price" in fields:
             lines += rent_warning(after)
+        lines += covers_lines
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
 
@@ -1333,7 +1352,8 @@ def build_server(store: Store) -> FastMCP:
     update_place.__signature__ = _params(  # type: ignore[attr-defined]
         [_req("place_id", int, "The place's id")],
         [("commutes", list[dict[str, Any]] | None, "Commute minutes from your own routing lookup: [{anchor, mode, minutes}]", None),
-         ("utilities_source", str | None, UTILITIES_SOURCE_HELP, None)])
+         ("utilities_source", str | None, UTILITIES_SOURCE_HELP, None),
+         ("other_monthly_fees_covers", str | None, "Optional, with other_monthly_fees: what that monthly amount covers, for example \"internet\". When it says internet, the cost no longer lists the internet as missing", None)])
     mcp.tool(annotations=SAME_AGAIN)(update_place)
     try:  # tell "hoa: null" (clear it) from "hoa not sent": FastMCP fills every missing argument with None, so also pass the names that were sent
         _model = mcp._tool_manager.get_tool("update_place").fn_metadata.arg_model
