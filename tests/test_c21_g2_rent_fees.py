@@ -195,15 +195,16 @@ def test_nontech_l10_other_fields_stay():
     assert r["deposit"] == 1380 and r["application_fee"] == 35 and r["application_fee_per_adult"] == 1
 
 
-@pytest.mark.parametrize("text,total", [
-    ("Spacious townhouse 3 bed / 2.5 bath, $2,295.\nFees: Application $45/adult; Admin $150; Lease-up $100; Key deposit $50 refundable.\nDeposit $1,500.", 300),
-    ("3 bed, $2,295. Admin $80, lease-up $40, key deposit $20. Deposit $1,500.", 140),
-    ("3 bed, $2,295.\n- Admin: $60\n- Lease-up fee: $35\n- Key deposit: $25\nDeposit $1,500.", 120),
+@pytest.mark.parametrize("text,total,dep", [
+    ("Spacious townhouse 3 bed / 2.5 bath, $2,295.\nFees: Application $45/adult; Admin $150; Lease-up $100; Key deposit $50 refundable.\nDeposit $1,500.", 250, 1550),
+    ("3 bed, $2,295. Admin $80, lease-up $40, key deposit $20. Deposit $1,500.", 120, 1520),
+    ("3 bed, $2,295.\n- Admin: $60\n- Lease-up fee: $35\n- Key deposit: $25\nDeposit $1,500.", 95, 1525),
 ])
-def test_every_item_of_a_fee_list_is_counted(text, total):
+def test_every_item_of_a_fee_list_is_counted(text, total, dep):
+    # cycle 23: a key deposit comes back, so it is added once to the deposit and not spread as a move-in fee
     r = read(text)
     assert r["move_in_fees"] == total
-    assert r["deposit"] == 1500
+    assert r["deposit"] == dep
     assert "not counted anywhere" not in "\n".join(l for l in notes(r).split("\n") if "Admin" in l or "Lease" in l or "Key" in l)
 
 
