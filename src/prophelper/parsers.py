@@ -351,6 +351,8 @@ def _bare_labelled_rent(text: str) -> float | None:
         after = text[m.end():m.end() + 40]
         if re.match(r"[ \t]*(?:sq|sf|ft|bed|br|bd|bath)", after, re.I):
             continue
+        if re.match(r"[ \t]+\d", after):
+            continue  # "FOR RENT 4120 4120 Indianola St": a number that another number follows is part of an address
         nxt = re.match(r"[ \t]+([A-Za-z]+)(?:[ \t]+([A-Za-z]+))?", after)
         if nxt:
             w1, w2 = nxt.group(1), nxt.group(2) or ""
@@ -2131,8 +2133,10 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
         notes.append(f"The listing says the buyer pays the ${amount:,.0f} {label} at closing. It is counted in the cash to close as a one-time fee, not in the monthly cost. "
                      "Ask the seller's agent to confirm it.")
     for label, amount in unclear_fees:
+        if fee is not None and abs(fee - amount) < 0.01:
+            continue  # a move-in fee with no payer keeps its own note below
         notes.append(f"The listing mentions a ${amount:,.0f} {label} but does not say who pays it, so it is not counted in the cash to close. Ask who pays it.")
-    if fee is not None and (any(abs(a - fee) < 0.01 for _l, a in counted_fees + unclear_fees)):
+    if fee is not None and any(abs(a - fee) < 0.01 for _l, a in counted_fees):
         fee = None  # the move-in fee has its own note above
     if fee is not None:
         notes.append(f"The listing mentions a ${fee:,.0f} move-in fee. The cash to close does not count it, so it is not counted anywhere. Ask who pays it.")
@@ -2175,7 +2179,7 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
 
 
 _BUYER_FEE_NAME = (r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contribution|charge))?|reserve(?:s)?(?:[ \t]+fund)?(?:[ \t]+(?:contribution|fee|deposit|payment))|"
-                   r"reserve[ \t]+fund|move[- ]in[ \t]+fee|initiation[ \t]+fee|working[ \t]+capital(?:[ \t]+contribution)?|capital[ \t]+contribution")
+                   r"reserve[ \t]+fund|move[- ]in[ \t]+fee|initiation[ \t]+fee|working[ \t]+capital(?:[ \t]+(?:contribution|fee))?|capital[ \t]+contribution")
 _BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:one[- ]time[ \t]+|new[ \t]+)?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
                         r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
@@ -2232,7 +2236,7 @@ def _master_dues(text: str) -> tuple[float, str, float, str] | None:
     return round(monthly, 2), phrase, value, text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
 
 
-_LISTING_CASH_TO_CLOSE = re.compile(r"\bcash[ \t]+(?:needed[ \t]+)?to[ \t]+close(?:[ \t]+estimate)?[ \t]*(?:is|of|:|=|-|about|around|approx\.?)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?", re.I)
+_LISTING_CASH_TO_CLOSE = re.compile(r"\bcash[ \t]+(?:needed[ \t]+)?to[ \t]+close(?:[ \t]+estimate)?[ \t]*(?:(?:is|of|:|=|-|about|around|approx\.?)[ \t]*)*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?", re.I)
 
 
 def listing_cash_to_close(text: str) -> float | None:
@@ -6235,7 +6239,7 @@ _SVC_STRONG = (r"pest(?:[ \t]+control)?|package(?:[ \t]+(?:locker|lockers|servic
 _SVC_WEAK = r"amenit(?:y|ies)|community|technology|convenience|smart[ \t]+home"
 _SVC_FEE_WORD = r"(?:[ \t]+(?:fees?|charges?|service|package))"
 _SVC_PERIOD = r"(?:/[ \t]*mo(?:nth)?\b|[ \t]+per[ \t]+month|[ \t]+a[ \t]+month|[ \t]*monthly\b|[ \t]+each[ \t]+month)"
-_SVC_BAD_TAIL = re.compile(r"\b(?:optional|billed|passed|deposit|one[- ]time|set[- ]?up|install|per[ \t]+(?:use|load|visit)|/[ \t]*(?:yr|year)|per[ \t]+year|annual|yearly|quarterly|if[ \t]+(?:you|needed|wanted))", re.I)
+_SVC_BAD_TAIL = re.compile(r"\b(?:optional|billed|passed|deposit|one[- ]time|once|set[- ]?up|install|per[ \t]+(?:use|load|visit|quarter|year|week)|/[ \t]*(?:yr|year|qtr|quarter|wk|week)|annual|annually|yearly|quarterly|semi-?annual|weekly|biweekly|every[ \t]+(?:3|three|6|six)[ \t]+months|if[ \t]+(?:you|needed|wanted))", re.I)
 
 
 def _service_fee_items(text: str) -> list[tuple[str, float]]:
@@ -6251,7 +6255,7 @@ def _service_fee_items(text: str) -> list[tuple[str, float]]:
     p_name = re.compile(r"(?<![\w$])(?P<n>" + lead + r"(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?|(?:" + weak + r")" + _SVC_FEE_WORD + r")(?:[ \t]*\([^)\n$]{1,25}\))?[ \t:\-=]{0,4}(?:of[ \t]+)?" + amt + r"(?P<p>" + _SVC_PERIOD + r")?", re.I)
     p_amt = re.compile(amt + r"(?P<p>" + _SVC_PERIOD + r")?[ \t]*(?:flat[ \t]+)?(?:for[ \t]+)?(?:the[ \t]+)?(?:flat[ \t]+)?(?P<m>monthly[ \t]+)?(?P<n>(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?" + more + r"|(?:" + weak + r")" + _SVC_FEE_WORD + r")(?P<q>[ \t]*monthly\b|[ \t]+per[ \t]+month|/[ \t]*mo\b)?", re.I)
     for clause in re.split(r"\n|;|(?<=[a-z\)\d])\.(?=\s|$)", text):
-        clause_monthly = bool(re.search(r"\bmonthly\b|\bper[ \t]+month\b|/[ \t]*mo\b|\ba[ \t]+month\b", clause, re.I))
+        clause_monthly = bool(re.search(r"\bmonthly\b|\bper[ \t]+month\b|/[ \t]*mo\b|\ba[ \t]+month\b", re.sub(r"\((?:about|approx\.?|roughly|around|~)[^)]*\)", " ", clause), re.I))
         spans: list[tuple[int, int]] = []
         for pat in (p_name, p_amt):
             for m in pat.finditer(clause):
@@ -6261,8 +6265,8 @@ def _service_fee_items(text: str) -> list[tuple[str, float]]:
                     continue
                 tail = clause[m.end():m.end() + 30]
                 tail = re.split(r"[,]|\$", tail)[0]
-                if _SVC_BAD_TAIL.search(tail) or _SVC_BAD_TAIL.search(clause[m.start():m.end()]):
-                    continue
+                if _SVC_BAD_TAIL.search(tail) or _SVC_BAD_TAIL.search(clause[max(0, m.start() - 22):m.end()]):
+                    continue  # "quarterly pest control fee of $30", "$30 per quarter", "optional"
                 label = " ".join(m.group("n").lower().split())
                 amount = float(m.group("a"))
                 has_period = bool(m.groupdict().get("p") or m.groupdict().get("m") or m.groupdict().get("q"))
