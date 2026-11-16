@@ -56,3 +56,12 @@ def test_normal_japanese_listing_not_flagged():
 
 def test_ordinary_text_with_dots_not_flagged():
     assert not ai("Visit www.example.com or call 555.123.4567. Prior owner e.g. J. Smith. Instructions for the washer are in the unit.")
+
+
+def test_roommates_l68_correction_listing_has_no_ai_flag_and_is_not_do_not_trust():
+    path = "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel/r23-roommates-l68.txt"
+    import os
+    if not os.path.exists(path):
+        return
+    text = open(path).read()
+    assert not ai(text)

@@ -161,6 +161,22 @@ class _CorrectionAware:
     def search(self, text: str):
         return next(self.finditer(text), None)
 
+    def sub(self, repl: Any, text: str, count: int = 0) -> str:
+        """Replace the hits that are not plain corrections (the rest of the pattern API is the raw pattern's)."""
+        keep = [m for m in self.finditer(text)]
+        if not keep:
+            return text
+        out, last = [], 0
+        for m in keep[:count or None]:
+            out.append(text[last:m.start()])
+            out.append(repl(m) if callable(repl) else m.expand(repl))
+            last = m.end()
+        out.append(text[last:])
+        return "".join(out)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._raw, name)
+
 # cycle 12: polite and indirect ways of steering an AI reader. Each needs an AI-only tell (what you were told, prior guidance,
 # an AI addressee, a score, "when summarising"), so ordinary sentences like "Please forget about street parking" stay clear.
 _AI_SOFT = (
