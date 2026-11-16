@@ -248,10 +248,11 @@ def test_update_place_drops_the_starting_at_note_and_the_missing_amount(store):
     call(srv, "add_place", title="Campustown", listing_text=L21)
     pid = store.list_places(s["id"])[0]["id"]
     assert '"starting at" $1,250' in store.get_place(pid)["reader_notes"]
-    out = text(call(srv, "update_place", place_id=pid, price=1395))
+    # cycle 23 join: the reader now saves the 1 bedroom plan ($1,395) itself, so the user picks the other plan
+    out = text(call(srv, "update_place", place_id=pid, price=1445))
     notes = store.get_place(pid)["reader_notes"]
     assert "starting at" not in notes and "$1,250" not in notes and "$35" in notes  # the other stated amount stays
-    assert "$1,250" not in out and "missing: the $35 deposit in the listing notes" in out
+    assert "$1,250" not in out and "missing: the $35 amount in the listing notes" in out  # cycle 23 join: G4 names a figure by its own label
 
 
 def test_a_later_update_does_not_bring_the_old_note_back(store):
@@ -259,7 +260,7 @@ def test_a_later_update_does_not_bring_the_old_note_back(store):
     srv = server(store)
     call(srv, "add_place", title="Campustown", listing_text=L21)
     pid = store.list_places(s["id"])[0]["id"]
-    call(srv, "update_place", place_id=pid, price=1395)
+    call(srv, "update_place", place_id=pid, price=1445)
     call(srv, "update_place", place_id=pid, beds=1)
     assert "starting at" not in store.get_place(pid)["reader_notes"]
 

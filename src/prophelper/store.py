@@ -1812,6 +1812,14 @@ class Store:
                 price = values.get("price", existing.get("price"))
                 if price not in (None, "") and re.search(r"\bstarting at\b", unit, re.I) and float(price) != amount:
                     drop = True
+            old_price, new_price = existing.get("price"), values.get("price")
+            if "price" in values and new_price not in (None, "") and old_price not in (None, "") and float(new_price) != float(old_price) \
+                    and re.search(r"\bstarting at\b|\bfloor plan\b", unit, re.I):
+                drop = True  # a "starting at" or floor-plan note explains the old rent; the user has now set the rent
+            saved = re.search(r"rent saved is[^$]*\$\s?(\d[\d,]*)", unit, re.I)
+            price_now = values.get("price", existing.get("price"))
+            if saved and price_now not in (None, "") and float(saved.group(1).replace(",", "")) != float(price_now):
+                drop = True  # the floor-plan note names a saved rent that is no longer the rent (made again on a later update)
             if not drop:
                 out.append(unit)
         return "\n".join(out) if len(out) != len(units) else notes
