@@ -5420,7 +5420,7 @@ _POLICY_TITLE = re.compile(
     r"\b(?:month[- ]to[- ]month|lease|leases|leasing|doorman|concierge|rooftop|fenced|fence|yard|driveway|street permit|street parking|garage|carport|parking|"
     r"pets?|dogs?|cats?|utilit\w*|deposits?|laundry|washer|dryer|dishwasher|included|allowed|tours?|appointment|tenant|landlord|owner|"
     r"credit|application|available|rent[:=]|no:|sorry|oops|correction)\b", re.I)
-_REAL_PLACE_NOUN = re.compile(r"\b(?:apartments?|apts?|house|home|condo|townhome|townhouse|duplex|loft|flat|cottage|bungalow|villa|residences?|estates?|commons|court|manor|terrace|towers?)\b", re.I)
+_REAL_PLACE_NOUN = re.compile(r"\b(?:apartments?|apts?|house|home|condo|townhome|townhouse|duplex|lofts?|flats?|cottages?|bungalows?|villas?|residences?|estates?|commons|court|manor|terrace|towers?)\b", re.I)
 
 
 def _policy_title_line(line: str) -> bool:

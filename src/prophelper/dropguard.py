@@ -16,7 +16,7 @@ _NON_COST = re.compile(
     r"\blate (?:fee|charge|rent|payment)|\bpenalt|\bbounced|\breturned check|\bNSF\b|\bwas \$|\bformerly\b|\bnow \$|\breduced from\b|\bdown from\b|\bprice (?:drop|cut|reduction)\b|"
     r"\binstead of\b|\bnot \$|\bnot the \$|\bsuperseded\b|\bcorrection\b|\bvs\.?\b|\bcompared to\b|"
     r"\bincome\b|\bearn|\bsalary|\bcomps?\b|\bassessed\b|\bzestimate\b|\bappraise|\bsold for\b|\blast sold\b|\bper sq|/\s*sq|\bpsf\b|\bmortgage\b|\bdown payment\b|"
-    r"\bpre-?approv|\bbuyer.{0,30}budget|\bor (?:street|a street)\b", re.I)
+    r"\btogether\b|\bin total\b|\bpre-?approv|\bbuyer.{0,30}budget|\bor (?:street|a street)\b", re.I)
 
 
 _SEASON = re.compile(r"\b(?:summer|winter|spring|fall|autumn|peak|off-?season|cooling season|heating season)\b", re.I)
@@ -115,8 +115,9 @@ _STOP = frozenset("the and for per mo month monthly each about approx avg roughl
 def _noted(amount: float, item: str, notes: str) -> bool:
     """A note explains the figure when it holds the same amount and shares a word with the item the figure sits in."""
     words = {w for w in re.findall(r"[a-z0-9]{3,}", re.sub(r"\$\s?[\d,.]+", " ", item.lower())) if w not in _STOP}
+    mine = next((c[0] for c in _CATS if c[1].search(item)), None)
     for unit in notes.split("\n"):
-        if amount in _P()._dollar_values(unit) and (not words or any(w in unit.lower() for w in words)):
+        if amount in _P()._dollar_values(unit) and (not words or any(w in unit.lower() for w in words) or (mine and next((c[0] for c in _CATS if c[1].search(unit)), None) == mine)):
             return True
     return False
 
