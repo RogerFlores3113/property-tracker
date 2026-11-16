@@ -28,6 +28,15 @@ _ABROAD = re.compile(r"\b(out of (?:the )?(?:country|town|state|us|u\.s\.)|owner
                      r"(?:living|working|stationed|serving|based) (?:abroad|overseas|in (?:africa|europe|asia|london|canada|spain|italy|dubai))|"
                      r"(?:abroad|overseas|missionary|mission trip|deployed)|can'?t (?:show|meet|tour)|unable to (?:show|meet|tour)|"
                      r"(?:cannot|can not) (?:show|meet|tour))\b", re.I)
+# cycle 24: a payment sentence that also names a place outside the country ("wire it to my attorney's trust account in Lagos"): the payment flag says so
+_FOREIGN_PLACE = re.compile(r"\b(?:overseas|abroad|offshore|off-shore|out of (?:the )?country|outside (?:of )?(?:the )?(?:us|u\.s\.|usa|united states|country)|international(?:ly)?|foreign|"
+                            r"lagos|abuja|nigeria|ghana|accra|nairobi|kenya|south africa|johannesburg|london|england|united kingdom|u\.k\.|dubai|uae|abu dhabi|hong kong|shenzhen|china|"
+                            r"cyprus|malta|manila|philippines|mumbai|india|pakistan|bangladesh|russia|ukraine|romania|bulgaria|poland|malaysia|singapore|thailand|cayman|panama|cambodia|"
+                            r"vietnam|indonesia|egypt|cairo|morocco|senegal|cameroon|togo|benin|ivory coast|amsterdam|netherlands|germany|france|paris|spain|madrid|italy|rome|"
+                            r"ireland|dublin|brazil|colombia|argentina|peru|mexico|canada|toronto|vancouver|australia|sydney|new zealand|japan|korea)\b", re.I)
+_PAY_VERB = re.compile(r"\b(?:wire[sd]?|wiring|send|transfer|pay|deposit|remit|forward|western union|moneygram|funds?|earnest|account)\b", re.I)
+OVERSEAS_WIRE_NOTE = ("The money would go to someone or an account outside the country, so a wire there is almost impossible to get back. "
+                      "Do not send anything overseas before you have toured the place and checked the seller yourself.")
 _PRESSURE = re.compile(r"\b(act (?:now|fast|today|quickly)|decide today|(?:must|need to|have to) (?:decide|respond|pay|reply|send) (?:today|now|immediately|asap)|"
                        r"won'?t last|many (?:people|applicants) (?:are )?(?:interested|waiting|inquiring)|first come|hurry|"
                        r"(?:today|tonight) only|(?:rent|pay|respond|reply|send)[^.\n]{0,20}\b(?:today|immediately|right away|asap) (?:to|or|before)|"
@@ -656,6 +665,10 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
             continue
         if pattern.search(text):
             flags.append(message.replace("lease", "contract") if buy else message)
+    if any(_FOREIGN_PLACE.search(x) and _PAY_VERB.search(x) and (_PAYMENT.search(x) or buy_payment_hit(x)) for x in sentences):
+        for i, f in enumerate(flags):  # the wire flag also says the money goes outside the country
+            if f.startswith(("It asks for earnest money or a deposit by wire", "It asks for payment in a way that is hard to undo")) and OVERSEAS_WIRE_NOTE not in f:
+                flags[i] = f + " " + OVERSEAS_WIRE_NOTE
     ai_line = None
     for key in ("listing_text", "notes", "ai_notes", "title", "hidden_text"):  # the title is quoted only when it is what matched
         field_text, field_comments = normalise_text(str(place.get(key) or ""), keep_lines=True)
