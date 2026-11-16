@@ -55,12 +55,9 @@ def test_buy_sparse_gate(store, fields):
     store.add_place(title="Complete", address="2 A St", price=250000, beds=2, property_tax=3000, insurance=900, hoa=100)
     rows = _rows(store, s)
     top = today.best_fits(rows)
-    if len(fields) >= 2:
-        assert "Condo" in [p["title"] for p in top]  # one unknown part still ranks
-    else:
-        assert [p["title"] for p in top] == ["Complete"]
-        out = text(call(server(store), "todays_list"))
-        assert "Ask the listing agent" in out and "Ask the landlord" not in out
+    assert [p["title"] for p in top] == ["Complete"]  # cycle 22: one unknown part is never a best fit
+    out = text(call(server(store), "todays_list"))
+    assert "Ask the listing agent" in out and "Ask the landlord" not in out
 
 
 @pytest.mark.parametrize("words", ["Tenant pays all utilities.", "Renter pays electric, gas and water.", "Rent $1450 plus utilities."])

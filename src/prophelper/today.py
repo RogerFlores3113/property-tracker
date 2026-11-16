@@ -144,7 +144,7 @@ def cost_unsettled(place: dict[str, Any]) -> str:
 
 def is_best_fit(place: dict[str, Any]) -> bool:
     return (fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place) and not cost_unsettled(place)
-            and not over_budget(place))
+            and not over_budget(place) and not unknown_cost_parts(place))  # one rule: an unknown cost part is never a best fit
 
 
 def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
@@ -282,7 +282,7 @@ def unconfirmed(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
     for p in rows:
         score = p.get("score") or {}
         if (not _open(p) or not fits(p) or score.get("fit") != "fits" or ai_text_only(p) or no_price(p) or is_best_fit(p) or over_budget(p)
-                or (p["score_total"] >= MIN_FIT_SCORE and not is_near(p) and cost_unsettled(p))):  # these show under "Needs a cost check"
+                or (p["score_total"] >= MIN_FIT_SCORE and not is_near(p) and (cost_unsettled(p) or unknown_cost_parts(p)))):  # these show under "Needs a cost check"
             continue
         bits = [f"{n} not known yet" for n in score.get("unknown") or []] + [str(c) for c in score.get("concerns") or []]
         if (why := cost_unsettled(p)):
@@ -292,30 +292,41 @@ def unconfirmed(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
     return out[:limit]
 
 
-def cost_check(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Open places that would be best fits except that their monthly cost has unknown or conflicting parts: [{"place", "text"}],
-    best score first. They stay out of "Best fits" until the cost is settled."""
+def cost_check(rows: list[dict[str, Any]], also: Any = ()) -> list[dict[str, Any]]:
+    """Open places with an unknown or conflicting part in their monthly cost: [{"place", "text"}], best score first.
+    One rule: such a place is never in "Best fits" and always here, whatever other list it is in (Closest, Near miss).
+    ``also`` holds ids of places shown under "Closest", which count even when they miss a must-have by a lot."""
     out = []
+    also = set(also)
     for p in rows:
-        if not _open(p) or not fits(p) or ai_text_only(p) or no_price(p) or is_near(p) or p["score_total"] < MIN_FIT_SCORE or over_budget(p):
+        if not _open(p) or p.get("score_total") is None or possible_scam(p) or ai_text_only(p) or no_price(p):
             continue
-        if (p.get("score") or {}).get("fit") != "fits" or not (why := cost_unsettled(p)):
+        fit = (p.get("score") or {}).get("fit")
+        if not (fit in ("fits", "near_miss") or is_near(p) or over_budget(p) or p.get("id") in also):
             continue
-        ask = "Ask the listing agent before you count on this cost." if (p.get("cost") or {}).get("mode") == "buy" \
-            else "Ask the landlord before you count on the rent."
-        out.append({"place": p, "text": why[0].upper() + why[1:] + ". " + ask})
-    listed = {r["place"]["id"] for r in out if "id" in r["place"]}
-    for p in rows:  # any other open place that fits so far and has an unknown cost part is listed too (one part is enough)
-        if p.get("id") in listed or not _open(p) or not fits(p) or ai_text_only(p) or no_price(p):
-            continue
+        why = cost_unsettled(p) if (fit == "fits" and not is_near(p) and p["score_total"] >= MIN_FIT_SCORE and not over_budget(p)) else ""
         parts = unknown_cost_parts(p)
-        if not parts:
+        if not why and not parts:
             continue
         ask = "Ask the listing agent before you count on this cost." if (p.get("cost") or {}).get("mode") == "buy" \
             else "Ask the landlord before you count on the rent."
-        out.append({"place": p, "text": _join(parts)[0].upper() + _join(parts)[1:] + (" is" if len(parts) == 1 else " are") + " not counted yet. " + ask})
+        if why:
+            text = why[0].upper() + why[1:] + ". " + ask
+        else:
+            text = _join(parts)[0].upper() + _join(parts)[1:] + (" is" if len(parts) == 1 else " are") + " not counted yet. " + ask
+        out.append({"place": p, "text": text})
     out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
     return out
+
+
+_CLOSING_HELP = re.compile(r"\b(?:closing|seller|credit|concessions?|help|assist\w*|incentive|offer\w*)\b", re.I)
+_REAL_COST_WORD = re.compile(r"\b(?:hoa|tax|insurance|assessment|parking fee|deposit|fee|dues)\b", re.I)
+
+
+def _closing_help_only(place: dict[str, Any]) -> bool:
+    """True when every open money note in a buyer's listing notes is a closing-help offer (not a cost the buyer pays monthly)."""
+    notes = money_mod.open_listing_notes(place.get("reader_notes"), place)
+    return bool(notes) and all(_CLOSING_HELP.search(n) and not _REAL_COST_WORD.search(n) for n in notes)
 
 
 def unknown_cost_parts(place: dict[str, Any]) -> list[str]:
@@ -326,9 +337,16 @@ def unknown_cost_parts(place: dict[str, Any]) -> list[str]:
     for u in cost.get("uncounted") or []:
         u = str(u)
         if u == money_mod.LISTING_NOTES_UNCOUNTED:
+            if cost.get("mode") == "buy" and _closing_help_only(place):
+                continue  # a closing-help offer is about cash to close, not a monthly cost part
             out.append("some amounts in the listing notes")
             continue
         name = re.sub(r"\s*\(.*\)\s*$", "", u).strip()
+        if cost.get("mode") == "buy" and name.lower().startswith("parking"):
+            continue  # parking is no part of a buyer's monthly cost here
+        if name.lower() == "utilities" and (cost.get("mode") == "buy" or u.lower() == "utilities" and not _TENANT_PAYS_UTILITIES.search(
+                " ".join(str(place.get(k) or "") for k in ("listing_text", "reader_notes", "ai_notes", "notes")))):
+            continue  # a bare "utilities" nobody said the tenant pays is no cost part to ask about
         if name and name not in out:
             out.append(name)
     if cost.get("mode") != "buy" and any(l.get("key") == "pet_rent" and l.get("unset") and not l.get("not_counted") for l in cost.get("lines") or []):
@@ -539,7 +557,7 @@ def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> d
     needs = needs_price(rows)
     priceless = {p["id"] for p in needs}  # a place with no price shows under "Needs a price" only
     near_closest = [] if top else closest(rows)
-    return {"fits": top, "unconfirmed": [] if top else unconfirmed(rows), "needs_price": needs, "cost_check": cost_check(rows), "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
+    return {"fits": top, "unconfirmed": [] if top else unconfirmed(rows), "needs_price": needs, "cost_check": cost_check(rows, {c["place"]["id"] for c in near_closest}), "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
             "near_miss": [n for n in near_misses(rows) if n["place"]["id"] not in {c["place"]["id"] for c in near_closest}], "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
             "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late_availability(rows, search),
             "tours": store.upcoming_tours(days, search_id=search["id"])}

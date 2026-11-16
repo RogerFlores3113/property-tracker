@@ -242,6 +242,8 @@ def near_parts(score: dict[str, Any], cost: dict[str, Any] | None) -> list[dict[
         return []
     out = []
     for item in misses:
+        if item.get("hard") and item.get("dealbreaker_status") == "fail":
+            return []  # a hard limit is a fail at any minute over
         over, pct = item.get("over_amount"), item.get("over_pct")
         if over is None or pct is None or over <= 0 or (pct >= NEAR_MISS_PCT and item.get("dealbreaker_status") != "near"):
             return []
@@ -599,6 +601,8 @@ def score_criterion(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any
         r = _score_custom(c, place, ctx)
     else:
         r = _unknown("", kind)
+    if kind == "commute" and (c.get("target") or {}).get("hard"):
+        r["hard"] = True  # one minute over a hard limit is a fail, never a near miss
     if not c.get("dealbreaker"):
         r.pop("conditional", None)  # only a must-have is held back by an unknown cost
         status = ""
