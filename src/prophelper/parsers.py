@@ -1064,6 +1064,10 @@ def _pets(text: str) -> str:
         cats = True  # "Cats up to 2"
     if re.search(r"\bdogs?\s+(?:up to|max(?:imum)?(?: of)?|limit(?: of)?)\s+(?:\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch))", work):
         dogs = True
+    if re.search(r"\bcats?\s*[:\-]\s*(?:up to\s+|max(?:imum)?(?: of)?\s+)?(?:\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch|%|/))(?![ \t]+(?:not|no)\b)", work):
+        cats = True  # "Cats: 2 allowed"
+    if re.search(r"\bdogs?\s*[:\-]\s*(?:up to\s+|max(?:imum)?(?: of)?\s+)?(?:\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch|%|/))(?![ \t]+(?:not|no)\b)", work):
+        dogs = True  # "Dogs: 2 allowed, max 60 lbs each"
     pm = re.search(r"\bpets?\s*[:\-]\s*((?:up to|max(?:imum)?(?: of)?|limit(?: of)?|up to a max of)?\s*(?:\d|one|two|three|four)?\s*(?:dogs?|cats?)\b[^.\n;]{0,40})", work)
     if pm and not re.search(r"\b(?:no|not|none)\b", pm.group(1)):
         cats = cats or bool(re.search(r"\bcats?\b", pm.group(1)))
@@ -1333,11 +1337,22 @@ def _pet_fees(text: str) -> dict[str, float]:
 _NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4}
 
 
+def _no_pet_deposit(text: str) -> bool:
+    """The listing says there is no pet deposit ("no pet deposit", "pet deposit: none", "no deposit for pets")."""
+    return bool(re.search(r"\bno[ \t]+pet[ \t]+deposits?\b|\bpet[ \t]+deposits?[ \t]*[:\-=]?[ \t]*(?:none|n/?a|\$0(?:\.00)?|waived|no)\b|"
+                          r"\bno[ \t]+deposits?[ \t]+(?:is[ \t]+)?(?:for|on|needed[ \t]+for|required[ \t]+for)[ \t]+(?:pets?|cats?|dogs?|animals?)\b|"
+                          r"\b(?:pets?|cats?|dogs?)\b[^.\n;$]{0,30}\bno[ \t]+(?:pet[ \t]+)?deposits?\b", text, re.I))
+
+
 def _pet_deposit(text: str) -> tuple[float | None, str]:
     """A refundable pet deposit ("$400 refundable pet deposit"), kept apart from the one-time pet fee: it comes back,
     so it counts only as cash needed at move-in. Returns (amount, text with that phrase blanked so _pet_fees skips it)."""
     pats = (r"\$\s?(\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+)?(?:refundable[ \t]+)?pet[ \t]+deposit\b",
-            r"\bpet[ \t]+deposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?\b(?!/)")
+            r"\bpet[ \t]+deposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?\b(?!/)",
+            # "$250 per pet deposit", "$250 each pet deposit", "deposit: $250 per pet"
+            r"\$\s?(\d{1,4})(?:\.\d\d)?[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]+(?:refundable[ \t]+)?deposit\b",
+            r"\b(?:pets?|dogs?|cats?|animals?)[ \t]+deposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b",
+            r"(?<!pet )\bdeposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?(?=[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b)")
     for pat in pats:
         for m in re.finditer(pat, text, re.I):
             before = re.split(r"[,;.\n]", text[max(0, m.start() - 20):m.start()])[-1]
@@ -4317,6 +4332,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if deposit_amount is not None and "pet_deposit" in out:
         deposit_amount = None
     put("pet_deposit", deposit_amount)
+    if deposit_amount is None and "pet_deposit" not in out and out.get("pets") != "none" and _try(lambda: _no_pet_deposit(text)):
+        out["pet_deposit"] = 0  # the listing says there is no pet deposit: zero, not unknown
     for key, value in (_try(lambda: _pet_fees(fee_text)) or {}).items():
         if key not in out:
             put(key, value)
@@ -4341,6 +4358,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     elif out.get("pet_rent") and re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:each|apiece)\b", fee_text, re.I):
         facts.append(f"The listing says ${out['pet_rent']:,.0f} each for pets, saved as monthly pet rent for each pet, so with more than one pet it adds up. "
                      "If it is a one time fee instead, move it to the pet fee.")
+    if out.get("pet_deposit") and re.search(r"\$\s?" + f"{out['pet_deposit']:.0f}" + r"(?!\d)(?:\.\d\d)?[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]+(?:refundable[ \t]+)?deposit\b"
+                                            r"|\bdeposit[ \t]*[:\-]?[ \t]*\$\s?" + f"{out['pet_deposit']:.0f}" + r"(?!\d)(?:\.\d\d)?[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b", text, re.I):
+        facts.append(f"The pet deposit is ${out['pet_deposit']:,.0f} for each pet, so with more than one pet it adds up. It comes back, so it counts only as cash at move-in.")
     nr = re.search(r"\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?[ \t]*(?:non[- ]?refundable[ \t]+)?pet[ \t]+deposit\b[^.\n;]{0,25}?non[- ]?refundable|\bnon[- ]?refundable[ \t]+\$\s?(\d{1,4}(?:,\d{3})?)[ \t]*pet[ \t]+deposit", text, re.I)
     if nr and out.get("pet_fee") and not out.get("pet_deposit"):
         facts.append(f"The ${float((nr.group(1) or nr.group(2)).replace(",", "")):,.0f} pet deposit is non-refundable, so it is counted as a pet fee, not as money you get back.")
@@ -5177,8 +5197,8 @@ def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
     """The short phrase around text[start:end]: the clause it sits in. A clause that fits ``limit`` is quoted whole, never
     cut in the middle; a longer one is narrowed to the comma-separated piece that holds the match, and only a piece that is
     still too long is cut at a word edge."""
-    left = max(text.rfind(c, 0, start) for c in _NET_ENDS) + 1
-    rights = [i for i in (text.find(c, end) for c in _NET_ENDS) if i >= 0]
+    left = max(max(text.rfind(c, 0, start) for c in _NET_ENDS) + 1, text.rfind(" * ", 0, start) + 3 if text.rfind(" * ", 0, start) >= 0 else 0)  # " * " separates bullets
+    rights = [i for i in (text.find(c, end) for c in (*_NET_ENDS, " * ")) if i >= 0]
     right = min(rights) if rights else len(text)
     lo, hi = left, right
     if hi - lo > limit:
