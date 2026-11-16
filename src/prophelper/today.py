@@ -44,6 +44,11 @@ def fits(place: dict[str, Any], high_messages: Any = None) -> bool:
     return place.get("score_total") is not None and not fails_dealbreakers(place) and not possible_scam(place)
 
 
+def hard_limit_failed(place: dict[str, Any]) -> bool:
+    """True when a hard limit (a commute the searcher set as hard) is failed: list_places and Compare say FAILS for it."""
+    return any(i.get("hard") and i.get("dealbreaker_status") == "fail" for i in (place.get("score") or {}).get("items") or [])
+
+
 def is_near(place: dict[str, Any]) -> bool:
     """A must-have is missed by a little (only because of a guess): a near miss, so not a best fit."""
     score = place.get("score") or {}
@@ -100,6 +105,24 @@ def low_insurance(place: dict[str, Any]) -> str:
             "Confirm the real quote before you count on it")
 
 
+LOW_RENT_MONTHLY = 200  # a rental is never listed for less than about this much a month
+
+
+def low_rent(place: dict[str, Any], mode: str | None = None) -> str:
+    """'' or a plain check note when a rental's monthly rent is far below normal (under about $200): a typo or a placeholder."""
+    mode = mode or (place.get("cost") or {}).get("mode") or "rent"
+    if mode == "buy":
+        return ""
+    try:
+        rent = float(place.get("price"))
+    except (TypeError, ValueError):
+        return ""
+    if rent <= 0 or rent >= LOW_RENT_MONTHLY:
+        return ""
+    return (f"the rent of ${rent:,.0f} a month is far below normal for a rental, so the monthly cost looks too low. "
+            "Confirm the real rent before you count on it")
+
+
 def cost_unsettled(place: dict[str, Any]) -> str:
     """Why a place's monthly cost can't be trusted for a ranking, in plain words ('' when it can). Rent: the listing's utilities
     lines disagree (so none are counted), a utility the tenant pays has no amount, or two or more parts of the monthly cost
@@ -116,6 +139,8 @@ def cost_unsettled(place: dict[str, Any]) -> str:
         if low:
             return low
         return f"{_join(left)} are not counted yet" if len(left) >= 2 else ""
+    if (low := low_rent(place)):
+        return low
     notes = " ".join(str(place.get(k) or "") for k in ("reader_notes", "ai_notes"))
     utilities = [u for u in unc if u.startswith("utilities")]
     if utilities and _UTILITY_CONFLICT.search(notes):
@@ -144,7 +169,8 @@ def cost_unsettled(place: dict[str, Any]) -> str:
 
 def is_best_fit(place: dict[str, Any]) -> bool:
     return (fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place) and not cost_unsettled(place)
-            and not over_budget(place) and not unknown_cost_parts(place))  # one rule: an unknown cost part is never a best fit
+            and not over_budget(place) and not unknown_cost_parts(place)
+            and not (place.get("score") or {}).get("lease_gap"))  # one rule: an unknown cost part is never a best fit
 
 
 def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
@@ -152,7 +178,7 @@ def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[st
     open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in OFF_THE_MARKET and is_best_fit(p)
                  and not no_price(p)]
     # a place whose cost leaves listed amounts out never ranks above a complete place (its price is only as low as what was read)
-    open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), bool(compare.cost_may_be_higher(p)), -p["score_total"], p["title"].lower()))
+    open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), bool(compare.cost_may_be_higher(p)), -p["score_total"], _cost_key(p), p["title"].lower()))
     if open_rows and _no_address(open_rows[0]):  # a place with no address is never the top pick when another full fit has one
         i = next((i for i, p in enumerate(open_rows) if not _no_address(p)), None)
         if i is not None:
@@ -161,6 +187,16 @@ def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[st
     for p in top:
         p["caution"] = caution(p)
     return top
+
+
+def _cost_key(place: dict[str, Any]) -> tuple[bool, float]:
+    """Tie-break for places with the same score: a complete cost before one with unknown parts, then the lowest monthly cost
+    first; a place with no cost sorts last."""
+    try:
+        total = float(place.get("cost_total"))
+    except (TypeError, ValueError):
+        total = float("inf")
+    return (bool((place.get("cost") or {}).get("uncounted")), total)
 
 
 def _no_address(place: dict[str, Any]) -> bool:
@@ -210,9 +246,20 @@ def check_first(rows: list[dict[str, Any]], mode: str = "rent") -> list[dict[str
 
 
 def _own_reason(place: dict[str, Any], generic: str, first: str = "") -> str:
-    """The place's own first flag (so check-first places can be told apart), then the plain advice."""
-    flag = first or next((str(f) for f in place.get("flags") or [] if f), "")
-    return f"{flag} {generic}" if flag else generic
+    """A short reason for this place: the first sentence of its one or two own flags (the full text stays on the place page),
+    so check-first places can be told apart. With no flag, the plain advice."""
+    if first:
+        return f"{first} {generic}"
+    flags = [str(f) for f in redflags.scam_sign_flags(place.get("flags") or []) if f]
+    reasons: list[str] = []
+    for f in flags:
+        r = redflags.short_reason(f)
+        if r not in reasons:
+            reasons.append(r)
+    if not reasons:
+        return generic
+    advice = generic.split(". ", 1)[1] if generic.startswith("Possible scam signs in the listing. ") else generic
+    return " ".join(reasons[:2]) + " " + advice
 
 
 def caution(place: dict[str, Any]) -> str:
@@ -265,9 +312,11 @@ def closest(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str,
             continue
         if score.get("fit") not in ("near_miss", "doesnt_fit"):
             continue
+        if hard_limit_failed(p):
+            continue  # a hard limit is a fail at any minute over, never a near miss
         reasons = [str(r) for r in score.get("fit_reasons") or [] if r]
         out.append({"place": p, "text": "; ".join(reasons) or "Misses a must-have."})
-    out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
+    out.sort(key=lambda r: (-r["place"]["score_total"], _cost_key(r["place"]), r["place"]["title"].lower()))
     return out[:limit]
 
 
@@ -288,7 +337,7 @@ def unconfirmed(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[
         if (why := cost_unsettled(p)):
             bits.append("monthly cost not settled: " + why)
         out.append({"place": p, "text": "; ".join(bits) or "Check the details on its page."})
-    out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
+    out.sort(key=lambda r: (-r["place"]["score_total"], _cost_key(r["place"]), r["place"]["title"].lower()))
     return out[:limit]
 
 
@@ -301,6 +350,8 @@ def cost_check(rows: list[dict[str, Any]], also: Any = ()) -> list[dict[str, Any
     for p in rows:
         if not _open(p) or p.get("score_total") is None or possible_scam(p) or ai_text_only(p) or no_price(p):
             continue
+        if fails_dealbreakers(p) or over_budget(p) or hard_limit_failed(p):
+            continue  # a place that already fails a must-have or the budget is no "fit so far": it can only be a near miss
         fit = (p.get("score") or {}).get("fit")
         if not (fit in ("fits", "near_miss") or is_near(p) or over_budget(p) or p.get("id") in also):
             continue
@@ -315,7 +366,7 @@ def cost_check(rows: list[dict[str, Any]], also: Any = ()) -> list[dict[str, Any
         else:
             text = _join(parts)[0].upper() + _join(parts)[1:] + _verb(parts) + " not counted yet. " + ask
         out.append({"place": p, "text": text})
-    out.sort(key=lambda r: (-r["place"]["score_total"], r["place"]["title"].lower()))
+    out.sort(key=lambda r: (-r["place"]["score_total"], _cost_key(r["place"]), r["place"]["title"].lower()))
     return out
 
 
@@ -549,6 +600,9 @@ def late_availability(rows: list[dict[str, Any]], search: dict[str, Any], limit:
         if p["hidden"] or p["stage"] in OFF_THE_MARKET or fails_dealbreakers(p) or possible_scam(p):
             continue
         msg = availability_warning(p, search)
+        gap = (p.get("score") or {}).get("lease_gap")
+        if gap:
+            msg = f"{msg}. {gap}" if msg else gap
         if msg:
             out.append({"place": p, "text": msg})
     return out[:limit]

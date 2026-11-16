@@ -266,6 +266,12 @@ def scam_sign_flags(flags: Iterable[str]) -> list[str]:
     return [f for f in flags if not is_hidden_note(f) and not is_plain_hint(f)]
 
 
+def short_reason(flag: str) -> str:
+    """The first sentence of a hint, without any quoted listing line: a short reason for a list (the full text stays on the place page)."""
+    first = re.split(r"(?<=[.!?;])\s+(?=[A-Z])", without_quote(str(flag)).strip(), maxsplit=1)[0].strip()
+    return first if first.endswith((".", "!", "?")) else first.rstrip(";:,") + "."
+
+
 AI_QUOTE_MARK = ' It says: "'
 
 

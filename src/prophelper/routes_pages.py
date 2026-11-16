@@ -194,7 +194,7 @@ def _place_page(request: Request, place_id: int, *, status: int = 200, form_valu
             commute_rows.append({"anchor": a, "mode": mode, "found": found, "saved": saved})
     criteria = store.list_criteria(search["id"])
     return render(request, "place.html", status_code=status, place=full, search=search,
-                  avail_warning=movein.gap_warning(place, search), insurance_warning=today.low_insurance(full), stages=stages.stages_for(search["mode"]),
+                  avail_warning=movein.gap_warning(place, search), insurance_warning=today.low_insurance(full) or today.low_rent(full, search["mode"]), stages=stages.stages_for(search["mode"]),
                   events=store.list_events(place_id), commute_rows=commute_rows, anchors=anchors, criteria=criteria,
                   custom_scores=store.custom_scores(place_id), form_values=form_values or {}, form_error=error,
                   all_searches=store.list_searches(), listing_has_text=bool(place["listing_text"]),

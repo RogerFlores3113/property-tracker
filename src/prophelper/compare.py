@@ -365,6 +365,9 @@ def _note_rank(unit: str) -> int:
     return 1 if (money_mod.listing_notes_uncounted(unit) or re.search(r"\$\s?\d", unit)) else 2
 
 
+NOTES_SHOWN = 3  # how many listing notes the Compare row shows before "and N more"
+
+
 def listing_notes_text(p: dict[str, Any], limit: int = 110) -> str:
     """The reader's saved notes from the listing, short. Money notes come first and the offer boilerplate last. Whole notes
     only: when they do not all fit, it ends after the last whole note with "and N more on the place page"."""
@@ -373,21 +376,16 @@ def listing_notes_text(p: dict[str, Any], limit: int = 110) -> str:
         return ""
     units = sorted(money_mod.note_units(text), key=_note_rank)  # stable: the order they were written inside each group
     shown: list[str] = []
-    used = 0
-    for u in units:
-        if used + len(u) + 1 > limit and shown:
-            break
+    cut = 0
+    for u in units[:NOTES_SHOWN]:  # up to three whole notes; one very long note keeps only its first whole sentence
+        if len(u) > limit * 2:
+            sentences = re.split(r"(?<=[.!?])\s+", u)
+            u = sentences[0]
+            cut += len(sentences) > 1
+            if len(u) > limit * 2:
+                u = u[:limit * 2].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
         shown.append(u)
-        used += len(u) + 1
-    rest = len(units) - len(shown)
-    first = shown[0] if shown else ""
-    if len(first) > limit and len(shown) == 1:
-        sentences = re.split(r"(?<=[.!?])\s+", first)  # one long note: keep whole sentences, never cut inside one
-        first = sentences[0]
-        if len(first) > limit * 2:
-            first = first[:limit * 2].rsplit(" ", 1)[0].rstrip(" ,;:") + "..."
-        shown = [first]
-        rest = len(units) - 1 + (1 if len(sentences) > 1 else 0)
+    rest = len(units) - len(shown) + (1 if cut else 0)
     out = " ".join(shown)
     return out + (f" and {rest} more on the place page." if rest > 0 else "")
 
@@ -530,7 +528,7 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
     from .money import num
     sa = num(p.get("special_assessment"))
     if sa is None:
-        if "assessment" in str(p.get("listing_text") or "").lower():
+        if re.search(r"\bspecial\b[^.\n]{0,60}\bassessments?\b|\bassessments?\b[^.\n]{0,60}\bspecial\b", str(p.get("listing_text") or ""), re.I):
             cell = _cell("Mentioned in the listing, amount not entered")
             cell["incomplete"] = True
             return cell
