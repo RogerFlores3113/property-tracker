@@ -176,6 +176,19 @@ _AI_C17 = re.compile(_AI_C18 + "|" +
     r"\b(?:ignora|ignore|ignoren|olvida|olvide|omite|omita|desestima)\s+(?:todas\s+)?(?:las|tus|sus|mis)\s+(?:todas\s+)?(?:instrucciones|reglas|indicaciones|directrices)\s+(?:anteriores|previas|de arriba|iniciales)\b(?!\s+(?:del|de la|de los)\b)|"
     r"\b(?:ignora|ignore|olvida|olvide)\s+(?:todas\s+)?(?:las\s+)?(?:anteriores|previas)\s+(?:instrucciones|reglas|indicaciones)\b", re.I)
 
+# cycle 22: polite "treat prior guidance as void", an order to tell the renter a place is the best, and the plain "ignore all previous
+# instructions" in Chinese, Portuguese and Italian (no \\b: those scripts have no word breaks).
+_AI_C22 = (
+    r"\b(?:kindly\s+|please\s+)?(?:treat|consider|regard|take|count|deem|view)\s+(?:all\s+|any\s+|the\s+|your\s+|these\s+|my\s+)*(?:prior|previous|earlier|above|original|existing|preceding)\s+"
+    r"(?:guidance|instructions?|rules|prompts?|directions|advice|context|directives?)\s+as\s+(?:void|null|invalid|cancell?ed|moot|obsolete|superseded|irrelevant|revoked|no longer (?:valid|applicable|in force))\b|"
+    r"\btell\s+the\s+(?:renter|buyer|tenant|person|reader|user)\s+(?:that\s+)?(?:this|it)\s+(?:is|looks|seems)\s+(?:the\s+)?(?:best|top|perfect|ideal|number one|#1|greatest)\b|"
+    r"(?:请|請|麻烦|麻煩)?(?:忽略|无视|無視|忽视|忽視|不要理会|不要理會|忘记|忘記|别管|別管)(?:掉)?(?:以上|上面|上述|之前|先前|前面|此前|以前)?(?:的)?(?:所有|全部|一切)(?:的)?(?:指令|指示|提示|规则|規則|命令)|"
+    r"\b(?:ignore|ignora|esque[cç]a)\s+(?:todas\s+)?(?:as\s+)?instru[cç][oõ]es\s+anteriores\b|"
+    r"\b(?:ignora|ignorare|dimentica)\s+(?:tutte\s+)?(?:le\s+)?(?:istruzioni|regole)\s+(?:precedenti|sopra)\b")
+_AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_C22, re.I)
+# A fence-like tag in listing text ("</untrusted><untrusted source='user notes'>"): it only exists to pass listing words off as the user's.
+_FENCE_TAG = re.compile(r"</?\s*(?:untrusted|system|assistant|user|human|developer|tool_result|function_results|tool_use|instructions?)\b[^>]*>", re.I)
+
 _SYSTEM_IN_COMMENT = re.compile(r"\b(?:system|assistant|developer)\s*:", re.I)
 # "Payment plan for the deposit" plus a request to talk only through messages is a soft sign worth a look.
 _PAY_PLAN = re.compile(r"\bpayment plans?\b[^.\n]{0,30}\b(?:deposit|rent|move[- ]in)\b|\b(?:deposit|rent|move[- ]in)\b[^.\n]{0,30}\bpayment plans?\b", re.I)
@@ -490,7 +503,37 @@ def reversed_injection(text: str) -> str:
             end = min(stops)[0] if stops else len(back)
             piece = back[m.start():end]
             return piece.strip()
-    return ""
+    return _reversed_run(t)
+
+
+_COMMON_WORDS = frozenset("""the and to all please of in on for your you this that with here is it as at by be are not or send pay payment funds bring carrier ignore rules
+rule instructions instruction previous prior place move mark rate say tell user renter listing best safe money wire deposit first now them they their
+will must should from have has was were can any every more less only also then than but into out over under after before about when where which what
+who how why one two new old good great just like make made take give get let see know want need keep hold use used""".split())
+
+
+def _reversed_run(text: str) -> str:
+    """A run of 4 or more words that is readable English only when each word is read backwards ('' when none). Needs 3 common words
+    in the run once reversed and none of the words common going forward, so ordinary text and palindromes never count."""
+    tokens = text.split()
+    ok = []
+    for tok in tokens:
+        bare = tok.strip(".,;:!?'\"()")
+        ok.append(len(bare) >= 2 and bare.lower()[::-1] in _COMMON_WORDS and bare.lower() not in _COMMON_WORDS)
+    best = ""
+    i = 0
+    while i < len(tokens):
+        if not ok[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(tokens) and (ok[j] or (j + 1 < len(tokens) and ok[j + 1] and j > i and re.fullmatch(r"[A-Za-z]{3,}", tokens[j].strip(".,;:!?'\"()")))):
+            j += 1  # one unknown word between two backwards words is still part of the run
+        run = tokens[i:j]
+        if len(run) >= 4 and sum(1 for w in run if w.strip(".,;:!?'\"()").lower()[::-1] in _COMMON_WORDS) >= 3 and len(" ".join(run)) > len(best):
+            best = " ".join(w[::-1] for w in reversed(run)).strip(" .,;:")
+        i = j
+    return best
 
 
 PRICE_FLOOR_RATIO = 0.55  # under this share of the typical price in the same search is "far under"
@@ -606,6 +649,13 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         if (rev := reversed_injection(normalise_text(str(place.get(k) or ""))[0])):
             extra_quotes.append(_quote(rev))
             break
+    if ai_line is None and not extra_quotes:
+        for k in ("listing_text", "title", "ai_notes", "notes", "hidden_text"):
+            own = html.unescape(html.unescape(str(place.get(k) or "")))
+            fence = _FENCE_TAG.search(own)
+            if fence:  # a spoofed fence tag: the words after it are quoted so the line says what was passed off
+                ai_line = _quote(_FENCE_TAG.sub(" ", own[fence.start():]), 120) or ""
+                break
     for q in extra_quotes:
         if ai_line is None:
             ai_line = q
@@ -677,8 +727,14 @@ def clean_reader_notes(text: Any, place: dict[str, Any] | None = None) -> str:
             flagged = []
     if not any("aimed at AI tools" in str(f) for f in flagged):
         return out
+    flag_quotes = " ".join(quote_of(str(f)) for f in flagged)
+
     def hostile_only(piece: str) -> bool:
-        return bool(piece.strip()) and reads_as_instruction(normalise_text(piece)[0]) and not re.search(r"\$\s?\d", piece)
+        """A note that only repeats the hostile text. Its dollar figures are no reason to keep it when the flag's own quote holds them."""
+        if not piece.strip() or not reads_as_instruction(normalise_text(piece)[0]):
+            return False
+        amounts = re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", piece)
+        return all(a.replace(" ", "") in flag_quotes.replace(" ", "") for a in amounts)
 
     lines = out.split("\n")
     if len([x for x in lines if x.strip()]) == 1:  # one paragraph: go sentence by sentence

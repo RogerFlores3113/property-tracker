@@ -1797,6 +1797,22 @@ def build_server(store: Store) -> FastMCP:
             if "kind" not in c and "field" in c:
                 c["kind"] = c.pop("field")
                 notes.append(f"{at}: I read field as the criterion's kind. Next time use kind.")
+            if "kind" not in c and isinstance(c.get("type"), str) and str(c["type"]).strip().lower() in CRITERION_KINDS:
+                c["kind"] = c.pop("type")
+                notes.append(f"{at}: I read type as the criterion's kind. Next time use kind.")
+            elif "kind" not in c:
+                named = [k for k in c if isinstance(k, str) and k.strip().lower() in CRITERION_KINDS and isinstance(c[k], dict)]
+                if len(named) == 1:  # {"price": {"max": 1600}} instead of {"kind": "price", "target": {"max": 1600}}
+                    inner = c.pop(named[0])
+                    c["kind"] = named[0]
+                    if "target" in c:
+                        pass
+                    elif any(k in inner for k in ("target", "label", "weight", "dealbreaker", "deal_breaker", "name")):
+                        for k, v in inner.items():
+                            c.setdefault(k, v)
+                    else:
+                        c["target"] = inner
+                    notes.append(f"{at}: I read {{\"{named[0].strip().lower()}\": ...}} as a {named[0].strip().lower()} criterion. Next time use {{\"kind\": \"{named[0].strip().lower()}\", \"target\": {{...}}}}.")
             if "name" in c and "label" not in c:
                 c["label"] = c.pop("name")
             if _deal_alias(c):

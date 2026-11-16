@@ -29,12 +29,11 @@ def test_uncounted_place_ranks_below_complete_and_is_marked(store, note):
     assert compare.cost_may_be_higher(by[a["id"]]).startswith("Cost may be higher:")
     assert compare.cost_may_be_higher(by[b["id"]]) == ""
     top = today.best_fits(rows)
-    ids = [p["id"] for p in top]
-    assert ids.index(b["id"]) < ids.index(a["id"])
-    assert "Cost may be higher" in next(p for p in top if p["id"] == a["id"])["caution"]
+    assert [p["id"] for p in top] == [b["id"]]  # cycle 22: open amounts in the notes keep a place out of Best fits
+    assert a["id"] in [c["place"]["id"] for c in today.cost_check(rows)]
     out = text(call(server(store), "todays_list"))
     line = next(x for x in out.splitlines() if "Cheap but open" in x)
-    assert "Cost may be higher" in line
+    assert line.startswith("Needs a cost check")
 
 
 def test_compare_highest_score_names_uncounted_cost(store):
