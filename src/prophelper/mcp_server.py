@@ -1729,7 +1729,7 @@ def build_server(store: Store) -> FastMCP:
         new = data["new"]
         lines.append("New places the user has not looked at:" + (" none." if not new else ""))
         for p in new[:8]:
-            lines.append(f"  - #{p['id']} {_title(p)}" + (" (no price yet)" if p.get("cost_total") is None else ""))
+            lines.append(f"  - #{p['id']} {_title(p)}" + (" (no price yet)" if p.get("cost_total") is None else "") + (f" (check first: {p['low_rent_note']})" if p.get("low_rent_note") else ""))
         late = data["late"]
         for item in late:
             lines.append(f"Heads up: {_title(item['place'])} (id {item['place']['id']}): {item['text']}.")

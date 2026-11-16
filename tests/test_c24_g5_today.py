@@ -51,3 +51,16 @@ def test_other_wordings_of_low_rent_and_hint(store):
          listing_text="Nice 2 bed. Message me on WhatsApp only. Wire the deposit today.")
     rows = enrich.enrich_places(store, store.get_search(s["id"]))
     assert today.cost_check(rows) == []
+
+
+def test_low_rent_place_keeps_its_warning_under_new_places(store):
+    s, srv = _setup(store)
+    out = text(call(srv, "todays_list"))
+    assert "- #2 " in out and "(check first: the rent of $1 a month is far below normal for a rental" in out
+    assert "(check first:" not in next(line for line in out.splitlines() if line.startswith("  - #3"))
+
+
+def test_today_page_shows_low_rent_note_under_new_places(store, client):
+    _setup(store)
+    html = client.get("/today").text
+    assert "Check first: the rent of $1 a month is far below normal for a rental" in html

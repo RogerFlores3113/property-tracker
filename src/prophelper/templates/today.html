@@ -181,7 +181,8 @@
   <ul class="items">
     {% for p in new %}
     <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ sample_badge(p.is_sample) }}
-      <span class="item-sub">{% if p.price %}{{ p.price|money }}{% else %}No price yet{% endif %}{% if p.beds is not none %} &middot; {{ p.beds|beds }}{% endif %}</span></div></li>
+      <span class="item-sub">{% if p.price %}{{ p.price|money }}{% else %}No price yet{% endif %}{% if p.beds is not none %} &middot; {{ p.beds|beds }}{% endif %}</span>{% if p.low_rent_note %}
+      <span class="item-sub">Check first: {{ p.low_rent_note }}.</span>{% endif %}</div></li>
     {% endfor %}
   </ul>
   <p class="fine">Places you haven't opened yet. Ones that miss a must have or look risky are left out here and stay on the board.</p>
