@@ -451,8 +451,8 @@ def miss_score(failed_items: list[dict[str, Any]]) -> int:
 
 
 _LIMIT_WORDS = re.compile(r"\b(?:lbs?\.?|pounds?|weight|pets?|dogs?|animals?|breed|limit|over|under|max(?:imum)?)\b", re.I)
-_WAIVABLE = re.compile(r"\b(?:unless|except(?:ion|ions)?|case[- ]by[- ]case|waive[sd]?|waivable|negotiable|at (?:the )?(?:management|landlord|owner|property manager)(?:'s|\u2019s)? (?:discretion|option|approval)|"
-                       r"(?:with|upon|subject to|pending|requires?|needs?|if|once|when)\s+(?:prior\s+|written\s+|special\s+)?(?:approv\w+|permission|consent)|(?:approved|permitted|allowed|cleared|okayed)\s+(?:by|on)\s+(?:the\s+)?(?:management|landlord|owner|office|property manager|case)|"
+_WAIVABLE = re.compile(r"\b(?:unless|without[ \t]+(?:prior[ \t]+|written[ \t]+)?(?:approv\w+|permission|consent)|except(?:ion|ions)?|case[- ]by[- ]case|waive[sd]?|waivable|negotiable|at (?:the )?(?:management|landlord|owner|property manager)(?:'s|\u2019s)? (?:discretion|option|approval)|"
+                       r"(?:with|upon|subject to|pending|requires?|needs?|if|once|when)\s+(?:prior\s+|written\s+|special\s+|management\s+|landlord\s+|owner\s+)?(?:approv\w+|permission|consent)|(?:approved|permitted|allowed|cleared|okayed)\s+(?:by|on)\s+(?:the\s+)?(?:management|landlord|owner|office|property manager|case)|"
                        r"(?:may|can|might|could)\s+(?:be\s+)?(?:made|approved|allowed|considered|granted|reviewed|accepted)|ask (?:about|us|the office|management) (?:an? )?exceptions?|"
                        r"(?:larger|bigger|heavier|big) (?:dogs?|pets?)[^.\n]{0,30}(?:considered|approved|reviewed|ask))\b", re.I)
 
