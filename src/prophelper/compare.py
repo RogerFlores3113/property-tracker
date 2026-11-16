@@ -252,7 +252,33 @@ def _not_counted_text(p: dict[str, Any]) -> str:
     names = partial_utilities(p)
     plain = _join_and(names) if names else ""
     unknown = [u + " (not listed)" if plain and u == plain else u for u in cost_unknowns(p)]  # the listing never named them
+    unknown += _unset_line_names(p, " ".join(unknown))
     return unknown_text(unknown, _guessed_names(p))
+
+
+_UNSET_LINE_NAMES = (("parking", "parking"), ("pet_rent", "pet rent"), ("other", "other monthly fees"))
+
+
+def _unset_line_names(p: dict[str, Any], already: str) -> list[str]:
+    """Cycle 24: the "Not counted yet" row and the cost rows agree. A cost row that reads "Not known" (parking, pet rent or other monthly fees the
+    listing never gave) is named here too, so the row never says "Nothing unknown" beside it. Only for a rental."""
+    cost = p.get("cost") or {}
+    if cost.get("mode") != "rent":
+        return []
+    out = []
+    low = already.lower()
+    for key, name in _UNSET_LINE_NAMES:
+        ln = next((x for x in cost.get("lines") or [] if x["key"] == key), None)
+        if ln is None or ln.get("amount") is None or ln.get("not_counted"):
+            continue
+        if not (ln.get("unset") or _line_unset(p, key)):
+            continue
+        if key == "pet_rent" and not cost.get("pets_counted", True):
+            continue
+        if name.split()[0] in low:
+            continue  # "pet charges", "parking cost" are already named
+        out.append(name)
+    return out
 
 
 def still_unknown_text(p: dict[str, Any], label=lambda x: x) -> str:

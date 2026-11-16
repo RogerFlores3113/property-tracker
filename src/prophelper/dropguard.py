@@ -22,6 +22,16 @@ _NON_COST = re.compile(
 _SEASON = re.compile(r"\b(?:summer|winter|spring|fall|autumn|peak|off-?season|cooling season|heating season)\b", re.I)
 
 
+def _after_address(before: str) -> bool:
+    """True when the words in front of a figure end with a street address and a comma or dash ("Studio 5 Elm Ave," / "12 Oak St -")."""
+    m = re.search(r"[ \t]*[,\-:|][ \t]*$|[ \t]+$", before)
+    head = before[:m.start()] if m else before
+    if not m or not head.strip():
+        return False
+    pm = _P()._ADDRESS.search(head)
+    return bool(pm and pm.end() >= len(head.rstrip()) - 0 and head[pm.end():].strip(" ,") == "")
+
+
 def is_non_cost(text: str, start: int, end: int, amount: float) -> bool:
     """True when the figure at text[start:end] is one the cost never counts: a late fee or other penalty, the old price in a price drop, a
     figure the listing replaces ("not $1,380"), an option named in a parking note, a buyer figure the listing compares, or the lower of a
@@ -31,6 +41,8 @@ def is_non_cost(text: str, start: int, end: int, amount: float) -> bool:
     near = line[max(0, start - 60 - ls):end + 60 - ls]
     if _NON_COST.search(item) or _NON_COST.search(near):
         return True
+    if amount >= 500 and _after_address(line[:start - ls]):
+        return True  # cycle 24: "Studio 5 Elm Ave, $1,500": the price a headline gives right after the address is the rent of that place, not a cost left out
     figures = list(_P()._NET_DOLLARS.finditer(line))
     ls = text.rfind("\n", 0, start) + 1
 
@@ -51,6 +63,48 @@ def is_non_cost(text: str, start: int, end: int, amount: float) -> bool:
 def _P():
     from . import parsers
     return parsers
+
+
+_PLAN_WORDS = re.compile(r"\bstudio\b|\b\d(?:\.\d)?[ \t]*(?:br|bd|bed(?:room)?s?|ba|bath)\b|\b(?:one|two|three|four)[- ]bed|\bsf\b|sq\.?[ \t]?ft|square f|floor[- ]?plans?|\bplan[ \t]+[A-Z]?\d|\bunit type", re.I)
+_START_AT = re.compile(r"\b(?:starting|starts|begins?|beginning|as low as|from|priced from|rents? from)[ \t]*(?:at|from)?[ \t:]*[\"']?[ \t]*$", re.I)
+_CORRECTION_CUE = re.compile(r"\bcorrection\b|\bcorrected\b|\bignore (?:the |my )?(?:earlier|old|previous|first|above|original|prior) (?:price|rent|figure|number)|\b(?:rent|price) is now\b|\bupdated (?:price|rent)\b|\bnew (?:rent|price) is\b", re.I)
+_COST_ITEM = re.compile(r"deposit|\bfees?\b|dues|\btax|insurance|\bhoa\b|parking|garage|utilit|electric|water|trash|pet|cleaning|application|admin", re.I)
+
+NOT_A_COST_MARK = "not a cost on top of the rent"
+_NOT_COST_SENTENCES = {
+    "plan": f"It looks like the price of another floor plan or a starting price, {NOT_A_COST_MARK}. Ask which plan the rent is for.",
+    "old_price": f"It looks like an older price that the listing replaces, {NOT_A_COST_MARK}. Ask if the rent saved is the right one.",
+    "deposit_alternative": f"It looks like an alternative to the deposit, {NOT_A_COST_MARK}. Ask which one you would pick and what it costs.",
+    "lease_option": f"It looks like the rent for another lease length, {NOT_A_COST_MARK}. Ask which lease length you want.",
+}
+
+
+def not_cost_kind(text: str, start: int, end: int, amount: float, price: Any = None) -> str:
+    """Cycle 24: the figure is one the listing explains as not a cost on top of the rent: the price of another floor plan or a "starting at" price
+    ("plan"), a rent the listing takes back ("old_price"), a surety bond offered instead of a deposit ("deposit_alternative"), or the rent for another
+    lease length ("lease_option"). "" when it is none of these. The note keeps the figure; the missing list does not name it."""
+    item, line = _item(text, start, end, back=False)
+    ls = text.rfind("\n", 0, start) + 1
+    before = line[max(0, start - ls - 60):start - ls]
+    after = line[end - ls:end - ls + 50]
+    rent = float(price) if isinstance(price, (int, float)) and not isinstance(price, bool) and price else None
+    if amount >= 500 and rent and abs(amount - rent) >= 1 and (re.search(r"\b\d{1,2}[- ]?(?:months?|mo)\b[^$\n;.]{0,12}$", before, re.I)
+                                                              or re.match(r"\s*(?:/\s*mo\w*\s*)?(?:for|on|with)\s+(?:a\s+)?\d{1,2}[- ]?(?:months?|mo)\b", after, re.I)) \
+            and not _COST_ITEM.search(item):
+        return "lease_option"
+    if re.search(r"\bor\b[^$\n;.]{0,60}\b(?:surety|bond|waiver|guarantor|alternative)\b[^$\n;.]{0,12}$", before, re.I) and re.search(r"deposit", line, re.I):
+        return "deposit_alternative"
+    if amount >= 500 and rent and abs(amount - rent) >= 1 and not _COST_ITEM.search(item) and (_START_AT.search(before) or _PLAN_WORDS.search(item)):
+        return "plan"
+    if amount >= 500 and rent and abs(amount - rent) >= 1 and 0.5 * rent <= amount <= 2 * rent and not _COST_ITEM.search(item) and not re.search(r"concession|credit|free|\boff\b|discount|bonus|rebate", item, re.I) and (cue := _CORRECTION_CUE.search(text)) and start < cue.start():
+        return "old_price"  # only a figure written before the correction: the new rent after it is never called old
+    return ""
+
+
+def not_cost_sentence(kind: str) -> str:
+    return _NOT_COST_SENTENCES.get(kind, "")
+
+
 
 
 _ITEM_SEP = re.compile(r"(?:(?<!\d),|,(?!\d{3}(?!\d)))|[;|\n]|[ \t]\+[ \t]|[ \t]~[ \t]|\.(?=\s|$)|\bplus\b|\band\b|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|[✔✓✅☑]️?|\([^)]*\)")
@@ -116,7 +170,9 @@ def _matches(amount: float, v: float, item: str = "") -> bool:
         mult |= {6.0}
     if re.search(r"\beach\b|\bper\b|/\s*(?:space|pet|car)", low):
         mult |= {0.5, 1 / 3, 0.25}
-    return any(abs(amount - v * k) < 0.51 for k in mult)
+    # cycle 24: a figure written with cents is placed only by a field that holds those cents ("Trash $8.50" is not placed by an $8); the loose
+    # half-dollar is only for a share worked out over a period (a yearly figure over 12 is rounded)
+    return any(abs(amount - v * k) < (0.011 if k == 1.0 else 0.51) for k in mult)
 
 
 _STOP = frozenset("the and for per mo month monthly each about approx avg roughly all fee fees extra paid pay pays tenant only one two".split())
@@ -201,6 +257,7 @@ def sum_members(text: str, value: float, price: float | None = None) -> set[int]
     field's parts ({start offsets}). None when no combination does (the field was worked out some other way: it is not checked)."""
     P = _P()
     cands: list[tuple[int, tuple[float, ...]]] = []
+    raw_by_start: dict[int, float] = {}
     for m in P._NET_DOLLARS.finditer(text):
         raw = m.group(1) if m.group(1) is not None else m.group(4)
         try:
@@ -227,25 +284,32 @@ def sum_members(text: str, value: float, price: float | None = None) -> set[int]
         if min(opts) > value + 0.51:
             continue
         cands.append((m.start(), tuple(sorted(opts))))
+        raw_by_start[m.start()] = round(amount, 2)
     if price:  # fees worked out from the rent: "landlord fee half a month", "broker fee 8% of annual rent"
         derived = {price * k for k in (0.5, 1, 1.5, 2)}
         for pm in _PCT.finditer(text):
             derived |= {price * float(pm.group(1)) / 100, price * 12 * float(pm.group(1)) / 100}
         cands += [(-1 - i, (round(d, 2),)) for i, d in enumerate(sorted(derived)) if d < value * 1.01 + 0.51]
     cands = cands[:22]
+    amounts_raw = {j: raw_by_start.get(c[0], -1.0) for j, c in enumerate(cands)}  # a figure worked out from the rent (negative start) may be rounded
     found: set[int] = set()
     hit = False
 
-    def rec(i: int, total: float, chosen: tuple[int, ...]) -> None:
+    def close(total: float, chosen: tuple[tuple[int, float], ...]) -> bool:
+        # cycle 24: figures added as written must add up to the cents; a share worked out over a period (a yearly figure over 12) may be a rounded half-dollar off
+        exact = all(abs(o - round(amounts_raw.get(j, o), 2)) < 0.005 for j, o in chosen)
+        return abs(total - value) < (0.011 if exact else 0.51)
+
+    def rec(i: int, total: float, chosen: tuple[tuple[int, float], ...]) -> None:
         nonlocal hit
-        if chosen and abs(total - value) < 0.51:
+        if chosen and close(total, chosen):
             hit = True
-            found.update(cands[j][0] for j in chosen)
+            found.update(cands[j][0] for j, _o in chosen)
         if i >= len(cands) or len(chosen) >= 6 or total > value + 0.51:
             return
         rec(i + 1, total, chosen)
         for o in cands[i][1]:
-            rec(i + 1, total + o, (*chosen, i))
+            rec(i + 1, total + o, (*chosen, (i, o)))
     rec(0, 0.0, ())
     return found if hit else None
 
@@ -316,9 +380,9 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
                                                                                 for k in ("pet_deposit", "pet_fee", "pet_rent")):
             continue  # cycle 21: "Pet policy: Cats only, $35 monthly rent, $200 fee": the pet fields hold both figures
         fieldkv = [(k, r.get(k)) for k in cat[2] if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k) not in (0,)]
-        if cat[0] != "util" and any(_matches(amount, float(v), item) or (k in _SUMMED and (m.start() in members[k] if members.get(k) is not None else amount <= float(v) + 0.5)) for k, v in fieldkv):
+        if cat[0] != "util" and any(_matches(amount, float(v), item) or (k in _SUMMED and (m.start() in members[k] if members.get(k) is not None else amount <= float(v) + 0.011)) for k, v in fieldkv):
             continue
-        if cat[0] == "util" and any(amount <= float(r[k]) + 0.5 for k in ("other_monthly_fees",) if isinstance(r.get(k), (int, float)) and r.get(k)):
+        if cat[0] == "util" and any(amount <= float(r[k]) + 0.011 for k in ("other_monthly_fees",) if isinstance(r.get(k), (int, float)) and r.get(k)):
             continue
         bad.append({"amount": amount, "start": m.start(), "end": m.end(), "item": item.strip(), "kind": cat[0]})
     return bad

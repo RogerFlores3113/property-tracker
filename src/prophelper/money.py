@@ -304,7 +304,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
     other = num(place.get("other_monthly_fees")) or 0
     pet_line = _line("pet_rent", "Pet rent", pet_rent)
     if not pets and (pet_rent_listed or num(place.get("pet_fee")) or num(place.get("pet_deposit"))):
-        listed = [f"{lab} {_dollars(v)}" for lab, v in (("pet rent", pet_rent_listed), ("pet fee", num(place.get("pet_fee"))),
+        listed = [f"{lab} {exact_dollars(v)}" for lab, v in (("pet rent", pet_rent_listed), ("pet fee", num(place.get("pet_fee"))),
                                                           ("pet deposit", num(place.get("pet_deposit")))) if v]
         pet_line["note"] = f"{NO_PETS_NOTE} ({', '.join(listed)} listed)"
         pet_line["not_counted"] = True
@@ -346,10 +346,10 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
     amounts = {k: (app_total if k == "application_fee" else num(place.get(k)) or 0) for k in one_time}
     one_total = sum(amounts.values())
     spread = one_total / months
-    detail = ", ".join(f"{label.lower()} ${amounts[k]:,.0f}" for k, label in one_time.items() if amounts[k])
+    detail = ", ".join(f"{label.lower()} {exact_dollars(amounts[k])}" for k, label in one_time.items() if amounts[k])
     app_fee = num(place.get("application_fee")) or 0
     if app_fee and app_total != app_fee:
-        detail = detail.replace(f"application fee ${app_total:,.0f}", f"application fee ${app_total:,.0f} (${app_fee:,.0f} each for {adults} adults)")
+        detail = detail.replace(f"application fee {exact_dollars(app_total)}", f"application fee {exact_dollars(app_total)} ({exact_dollars(app_fee)} each for {adults} adults)")
     one_line = _line("one_time", f"One-time fees spread over {months} months", spread, detail or "none entered")
     if all(place.get(k) in (None, "") for k in one_time):
         one_line["unset"] = True
@@ -359,7 +359,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
     deposit = num(place.get("deposit"))
     total = None if price is None else _r(sum(l["amount"] or 0 for l in lines))
     if deposit:
-        notes.append(f"Deposit ${deposit:,.0f} is not included in the monthly cost because it comes back.")
+        notes.append(f"Deposit {exact_dollars(deposit)} is not included in the monthly cost because it comes back.")
     cash = cash_at_move_in(place, pets, adults)
     return {"mode": "rent", "total": total, "lines": lines, "missing": missing, "notes": notes, "deposit": deposit,
             "lease_months": months, "one_time_total": _r(one_total), "uncounted": uncounted,
@@ -423,7 +423,7 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -
         if key == "application_fee" and v:
             total_fee = application_fee_total(place, adults)
             if total_fee != v:
-                label = f"Application fee (${v:,.0f} each for {adults} adults)"
+                label = f"Application fee ({exact_dollars(v)} each for {adults} adults)"
             v = total_fee
         if v:
             parts.append((label, v))
@@ -601,6 +601,16 @@ def _dollars(n: float) -> str:
     return f"${n:,.0f}"
 
 
+def exact_dollars(n: float) -> str:
+    """Cycle 24: a figure the listing gave, shown the way it was given: $42.50 keeps its cents, $1,200 does not. Totals worked out from several
+    figures still use ``_dollars`` (rounded)."""
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return str(n)
+    return f"${n:,.2f}" if abs(n - round(n)) >= 0.005 else f"${n:,.0f}"
+
+
 def _join_words(items: list[str]) -> str:
     if len(items) <= 1:
         return "".join(items)
@@ -723,6 +733,7 @@ def display_note_units(place: dict[str, Any]) -> list[str]:
 ONE_TIME_NOTE = re.compile(r"not in the monthly cost|not counted in the monthly cost|one-time cost|in total to move in|\bholding fee|\breservation (?:fee|deposit)|one-time (?:deal|amount)|"
                            r"price was cut|price (?:cut|drop|reduc\w*|lowered)|(?:cut|reduced|lowered|dropped) (?:by|to|from)\s+\$|\$\s?[\d,]+\s+off\b|rent concession|\bdiscount\b", re.I)
 # A note about an optional extra with no price ("A carport is available but the listing gives no price. It looks optional") holds no amount.
+NOT_A_COST_NOTE = re.compile(r"not a cost on top of the rent|\bThe rent saved is the (?:lowest|cheapest|matching)\b[^.]*\bplan\b|\bthe rent saved is\b[^.]*,\s*not the \"?starting at\"? price", re.I)
 _NOTE_CLOSED = re.compile(r"\bcounted once\b|\bnot counted again\b|\balready counted\b|\bpaid through that flat fee\b|was a mistake or an old figure", re.I)  # cycle 20 join: a figure the listing takes back is not open
 _NOTE_CONDITIONAL = re.compile(r"only applies on that condition|only if (?:credit|your credit)", re.I)
 # A note with no dollar amount names an open cost only when it names a cost word ("rent" and "free" alone are not: "Ask what the month to month terms and rent are").
@@ -760,6 +771,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
+        if NOT_A_COST_NOTE.search(note):
+            continue  # cycle 24: the note says the figure is another plan's price, an older rent, a deposit alternative or another lease length: it stays a note, never "missing"
         if _NOTE_BUY_PARKING.search(note):
             continue  # cycle 22: parking is never part of the cost of buying, so it is not a missing cost part there
         if _NOTE_WARNING.search(note) or (_NOTE_CHOICE.search(note) and place is not None and num(place.get("parking_cost")) is not None):
@@ -949,7 +962,7 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
         out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
         out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
     # "all in" is only said when nothing the listing gave is left out: a buyer's one-time fee that is not counted keeps it from reading "all in" too
-    one_time_left = mode == "buy" and any(ONE_TIME_NOTE.search(u) and re.search(r"not counted|not saved|not used", u, re.I) and re.search(r"\$\s?\d", u)
+    one_time_left = mode == "buy" and any(ONE_TIME_NOTE.search(u) and re.search(r"not counted|not saved|not used|not in the monthly cost", u, re.I) and re.search(r"\$\s?\d", u)
                                           and not _note_is_stale(u, place) for u in note_units(place.get("reader_notes")))
     out["all_in"] = not out.get("uncounted") and not out.get("missing") and not one_time_left
     out["people"] = n
