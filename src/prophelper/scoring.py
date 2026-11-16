@@ -684,6 +684,9 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
                 notes.append(text)  # a nice-to-have a little over its limit is a plain fit with a note, not "Fits, but check"
             else:
                 concerns.append(text)
+    for i in items:  # a pet limit the listing says can be waived is a maybe, so the place "fits, but check" (it is not a plain Yes)
+        if "can be waived or needs approval" in str(i.get("detail") or "") and i["dealbreaker_status"] != "fail" and i["detail"] not in concerns:
+            concerns.append(i["detail"])
     far_commute = any(i.get("concern") and (i.get("over_pct") or 0) > 0.25 for i in items)
     late = _late_opening(place, search, mode)
     if late:

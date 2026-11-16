@@ -34,6 +34,7 @@ from . import compare as compare_mod
 from . import guards, helpers, redflags, scoring
 from . import stages as st
 from .parsers import split_address_unit, split_full_address, street_with_unit
+from . import money as money_mod
 from . import movein
 from . import today as today_view
 from .enrich import enrich_place, enrich_places
@@ -147,7 +148,7 @@ PLACE_PARAMS: list[tuple[str, Any, str]] = [
 PLACE_KEYS = {n for n, _, _ in PLACE_PARAMS}
 # Money fields an explicit null clears on update_place (the value goes back to unknown, and the old one stays on the timeline).
 CLEARABLE = ("hoa", "property_tax", "insurance", "other_monthly_fees", "move_in_fees", "broker_fee", "application_fee", "deposit",
-             "utilities_estimate", "special_assessment", "closing_costs", "seller_credit")
+             "utilities_estimate", "special_assessment", "closing_costs", "seller_credit", "pet_fee", "pet_deposit", "pet_rent", "parking_cost")
 UTILITIES_SOURCE_HELP = ("Where utilities_estimate came from: guess (default, shown as a guess), billed back or from the listing "
                          "(the listing itself gives that monthly amount, so it is shown as from the listing). Send it only together with a "
                          "utilities_estimate amount, for example utilities_estimate 120 with utilities_source \"from the listing\". "
@@ -180,6 +181,14 @@ def _money(n: Any) -> str:
 def _clip(text: str | None, n: int) -> str:
     text = (text or "").strip()
     return text if len(text) <= n else text[:n].rstrip() + f" ... (cut, {len(text) - n} more characters; open the app for all of it)"
+
+
+def _note_lines(text: Any) -> str:
+    """The saved listing notes one note to a line (the notes are stored as one paragraph)."""
+    try:
+        return "\n".join(money_mod.note_units(text)) if text else ""
+    except Exception:  # noqa: BLE001 - the notes still show, as one paragraph
+        return str(text or "")
 
 
 def _t(text: Any, source: str = "listing title", limit: int = 120) -> str:
@@ -952,7 +961,7 @@ def build_server(store: Store) -> FastMCP:
                                  f"at a time. Add it as Saved and move it forward one step at a time, or ask the user. Nothing was saved.")
         place, created = store.add_place(by="ai", search_id=search["id"], stage=stage, **fields)
         notes: list[str] = []
-        reader_block = guards.fence(_clip(place.get("reader_notes"), 1500), "notes the reader made from the listing") if fields.get("reader_notes") else ""
+        reader_block = guards.fence(_clip(_note_lines(place.get("reader_notes")), 1500), "notes the reader made from the listing") if fields.get("reader_notes") else ""
         matched = ""
         if not created:
             matched = "the same link" if dup and fields.get("url") and normalize_url(dup.get("url")) == normalize_url(fields["url"]) else "the same address and unit"
@@ -1158,7 +1167,7 @@ def build_server(store: Store) -> FastMCP:
         blocks = [guards.fence(_clip(e.get("listing_text"), LISTING_CLIP), "listing text"),
                   guards.fence(_clip(e.get("notes"), 1500), "the user's notes"),
                   guards.fence(_clip(e.get("ai_notes"), 1500), "earlier AI notes"),
-                  guards.fence(_clip(e.get("reader_notes"), 1500), "notes the reader made from the listing when it was added")]
+                  guards.fence(_clip(_note_lines(e.get("reader_notes")), 1500), "notes the reader made from the listing when it was added")]
         events = store.list_events(e["id"])[:TIMELINE_LINES]
         if events:
             blocks.append(guards.fence("\n".join(f"{helpers.day_text(ev['at'])} [{ev['kind']}, {ev['source']}] {guards.inline(ev['body'], 200)}" for ev in events),
@@ -1512,7 +1521,9 @@ def build_server(store: Store) -> FastMCP:
         rows: list[tuple[str, list[str]]] = [
             ("Stage", [e["stage"] for e in es]),
             ("Fit", [(e["score"].get("fit_label") or "Yes") if e["score"].get("fit", "fits") == "fits" and e["score"].get("concerns")
-                    else scoring.FIT_LABELS.get(e["score"].get("fit", "fits"), "Yes") for e in es]),
+                    else scoring.FIT_LABELS.get(e["score"].get("fit", "fits"), "Yes")
+                    + (f" ({'; '.join(_t(n, 'fit note', 160) for n in e['score']['notes'])})" if e["score"].get("fit", "fits") == "fits" and not e["score"].get("concerns") and e["score"].get("notes") else "")
+                    for e in es]),
             ("True monthly cost", [_money(e["cost_total"]) for e in es]),
             *([(f"Each adult ({_split_count(search)} adults)" if _split_noun(search) == "adults" else f"Per person ({_split_count(search)} {_split_noun(search)})", [_money(e.get("per_person")) for e in es])]
               if _split_count(search) > 1 else []),

@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from . import guards
 from . import stages as st
 
 # --------------------------------------------------------------------------- vocabulary
@@ -641,7 +642,7 @@ def has_userinfo(link: str) -> bool:
 
 
 # Also the backslash and every bidi control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F, U+061C) and the zero-width ones (U+200B to U+200D, U+2060, U+FEFF): they change how a link reads on screen
-_LINK_RAW = re.compile("[<>\"'`\\\\\\s\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b-\u200d\u2060\ufeff]")
+_LINK_RAW = re.compile("[<>\"'`\\\\\\s\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c\u200b-\u200d\u2060\ufeff\u00ad\u180e\ue000-\uf8ff\U000e0000-\U000e007f\U000f0000-\U000ffffd\U00100000-\U0010fffd]")
 
 
 _BIDI = re.compile("[\u202a-\u202e\u2066-\u2069\u200e\u200f\u061c]")
@@ -699,6 +700,10 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     row = {k: (_tidy_num(v) if isinstance(v, float) else v) for k, v in row.items()}
+    hidden = [guards.decode_tag_chars(v) for k, v in row.items() if isinstance(v, str) and k not in ("url", "photo_urls") and guards.has_tag_chars(v)]
+    if hidden:  # invisible tag characters are removed from every text; what they spelled is kept apart so the flags can still see it
+        row = {k: (guards.strip_tag_chars(v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
+        row["hidden_text"] = " ".join(h for h in hidden if h) or "(hidden characters)"
     if isinstance(row.get("title"), str):
         row["title"] = _BIDI.sub("", row["title"])  # a title that flips the text around it is shown plainly on every page, Today and the CSV
     if row.get("url"):
