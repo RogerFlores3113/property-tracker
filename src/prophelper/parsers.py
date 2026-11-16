@@ -6499,10 +6499,13 @@ _TITLE_DECOR = re.compile(r"[*#~=_\u2022\u00b7\u2605\u2606\u2726\u2727\u2756\u25
 
 
 def strip_title_decoration(title: str) -> str:
-    """Cycle 23: stars, hashes, bullets and emoji around a name are decoration ("*** Edgewater 3 bed 2 bath ***"), never part of the title."""
+    """Cycle 23: stars, hashes, bullets and emoji around a name are decoration ("*** Edgewater 3 bed 2 bath ***"), never part of the title. Only
+    the edges lose them (a "#5" unit number inside the title stays); emoji and star symbols go from anywhere."""
     import unicodedata
-    t = _TITLE_DECOR.sub(" ", title or "")
-    t = "".join(" " if unicodedata.category(c) in ("So", "Sk") else c for c in t)
+    t = "".join(" " if unicodedata.category(c) in ("So", "Sk") else c for c in (title or ""))
+    t = re.sub(r"[\u2605\u2606\u2726\u2727\u2756\u25cf\u25a0\u25c6\u25ba\u25b6]+", " ", t)
+    t = re.sub(r"^[\s*#~=_\u2022\u00b7]+|[\s*#~=_\u2022\u00b7]+$", "", t)
+    t = re.sub(r"(?:\s[*~=_]+)+(?=\s|$)", " ", t)  # a run of stars standing alone between words
     return " ".join(t.split()).strip(" ,;:-|\u2013\u2014")
 
 
