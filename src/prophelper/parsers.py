@@ -5323,7 +5323,7 @@ _RULE_LINE = re.compile(r"^seller(?:'s)?[ \t]+(?:to|will|pays?|concessions?|cred
 _PET_LINE = re.compile(r"^(?:no[ \t]+)?(?:pets?|dogs?|cats?|animals?)\b", re.I)
 # a policy or money sentence is never the name of a place ("Landlord pays all utilities", "Deposit one month", "Tenant pays electric", "Utilities included")
 _POLICY_LINE = re.compile(r"^(?:(?:landlord|owner|owners|tenant|tenants|renter|renters|resident|residents)(?:'s)?[ \t]+(?:pays?|paying|covers?|is|are|responsible|provides?|total)\b"
-                          r"|(?:security[ \t]+|refundable[ \t]+)?deposits?\b|(?:all[ \t]+)?utilit(?:y|ies)\b|(?:application|admin|move[- ]in|pet|parking|lease|rent)[ \t]+(?:fees?|terms?|total|due|cost|is|are)\b"
+                          r"|(?:security[ \t]+|refundable[ \t]+)?deposits?\b|(?:all[ \t]+)?utilit(?:y|ies)\b|(?:application|admin|move[- ]in|pet|parking|lease|rent)[ \t]+(?:fees?|terms?|total|due|cost|is|are)\b|lease[ \t]+(?:begins?|starts?|runs?|ends?|length|period)\b"
                           r"|(?:water|sewer|trash|gas|electric(?:ity)?|heat|internet|wifi|cable)\b[^.\n]{0,40}\b(?:included|extra|separate|not included|paid|billed)\b"
                           r"|available[ \t]+(?:now|immediately|today|\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*)", re.I)
 
@@ -5360,6 +5360,19 @@ _GREETING_TITLE = re.compile(r"^(?:hi|hello|hey|hiya|howdy|dear|greetings|good (
 _NAME_STOP_WORDS = re.compile(r"\b(?:beautiful|charming|spacious|sunny|cozy|newly|new|renovated|large|lovely|gorgeous|brand|luxury|nice|great|huge|amazing|updated|modern)\b", re.I)
 
 
+_BED_CUE = re.compile(r"\b\d(?:\.\d)?[ \t]*(?:br|bd|bdrm|bed(?:room)?s?)\b|\bstudio\b|\b[1-4][xX][1-3]\b|\b(?:one|two|three|four)[- ]bed", re.I)
+_FEE_HEAD = re.compile(r"\b(?:fees?|deposits?|dues|control|permits?|net effective|billed|late|locker|valet|assessments?|utilities|concession|free)\b", re.I)
+
+
+def _fee_or_policy_head(line: str) -> bool:
+    """True when a line reads like a fee, a money rule or a policy ("Pest control $8, locker $10", "Net effective rent $1,380", "Condo fee $240
+    paid by owner"), whatever follows: such a line is never the name of a place. A line that names its beds ("2BR Rent Special") is a headline."""
+    if _BED_CUE.search(line):
+        return False
+    head = re.split(r"\$|[:;]|[ \t]+[-\u2013\u2014][ \t]+|[ \t]\|[ \t]", line, maxsplit=1)[0]
+    return (bool(_FEE_HEAD.search(head)) or bool(re.match(r"(?:monthly[ \t]+)?rent\b|(?:just[ \t]+)?(?:reduced|price[ \t]+(?:reduced|drop|cut)|new[ \t]+price)\b", head, re.I))) and len(head.split()) <= 6
+
+
 def _chatty_title(title: str, found: dict[str, Any]) -> str:
     """A greeting or a long sentence that holds the street address ("Hi Beautiful newly built 1 bed 1 bath at 88 Prospect Ave Champaign")
     is not a name: the street address is the title. A real name in front of the address ("Pilsen Courtyard 3BR/2BA 1700 S Racine Ave") stays."""
@@ -5386,6 +5399,19 @@ def fallback_title(found: dict[str, Any]) -> str:
     return f"Rental in {city}" if city else ""
 
 
+_STREET_NAME_ONLY = re.compile(r"\b(?:on|at|off|near)[ \t]+((?:[A-Z][A-Za-z.'-]+[ \t]+){1,3}(?:Dr|Drive|St|Street|Ave|Avenue|Rd|Road|Ln|Lane|Ct|Court|Blvd|Boulevard|Way|Pl|Place|Ter|Terrace|Cir|Circle)\b\.?)")
+
+
+def _street_name_title(text: str, found: dict[str, Any]) -> str:
+    """No name and no numbered address, but the paste names a street ("3BR/2BA SFH on Oak Knoll Dr, Menlo Park"): "3 bed on Oak Knoll Dr". '' when none."""
+    m = _STREET_NAME_ONLY.search(text)
+    beds = found.get("beds")
+    if not m or not isinstance(beds, (int, float)) or isinstance(beds, bool) or not 0 <= beds <= 20:
+        return ""
+    street = m.group(1).rstrip(".").strip()
+    return f"{'Studio' if beds == 0 else f'{beds:g} bed'} on {street}"
+
+
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
     letters = [c for c in title if c.isalpha()]
@@ -5393,6 +5419,9 @@ def _title(text: str, found: dict[str, Any]) -> str:
         title = re.sub(r"\d*[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in _ALL_CAPS_KEEP or re.fullmatch(r"\d+(?:BR|BA|BD)", m.group(0)) else m.group(0).capitalize(), title)
         title = re.sub(r"^The\b", "The", title)
     title = _finish_title(title, text)
+    if title and _fee_or_policy_head(title) and not _ADDRESS.match(title):
+        addr = str(found.get("address") or "")
+        return addr.split(",")[0] if addr else ""  # a fee or policy phrase is never the name: the street address, else no title
     return _chatty_title(title, found)
 
 
@@ -5486,8 +5515,9 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         for _ in range(2):  # "FB Marketplace - 2 bedroom ...", "Rental: 3 Bedroom Home in Belmont": the label is not the title
             line = _LABEL_PREFIX.sub("", line, count=1)
         line = _name_segment(line)
-        if not line or _not_a_name(line) or _money_line_cut(line) or _date_only_line(line):
+        if not line or _not_a_name(line) or _money_line_cut(line) or _date_only_line(line) or (_fee_or_policy_head(line) and not (found.get("address") and found["address"].lower() in line.lower())):
             continue
+        shout = line
         line = _headline_clean(line)
         if not line:
             continue
@@ -5512,6 +5542,9 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         if re.fullmatch(r"[A-Za-z .'-]+,\s*[A-Z]{2}(?:\s+\d{5})?", line):  # just "Champaign, IL"
             continue
         if len(line.split()) >= 6 and line.endswith((".", "?")) and not marked:
+            lead = re.split(r"(?<=[a-z])!+[ \t]", shout, maxsplit=1)[0]
+            if lead != shout and 2 <= len(lead.split()) <= 8 and not re.search(r"\d", lead) and _PROPERTY_NOUN.search(lead) and not _fee_or_policy_head(lead) and not _not_a_name(lead):
+                return lead  # "Cozy duplex in Hilltop! 2 bedrooms, 1 bath. ...": the shout in front is the headline
             continue  # a sentence, not a name
         if marked and line.endswith("."):
             line = line[:-1].rstrip()
@@ -6484,11 +6517,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("city", hint[1])
         elif _try(lambda: _paren_area(text)):
             put("city", _paren_area(text))
-    title = _try(lambda: _title(text, out))
+    title = _try(lambda: _title(text, out)) or _try(lambda: _street_name_title(text, out))
     if title:
         out["title"] = title
+    reader_estimate = out.get("utilities_estimate")
     if current:
         _apply_current(out, current)
+        facts = _reword_replaced_estimate(facts, reader_estimate, out.get("utilities_estimate"))
     facts = _drop_placed_facts(facts, out, follow=bool(current))
     facts += _try(lambda: _safety_net(text, out, facts)) or []
     facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
@@ -6498,6 +6533,18 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
             out["found_in_listing"] = re.sub(r"\b([Aa]sk|[Cc]heck with) the landlord\b", r"\1 the seller or listing agent", out["found_in_listing"])
     return out
+
+
+def _reword_replaced_estimate(facts: list[str], read: Any, saved: Any) -> list[str]:
+    """The reader's utilities note says what it counted. When the place holds a different estimate (Claude or the user set it after the
+    listing was read), the saved estimate is what the cost uses, so the note says that instead of the reader's figure."""
+    try:
+        if read is None or saved is None or isinstance(saved, bool) or abs(float(saved) - float(read)) < 0.5:
+            return facts
+        mine = float(saved)
+    except (TypeError, ValueError):
+        return facts
+    return [re.sub(r"counted as your utilities estimate", f"but the utilities estimate saved on this place is ${mine:,.0f}, so ${mine:,.0f} is what is counted", f) for f in facts]
 
 
 def reader_notes_for(place: dict[str, Any], buying: bool = False, pet_kind: str = "") -> str:
@@ -6614,9 +6661,9 @@ def _restates_field(note: str, out: dict[str, Any]) -> bool:
         return _filled(out, "special_assessment") and _filled(out, "special_assessment_payer")
     if re.match(r"The listing says renter's insurance is required", note):
         return _filled(out, "insurance") or _filled(out, "other_monthly_fees")
-    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It|Only [^"]{1,80} of that) (?:is not counted anywhere|is a one-time cost, so it is not in the monthly cost|is a monthly fee and it is not counted anywhere|looks like a utility cost and it is not counted anywhere)\. Check what it is for\.', note)
-    if m:
-        return amounts_all_placed(_dollar_values(m.group(1)), _net_used_numbers(out, []), _field_sums(out))
+    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It|Only [^"]{1,80} of that) (?:is|are|looks?) [^"]{0,80}\. (?:The rest is already counted\. )?Check what it is for\.', note)
+    if m and re.search(r"not counted anywhere|not in the monthly cost", note):
+        return amounts_all_placed(_dollar_values(m.group(1)), _net_used_numbers(out, []), _field_sums(out), m.group(1), out)
     return False
 
 
@@ -6629,23 +6676,121 @@ def _field_sums(out: dict[str, Any]) -> set[float]:
     return {round(sum(c), 2) for size in (2, 3) for c in itertools.combinations(vals, size)}
 
 
-def amounts_all_placed(amounts: set[float], used: set[float], extra: set[float] | None = None) -> bool:
-    """True when every dollar amount in a note is a value a field holds, or part of a sum a field holds ("electric avg $60, gas avg
-    $45" with a utilities estimate of $105). The one test behind dropping a stale "not counted anywhere" note."""
-    left = sorted(a for a in amounts if round(a, 2) not in {round(u, 2) for u in used})
+_PERIOD_AFTER = ((re.compile(r"semi-?annual|twice a year|every (?:6|six) months|per half"), 6),
+                 (re.compile(r"annual|yearly|per year|a year|each year|/\s*(?:yr|year)\b|per annum"), 12),
+                 (re.compile(r"quarter|qtr|every (?:3|three) months|per (?:3|three) months"), 3))
+_NOTE_MONTHLY_WORDS = re.compile(r"/\s*(?:mo|month)\b|\bper month\b|\ba month\b|\bmonthly\b|\bmo\b", re.I)
+
+
+def _period_divisors(phrase: str) -> dict[float, int]:
+    """For each dollar amount in ``phrase``, how many months it covers when the words next to it say so ("$600 annual master dues" is 12,
+    "$210 every 3 months" is 3). Amounts with no such words are left out (they are monthly)."""
+    out: dict[float, int] = {}
+    for m in _NET_DOLLARS.finditer(phrase):
+        raw = m.group(1) if m.group(1) is not None else m.group(4)
+        try:
+            amount = round(float(raw.replace(",", "") + ((m.group(2) or "") if m.group(1) is not None else "")), 2)
+        except ValueError:
+            continue
+        after = phrase[m.end():m.end() + 28].lower()
+        after = after.split("$")[0]
+        after = re.split(r"[,;]|\band\b", after)[0]
+        before = re.split(r"[,;.:(]|\bplus\b|\band\b", phrase[max(0, m.start() - 24):m.start()].lower())[-1]  # "every 3 months $90", "annual dues $600"
+        if _NOTE_MONTHLY_WORDS.search(after):
+            continue
+        for pat, div in _PERIOD_AFTER:
+            if pat.search(after) or pat.search(before):
+                out[amount] = div
+                break
+    return out
+
+
+_UTIL_NAME_MAP = (("electric", re.compile(r"\b(?:electric(?:ity)?|power)\b", re.I)), ("gas", re.compile(r"\bgas\b", re.I)),
+                  ("water", re.compile(r"\bwater\b", re.I)), ("sewer", re.compile(r"\bsewer\b", re.I)),
+                  ("trash", re.compile(r"\b(?:trash|garbage)\b", re.I)), ("heat", re.compile(r"\bheat(?:ing)?\b", re.I)),
+                  ("internet", re.compile(r"\b(?:internet|wi-?fi|cable)\b", re.I)))
+_ITEM_SPLIT = re.compile(r"[,;|\n]|:::|\bplus\b|\band\b(?![ \t]*(?:sewer|trash|garbage))|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]")
+_ITEM_FIELD_WORDS = (
+    ("hoa", re.compile(r"\b(?:hoa|dues|association|condo fee)\b", re.I)),
+    ("parking_cost", re.compile(r"\b(?:parking|garage|carport|covered space|assigned space)\b", re.I)),
+    ("pet_rent", re.compile(r"\bpet rent\b", re.I)),
+    ("other_monthly_fees", re.compile(r"\b(?:flat fee|amenity|valet|pest|trash fee|package|locker|storage|permit|technology|internet|wifi|cable)\b", re.I)),
+)
+
+
+def _tenant_names(out: dict[str, Any]) -> set[str]:
+    text = str(out.get("tenant_pays") or "")
+    return {name for name, pat in _UTIL_NAME_MAP if pat.search(text)}
+
+
+def _semantic_placed(amount: float, phrase: str, out: dict[str, Any]) -> bool:
+    """True when ``amount`` sits in an item of ``phrase`` that names a cost a field already carries: a utility the place says the tenant
+    pays (with a utilities estimate that holds at least the utility amounts of the line), or a fee, dues, parking or pet rent item
+    with its own field that holds at least that amount. The field is what is counted, so the amount is not "not counted"."""
+    items = [x for x in _ITEM_SPLIT.split(phrase) if x and x.strip()]
+    tenant = _tenant_names(out)
+    est = out.get("utilities_estimate")
+    est = float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None
+    util_sum, mine_util = 0.0, False
+    field_sum: dict[str, float] = {}
+    mine_field: set[str] = set()
+    for item in items:
+        vals = _dollar_values(item)
+        if not vals:
+            continue
+        named = {name for name, pat in _UTIL_NAME_MAP if pat.search(item)}
+        if named & tenant and est is not None:
+            util_sum += sum(vals)
+            if amount in vals:
+                mine_util = True
+            continue
+        for key, pat in _ITEM_FIELD_WORDS:
+            if pat.search(item):
+                field_sum[key] = field_sum.get(key, 0.0) + sum(vals)
+                if amount in vals:
+                    mine_field.add(key)
+                break
+    for key in mine_field:  # the field must hold all the amounts of that kind in the line, or one of them was left out of it
+        held = out.get(key)
+        if isinstance(held, (int, float)) and not isinstance(held, bool) and held and field_sum[key] <= float(held) + 0.5:
+            return True
+    return bool(mine_util and est is not None and est + 0.5 >= util_sum)
+
+
+def placed_amounts(amounts: set[float], used: set[float], extra: set[float] | None = None, phrase: str = "", out: dict[str, Any] | None = None) -> set[float]:
+    """The amounts (of ``amounts``) that a field already counts. An amount is placed when a field holds it, when its monthly share does
+    ("$600 annual" is $50 a month), when some of the amounts add up to a field ("$210 plus $600 annual" is the $260 HOA), or, given the
+    place's fields (``out``), when the item it sits in names a cost a field carries (electric $60, gas $35 with a $125 utilities estimate)."""
+    used_r = {round(u, 2) for u in used}
+    targets = used_r | {round(e, 2) for e in (extra or set())}
+    divs = _period_divisors(phrase) if phrase else {}
+    monthly = {a: round(a / divs.get(round(a, 2), 1), 2) for a in amounts}
+    placed = {a for a in amounts if round(a, 2) in used_r or monthly[a] in used_r}
     if not amounts:
-        return False
-    if not left:
-        return True
+        return placed
     pool = sorted(amounts)
-    targets = {round(u, 2) for u in used} | {round(e, 2) for e in (extra or set())}
     for size in range(len(pool), 1, -1):
         for combo in itertools.combinations(pool, size):
-            if round(sum(combo), 2) in targets:
-                left = [a for a in left if a not in combo]
-        if not left:
-            return True
-    return not left
+            total = round(sum(monthly[c] for c in combo), 2)
+            if any(abs(total - t) < (0.51 if any(c in divs or round(c, 2) in divs for c in combo) else 0.005) for t in targets):
+                placed |= set(combo)
+    if out:
+        for a in pool:
+            if a not in placed and _semantic_placed(a, phrase or "", out):
+                placed.add(a)
+        # an amount that repeats the monthly share of a placed periodic amount ("$600 annual ... $50/month") is placed with it
+        for a in pool:
+            if a not in placed and any(monthly[b] == a for b in placed if b != a):
+                placed.add(a)
+    return placed
+
+
+def amounts_all_placed(amounts: set[float], used: set[float], extra: set[float] | None = None, phrase: str = "", out: dict[str, Any] | None = None) -> bool:
+    """True when every dollar amount in a note is a value a field holds, or part of a sum a field holds ("electric avg $60, gas avg
+    $45" with a utilities estimate of $105). The one test behind dropping a stale "not counted anywhere" note."""
+    if not amounts:
+        return False
+    return placed_amounts(amounts, used, extra, phrase, out) >= set(amounts)
 
 
 def note_amounts_placed(note: str, place: dict[str, Any]) -> bool:
@@ -6654,8 +6799,8 @@ def note_amounts_placed(note: str, place: dict[str, Any]) -> bool:
     amounts = _dollar_values(note)
     if not amounts:
         return False
-    out = {k: v for k, v in place.items() if k in _NET_REAL_FIELDS}
-    return amounts_all_placed(amounts, _net_used_numbers(out, [], str(place.get("listing_text") or "")), _field_sums(out))
+    out = {k: v for k, v in place.items() if k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
+    return amounts_all_placed(amounts, _net_used_numbers(out, [], str(place.get("listing_text") or "")), _field_sums(out), note, out)
 
 
 def _filled(out: dict[str, Any], key: str) -> bool:
@@ -6845,12 +6990,24 @@ def _uncounted_kind_sentence(phrase: str) -> str:
     return "It is not counted anywhere."
 
 
-def _only_unplaced(sentence: str, phrase: str, used: set[float]) -> str:
+_PLURAL_KIND = (("It is a one-time cost, so it is not in the monthly cost.", "are one-time costs, so they are not in the monthly cost."),
+                ("It looks like a utility cost and it is not counted anywhere.", "look like utility costs and they are not counted anywhere."),
+                ("It is a monthly fee and it is not counted anywhere.", "are monthly fees and they are not counted anywhere."),
+                ("It is not counted anywhere.", "are not counted anywhere."))
+
+
+def _with_rest_counted(sentence: str) -> str:
+    """A "not counted" sentence that names only some of the amounts in a line says the rest of the line is counted."""
+    return sentence + " The rest is already counted." if sentence.startswith("Only ") else sentence
+
+
+def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, Any] | None = None) -> str:
     """When a quoted line holds some amounts a field already counts and some it does not, the "not counted" sentence names only the
     amounts that are not placed ("Only $4 of that is a monthly fee and it is not counted anywhere."), never the whole line. The kind
     (monthly, one-time) is read from the words around the unplaced amounts, not from the placed ones."""
     amounts = sorted(_dollar_values(phrase))
-    left = [a for a in amounts if round(a, 2) not in {round(u, 2) for u in used}]
+    placed = placed_amounts(set(amounts), used, _field_sums(out or {}), phrase, out)
+    left = [a for a in amounts if a not in placed]
     if len(amounts) < 2 or not left or len(left) == len(amounts):
         return sentence
     shown = [f"${a:,.0f}" if float(a).is_integer() else f"${a:,.2f}" for a in left]
@@ -6860,6 +7017,10 @@ def _only_unplaced(sentence: str, phrase: str, used: set[float]) -> str:
     kind = _uncounted_kind_sentence(mine) if mine else "It is not counted anywhere."
     if kind == "It is not counted anywhere." and _ONE_TIME_WORDS.search(phrase) and not _MONTHLY_WORDS.search(mine):
         kind = "It is a one-time cost, so it is not in the monthly cost."
+    if len(left) > 1:
+        for single, plural in _PLURAL_KIND:
+            if kind == single:
+                return f"Only {names} of that {plural}"
     return re.sub(r"^It (?:is|looks)", lambda m: f"Only {names} of that " + ("is" if m.group(0) == "It is" else "looks"), kind, count=1)
 
 
@@ -6949,9 +7110,12 @@ def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> 
         if isinstance(v, (int, float)) and not isinstance(v, bool) and v:
             used.add(float(v))
             if key in ("hoa", "property_tax", "insurance", "other_monthly_fees", "parking_cost", "utilities_estimate", "pet_rent"):
-                used.update({round(float(v) * 12, 2), round(float(v) / 12, 2), round(float(v) * 3, 2), round(float(v) * 6, 2)})  # a yearly, quarterly or half-year figure written beside the monthly one
+                used.update({round(float(v) * 12, 2), round(float(v) * 3, 2), round(float(v) * 6, 2)})  # a yearly, quarterly or half-year figure written beside the monthly one
                 used.update({float(round(float(v) * k)) for k in (3, 6, 12)})  # "$425 a quarter" saved as 141.67 a month: 141.67 x 3 is 425.01
-                used.update({float(round(float(v) / 12)), float(int(float(v) / 12)), float(round(float(v) / 4)), float(round(float(v) / 2))})  # "$3,100 a year ($258/mo)": the rounded share is the same figure
+                if key == "parking_cost":
+                    used.update({round(float(v) / 2, 2)})  # "$175 each, 2 required" saved as $350
+                if key in ("property_tax", "insurance"):  # saved per year: the monthly share is the same figure ("$3,100 a year ($258/mo)")
+                    used.update({round(float(v) / 12, 2), float(round(float(v) / 12)), float(int(float(v) / 12)), float(round(float(v) / 4)), float(round(float(v) / 2))})
     price = out.get("price")
     if isinstance(price, (int, float)) and price:
         used.update({float(price) * 2, float(price) * 3})  # first and last month, three months up front
@@ -7001,6 +7165,9 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
             k = {"two": 2, "three": 3, "four": 4}.get(n_adults.group(1).lower()) or int(n_adults.group(1))
             if any(abs(c * k - amount) < 0.01 for c in used if c):
                 continue  # "For 2 adults that is $110 together": the sum of a per-adult fee that is already placed
+        if amount in placed_amounts(_dollar_values(phrase), used, _field_sums(out), phrase, out):
+            done.add(amount)
+            continue  # a field counts it (a yearly figure's monthly share, part of a sum, a utility the tenant pays with an estimate): never "not counted"
         done.add(amount)
         if any(f'"{phrase}"' in n for n in notes):
             continue  # a second amount in the same quoted line: the line is already there
@@ -7015,7 +7182,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         elif re.search(r"\boptional\b", near, re.I) and not re.search(r"\b(?:required|mandatory|must)\b", phrase, re.I):
             notes.append(f'The listing says "{phrase}". It looks optional, so it is not counted in the monthly cost. Ask if it is required.')
         else:
-            notes.append(f'The listing also says "{phrase}". {_only_unplaced(_uncounted_kind_sentence(phrase), phrase, used)} Check what it is for.')
+            notes.append(f'The listing also says "{phrase}". {_with_rest_counted(_only_unplaced(_uncounted_kind_sentence(phrase), phrase, used, out))} Check what it is for.')
     low_facts = " ".join(facts).lower()
     limit = out.get("pet_weight_limit")
     seen_w: set[int] = set()

@@ -191,7 +191,7 @@ def test_only_unplaced_helper_layouts():
     used = {60.0}
     base = "It is not counted anywhere."
     assert _only_unplaced(base, "electric $60 and gas $45", used) == "Only $45 of that is not counted anywhere."
-    assert _only_unplaced(base, "electric $60, gas $45 (tenant), trash $12", used) == "Only $12 and $45 of that is not counted anywhere."
+    assert _only_unplaced(base, "electric $60, gas $45 (tenant), trash $12", used) == "Only $12 and $45 of that are not counted anywhere."
     assert _only_unplaced(base, "- electric $60\n- gas $45", used).startswith("Only $45")
     assert _only_unplaced(base, "gas $45", used) == base
     assert _only_unplaced(base, "electric $60 and gas $60", used) == base

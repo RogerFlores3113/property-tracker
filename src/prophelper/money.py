@@ -598,6 +598,10 @@ def display_note_units(place: dict[str, Any]) -> list[str]:
 ONE_TIME_NOTE = re.compile(r"not in the monthly cost|not counted in the monthly cost|one-time cost|in total to move in|\bholding fee|\breservation (?:fee|deposit)|one-time (?:deal|amount)|"
                            r"price was cut|price (?:cut|drop|reduc\w*|lowered)|(?:cut|reduced|lowered|dropped) (?:by|to|from)\s+\$|\$\s?[\d,]+\s+off\b|rent concession|\bdiscount\b", re.I)
 # A note about an optional extra with no price ("A carport is available but the listing gives no price. It looks optional") holds no amount.
+_NOTE_CLOSED = re.compile(r"\bcounted once\b|\bnot counted again\b|\balready counted\b|\bpaid through that flat fee\b", re.I)
+_NOTE_CONDITIONAL = re.compile(r"only applies on that condition|only if (?:credit|your credit)", re.I)
+# A note with no dollar amount names an open cost only when it names a cost word ("rent" and "free" alone are not: "Ask what the month to month terms and rent are").
+_NOTE_COST_WORD = re.compile(r"\b(?:fee|fees|deposit|assessment|parking|garage|utilit\w*|hoa|tax|insurance)\b", re.I)
 _NO_AMOUNT_OPTIONAL = re.compile(r"gives no price|no price is given|looks optional|is optional|\boptional\b", re.I)
 
 
@@ -617,6 +621,9 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     """The saved reader notes that still hold a money note that is open: an amount, fee or cost the reader saw and did
     not count or could not place. ``place`` (its saved fields) lets a note whose amounts are all counted in a field count as closed."""
     out: list[str] = []
+    whole = " ".join(str(reader_notes or "").split())
+    if "\n" not in str(reader_notes or "").strip() and _note_is_stale(whole, place):
+        return out  # one saved note whose sentences were cut apart: judged as one note, every amount in it is already counted
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
@@ -626,11 +633,17 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
             continue  # what the seller gives toward closing is about the cash to close, not a monthly cost the buyer left out
         if _note_is_stale(note, place):
             continue
+        if _NOTE_CLOSED.search(note) and not re.search(r"\bOnly [^.]{1,80} of that\b", note):
+            continue  # "counted once in other monthly fees", "not counted again": the note says the money IS counted
+        if _NOTE_CONDITIONAL.search(note):
+            continue  # a deposit that only applies on a condition ("if credit is poor") is a question for the landlord, not a cost left out of the monthly number
         if _NOTE_PLACED.search(note) and not re.search(r"not counted|no amount|not saved", note, re.I):
             continue  # "The $25 credit check fee is saved as the application fee. Ask if each adult pays it.": the amount is placed
         if _NO_AMOUNT_OPTIONAL.search(note) and not re.search(r"\$\s?\d", note):
             continue  # an optional carport with no price: nothing to add up
         probe = note if re.search(r"\$\s?\d", note) else re.sub(r"\b(?:what|how much)\b[^.]{0,30}\bcosts?\b", " ", note, flags=re.I)  # "ask what they cost" is no amount
+        if not re.search(r"\$\s?\d", note) and not _NOTE_COST_WORD.search(probe):
+            continue  # no amount and no cost word: a lease-term question ("month to month") is not money left out
         if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(probe):
             out.append(note)
     return out
@@ -658,23 +671,25 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
     notes = open_listing_notes(reader_notes, place)
     if not notes:
         return LISTING_NOTES_UNCOUNTED
-    used: set[float] = set()
-    if place:
-        try:
-            from .parsers import _field_sums, _net_used_numbers
-            used = {round(u, 2) for u in _net_used_numbers({k: v for k, v in place.items() if v is not None}, [], str(place.get("listing_text") or "")) | _field_sums(place)}
-        except Exception:
-            used = set()
     seen: dict[float, str] = {}
     unplaced: dict[float, str] = {}
     for note in notes:
-        for raw in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", note):
-            amount = raw.replace(" ", "").rstrip(",.")  # "$3,400," is $3,400 (a comma after the amount is not part of it)
-            value = float(amount.lstrip("$").replace(",", ""))
+        used: set[float] = set()
+        placed: set[float] = set()
+        values = {float(r.replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): r.replace(" ", "").rstrip(",.") for r in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", note)}
+        if place:
+            try:
+                from .parsers import _CURRENT_EXTRA, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
+                fields = {k: v for k, v in place.items() if v is not None and k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
+                used = {round(u, 2) for u in _net_used_numbers(fields, [], str(place.get("listing_text") or "")) | _field_sums(place)}
+                placed = placed_amounts(set(values), used, _field_sums(place), note, fields)
+            except Exception:
+                used, placed = set(), set()
+        for value, amount in values.items():
             seen.setdefault(value, amount)
-            if round(value, 2) not in used:
+            if value not in placed and round(value, 2) not in used:
                 unplaced.setdefault(value, amount)
-    amounts = list((unplaced or seen).values())
+    amounts = list(unplaced.values())  # an amount a field already counts is never named as left out
     if len(amounts) == 1 and len(notes) == 1:
         kind = _OPEN_KIND.search(notes[0])
         return f"the {amounts[0]} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
