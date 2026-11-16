@@ -53,7 +53,7 @@ def _P():
     return parsers
 
 
-_ITEM_SEP = re.compile(r"[,;|\n]|\.(?=\s|$)|\bplus\b|[ \t]\+[ \t]|\band\b|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|\([^)]*\)")
+_ITEM_SEP = re.compile(r"(?:(?<!\d),|,(?!\d{3}(?!\d)))|[;|\n]|[ \t]\+[ \t]|[ \t]~[ \t]|\.(?=\s|$)|\bplus\b|\band\b|[ \t][-\u2013\u2014][ \t]|[ \t]\*[ \t]|\([^)]*\)")
 _SUMMED = ("other_monthly_fees", "move_in_fees")
 _CATS = (
     ("app", re.compile(r"application|\bapp\.? fee|applicants?\b|screening|credit check|background", re.I), ("application_fee",)),
@@ -110,6 +110,19 @@ def _matches(amount: float, v: float, item: str = "") -> bool:
 
 
 _STOP = frozenset("the and for per mo month monthly each about approx avg roughly all fee fees extra paid pay pays tenant only one two".split())
+
+
+def _quoted_clean(amount: float, notes: str, line: str, pos: int) -> bool:
+    """A note quotes this very figure (the one at offset ``pos`` of its line) in words taken from the listing: a quote cut down to the figure and
+    the clean words beside it. Another figure with the same amount elsewhere on the line is not covered by it."""
+    for q in re.findall(r'"([^"]{2,200})"', notes):
+        for part in (x.strip() for x in q.split("...") if x.strip()):
+            if amount not in _P()._dollar_values(part):
+                continue
+            pat = r"\s+".join(re.escape(w) for w in part.split())
+            if any(m.start() <= pos < m.end() for m in re.finditer(pat, line, re.I)):
+                return True
+    return False
 
 
 def _noted(amount: float, item: str, notes: str) -> bool:
@@ -178,7 +191,7 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
         if (amount, item.strip()) in seen:
             continue
         seen.add((amount, item.strip()))
-        if _noted(amount, item, notes) or (isinstance(price, (int, float)) and amount == price):
+        if _noted(amount, item, notes) or _quoted_clean(amount, notes, line, m.start() - (text.rfind(chr(10), 0, m.start()) + 1)) or (isinstance(price, (int, float)) and amount == price):
             continue
         if is_non_cost(text, m.start(), m.end(), amount):
             continue

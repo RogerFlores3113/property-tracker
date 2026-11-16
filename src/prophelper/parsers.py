@@ -5520,6 +5520,7 @@ def _tax(text: str) -> float | None:
 
 
 _NOSUFFIX = re.compile(r"(?<![\w$.,/#-])(\d{1,6})[ \t]+((?:(?:[NSEW]{1,2}|North|South|East|West)\.?[ \t]+)?[A-Z][A-Za-z.'-]*(?:[ \t]+[A-Z][A-Za-z.'-]*){0,2})\b")
+_ADDR_NOCOMMA = re.compile(r"(?<![\w$.,/#-])(\d{1,6}[ \t]+(?:[NSEW]{1,2}\.?|North|South|East|West)[ \t]+([A-Z][A-Za-z'-]+))[ \t]+([A-Z][A-Za-z.'-]+(?:[ \t]+[A-Z][A-Za-z.'-]+)?)[ \t]+([A-Z]{2})\b(?=[ \t]*(?:[|\n,.;]|$))")
 _NOSUFFIX_AFTER = re.compile(r"[ \t]*(?:,[ \t]*[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3},?[ \t]+[A-Z]{2}\b|,[ \t]*\d{5}\b|,?[ \t]+(?:#|apt\b|apartment\b|unit\b|suite\b|ste\b))", re.I)
 _NOSUFFIX_BEFORE = re.compile(r"(?:#|\bapt\.?|\bapartment|\bunit|\bsuite)[ \t]*#?[ \t]*[A-Za-z]?\d{1,5}[A-Za-z]?[ \t]*,[ \t]*$", re.I)
 _NOSUFFIX_BAD = _NOT_STREET_WORDS | {"day", "days", "week", "weeks", "per", "plus", "and", "of", "at", "in", "for", "to", "off", "total", "rent", "pm", "am",
@@ -5695,6 +5696,11 @@ def _address_raw(text: str) -> dict[str, str]:
         bare = _address_no_suffix(text)
         if bare:
             candidates.append((bare[0], None, bare[1]))
+    if not candidates and "address" not in out:
+        nm = _ADDR_NOCOMMA.search(text)  # "| 4600 N Broadway Chicago IL |": a direction, one street word, then the city and the state
+        if nm and nm.group(4) in _STATES and not ({w.lower() for w in nm.group(2).split()} & (_NOSUFFIX_BAD | _PARKING_ADDRESS_WORDS)):
+            out["address"] = " ".join(nm.group(1).split())
+            out["city"], out["state"] = nm.group(3), nm.group(4)
     for street, unit_in, end in candidates:
         out["address"] = street
         if unit_in:
@@ -6047,7 +6053,7 @@ _CORRECTION_CUT = re.compile(r"[ \t.!?,;]+(?:no|nope|oops|sorry|correction|actua
 _POLICY_TITLE = re.compile(
     r"\b(?:month[- ]to[- ]month|lease|leases|leasing|doorman|concierge|rooftop|fenced|fence|yard|driveway|street permit|street parking|garage|carport|parking|"
     r"pets?|dogs?|cats?|utilit\w*|deposits?|laundry|washer|dryer|dishwasher|included|allowed|tours?|appointment|tenant|landlord|owner|"
-    r"credit|application|available|rent[:=]|no:|sorry|oops|correction)\b", re.I)
+    r"credit|application|available|rent[:=]|no:|sorry|oops|correction|breeds?|restrictions?|restricted|smok\w*|weight|limits?|apply|applies|not incl\w*|prohibited|required|mandatory)\b", re.I)
 _REAL_PLACE_NOUN = re.compile(r"\b(?:apartments?|apts?|house|home|condo|townhome|townhouse|duplex|lofts?|flats?|cottages?|bungalows?|villas?|residences?|estates?|commons|court|manor|terrace|towers?)\b", re.I)
 
 
@@ -6057,13 +6063,21 @@ def _policy_title_line(line: str) -> bool:
     return bool(_POLICY_TITLE.search(line)) and not _BED_CUE.search(line) and not _REAL_PLACE_NOUN.search(line)
 
 
+_HYPE_LEAD = re.compile(r"^(?:wow|omg|hurry|look|must[ \t]+see|don'?t[ \t]+miss(?:[ \t]+this)?|won'?t[ \t]+last|amazing[ \t]+deal|great[ \t]+deal|rare[ \t]+find|a[ \t]+must[ \t]+see|act[ \t]+fast|available[ \t]+now|just[ \t]+listed|new[ \t]+listing)\b[ \t!:,.\u2013\u2014-]*", re.I)
+
+
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
+    lead = _HYPE_LEAD.sub("", title)
+    if lead != title and len(lead) >= 8:
+        title = lead[:1].upper() + lead[1:]  # "Wow Newly renovated 2 bedroom": the shout is not part of the name
     cut = _CORRECTION_CUT.sub("", title).strip(" ,;:-|\u2013\u2014")
     if cut != title:  # "Albany Park 1x1? no 3x2": the size before the correction is the wrong one, so it goes too
         cut = re.sub(r"\s+\d+\s*x\s*\d+\s*\??$", "", cut).strip(" ,;:-|?\u2013\u2014")
     if len(cut) >= 8:
         title = cut  # "Gorgeous 3 bedroom house near Lincoln Elementary! No: rent 3,240 -- no wait": the correction is not part of the name
+    if re.search(r"[a-z]", title):  # "Uptown 3 BEDROOM 2 BATH": a shouted kind-of-place word beside normal words is written normally
+        title = re.sub(r"\b(?:BEDROOMS?|BATHROOMS?|BATHS?|BEDS?|APARTMENT|HOUSE|DUPLEX|TOWNHOUSE|CONDO|STUDIO)\b", lambda m: m.group(0).capitalize(), title)
     letters = [c for c in title if c.isalpha()]
     if len(letters) >= 4 and title.upper() == title:
         title = re.sub(r"\d*[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in _ALL_CAPS_KEEP or re.fullmatch(r"\d+(?:BR|BA|BD)", m.group(0)) else m.group(0).capitalize(), title)
@@ -6085,6 +6099,18 @@ _PROPERTY_NOUN = re.compile(r"(?:\b|(?<=\d))(?:apartments?|apts?|house|home|cond
 # a brand with a plan after it ("LUXE 1x1", "Aspen 2BR") is a name, even though the rest is a bed/bath word
 _PLAN_HEAD = re.compile(r"^[A-Z][A-Za-z'&.-]+(?:[ \t]+[A-Z][A-Za-z'&.-]+){0,2}[ \t]+(?:\d{1,2}[ \t]?(?i:br|bd|bed)|\d[xX]\d|(?i:studio)\b)")
 _PLAN_NAME = re.compile(r"^[A-Z][A-Za-z'&.-]{2,}(?:[ \t]+[A-Za-z'&.-]+){0,2}[ \t]+(?:\d[xX]\d(?:\.\d)?|\d[ \t]?(?:br|bd|bed)\w*)$")
+
+
+# a pipe part that is a bed count and a kind of place ("3 Bed Duplex Half") or a neighbourhood with its plan ("Uptown 3 BEDROOM 2 BATH") is a name
+_NAMED_PLAN = re.compile(
+    r"^[A-Z][A-Za-z'&-]{2,}(?:[ \t]+[A-Za-z'&-]+){0,2}[ \t]+\d(?:\.\d)?[ \t]*(?:bed(?:room)?s?|br|bd)(?:[ \t]*/?[ \t]*\d(?:\.\d)?[ \t]*(?:bath(?:room)?s?|ba))?(?:[ \t]+\$[\d,]+(?:/mo)?)?$", re.I)
+_BED_NOUN_PART = re.compile(r"^\d(?:\.\d)?[ \t]*(?:bed(?:room)?s?|br|bd)[ \t]+(?:[A-Za-z]+[ \t]+)?(?:duplex|house|townhouse|townhome|condo|apartment|flat|loft|studio|cottage|bungalow)(?:[ \t]+[A-Za-z]+)?$", re.I)
+
+
+def _plain_address_part(part: str, found: dict[str, Any]) -> bool:
+    """A pipe part that is only the street address (with its city and state): it is the address, not the name."""
+    addr = str(found.get("address") or "")
+    return bool(addr) and part.lower().startswith(addr.lower()) and len(part) <= len(addr) + 40
 
 
 def _feature_line(line: str) -> bool:
@@ -6156,15 +6182,18 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         else:
             raw_lines.append(one)
     for raw_line in raw_lines:
+        named_part = False
         line = " ".join(_PROMO_BANNER.sub(" ", raw_line).strip(" \t|\u2022\u00b7*#").split())
         marked = bool(re.match(r"[ \t>]*(?:#{1,6}[ \t]|\*\*|__)", raw_line))  # a bold or heading line is a title, even when it ends in a full stop
         line = re.sub(r"^(?:>[ \t]*|[-+][ \t]+|\d{1,2}[.)][ \t]+)+", "", line).strip(" \t*#_") if not line.startswith("$") else line
         line = re.sub(r"^(?:actually|update|updated|correction|edit|edited|note|ps|p\.s\.)[ \t]*[:,][ \t]*(?=\S)", "", line, flags=re.I)  # "Actually: Campustown Flats 1x1"
         if _ai_aimed(raw_line) or _ai_aimed(line):
             continue
-        if " | " in line:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
-            parts = [x.strip() for x in line.split(" | ")]
-            line = next((x for x in parts if len(x) >= 3 and not _not_a_name(x) and (not _is_fact_line(x) or _PLAN_NAME.match(x))), "")
+        if " | " in line or len(re.findall(r"[ \t]~[ \t]", line)) >= 2:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
+            parts = [x.strip() for x in (re.split(r"[ \t]\|[ \t]", line) if " | " in line else re.split(r"[ \t]~[ \t]", line))]
+            ok = [x for x in parts if len(x) >= 3 and not _not_a_name(x) and (not _is_fact_line(x) or _PLAN_NAME.match(x) or _NAMED_PLAN.match(x) or _BED_NOUN_PART.match(x))]
+            line = next((x for x in ok if not _ADDRESS.match(x) and not _plain_address_part(x, found)), "") or (ok[0] if ok else "")
+            named_part = bool(_NAMED_PLAN.match(line) or _BED_NOUN_PART.match(line))
         for _ in range(2):  # "FB Marketplace - 2 bedroom ...", "Rental: 3 Bedroom Home in Belmont": the label is not the title
             line = _LABEL_PREFIX.sub("", line, count=1)
         line = _name_segment(line)
@@ -6187,7 +6216,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
             return found["address"]  # "Unit 3B, 500 Main St, Austin TX 78701": the street is the title, the unit has its own field
         if found.get("address") and found["address"].lower() in line.lower() and _is_fact_line(line) and not _PLAN_NAME.match(line):
             return found["address"]  # "Beautiful updated 2 bed 1 bath in Beechwold, 4410 Indianola Ave, Columbus": a headline with an address
-        if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or (_is_fact_line(line) and not _PLAN_NAME.match(line) and not re.search(r"\b(?:apartment|condo|house|townhome|townhouse|duplex|loft)\b", line, re.I)):
+        if re.fullmatch(r"[\d\s$,./\-+:()]+", line) or (_is_fact_line(line) and not _PLAN_NAME.match(line) and not named_part and not re.search(r"\b(?:apartment|condo|house|townhome|townhouse|duplex|loft)\b", line, re.I)):
             continue
         if re.search(r"\b(?:call|text|email|contact|apply|posted|updated|listed|published)\b.*(?:\d{3}|ago|on\b)", low) \
                 or re.search(r"\b(?:call|text|email|message|msg|dm|reach|contact)\s+(?:me|us)\b|\bwhatsapp\b", low):
@@ -7290,6 +7319,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
     if not buying:
         facts += [n for n in (_try(lambda: _no_silent_drop(text, out, facts, est_replaced)) or []) if not _pet_quote_placed(n, out)]  # cycle 20: the last net, every figure is placed, explained or quoted
+    facts = _try(lambda: _settle_notes(text, out, facts, buying)) or facts
     if est_replaced:
         facts = _answer_utility_notes(facts, out)
     facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
@@ -7798,12 +7828,12 @@ def _with_rest_counted(sentence: str) -> str:
     return sentence[:-1] + "; the other amounts in that line are counted." if sentence.startswith("Only ") and sentence.endswith(".") else sentence
 
 
-def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, Any] | None = None) -> str:
+def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, Any] | None = None, extra_placed: set[float] | frozenset[float] = frozenset()) -> str:
     """When a quoted line holds some amounts a field already counts and some it does not, the "not counted" sentence names only the
     amounts that are not placed ("Only $4 of that is a monthly fee and it is not counted anywhere."), never the whole line. The kind
     (monthly, one-time) is read from the words around the unplaced amounts, not from the placed ones."""
     amounts = sorted(_dollar_values(phrase))
-    placed = placed_amounts(set(amounts), used, _field_sums(out or {}), phrase, out)
+    placed = placed_amounts(set(amounts), used, _field_sums(out or {}), phrase, out) | (set(amounts) & set(extra_placed))
     left = [a for a in amounts if a not in placed]
     if len(amounts) < 2 or not left or len(left) == len(amounts):
         return sentence
@@ -7821,17 +7851,138 @@ def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, 
     return re.sub(r"^It (?:is|looks)", lambda m: f"Only {names} of that " + ("is" if m.group(0) == "It is" else "looks"), kind, count=1)
 
 
+_ABBREV_BEFORE = re.compile(r"(?:\b(?:est|approx|avg|incl|apt|ca|ave|inc|bldg|ste)|\b[a-z])$", re.I)
+
+
+def _real_end(text: str, i: int) -> bool:
+    """A sentence end: a full stop after "est" or "approx" (or inside a number such as 1.45k) is not one."""
+    if text[i] != ".":
+        return True
+    nxt = text[i + 1:i + 2]
+    if nxt and not nxt.isspace():
+        return False
+    return not _ABBREV_BEFORE.search(text[max(0, i - 8):i])
+
+
+def _end_before(text: str, c: str, start: int) -> int:
+    at = start
+    while True:
+        at = text.rfind(c, 0, at)
+        if at < 0 or _real_end(text, at):
+            return at
+
+
+def _end_after(text: str, c: str, end: int) -> int:
+    at = end - 1
+    while True:
+        at = text.find(c, at + 1)
+        if at < 0 or _real_end(text, at):
+            return at
+
+
+_FORMAT_CHARS = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\U000e0000-\U000e007f]")
+_QUOTE_WORD = re.compile(r"[A-Za-z](?:[A-Za-z'\-]*[A-Za-z])?[,:]?")
+_QUOTE_NUM = re.compile(r"[~\u2248]?\$?\d[\d,]*(?:\.\d+)?(?:/[A-Za-z]+|[A-Za-z]+\d*)?[,:)]?")
+_QUOTE_JUNK_PHRASE = re.compile(r"[<>\[\]{}=@\\_`^\uff1d]|<!|\|")
+
+
+def _quote_token_ok(tok: str) -> bool:
+    return bool(_QUOTE_WORD.fullmatch(tok) or _QUOTE_NUM.fullmatch(tok))
+
+
+def _tidy_quote(phrase: str, text: str, start: int, end: int) -> str:
+    """A quote of an open figure that reads as plain words. A clean phrase is returned as it is. A phrase that holds markup, a formula, a
+    hidden character or text aimed at an AI tool is cut down to the figure with the clean words next to it ("Concierge ... $25 monthly",
+    "$14"): it never starts in the middle of a word or number and never carries the junk."""
+    from .redflags import _AI_C17, _AI_EXTRA, _AI_TARGETED
+    folded = _FORMAT_CHARS.sub("", phrase)
+    before = re.split(r"[.!?]\s|\n", text[max(0, start - 70):start])[-1]
+    around = _FORMAT_CHARS.search(before) or re.search(r"[=\uff1d+@]\s?[A-Za-z]{2,10}\||<!--|</?[A-Za-z]|-->", before)  # junk just in front of the clause
+    if folded == phrase and not around and not _QUOTE_JUNK_PHRASE.search(phrase) and all(_quote_token_ok(t.rstrip(".;!?")) or not re.search(r"^[A-Za-z]{1,2}\d+$|[A-Za-z]!|!\w", t) for t in phrase.split()):
+        return phrase
+    ls = text.rfind("\n", 0, start) + 1
+    le = text.find("\n", end)
+    line = text[ls:(le if le >= 0 else len(text))]
+    line = _FORMAT_CHARS.sub("", line)
+    line = re.sub(r"<!--.*?-->|<[^>]{0,80}>", " \x00 ", line)
+    line = re.sub(r"[=\uff1d+@]\s?[A-Za-z]{2,10}\|\S*(?:\s+'?[/\w]+'?!?\w*)?", " \u00a7 ", line)  # a spreadsheet formula ("=cmd|calc", "+cmd|' /C calc'!A0")
+    for pat in (_AI_TARGETED, _AI_EXTRA, _AI_C17):
+        line = pat.sub(" \x00 ", line)
+    amount_text = text[start:end].replace(" ", "")
+    toks = line.split()
+    idx = next((i for i, t in enumerate(toks) if amount_text in t.replace(" ", "")), None)
+    if idx is None:
+        return phrase
+    left: list[str] = []
+    skipped = 0
+    i = idx - 1
+    while i >= 0 and len(left) < 5:
+        t = toks[i]
+        if "\x00" in t or re.search(r"[.;!?]$", t):
+            break
+        if _quote_token_ok(t):
+            left.insert(0, t)
+            skipped = 0
+        else:
+            skipped += 1
+            if skipped > 3:
+                break
+            if not left or left[0] != "...":
+                left.insert(0, "...")
+        i -= 1
+    while left and left[0] == "...":
+        left.pop(0)
+    words = [w for w in left if w != "..."]
+    if not any(len(re.sub(r"[^A-Za-z]", "", w)) >= 3 for w in words):
+        left = []
+    amt_tok = toks[idx].rstrip(".;!?,)")
+    right: list[str] = []
+    for t in toks[idx + 1:idx + 4]:
+        if "\x00" in t or not re.fullmatch(r"(?:per|a|each|month|monthly|mo|year|yearly|annually|/mo|/month|/yr|flat|extra)[.;!?]?", t, re.I):
+            break
+        right.append(t.rstrip(".;!?"))
+        if re.search(r"[.;!?]$", t):
+            break
+    if right and right[0].lower() in ("and", "or", "plus", "the", "a"):
+        right = []
+    out = " ".join([*left, amt_tok, *right]).strip(" ,:-")
+    return out.replace('"', "'")
+
+
+def _comma_before(text: str, lo: int, start: int) -> int:
+    """Where a quote may start after the last comma before ``start``: never inside a number ("$1,380"). ``lo`` when there is none."""
+    at = start
+    while True:
+        at = text.rfind(",", lo, at)
+        if at < 0:
+            return lo
+        if not (text[at - 1:at].isdigit() and text[at + 1:at + 2].isdigit()):
+            return at + 1
+
+
+def _comma_after(text: str, end: int, hi: int) -> int:
+    """The first comma at or after ``end`` that is not inside a number, else -1."""
+    at = end
+    while True:
+        at = text.find(",", at, hi)
+        if at < 0:
+            return -1
+        if not (text[at - 1:at].isdigit() and text[at + 1:at + 2].isdigit()):
+            return at
+        at += 1
+
+
 def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
     """The short phrase around text[start:end]: the clause it sits in. A clause that fits ``limit`` is quoted whole, never
     cut in the middle; a longer one is narrowed to the comma-separated piece that holds the match, and only a piece that is
     still too long is cut at a word edge."""
-    left = max(max(text.rfind(c, 0, start) for c in _NET_ENDS) + 1, text.rfind(" * ", 0, start) + 3 if text.rfind(" * ", 0, start) >= 0 else 0)  # " * " separates bullets
-    rights = [i for i in (text.find(c, end) for c in (*_NET_ENDS, " * ")) if i >= 0]
+    left = max(max(_end_before(text, c, start) for c in _NET_ENDS) + 1, text.rfind(" * ", 0, start) + 3 if text.rfind(" * ", 0, start) >= 0 else 0)  # " * " separates bullets
+    rights = [i for i in (_end_after(text, c, end) for c in (*_NET_ENDS, " * ")) if i >= 0]
     right = min(rights) if rights else len(text)
     lo, hi = left, right
     if hi - lo > limit:
-        lo = max(lo, text.rfind(",", lo, start) + 1)
-        comma = text.find(",", end, hi)
+        lo = max(lo, _comma_before(text, lo, start))
+        comma = _comma_after(text, end, hi)
         if comma >= 0:
             hi = comma
     if hi - lo > limit:
@@ -7843,7 +7994,7 @@ def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
         if hi < right:
             prev = text.rfind(" ", end, hi)
             hi = prev if prev > end else hi
-    phrase = " ".join(text[lo:hi].split()).strip(" ,:-–—")
+    phrase = re.sub(r"\.{2,}$", "", " ".join(text[lo:hi].split()).strip(" ,:-–—")).strip(" ,:-–—")
     return phrase.replace('"', "'")
 
 
@@ -7961,6 +8112,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         if phrase:
             from .redflags import trim_at_injection
             phrase = trim_at_injection(phrase)  # a line that runs on into text aimed at an AI is quoted only up to the fee itself
+            phrase = _tidy_quote(phrase, text, m.start(), m.end())  # markup, a formula or a hidden character in the line never goes into the quote
         if not phrase:
             continue
         if _quotes_title(phrase, out.get("title")):
@@ -8050,6 +8202,56 @@ def _answer_utility_notes(facts: list[str], out: dict[str, Any]) -> list[str]:
     return done
 
 
+_QUOTE_NOTE = re.compile(r'^The listing also says "([^"]*)"\. (.*) Check what it is for\.$')
+_PARTS_NOTE = re.compile(r"^The listing also gives .+? at about \$([\d,]+(?:\.\d+)?) a month\. Only the figure that covers more or is higher, \$([\d,]+(?:\.\d+)?), is counted\.$")
+_COUNTED_OTHER_FEES = re.compile(r"\bcounted in other monthly fees\b|\bis counted in other monthly fees\b", re.I)
+
+
+def _settle_notes(text: str, out: dict[str, Any], facts: list[str], buying: bool = False) -> list[str]:
+    """Cycle 21: the notes made agree with the final fields, one truthful note each. A figure that is part of a counted total (electric $50,
+    gas $25, internet $55 and trash $18 inside "about $148 total") is placed, so it is never "not counted anywhere" and its parts are not
+    repeated. "The other amounts in that line are counted" is said only when every other amount in the line is in a saved field. For a
+    home for sale, a note that says an amount is "counted in other monthly fees" (the cost of buying does not use that field) is dropped
+    when another note already says the same figure is not counted, and otherwise says it is not counted."""
+    from . import dropguard
+    est = out.get("utilities_estimate")
+    util_ok: set[float] = set()
+    if not buying and isinstance(est, (int, float)) and not isinstance(est, bool) and est:
+        util_ok = dropguard._util_placed(text, float(est))
+    used = _net_used_numbers(out, [], text)
+    done: list[str] = []
+    for f in facts:
+        if buying and _COUNTED_OTHER_FEES.search(f):
+            amt = next(iter(sorted(_dollar_values(f))), None)
+            if amt is not None and any(g is not f and "not counted" in g and amt in _dollar_values(g) for g in facts):
+                continue  # the same figure has a note that says it is not counted: one truthful note
+            f = re.sub(r"\bis counted in other monthly fees\.(?: If it is optional, take it out\.)?|, counted in other monthly fees\.(?: If it is optional, take it out\.)?|so it is counted in other monthly fees\.",
+                       "but the cost of buying does not use other monthly fees, so it is not counted anywhere. Add it to your own budget if you pay it.", f)
+        pm = _PARTS_NOTE.match(f)
+        if pm and util_ok and float(pm.group(1).replace(",", "")) in util_ok and abs(float(pm.group(2).replace(",", "")) - float(est or 0)) < 0.5:
+            continue  # "electric about $50" is one of the parts that add up to the counted $148
+        qm = _QUOTE_NOTE.match(f)
+        if qm and re.search(r"not counted anywhere|not in the monthly cost", qm.group(2)):
+            q = qm.group(1)
+            amounts = _dollar_values(q)
+            extra = {a for a in amounts & util_ok} if (util_ok and _NET_UTIL_WORD.search(q)) else set()
+            if extra:
+                placed = placed_amounts(amounts, used, _field_sums(out), q, out) | extra
+                if amounts <= placed:
+                    continue  # every figure in the line is in a field or is a part of a counted total: nothing is left out
+                kind = _uncounted_kind_sentence(q)
+                new = _with_rest_counted(_only_unplaced(kind, q, used, out, extra))
+                f = f'The listing also says "{q}". {new} Check what it is for.'
+            elif "the other amounts in that line are counted" in qm.group(2):
+                named = _dollar_values(qm.group(2))
+                sums = _field_sums(out)
+                strict = {round(u, 2) for u in used} | {round(x, 2) for x in sums}
+                if any(round(a, 2) not in strict and not any(abs(a / k - u) < 0.51 for u in strict for k in (3, 6, 12)) for a in amounts - named):
+                    f = f.replace("; the other amounts in that line are counted.", ".")  # said only when every other amount is in a saved field
+        done.append(f)
+    return done
+
+
 def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str], skip_util: bool = False) -> list[str]:
     """Cycle 20: a dollar figure of the listing that no field holds and no note explains gets a plain note that quotes its phrase."""
     from . import dropguard
@@ -8068,6 +8270,7 @@ def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str], skip_util:
         if phrase:
             from .redflags import trim_at_injection
             phrase = trim_at_injection(phrase)
+            phrase = _tidy_quote(phrase, text, hit["start"], hit["end"])
         if phrase and _quotes_title(phrase, out.get("title")) and item and len(item) < len(phrase):
             phrase = item  # the figure sits in the title line, so only its own item is quoted
         if not phrase or _quotes_title(phrase, out.get("title")) or any(f'"{phrase}"' in n for n in [*facts, *notes]):

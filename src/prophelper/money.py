@@ -540,6 +540,18 @@ def _join_words(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
+def _short_unc(unc: list[str]) -> list[str]:
+    """The names behind "not counted yet" kept to the essentials: when they run long, "utilities (electric, gas, water and sewer)" is just
+    "utilities", and when that is still long a list of amounts in the listing notes is "some amounts in the listing notes" (the notes and the
+    cost lines name them)."""
+    if len(_join_words(unc)) <= 60:
+        return unc
+    short = list(dict.fromkeys(re.sub(r"\s*\([^)]*\)$", "", u) if u.startswith("utilities (") else u for u in unc))
+    if len(_join_words(short)) > 80:
+        short = [LISTING_NOTES_UNCOUNTED if re.search(r"amounts in the listing notes$", u) and len(re.findall(r"\$", u)) >= 2 else u for u in short]
+    return list(dict.fromkeys(short))
+
+
 def headline(cost: dict[str, Any], people: int = 1, noun: str = "people") -> str:
     """The one line next to the total: '$2,414/mo, insurance not counted yet' (and '$807 each' when people share it)."""
     total = cost.get("total")
@@ -551,7 +563,7 @@ def headline(cost: dict[str, Any], people: int = 1, noun: str = "people") -> str
     if label:
         unc = [label if u == LISTING_NOTES_UNCOUNTED else u for u in unc]
     if unc:
-        text += f", {_join_words(unc)} not counted yet"
+        text += f", {_join_words(_short_unc(unc))} not counted yet"
     if people and people > 1:
         text += f" ({_dollars(total / people)} each for {people} {noun})"
     return text
@@ -687,6 +699,25 @@ def _amount_list(amounts: list[str]) -> str:
     return amounts[0] if len(amounts) == 1 else ", ".join(amounts[:-1]) + " and " + amounts[-1]
 
 
+_THING_STOP = frozenset("the a an and also says say of for per each every this that it is are be to in on at or with only extra any one two monthly month mo yearly year flat total about approx roughly est by".split())
+
+
+def _nearest_kind(note: str, amount: str) -> re.Match[str] | None:
+    """The kind word (fee, deposit, parking...) closest to the amount inside the note's quote, so "$1,380 security deposit + $50 lease fee"
+    names the $50 as a fee and never as the deposit. None when the note quotes nothing or no kind word sits beside the amount."""
+    qm = re.search(r'"([^"]*)"', note)
+    if not qm or amount not in qm.group(1):
+        return None
+    q = qm.group(1)
+    at = q.index(amount)
+    best = None
+    for m in _OPEN_KIND.finditer(q):
+        gap = at - m.end() if m.end() <= at else m.start() - (at + len(amount))
+        if gap <= 25 and (best is None or gap < best[0]):
+            best = (gap, m)
+    return best[1] if best else None
+
+
 def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> str:
     """A few words for what is open in the notes, naming the amounts: "the $75 flat fee in the listing notes" for one amount,
     "the $96 and $40 amounts in the listing notes" for several (up to four), else the generic "some amounts in the listing notes"."""
@@ -718,7 +749,7 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
                 unplaced.setdefault(value, amount)
     amounts = list(unplaced.values())  # an amount a field already counts is never named as left out
     if len(amounts) == 1 and len(notes) == 1:
-        kind = _OPEN_KIND.search(notes[0])
+        kind = _nearest_kind(notes[0], amounts[0]) or _OPEN_KIND.search(notes[0])
         return f"the {amounts[0]} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
     if 1 <= len(amounts) <= 4:
         return f"the {_amount_list(amounts)} amount{'s' if len(amounts) > 1 else ''} in the listing notes"
@@ -727,6 +758,11 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
         for note in notes:
             kind = _OPEN_KIND.search(note)
             word = _OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else ""
+            if word == "fee":
+                fm = next((x for src in (note, " ".join(str(reader_notes or "").split())) for x in re.finditer(r"\b([A-Za-z][A-Za-z-]{2,})[ \t]+fees?\b", src)
+                           if x.group(1).lower() not in _THING_STOP), None)
+                if fm:
+                    word = f"{fm.group(1).lower()} fee"  # "the broker fee in the listing notes", not "the fee"
             if word and word not in kinds:
                 kinds.append(word)
         if kinds and len(kinds) <= 3:
