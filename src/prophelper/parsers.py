@@ -3439,7 +3439,8 @@ def _both_or_electric(m: re.Match[str], word: str) -> str:
 # cycle 22: internet the listing calls optional ("internet optional (Comcast ~$70)", "your choice", "if you want it") or never says the
 # renter has to pay ("Internet (Comcast ~$70)" in a plain list) is a choice, not a utility bill: it is never part of the utilities estimate.
 _NET_WORD_RE = re.compile(r"\b(?:internet|wi-?fi|broadband)\b", re.I)
-_NET_OPTIONAL_RE = re.compile(r"\b(?:optional|your choice|if you (?:want|need|choose|like|prefer)(?: it)?|if desired|at your option|up to you|not (?:required|mandatory)|(?:by|on|upon) request|available)\b|\bextra if\b", re.I)
+_NET_OPTIONAL_RE = re.compile(r"\b(?:optional|your choice|if you (?:want|need|choose|like|prefer)(?: it)?|if desired|at your option|up to you|not (?:required|mandatory)|(?:by|on|upon) request)\b|\bextra if\b", re.I)
+_NET_AVAILABLE_RE = re.compile(r"\bavailable\b", re.I)
 _NET_PAYER_RE = re.compile(r"\b(?:tenants?|residents?|renters?|you|lessees?)\b[^.\n;]{0,30}\b(?:pays?|responsible|handles?|sets? up|arranges?|will pay|must pay)\b|\b(?:required|mandatory|must|billed back|resident responsibility|tenant responsibility|responsibility of)\b", re.I)
 _NET_BRAND_RE = re.compile(r"\b(?:comcast|xfinity|spectrum|verizon|fios|cox|centurylink|frontier|google fiber|at&t|att|optimum|rcn|wow|astound|mediacom|windstream)\b", re.I)
 _NET_AMOUNT_RE = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d{1,5})(?:\.\d{1,2})?(?![\d])")
@@ -3475,10 +3476,11 @@ def _internet_clauses(text: str) -> list[dict[str, Any]]:
         before = text[max(0, m.start() - 16):m.start()]
         line_start = text.rfind("\n", 0, m.start()) + 1
         prefix = text[line_start:m.start()]
-        cut = list(re.finditer(r"(?<!approx)(?<!avg)(?<!est)(?<!incl)\.[ \t]+(?=[A-Z])", prefix))
+        cut = list(re.finditer(r"(?<!approx)(?<!avg)(?<!est)(?<!incl)\.[ \t]+(?=[A-Z])", prefix + text[m.start():m.start() + 1]))
         sentence = (prefix[cut[-1].end():] if cut else prefix) + text[m.start():i]  # "Resident pays: Electric ~$40; Internet (Xfinity) approx. $60": the ";" does not end the payer's list
         flat = " " + clause.lower()
-        if _NET_OPTIONAL_RE.search(clause) or re.search(r"\boptional[ \t:]*$", before, re.I):
+        if _NET_OPTIONAL_RE.search(clause) or re.search(r"\boptional[ \t:]*$", before, re.I) \
+                or (_NET_AVAILABLE_RE.search(clause) and not _NET_PAYER_RE.search(sentence)):  # "available" alone is weak: "available, tenant pays Comcast ~$70" is a bill
             kind = "optional"
         elif _NET_BRAND_RE.search(clause) and not _NET_PAYER_RE.search(sentence) and not re.search(r"\b(?:included|incl)\b", flat):
             kind = "unstated"
@@ -3522,7 +3524,7 @@ def _internet_choice_notes(text: str, facts: list[str]) -> list[str]:
         if any("nternet" in f and amt in f and re.search(r"optional|not counted|does not say|starting price", f) for f in [*facts, *notes]):
             continue
         if h["kind"] == "optional":
-            notes.append(f"Internet is listed as optional at {amt} a month, so it is not counted in your utilities estimate. Ask if you need it.")
+            notes.append(f"Internet is listed as optional at {amt} a month, so it is not counted. Ask if you need it.")
         elif h["kind"] == "starting":
             notes.append(f"The listing gives internet from {amt} a month, which is only a starting price, so it is not counted. Ask what you would really pay.")
         else:
@@ -3549,11 +3551,13 @@ def _strip_hoa_covers(text: str) -> str:
 
 def _tilde_items(text: str) -> str:
     """A listing pasted as "~ Heat is gas ~ Electric typically $55 ~ Water included" uses the tilde as a bullet: each part is its own sentence.
-    Only a line with two or more spaced tildes followed by a word is cut ("Electric ~ $55" is a figure, not a bullet)."""
+    Only a line with two or more spaced tildes followed by a word is cut. "Electric ~ $55" and "Electric ~ about $55" are figures, not bullets."""
+    bullet = r"[ \t]~[ \t]+(?=(?!(?:about|around|approx\w*|roughly|est\w*|avg|average|maybe|up[ \t]+to)\b)[A-Za-z])"
     out = []
     for line in text.split("\n"):
-        if len(re.findall(r"[ \t]~[ \t]+(?=[A-Za-z])", line)) >= 2 or (re.match(r"^[ \t]*~[ \t]+[A-Za-z]", line) and len(re.findall(r"[ \t]~[ \t]+(?=[A-Za-z])", line)) >= 1):
-            line = re.sub(r"[ \t]+~[ \t]+(?=[A-Za-z])", ". ", line)
+        n = len(re.findall(bullet, line))
+        if n >= 2 or (n >= 1 and re.match(r"^[ \t]*~[ \t]+[A-Za-z]", line)):
+            line = re.sub(bullet, ". ", line)
             line = re.sub(r"^[ \t]*~[ \t]+", "", line)
         out.append(line)
     return "\n".join(out)
@@ -4672,10 +4676,11 @@ def _util_general_note(gen: dict[str, Any]) -> str:
     return text
 
 
-def _utility_component_numbers(text: str) -> set[float]:
-    """The single utility figures a utilities estimate was built from (each rough figure, a quarterly bill and its monthly share)."""
+def _utility_component_numbers(text: str, skip_internet: bool = False) -> set[float]:
+    """The single utility figures a utilities estimate was built from (each rough figure, a quarterly bill and its monthly share).
+    With ``skip_internet`` an internet-only figure is left out (the fee readers own a required internet fee)."""
     utext = _util_text(_tidy(text or ""))
-    nums = {float(i["amount"]) for i in _estimate_items(utext)}
+    nums = {float(i["amount"]) for i in _estimate_items(utext) if not (skip_internet and set(i.get("names") or []) == {"internet"})}
     per = _periodic_named(utext)
     if per:
         nums |= {per["raw"], per["monthly"]}
@@ -4684,6 +4689,8 @@ def _utility_component_numbers(text: str) -> set[float]:
     gen = _util_general(utext, _pipe_list(text or ""))  # cycle 19: every figure the general reader counted is a part of the estimate, never "not counted"
     if gen and not gen["conflict"]:
         for it in gen["items"]:
+            if skip_internet and set(it["names"]) == {"internet"}:
+                continue
             nums |= {float(it["raw"]), float(it["monthly"])}
         nums |= {float(f) for f in gen.get("restated") or []}
         if gen.get("stated_total"):
@@ -4929,7 +4936,10 @@ def _utilities_extra_amount(text: str) -> float | None:
             return float(m.group(1))
     for clause in re.split(r"\n|;|\.(?=\s|$)", text):
         m = _UTIL_AMOUNT_FIRST.search(clause)  # cycle 22: "Approx $175/mo all utilities"
-        if m and 10 <= float(m.group(1)) <= 2000 and not _NOT_UTILITY_LINE.search(clause) and (m.group(0).lower().lstrip().startswith(("approx", "about", "around", "roughly", "~", "est", "avg", "average")) or re.search(r"/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly", m.group(0), re.I)):
+        if not m or not 10 <= float(m.group(1)) <= 2000 or _NOT_UTILITY_LINE.search(clause) or re.search(r"\b(?:\d[ \t]*(?:bed|br|bd|ba|bath)\w*|studio|sq[ \t]*ft|sqft)\b", clause, re.I):
+            continue
+        approx = m.group(0).lower().lstrip().startswith(("approx", "about", "around", "roughly", "~", "est", "avg", "average"))
+        if approx or (float(m.group(1)) <= 600 and re.search(r"/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly", m.group(0), re.I)):  # a rent-sized figure with no "about" is not a utilities total
             return float(m.group(1))
     parts = re.split(r"(?<=[.!\n;])[ \t]*", text)
     for i in range(len(parts) - 1):
@@ -6999,7 +7009,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         util_taken = [v for it in gen["items"] if set(it["names"]) != {"internet"} for v in (it["raw"], it["monthly"])]
     if not util_taken and not buying and isinstance(out.get("utilities_estimate"), (int, float)) and not isinstance(out.get("utilities_estimate"), bool):
         # cycle 22: whichever reader built the estimate, its figures are counted once: never also in other monthly fees ("Water/sewer/trash $35" next to "electric & gas (budget $80)")
-        util_taken = [v for v in (_try(lambda: _utility_component_numbers(text)) or set()) if 0 < v <= float(out["utilities_estimate"]) + 0.5]
+        util_taken = [v for v in (_try(lambda: _utility_component_numbers(text, True)) or set()) if 0 < v <= float(out["utilities_estimate"]) + 0.5]
     _UTIL_TRACE.set({"amount": out.get("utilities_estimate"), "names": sorted(counted | set(add_names_seen))})
     if buying and included and included != "all":
         hm = re.search(r"\b(?:hoa|assessment|association|condo[ \t]+fees?|dues)\b[^.\n]{0,60}?\b(?:includes?|covers?)\b([^.\n]{0,80})", utext, re.I)
@@ -8821,6 +8831,7 @@ def _deposit_credit_note(text: str, deposit: Any) -> str:
 
 def _money_monthly_fees(text: str) -> list[float]:
     """Required extras charged every month ("amenity fee $25/mo", "$10/month trash")."""
+    text = _strip_choice_internet(text)  # cycle 22: an optional internet package is a choice, never a monthly fee that counts
     found: list[float] = []
     label = r"(?:amenity|trash|valet trash|trash valet|valet waste|pest(?: control)?|package|technology|tech|community|convenience|internet|cable|smart home)(?:\s*(?:fee|fees|charge|package|service))?"
     back = re.compile(r"^[^.\n;$]{0,14}?\b(?:billed|charged|passed)\s*(?:back|through|on)\b", re.I)

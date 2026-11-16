@@ -57,7 +57,7 @@ def test_optional_internet_is_not_counted(text, est, pays):
     assert r.get("utilities_estimate") == est, (r.get("utilities_estimate"), notes(r))
     assert pays_set(r) == pays
     low = notes(r).lower()
-    assert "internet" in low and "optional" in low and "not counted" in low or "not counted in" in low or "is not counted" in low
+    assert "internet" in low and "optional" in low and "not counted" in low
     assert re.search(r'internet[^\n]*not counted anywhere', low) is None
     assert "counted as your utilities estimate" in low
     assert not re.search(r"internet[^.\n]*(?:are|is) about \$\d+ a month from the listing", low)
@@ -307,3 +307,40 @@ def test_no_figure_is_in_two_fields_for_the_reviewer_listings():
         fees = r.get("other_monthly_fees") or 0
         assert est + fees <= est + 15 or name == "r21-roommates-l36", (name, est, fees)
         assert text
+
+
+# 7. layouts and neighbours of the optional internet rule ---------------------------------------------------------------------------------------
+@pytest.mark.parametrize("text,est,fees", [
+    ("Electric $60, gas $40. Optional internet package $55/mo.", 100, None),
+    ("Fees: Admin $150; Internet (Comcast) optional $60/mo; Application $40.", None, None),
+    ("Monthly: Pest control $5, Internet $60/mo optional. Electric $50.", 50, 5),
+    ("Fees:\n- Admin $150\n- Optional internet: $60/mo\nUtilities: electric $50", 50, None),
+    ("Internet (Comcast ~$70/mo) if you want it. Electric $50, water $30.", 80, None),
+])
+def test_optional_internet_is_never_a_monthly_fee_either(text, est, fees):
+    r = read(text)
+    assert r.get("utilities_estimate") == est, (r.get("utilities_estimate"), notes(r))
+    assert r.get("other_monthly_fees") == fees, (r.get("other_monthly_fees"), notes(r))
+    assert "Internet is listed as optional" in notes(r)
+
+
+def test_internet_available_with_the_renter_paying_is_not_called_optional():
+    r = read("Internet available, tenant pays Comcast ~$70/mo. Electric $60.")
+    assert "listed as optional" not in notes(r)
+
+
+def test_a_required_internet_fee_is_still_a_fee():
+    r = parse_listing("Internet (Xfinity) $60/mo mandatory", "")
+    assert r["other_monthly_fees"] == 60 and "utilities_estimate" not in r
+
+
+def test_a_rent_sized_figure_before_the_word_utilities_is_not_the_utilities_total():
+    for text in ("Rent $1500/mo utilities not included.", "$1,500/mo utilities extra.", "2 bed $1450 per month utilities extra"):
+        r = parse_listing(text, "")
+        assert r.get("utilities_estimate") in (None, 0), (text, r.get("utilities_estimate"))
+
+
+def test_tildes_before_about_are_figures_not_bullets():
+    r = read("Electric ~ about $55 per month. Gas ~ about $30 per month. Water ~ about $25.")
+    assert r.get("utilities_estimate") == 110
+    assert pays_set(r) == {"electric", "gas", "water"}
