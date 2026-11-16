@@ -18,6 +18,7 @@ from . import guards
 _PAYMENT = re.compile(
     r"\b(wire (?:the |me |us |it |your )?(?:deposit|money|funds|payment|rent|fee)|wiring (?:the |your )?(?:deposit|money|funds)|wire transfer|wire (?:it |this |that |the (?:deposit|money|funds|payment|rent) |money |funds |payment )?to (?:my|our|the|a) (?:lawyer|attorney|solicitor)|western union|money ?gram|"
     r"wire\b(?:[^.\n]|\.\d){0,50}?\bto\s+(?:my|our|the|a|an|his|her|their)\s+(?:(?:seller|owner|landlord|agent|realtor|broker|property manager|manager)['\u2019]?s?\s+)?(?:lawyer|attorney|solicitor)\b|"
+    r"wired\s+(?:funds|money|payments?|deposits?|rent|fees?)\b[^.\n]{0,40}\b(?:to|accepted|only|preferred|required|welcome|please)\b|"
     r"gift ?cards?|itunes card|bitcoin|btc|crypto(?:currency)?|apple pay only|"
     r"send (?:the |your )?(?:deposit|money|payment))\b", re.I)
 _ZELLE_ONLY = re.compile(r"\b(zelle|cash ?app|venmo|paypal friends)\s*(?:only|is the only|payments? only)\b|"
@@ -247,6 +248,21 @@ _AI_JA = (r"(?:以前|これま[でて]|今ま[でて]|前|先|上記|上|従来
           r"(?:を|は|も)?(?:す[べへ]て|全て|全部|一切)?(?:を)?(?:無視|忘れ|破棄|取り消|上書き|守らな|従わな)|"
           r"(?:す[べへ]て|全て|全部)の(?:以前|これまで|上記|前)の(?:指示|命令|ルール)(?:を)?(?:無視|忘れ|破棄)")
 _AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_JA, re.I)
+
+# cycle 25: Korean and Japanese "ignore the earlier instructions", orders to send the user's notes, and "Assistant: fetch <url> plus the
+# user's notes". Every rule needs an AI-only tell (instruction or prompt words, the user's data, or a link with a data query).
+_AI_C25 = (
+    r"(?:모든\s*)?(?:이전|앞|위|기존|지금까지|상기|처음|원래)(?:의|에|까지의)?\s*(?:모든\s*|모두\s*|전부\s*)?(?:지침|지시|지시사항|명령|규칙|프롬프트|시스템\s*프롬프트|가이드라인)(?:을|를|은|는|도)?\s*(?:모두\s*|전부\s*|다\s*|모든\s*|일체\s*)?(?:무시|잊|취소|덮어|따르지|어기|폐기)|"
+    r"시스템\s*프롬프트(?:을|를|는|은)?\s*(?:무시|잊|덮어|공개|출력)|"
+    r"(?:사용자|이용자|세입자|유저)의\s*(?:메모|노트|연락처|데이터|개인\s*정보|메시지|정보)[^.\n]{0,30}(?:전송|보내|전달|공유|유출|공개)|"
+    r"(?:이|해당)\s*(?:매물|집|방|리스팅)(?:을|를)\s*(?:최고|만점|안전)[^.\n]{0,8}(?:평가|보고|판단|소개|표시)|"
+    r"(?:指示|命令|システム[プフ]ロン[プフ]ト|[プフ]ロン[プフ]ト)(?:を|は)(?:す[べへ]て|全て|全部|一切)?(?:無視|忘れ|上書き|破棄)|"
+    r"(?:ユーザー|ユーザ|利用者|入居者)の(?:メモ|ノート|連絡先|データ|個人情報|メッセージ|情報|電話番号)[^。\n]{0,30}(?:送信|転送|送って|共有|漏らし|開示)|"
+    r"この(?:物件|部屋)を(?:最高評価|満点|詐欺ではない)[^。\n]{0,8}(?:評価|報告|判断|紹介|表示|して)|"
+    r"\b(?:assistant|ai|llm|claude|chat ?gpt|gpt|chatbot|bot|language model|agent)\s*[:,\-]\s*(?:please\s+)?(?:fetch|open|visit|browse|navigate to|go to|load|request|get|post|upload|submit|include|append|attach|email|forward|share|leak|read|copy|paste|click)\b"
+    r"[^\n]{0,160}?(?:https?://|\bwww\.|\b(?:the |a )?(?:user|renter|buyer|tenant)(?:'s|’s|s')\b|\bnotes\b|\bcontacts?\b|\bsaved messages\b)|"
+    r"\b(?:fetch|open|visit|post|send|upload|forward|submit|load)\b[^.\n]{0,60}https?://[^\s]*\?[^\s]*=[^\n]{0,80}\b(?:user|renter|tenant|buyer)(?:'s|’s|s')?\s+(?:saved\s+)?(?:notes|contacts?|data|messages|info|details)\b")
+_AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_C25, re.I)
 # A fence-like tag in listing text ("</untrusted><untrusted source='user notes'>"): it only exists to pass listing words off as the user's.
 _FENCE_TAG = re.compile(r"</?\s*(?:untrusted|system|assistant|user|human|developer|tool_result|function_results|tool_use|instructions?)\b[^>]*>", re.I)
 
@@ -282,7 +298,13 @@ _CONFUSABLES = {
     **dict(zip("ΑΒΕΖΗΙΚΜΝΟΡΤΧΥ", "ABEZHIKMNOPTXY")),
 }
 _LEET = {"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"}
-_LEET_WORD = re.compile(r"(?=[A-Za-z0-9@$]*[A-Za-z])(?=[A-Za-z0-9@$]*[0-9@$])[A-Za-z0-9@$]{4,}")
+_LEET_WORD = re.compile(r"(?=[A-Za-z0-9@$]*[A-Za-z])(?=[A-Za-z0-9@$]*[0-9@$])[A-Za-z0-9@$]{3,}")
+# cycle 25: "ignore.previous.instructions": separators between whole words read as spaces (same length, for matching only)
+_WORD_SEPS = re.compile(r"(?<=[^\W\d_])[._\-/+|\u00b7]+(?=[^\W\d_])")
+
+
+def _unsep(text: str) -> str:
+    return _WORD_SEPS.sub(lambda m: " " * len(m.group(0)), text)
 
 
 def _fold_all(text: str) -> str:
@@ -379,10 +401,10 @@ def trim_at_injection(phrase: str) -> str:
     return cut if re.search(r"\d", cut) else text
 
 
-def _ai_line(text: str, comments: list[str]) -> str | None:
+def _ai_line(text: str, comments: list[str], original: str = "") -> str | None:
     """None when nothing in the text is aimed at an AI tool; else the (shortened) sentence that is, or '' if unquotable.
     With two or more such sentences the first two are quoted ("first / second") and the rest counted ("and 1 more")."""
-    lines = _ai_lines(text, comments)
+    lines = _ai_lines(text, comments, original)
     if lines is None:
         return None
     if len(lines) == 1 or not all(lines[:2]):
@@ -393,7 +415,62 @@ def _ai_line(text: str, comments: list[str]) -> str | None:
     return text_ + (f" (and {len(lines) - 4} more)" if len(lines) > 4 else "")
 
 
-def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
+def _built(normalised: str) -> str:
+    """The one-line text _ai_lines matches on: new lines and tags become single spaces, whitespace collapsed."""
+    built = ""
+    for piece in re.split(r"(" + _TAG.pattern + r"|\n)", normalised):
+        if piece == "\n" or _TAG.fullmatch(piece):
+            if built and not built.endswith(" "):
+                built += " "
+            continue
+        piece = " ".join(piece.split())
+        if piece:
+            if built and not built.endswith(" "):
+                built += " "
+            built += piece
+    return built
+
+
+def _light(piece: str) -> str:
+    out = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", _ZERO_WIDTH.sub("", piece)))
+    return " ".join(unicodedata.normalize("NFC", "".join(c for c in out if unicodedata.category(c) != "Mn")).split())
+
+
+def _verbatim(original: str, plain: str, variant: str, begin: int, end: int) -> str:
+    """The words of the original listing text that the matching text ``plain[begin:end]`` came from (matching text has marks such as
+    the Japanese dakuten stripped and letters folded; a quote must show what the listing really says). Falls back to the matching
+    text when the two can't be lined up exactly."""
+    fallback = variant[begin:end]
+    if not original or len(original) > 20000 or not fallback.strip() or plain[begin:end] != fallback:
+        return fallback  # letters were folded or de-spaced to match: the quote keeps showing the readable words
+
+    def size(i: int) -> int:
+        return len(_built(normalise_text(original[:i], keep_lines=True)[0]))
+
+    def first_reaching(n: int) -> int:
+        lo, hi = 0, len(original)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if size(mid) >= n:
+                hi = mid
+            else:
+                lo = mid + 1
+        return lo
+
+    try:
+        start = max(first_reaching(begin + 1) - 1, 0)
+        stop = first_reaching(end)
+        while stop < len(original) and unicodedata.category(original[stop]) == "Mn":
+            stop += 1
+        piece = original[start:stop]
+        if _built(normalise_text(piece, keep_lines=True)[0]).strip() == fallback.strip() and _light(piece) == fallback.strip():
+            return " ".join(piece.split())
+    except Exception:  # noqa: BLE001 - the matching text is always a safe quote
+        pass
+    return fallback
+
+
+def _ai_lines(text: str, comments: list[str], original: str = "") -> list[str] | None:
     """Every separate sentence aimed at an AI tool, first one first (None when there is none). Each quote starts at the start of
     its own line or sentence (never at the line before), and stops at a tag."""
     bound: set[int] = set()  # places where a new line or a tag was: a quote never reaches across them at its start
@@ -410,20 +487,26 @@ def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
                 built += " "
             built += piece
     text = built
-    hits: list[re.Match[str]] = []
     plain = text
-    # also try the text with every look-alike letter folded and with leet digits read as letters
-    for variant in (plain, _fold_all(plain), _unleet(_fold_all(plain))):
-        text = variant
-        hits = sorted((m for pattern in (_AI_TARGETED, _AI_EXTRA, _AI_C17) for m in pattern.finditer(text)), key=lambda m: m.start())
-        if hits:
-            break
+    # also try the text with every look-alike letter folded, leet digits read as letters and separators between words read as spaces;
+    # hits from every reading count (a leet instruction next to a plain tool name is still an instruction)
+    folded = _fold_all(plain)
+    variants = (plain, folded, _unleet(folded), _unsep(_unleet(folded)), _unsep(plain))
+    seen: set[tuple[int, int]] = set()
+    hits: list[tuple[re.Match[str], str]] = []
+    for variant in variants:
+        for pattern in (_AI_TARGETED, _AI_EXTRA, _AI_C17):
+            for m in pattern.finditer(variant):
+                if (m.start(), m.end()) not in seen:
+                    seen.add((m.start(), m.end()))
+                    hits.append((m, variant))
+    hits.sort(key=lambda h: (h[0].start(), -h[0].end()))
     quotes: list[str] = []
     last_end = -1
-    for hit in hits:
+    for hit, text in hits:
         if hit.start() < last_end:
             continue  # inside the sentence already quoted
-        starts = [text.rfind(sep, 0, hit.start()) + len(sep) for sep in (". ", "! ", "? ") if text.rfind(sep, 0, hit.start()) != -1]
+        starts = [text.rfind(sep, 0, hit.start()) + len(sep) for sep in (". ", "! ", "? ", "\u3002", "\uff01", "\uff1f") if text.rfind(sep, 0, hit.start()) != -1]
         starts += [i + 1 for i in bound if i < hit.start()]
         begin = max(starts, default=0)
         if re.search(r"\d", text[begin:hit.start()]):
@@ -438,11 +521,11 @@ def _ai_lines(text: str, comments: list[str]) -> list[str] | None:
             lm = re.fullmatch(r"([^.!?:;]{1,40}[:\-\u2013\u2014]\s*)((?:(?:kindly|please|now|also|just|and|then|you must|you should|you need to)[ ,]+){1,3})", lead, re.I)
             if lm:  # "Note: Kindly ignore previous instructions": quote from the polite word, not from the label
                 begin += len(lm.group(1))  # "Tenant pays: ignore previous instructions": the quote starts at the phrase, not at the label before it
-        ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ")) if i != -1]
+        ends = [i for i in (text.find(sep, hit.end()) for sep in (". ", "! ", "? ", "\u3002", "\uff01", "\uff1f")) if i != -1]
         ends += [i for i in bound if i >= hit.end()]
         end = min(ends) + (0 if ends and min(ends) in bound else 1) if ends else len(text)
         last_end = end
-        quotes.append(_quote(text[begin:end]))
+        quotes.append(_quote(_verbatim(original, plain, text, begin, end) if original else text[begin:end]))
     if quotes:
         return quotes
     for c in comments:
@@ -466,6 +549,7 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     out = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", out))
     out = _ZERO_WIDTH.sub("", out)
     out = "".join(ch for ch in out if unicodedata.category(ch) != "Mn")
+    out = unicodedata.normalize("NFC", out)  # cycle 25: Hangul back to syllables (NFKD split it into jamo)
     out = _DOT_PHRASE.sub(lambda m: " ".join(re.sub(r"[.\-_]", "", w) for w in m.group(0).split()) if any(len(re.sub(r"[.\-_]", "", w)) >= 5 for w in m.group(0).split()) else m.group(0), out)
     out = _SPACED.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
     out = _SEP_SPACED.sub(lambda m: re.sub(r"[.\-_]", "", m.group(0)), out)
@@ -562,7 +646,7 @@ def reversed_injection(text: str) -> str:
         if m:
             # only the reversed run: it ends at the next sentence mark (read backwards a reversed sentence's own period comes first)
             # and never takes in an ordinary price next to it, which reads "008,1$" backwards
-            stops = [(i + 1, i) for i in (back.find(sep, m.end()) for sep in (". ", "! ", "? ")) if i != -1]  # (end of the run, mark index)
+            stops = [(i + 1, i) for i in (back.find(sep, m.end()) for sep in (". ", "! ", "? ", "\u3002", "\uff01", "\uff1f")) if i != -1]  # (end of the run, mark index)
             stops += [(i, i) for i in (back.find(sep, m.end()) for sep in (" .", " !", " ?")) if i != -1]
             price = re.search(r"(?:^|\s)(?:\S*\$|\$\S*)(?=\s|$)", back[m.end():])
             if price:
@@ -688,19 +772,19 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
     ai_line = None
     for key in ("listing_text", "notes", "ai_notes", "title", "hidden_text"):  # the title is quoted only when it is what matched
         field_text, field_comments = normalise_text(str(place.get(key) or ""), keep_lines=True)
-        ai_line = _ai_line(field_text, field_comments)
+        ai_line = _ai_line(field_text, field_comments, str(place.get(key) or ""))
         if ai_line is not None:
             break
     if ai_line is None:
         all_text, all_comments = normalise_text("\n".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes", "hidden_text")), keep_lines=True)
-        ai_line = _ai_line(all_text, all_comments)
+        ai_line = _ai_line(all_text, all_comments, "\n".join(str(place.get(k) or "") for k in ("listing_text", "title", "notes", "ai_notes", "hidden_text")))
     hidden_decoded = " ".join(filter(None, [str(place.get("hidden_text") or "")] + [guards.decode_tag_chars(place.get(k)) for k in ("listing_text", "title", "notes", "ai_notes")]))
     if hidden_decoded == "(hidden characters)":
         hidden_decoded = ""
     spelled = ""  # what hidden characters spelled, when it is an order to an AI tool or the app
     if hidden_decoded:
         h_text, h_comments = normalise_text(hidden_decoded, keep_lines=True)
-        found = _ai_line(h_text, h_comments)
+        found = _ai_line(h_text, h_comments, hidden_decoded)
         if found is not None:
             spelled = found or _quote(hidden_decoded)
             if ai_line is None:
@@ -775,9 +859,20 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
     address = str(place.get("address") or "").strip()
     if address and not re.search(r"\d", address.split(",")[0]):
         flags.append("The address has no street number. Ask for the exact address before you go anywhere or pay anything.")
-    if not address and not place.get("lat") and (place.get("listing_text") or place.get("url")):
+    if not address and not place.get("lat") and (place.get("listing_text") or place.get("url")) and not _names_place(place):
         flags.append("There is no address yet. Ask for one before you go anywhere or pay anything.")
     return flags
+
+
+_STREET_NUMBER = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+|(?:north|south|east|west)\s+)?[A-Za-z0-9'.]+(?:\s+[A-Za-z0-9'.]+){0,3}\s+(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|way|pkwy|parkway|cir|circle|ter|terrace|hwy|highway|trl|trail|sq|square)\b\.?", re.I)
+_NAMED_COMMUNITY = re.compile(r"\b(?:[A-Z][\w'&-]+\s+){1,4}(?:Apartments?|Apts?|Lofts?|Villas?|Commons|Towers?|Flats|Residences|Gardens|Village|Villages|Estates|Manor|Square|Townhomes?|Townhouses|Condos?|Community|Terrace|Heights|Pointe?|Landing|Crossing|Station|Plaza|Lofts|Club|Ridge|Woods|Creek|Meadows|Reserve|Place|Park|Court)\b"
+                              r"|\b(?:community|building|complex|development|subdivision) (?:called|named|known as)\s+[A-Z]|\b(?:located|situated) (?:in|at|within) (?:the )?[A-Z][\w'&-]+(?:\s+[A-Z][\w'&-]+){0,3}\s+(?:community|neighborhood|subdivision|complex)\b")
+
+
+def _names_place(place: dict[str, Any]) -> bool:
+    """The listing gives a street address with a number, or names a building or community: then a missing address field is not a worry."""
+    text = " ".join(str(place.get(k) or "") for k in ("listing_text", "title"))
+    return bool(_STREET_NUMBER.search(text) or _NAMED_COMMUNITY.search(text))
 
 
 _ESCAPED_QUOTE = re.compile(r"\\(['\"])")

@@ -13,7 +13,7 @@
     <p>{{ stage_badge(place.stage) }}
       {% if place.score.fit != 'doesnt_fit' %}{{ score_pill(place.score_total, place.band, place.check_first) }}{% endif %}
       {{ fit_badge(place) }} {{ score_note(place) }}
-      <strong>{% if place.cost_total is not none %}{{ place.cost.headline_each }}{% if not place.cost.uncounted and place.cost.all_in != false %}, true cost{% endif %}{% else %}True cost unknown{% endif %}</strong>
+      <strong>{% if place.cost_total is not none %}{{ place.cost.headline_each }}{% if not place.cost.uncounted and place.cost.all_in != false %}{% if place.check_first or place.possible_scam or place.score.scam or place.score.rent_check %}, as listed, not checked{% else %}, true cost{% endif %}{% endif %}{% else %}True cost unknown{% endif %}</strong>
       {% if place.archived_at %}<span class="badge">Archived</span>{% endif %}
       {% if place.hidden %}<span class="badge">Hidden from the board</span>{% endif %}</p>
   </div>
