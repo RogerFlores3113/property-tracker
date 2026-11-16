@@ -338,6 +338,24 @@ def overcounted(text: str, r: dict[str, Any]) -> list[str]:
     return out
 
 
+_CONCESSION_ITEM = re.compile(r"\bconcessions?\b|\b(?:months?|weeks?) free\b|\bfree (?:rent|month)|\bmove-?in special", re.I)
+_CONCESSION_NOTE = re.compile(r"\b(?:rent )?concession\b|\bfree[- ]rent\b|\bmonths? free\b|\bone-time deal\b", re.I)
+_MONTHS_AFTER = re.compile(r"[ \t]*(?:months?|mos?\b|month's)", re.I)
+
+
+def _months_count_explained(text: str, end: int, amount: float, r: dict[str, Any]) -> bool:
+    """Cycle 25: a small figure written with a dollar sign but followed by "months" ("$1.5 months rent") is a number of months of rent, not dollars. It is
+    explained when a saved field holds that many months of the saved rent (a deposit of 1.5 x the rent)."""
+    if amount >= 12 or not _MONTHS_AFTER.match(text, end):
+        return False
+    price = r.get("price")
+    if not isinstance(price, (int, float)) or isinstance(price, bool) or not price:
+        return False
+    want = float(price) * amount
+    return any(isinstance(v, (int, float)) and not isinstance(v, bool) and abs(float(v) - want) < 1.0
+               for k, v in r.items() if k in ("deposit", "move_in_fees", "pet_deposit", "broker_fee", "application_fee"))
+
+
 def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, Any]]:
     """Every dollar figure of a rental listing that no field holds and no note explains: [{"amount", "start", "end", "item", "kind"}]."""
     text = _P().normalize_money(text)
@@ -355,6 +373,8 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue
         if amount <= 0:
             continue
+        if _months_count_explained(text, m.end(), amount, r):
+            continue  # cycle 25: "$1.5 months rent deposit hold": a count of months with a stray dollar sign; the deposit field holds that many months of rent
         item, line = _item(text, m.start(), m.end(), back=True)
         ls = text.rfind("\n", 0, m.start()) + 1
         near = line[max(0, m.start() - 60 - ls):m.end() + 60 - ls]
@@ -365,6 +385,8 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue
         if is_non_cost(text, m.start(), m.end(), amount):
             continue
+        if _CONCESSION_ITEM.search(item) and any(_CONCESSION_NOTE.search(u) for u in notes.split("\n")):
+            continue  # cycle 25: "$6,000 in concessions, 1 month free on 13-month lease": the concession note already says it is a one-time deal that is not counted
         own = next((c for c in _CATS if c[1].search(item)), None)
         if (own is None or own[0] in ("app", "deposit")) and clause_placed(text, r, m.start(), m.end(), amount):
             continue  # only the clause of an application fee or deposit item: a utility is placed by the estimate (util_ok), a fee by the sums of its field; a bare $25 beside a $25 fee is a coincidence

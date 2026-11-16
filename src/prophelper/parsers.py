@@ -179,6 +179,10 @@ def normalize_money(text: str) -> str:
         text = re.sub(r"\bUSD\s?\$?\s?(?=\d)", "$", text, flags=re.I)
         text = re.sub(r"(?<![\w$.,])(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?\s?(?:USD|US dollars?|dollars?|bucks)\b", lambda m: "$" + m.group(1) + (m.group(2) or ""), text, flags=re.I)
 
+        # cycle 25: the dollar sign after the number ("парковка 50$", "50 $/mo", "1,200$") is money too; "$50" is left as it is
+        text = re.sub(r"(?<![\w$.,])(\d{1,3}(?:\.\d{3})+)[ \t]?\$(?![ \t]?\d)", lambda m: "$" + m.group(1).replace(".", ","), text)
+        text = re.sub(r"(?<![\w$.,])(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?[ \t]?\$(?![ \t]?\d)", lambda m: "$" + m.group(1) + (m.group(2) or ""), text)
+
         # cycle 24: a European thousands dot ("$1.700", "$1.700,50", "$12.500") is $1,700 / $1,700.50 / $12,500, never $1.70 (a dot with exactly three digits after it
         # and no more is a thousands mark: nobody writes a thousandth of a dollar)
         text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+),(\d{2})(?!\d)", lambda m: "$" + m.group(1).replace(".", ",") + "." + m.group(2), text)
@@ -6831,7 +6835,7 @@ def _lease_offer_note(text: str, lease: int | None) -> list[str]:
     if not m or (lease is not None and int(m.group(1)) == lease):
         return []
     if lease is None:
-        return [f"The listing ties a deal to a {m.group(1)} month lease. That is not saved as the lease length, because it only says what the deal needs. Ask how long the lease is."]
+        return [f"The listing ties a deal to a {m.group(1)} month lease. That is not saved as the lease length, because it only says what the deal needs."]
     return [f"The listing ties a deal to a {m.group(1)} month lease, which is longer than the {lease} month lease that is saved. Ask what you have to sign to get the deal."]
 
 
@@ -9923,6 +9927,9 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
             continue
         if amount <= 0 or amount >= 20000 or amount in used or amount in done:
             continue
+        from .dropguard import _months_count_explained
+        if _months_count_explained(text, m.end(), amount, out):
+            continue  # cycle 25: "$1.5 months rent deposit hold": the deposit field holds 1.5 months of rent
         before = text[max(0, m.start() - 45):m.start()]
         after = text[m.end():m.end() + 45]
         near = before[-30:] + " " + after[:25]
@@ -9945,6 +9952,8 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
             continue
         if _quotes_title(phrase, out.get("title")):
             continue  # the title line itself is not a note
+        if dropguard._CONCESSION_ITEM.search(phrase) and any(dropguard._CONCESSION_NOTE.search(f) for f in facts):
+            continue  # cycle 25: "$6,000 in concessions, 1 month free": the concession note already says it is a one-time deal that is not counted
         n_adults = re.search(r"\bfor\s+(\d|two|three|four)\s+(?:adults?|applicants?|people|persons?)\b[^.]{0,30}\b(?:together|total|combined|in all|altogether)\b", phrase, re.I)
         if n_adults:
             k = {"two": 2, "three": 3, "four": 4}.get(n_adults.group(1).lower()) or int(n_adults.group(1))

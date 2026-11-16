@@ -8,7 +8,7 @@
   <h2>Applying here{% if _items %} <span class="count">{{ _left }} to do</span>{% endif %}</h2>
   {% if _next %}<p><strong>Apply by {{ _next.date|day }}, {{ _next.date|until }}</strong>{% if _next.note %} <span class="fine">({{ _next.note }})</span>{% endif %}</p>
   {% else %}<p class="fine">No application deadline yet. You can add one under <a href="#dates">Key dates</a>.</p>{% endif %}
-  <p>Application fee: {% if place.application_fee is not none %}<strong>{{ place.application_fee|money }}</strong>{% else %}<span class="fine">not filled in</span>{% endif %}</p>
+  <p>Application fee: {% if place.application_fee is not none %}<strong>{{ place.application_fee|money_exact }}</strong>{% else %}<span class="fine">not filled in</span>{% endif %}</p>
   {% if _items %}
   <ul class="items check-list">
     {% for i in _items %}

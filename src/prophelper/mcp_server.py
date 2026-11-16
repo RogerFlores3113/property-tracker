@@ -416,8 +416,8 @@ def _cash_lines(e: dict[str, Any]) -> list[str]:
     if cash:
         label = "Cash to close" if cost.get("mode") == "buy" else "Cash needed on move-in day"
         unknown = compare_mod.cash_unknown_names(e)
-        head = f"at least {_money(cash['total'])}; {', '.join(unknown)} not known yet" if unknown else _money(cash["total"])
-        out.append(f"{label}: {head} (" + ", ".join(f"{pt['label']} {_money(pt['amount'])}" for pt in cash["parts"]) + ")"
+        head = f"at least {helpers.money_exact(cash['total'])}; {', '.join(unknown)} not known yet" if unknown else helpers.money_exact(cash["total"])
+        out.append(f"{label}: {head} (" + ", ".join(f"{pt['label']} {helpers.money_exact(pt['amount'])}" for pt in cash["parts"]) + ")"
                    + (" (security deposit not filled in, so this is at least that much)" if cost.get("mode") != "buy" and compare_mod._deposit_unknown(e, cash) else "")
                    + ". Not part of the monthly cost."
                    + "".join(f" Left out: {w}." for w in cash.get("left_out") or []))
@@ -430,7 +430,7 @@ def _cost_text(e: dict[str, Any]) -> str:
     cost = e["cost"]
     if cost["total"] is None:
         return "True monthly cost: unknown (" + ", ".join(compare_mod._missing_names(e) or cost["missing"]) + ")"
-    parts = [f"{l['label'].split(' (')[0].lower()} {helpers.money(l['amount'])}" for l in cost["lines"]
+    parts = [f"{l['label'].split(' (')[0].lower()} {helpers.money_exact(l['amount'])}" for l in cost["lines"]
              if l["amount"] and not l["key"].startswith("one_time")]
     one = next((l for l in cost["lines"] if l["key"] == "one_time" and l["amount"]), None)
     if one:

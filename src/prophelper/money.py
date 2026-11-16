@@ -752,6 +752,67 @@ _RENT_RANGE_NOTE = re.compile(r"\brent range of \$", re.I)
 RENT_RANGE_LABEL = "the rent (the listing gives a range)"
 
 
+# Cycle 25: a figure that a note explains as another lease length, another plan, a move-in special, a one-time or pending amount or an old price is never a
+# missing monthly amount. Decided by meaning, from the words around the figure (inside the quoted listing line when the note quotes one), so the wording of
+# the note that holds it does not matter.
+_FIG = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
+_EXPL_FEE = re.compile(r"\bdeposit|\bfees?\b|\bdues\b|\btax|insurance|\bhoa\b|parking|garage|\bpets?\b|utilit|electric|\bwater\b|trash|internet|"
+                       r"\bdrops?\b|\bdropped\b|reduc|discount|\boff\b|\bfree\b|concession|credit|rebate|waive|bonus", re.I)
+_EXPL_LEASE_BEFORE = re.compile(r"\b\d{1,2}[- ]?(?:months?|mos?)\b(?:[- ]?(?:lease|term|contract))?[^$\n;]{0,25}$", re.I)
+_EXPL_LEASE_AFTER = re.compile(r"^\s*(?:/\s*mo\w*\s*)?(?:for|on|with|if you sign)\s+(?:a\s+|an\s+)?\d{1,2}[- ]?(?:months?|mos?)\b", re.I)
+_EXPL_LEASE_WORDS = re.compile(r"\blease (?:length|term)s?\b|\bother lease\b|\banother lease\b|\bdifferent lease\b|\blease options?\b|\bmonth lease options?\b", re.I)
+_EXPL_PLAN = re.compile(r"\b(?:another|other|different) (?:floor ?)?plans?\b|\bfloor[- ]?plans?\b|\b(?:\d[- ]?)?(?:bed(?:room)?s?|br|bd|studio)[- ]plans?\b|\bplans? (?:at|from)\b|\bstarting (?:at|from)\b|\bplan options?\b|\bother (?:unit|size)s?\b", re.I)
+_EXPL_SPECIAL = re.compile(r"\bmove-?in specials?\b|\bspecial offers?\b|\bpromo\w*|\bbest-case\b|\bwith approved credit\b|\bspecials?\b(?!\s+assessment)", re.I)
+_EXPL_ONE_TIME = re.compile(r"\bone[- ]time\b|\bpending\b|\bspecial assessments?\b|\bassessments?\b|\bvote\b|\bto be split\b|\bsplit (?:among|between)\b", re.I)
+_EXPL_OLD = re.compile(r"\bold price\b|\bolder (?:price|rent)\b|\bformerly\b|\bno longer\b|\bwas an old\b|\bis the old\b", re.I)
+
+
+def _figure_segment(note: str, start: int, end: int) -> tuple[str, int, int]:
+    """The words a figure sits in: the quoted listing line when it is inside one, else the note; cut at semicolons and sentence ends."""
+    lo, hi, text = 0, len(note), note
+    for qm in re.finditer(r'"([^"]*)"', note):
+        if qm.start(1) <= start and end <= qm.end(1):
+            text, lo, hi = qm.group(1), 0, len(qm.group(1))
+            start, end = start - qm.start(1), end - qm.start(1)
+            break
+    cuts = [m.end() for m in re.finditer(r";|\n|(?<!\d)\.(?=\s|$)|\s-\s", text) if m.end() <= start]
+    lo = max(cuts or [0])
+    nxt = [m.start() for m in re.finditer(r";|\n|(?<!\d)\.(?=\s|$)|\s-\s", text) if m.start() >= end]
+    hi = min(nxt or [len(text)])
+    return text, lo, hi
+
+
+def figure_explained(note: str, start: int, end: int) -> str:
+    """"lease", "plan", "special", "one_time" or "old" when the note itself says the figure at note[start:end] is another lease length, another floor
+    plan, a move-in special, a one-time or pending amount or an old price; "" otherwise (an unexplained figure stays a missing amount)."""
+    text, lo, hi = _figure_segment(note, start, end)
+    qs = [m for m in re.finditer(r'"([^"]*)"', note) if m.start(1) <= start and end <= m.end(1)]
+    off = qs[0].start(1) if qs else 0
+    s0, e0 = start - off, end - off
+    seg = text[lo:hi]
+    before, after = text[lo:s0], text[e0:hi]
+    slo = max([0] + [m.end() for m in re.finditer(r"(?<!\d)\.(?=\s|$)|\n", text) if m.end() <= s0])
+    shi = min([len(text)] + [m.start() for m in re.finditer(r"(?<!\d)\.(?=\s|$)|\n", text) if m.start() >= e0])
+    sent = text[slo:shi]  # the whole sentence: "2 bedroom plans at $1,380; $1,520; $1,480" says "plans" once for every figure of the list
+    if _EXPL_OLD.search(seg):
+        return "old"
+    if _EXPL_ONE_TIME.search(seg) and not re.search(r"\bper\s+month\b|/\s*mo\b", after[:14], re.I):
+        return "one_time"
+    if _EXPL_SPECIAL.search(seg) and not re.search(r"\bfees?\b|\bdues\b|\bhoa\b|\butilit", seg, re.I):
+        return "special"
+    if _EXPL_PLAN.search(sent) and not _EXPL_FEE.search(sent):
+        return "plan"
+    if not _EXPL_FEE.search(sent) and (_EXPL_LEASE_WORDS.search(sent) or _EXPL_LEASE_BEFORE.search(before[-40:]) or _EXPL_LEASE_AFTER.search(after[:40])):
+        return "lease"
+    return ""
+
+
+def note_figures_explained(note: str) -> bool:
+    """True when the note has dollar figures and every one of them is explained as not a missing monthly amount (see ``figure_explained``)."""
+    figs = list(_FIG.finditer(note))
+    return bool(figs) and all(figure_explained(note, m.start(), m.end()) for m in figs)
+
+
 def _note_is_stale(note: str, place: dict[str, Any] | None) -> bool:
     """True when every dollar amount in an "it is not counted" note is a value the place now holds in a field (or part of a sum a
     field holds): the note repeats what was counted, so it must not set the tag."""
@@ -771,6 +832,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     whole = " ".join(str(reader_notes or "").split())
     if "\n" not in str(reader_notes or "").strip() and _note_is_stale(whole, place):
         return out  # one saved note whose sentences were cut apart: judged as one note, every amount in it is already counted
+    if "\n" not in str(reader_notes or "").strip() and note_figures_explained(whole):
+        return out  # cycle 25: one saved note whose every figure is explained (a best-case deposit special, another lease length): its sentences without a figure are the same note
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
@@ -786,6 +849,10 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
             continue  # what the seller gives toward closing is about the cash to close, not a monthly cost the buyer left out
         if _note_is_stale(note, place):
             continue
+        if re.search(r"\bassessments?\b", note, re.I) and not re.search(r"\bmonthly\b|per month|/\s*mo\b|a month|\b(?:parking|garage|fee|deposit|hoa|dues|utilit\w*|insurance|tax)\b", re.sub(r"\bspecial assessments?\b", " ", note, flags=re.I), re.I):
+            continue  # cycle 25: a special assessment (pending or not) is one-time money, handled by the cash to close, never a missing monthly amount
+        if note_figures_explained(note):
+            continue  # cycle 25: every figure in the note is another lease length, another plan, a special, a one-time or pending amount or an old price
         if _NOTE_CLOSED.search(note) and not re.search(r"\bOnly [^.]{1,80} of that\b", note):
             continue  # "counted once in other monthly fees", "not counted again": the note says the money IS counted
         if _NOTE_CONDITIONAL.search(note):
@@ -895,7 +962,8 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
     for note in notes:
         used: set[float] = set()
         placed: set[float] = set()
-        values = {float(r.replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): r.replace(" ", "").rstrip(",.") for r in re.findall(r"\$\s?\d[\d,]*(?:\.\d+)?", note)}
+        values = {float(m.group(0).replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): m.group(0).replace(" ", "").rstrip(",.")
+                  for m in re.finditer(r"\$\s?\d[\d,]*(?:\.\d+)?", note) if not figure_explained(note, m.start(), m.end())}  # cycle 25: an explained figure is never named as missing
         if place:
             try:
                 from .parsers import _CURRENT_EXTRA, _NET_NOTE, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
