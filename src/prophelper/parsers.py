@@ -5536,7 +5536,10 @@ def _util_general_differs(gen: dict[str, Any], est: Any, pays: str, included: st
     if not isinstance(est, (int, float)) or abs(float(est) - gen["amount"]) > 0.01:
         return True
     priced_here = {w for it in gen["items"] for w in it["names"]}
-    if old_names and priced_here and (old_names - priced_here) and not gen.get("stated_total"):
+    unpriced_old = set(old_names or ()) - priced_here
+    if priced_here & {"gas", "heat"}:
+        unpriced_old -= {"gas", "heat"}  # a gas figure is the heat's figure too
+    if unpriced_old and priced_here and not gen.get("stated_total"):
         return True  # cycle 24: "pays gas, electric and water (about $55/mo water)": the figure is the water's, the older note said it was all three
     return bool(set(gen["tenant"]) - have_pays) or bool(set(gen["tenant"]) & inc) or bool(have_pays & set(gen["landlord"]))
 
@@ -5569,7 +5572,7 @@ def _util_general_note(gen: dict[str, Any]) -> str:
         text += (f" The listing gives one figure, {_money_cents(pt['amount'])}, after {_join_names(pt['all'])}, and does not say it is the total for all of them. "
                  f"It is counted for {pt['last']} only. {_join_names(unk).capitalize()} {'is' if len(unk) == 1 else 'are'} listed as something you pay, with no amount. "
                  f"Ask what {'it costs' if len(unk) == 1 else 'they cost'}.")
-    left_unpriced = [w for w in gen.get("tenant") or [] if not any(w in it["names"] for it in gen["items"])]
+    left_unpriced = list(gen.get("scoped_unknown") or [])
     if left_unpriced and not gen.get("partials") and not gen.get("stated_total") and not any(it.get("group") for it in gen["items"]) and not gen.get("optional"):
         text += (f" {_join_names(left_unpriced).capitalize()} {'is' if len(left_unpriced) == 1 else 'are'} listed as something you pay, with no amount. "
                  f"Ask what {'it costs' if len(left_unpriced) == 1 else 'they cost'}.")
@@ -8066,7 +8069,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                                f"Only the flat fee is counted, so the {_money_cents(trash_item['monthly'])} is not. Ask which one applies.")
     if gen and not gen["conflict"] and any(re.search(r"don't agree|unclear about", f) for f in facts[n_facts_pre:]):
         gen = None  # the older readers found the listing contradicting itself: nothing is called included or counted
-    if gen and (_util_general_differs(gen, out.get("utilities_estimate"), pays, included, {w for i in (_try(lambda: _estimate_items(utext)) or []) for w in i["names"]})
+    old_est_names = {w for i in (_try(lambda: _estimate_items(utext)) or []) for w in i["names"]}
+    if gen and old_est_names:
+        gen = {**gen, "scoped_unknown": [w for w in gen.get("tenant") or [] if w in old_est_names and not any(w in it["names"] or (w in ("gas", "heat") and {"gas", "heat"} & set(it["names"])) for it in gen["items"])]}  # cycle 24: the older reader gave these a figure the line did not
+    if gen and (_util_general_differs(gen, out.get("utilities_estimate"), pays, included, old_est_names)
                 or sum("utilities estimate" in f for f in facts[n_facts_pre:]) >= 2 or flat_trash_note):
         # cycle 18: the general line reader disagrees with the older readers, so its figures, payers and notes replace theirs
         priced_names = {w for it in gen["items"] for w in it["names"]}
