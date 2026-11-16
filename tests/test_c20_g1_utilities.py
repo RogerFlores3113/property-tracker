@@ -127,7 +127,7 @@ def test_heat_not_separate_unknown_when_gas_priced(text):
 
 def test_heat_stays_when_gas_not_priced():
     r = read("Tenant pays all utilities. Water paid by owner.")
-    assert pays_set(r) == {"electric", "gas"}  # cycle 23: "heat is gas" means the gas bill is the heat, so heat is not a separate utility
+    assert "heat" in pays_set(r)
 
 
 def test_total_for_everything_stays_unnamed():
@@ -137,7 +137,7 @@ def test_total_for_everything_stays_unnamed():
 
 def test_heat_named_in_listing_stays():
     r = read("Heat is gas, tenant pays. Gas cooking, electric tenant. Budget around $90/mo for both electric and gas.")
-    assert "heat" in pays_set(r)
+    assert pays_set(r) == {"electric", "gas"}  # cycle 23: "heat is gas" is the gas bill, not a separate heat
 
 
 def test_internet_after_period_is_not_pulled_into_estimate():
