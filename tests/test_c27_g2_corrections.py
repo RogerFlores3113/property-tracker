@@ -263,7 +263,9 @@ def test_compare_names_the_parking_deposit():
     place["reader_notes"] = r.get("found_in_listing")
     c = money.true_monthly_cost(place, "rent")
     label = c.get("listing_notes_label") or ""
-    assert "$200 parking deposit" in label and label != "the $200 deposit in the listing notes"
+    # cycle 28: a parking deposit is cash at move-in, so it never sits in the monthly "missing" label; the note still names it
+    assert "$200" not in label
+    assert "$200" in str(r.get("found_in_listing")) and "parking deposit" in str(r.get("found_in_listing")).lower()
 
 
 # ---- item 5: a narrow range keeps its note on a saved place too
