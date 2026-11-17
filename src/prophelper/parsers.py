@@ -638,6 +638,7 @@ _GC_NOW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|y
 # cycle 32: "HOA $340/mo -> $385/mo", "HOA went from $340 to $385 a month", "Seller credit increased from $5,000 to $8,000": the figure after the arrow or "to" is the new one
 _GC_ARROW = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*(?:-+>|=+>|\u2192|\u279c|\u2794|>>|to)[ \t]*(?:now[ \t:]*|only[ \t]+)?$", re.I)
 _GC_MOVE_VERB = re.compile(r"\b(?:increas\w*|decreas\w*|rais\w*|reduc\w*|lower\w*|drop\w*|chang\w*|went|goes|going|rose|rising|jump\w*|climb\w*|up|down|cut|updat\w*|correct\w*|revis\w*)\b", re.I)
+_GC_RANGE_WORDS = re.compile(r"\b(?:rang\w*|between|depend\w*|based[ \t]+on|varies|vary|varying|anywhere)\b", re.I)  # cycle 32 join: a range is never a correction
 _GC_ARROW_FIELDS = ("hoa", "property_tax", "seller_credit", "closing_costs", "deposit", "application_fee", "parking_cost")
 _GC_FEE_UNIT = re.compile(r"^[ \t]*(?:/[ \t]*(?:mo|month|yr|year|unit)\w*|per[ \t]+(?:month|year|unit)|a[ \t]+(?:month|year)|monthly|yearly|annual\w*|one[- ]time|once)?", re.I)
 
@@ -767,7 +768,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
             arrow_prev = None
             if role in (None, "soft") and last_amt is not None and last_amt[2] in _GC_ARROW_FIELDS and last_amt[3] in (None, "old", "soft") and _GC_ARROW.match(window) \
                     and not (_COND_AFTER.match(after) or _GC_LEASE_AFTER.match(after)) \
-                    and (not re.search(r"\bto[ \t]*(?:now[ \t:]*|only[ \t]+)?$", window, re.I) or last_amt[3] == "old" or _GC_MOVE_VERB.search(s[:a.start()])):  # "$300 to $350" alone is a range
+                    and (not re.search(r"\bto[ \t]*(?:now[ \t:]*|only[ \t]+)?$", window, re.I) or ((last_amt[3] == "old" or _GC_MOVE_VERB.search(s[:a.start()])) and not _GC_RANGE_WORDS.search(s))):  # "$300 to $350" alone, or "ranges from $500 to $1,500", is a range
                 role = "soft"  # the figure after the arrow or "to" is the new one; the figure before it is the old one
                 arrow_prev = last_amt
             was_paren = role is None and bool(_GC_WAS_PAREN.match(after))  # cycle 29: "HOA $350/mo (was $325)": the figure in front is the new one
