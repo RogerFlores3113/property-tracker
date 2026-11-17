@@ -395,6 +395,15 @@ def closest(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str,
 UNCONFIRMED_TEXT = "Nothing is confirmed yet. These fit if the unknowns check out:"
 
 
+def close_text(data: dict[str, Any]) -> str:
+    """Cycle 35: "No place fits all your must-haves yet; 3 places are close and need a cost check." when no place is a best fit but places sit under
+    "Needs a cost check" (their must-haves pass so far, their monthly cost is not settled). Empty when a place is a best fit or none is close."""
+    n = len(data.get("cost_check") or [])
+    if data.get("fits") or not n:
+        return ""
+    return "No place fits all your must-haves yet; " + ("1 place is close and needs a cost check." if n == 1 else f"{n} places are close and need a cost check.")
+
+
 def unconfirmed(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
     """When no place is a best fit: open places that fit so far ("Fits" or "Fits, but check") but have unknowns or things
     to check, so they are not confirmed: [{"place", "text"}], best score first. Not scams, not text aimed at AI tools,

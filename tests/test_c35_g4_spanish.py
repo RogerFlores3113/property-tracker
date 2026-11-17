@@ -179,4 +179,5 @@ def test_yearly_spanish_parking_is_a_monthly_twelfth(park):
 
 def test_a_quote_of_a_spanish_deposit_keeps_the_listing_words():
     r = read("Alquiler $2,300 al mes. Depósito $1.900. 2 hab 1 baño. 5 Calle Uno, Urbana IL")
-    assert "Security deposit" not in notes(r) and "Depósito $1.900" in notes(r), notes(r)
+    # cycle 35 join: G2 now reads the dotted thousands whole, so the deposit is saved and needs no quote; the English label still never shows
+    assert r.get("deposit") == 1900 and "Security deposit" not in notes(r), notes(r)

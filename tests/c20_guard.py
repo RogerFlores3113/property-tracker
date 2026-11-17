@@ -57,7 +57,10 @@ def unaccounted(text: str, guard: bool) -> list[str]:
         r = P.parse_listing(text, "")
     finally:
         dropguard.ENABLED = True
-    return [f"${h['amount']:g} [{h['kind']}] {h['item'][:100]}" for h in dropguard.find_unplaced(text, r, str(r.get("found_in_listing") or ""))]
+    from prophelper.redflags import ai_spans, in_ai_span
+    ai_at = ai_spans(text)  # cycle 35 rule (gg): a figure inside a sentence aimed at an AI tool is quoted in the flag only, so it is neither placed nor noted
+    return [f"${h['amount']:g} [{h['kind']}] {h['item'][:100]}" for h in dropguard.find_unplaced(text, r, str(r.get("found_in_listing") or ""))
+            if not in_ai_span(ai_at, h["start"], h["end"])]
 
 
 def percent_and_double(text: str, guard: bool) -> list[str]:

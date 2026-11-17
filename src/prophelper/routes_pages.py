@@ -82,7 +82,7 @@ def today_page(request: Request):
     return render(request, "today.html", search=search, first_run=False, fits=data["fits"], unconfirmed=data["unconfirmed"], cost_check=data["cost_check"], needs_price=data["needs_price"], check_first=data["check_first"], check_first_total=data["check_first_total"], check_first_shared=data["check_first_shared"], near_miss=data["near_miss"], near_miss_footer=data["near_miss_footer"], closest=data["closest"], capped=data["more"], more_fits_note=data["more_fits_note"], coming=data["coming"],
                   waiting=data["waiting"], new=data["new"], late=data["late"], no_criteria=not criteria,
                   place_count=store.count_places(search_id=sid), follow_up_days=store.get_setting_int("follow_up_days", 3),
-                  coming_days=today.COMING_UP_DAYS, closing=today.closing_target(store, search))
+                  coming_days=today.COMING_UP_DAYS, closing=today.closing_target(store, search), close_text=today.close_text(data))
 
 
 # --------------------------------------------------------------------------- Board
