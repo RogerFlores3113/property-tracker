@@ -534,6 +534,10 @@ def _limit_can_be_waived(place: dict[str, Any]) -> bool:
         for i, sentence in enumerate(sentences):
             # "No pets over 40 lbs. Exceptions may be granted.": the waiver is the next sentence, so the two are read together
             nxt = sentences[i + 1] if i + 1 < len(sentences) else ""
+            if sentence.rstrip().endswith("?"):
+                continue  # cycle 31 (rule l): a question line is never read as a rule or as an exception to a rule
+            if nxt.rstrip().endswith("?"):
+                nxt = ""
             if nxt and re.search(r"\bexceptions?\b|\bwaiv|\bcase[- ]by[- ]case\b|\bapproval\b|\bnegotiable\b|\bpermission\b", nxt, re.I) and len(nxt) < 80:
                 sentence = sentence + " " + nxt
             if _WAIVABLE.search(sentence) and re.search(r"\d", sentence) and _LIMIT_WORDS.search(sentence) \
@@ -585,6 +589,28 @@ def _refused_pet_kinds(place: dict[str, Any]) -> list[str]:
     return []
 
 
+def _who_to_ask(place: dict[str, Any]) -> str:
+    from .parsers import _ask_who
+    return _ask_who(str(place.get("listing_text") or ""))
+
+
+def _maybe_pet_kinds(place: dict[str, Any]) -> list[str]:
+    """Cycle 31 (rule k): kinds of pet the saved listing leaves open ("dogs negotiable", "Dogs: case by case", "dogs on approval", "cats: ask"): ["dogs"], ["cats"] or [].
+    A kind the listing also says yes or no to is not open. Question lines set nothing (rule l)."""
+    try:
+        from .parsers import _drop_question_sentences, _pet_stances
+    except Exception:
+        return []
+    text = str(place.get("listing_text") or "")
+    if not text:
+        return []
+    try:
+        stances, _quoted = _pet_stances(_drop_question_sentences(text)[0])
+    except Exception:
+        return []
+    return [sp for sp in ("cats", "dogs") if "maybe" in stances[sp] or "appr" in stances[sp] if not (stances[sp] & {"no", "yes"})]
+
+
 def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """The pet policy, then (when the search says what pets you have) the place's weight and count limits."""
     profile = (ctx or {}).get("pets") or {}
@@ -611,6 +637,14 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
         return _unknown(target, "The pet policy")
     ok = have in PETS_OK.get(want, ("cats", "dogs", "both"))
     value = have if have != "none" else "no pets"
+    if not ok and have in ("cats", "dogs"):
+        # cycle 31 (rule k): "Cats OK. Dogs: case by case" saves cats; a dog search is then a maybe about dogs, not a fail
+        wants_kinds = {"cat": {"cats"}, "dog": {"dogs"}, "both": {"cats", "dogs"}}.get(kind) or {"cats": {"cats"}, "dogs": {"dogs"}, "both": {"cats", "dogs"}}.get(want, set())
+        open_kinds = [k for k in _maybe_pet_kinds(place) if k in wants_kinds and k != have]
+        if open_kinds and wants_kinds - {have} <= set(open_kinds):
+            names = " and ".join(open_kinds)
+            return _result(None, value, target, f"The listing does not say yes or no to {names}: it is a maybe, not a yes. Ask {_who_to_ask(place)} about {names}.",
+                           known=False, passes=None)
     if not ok or not kind:
         return _score_yes(True, ok, target, value, "The pet policy")
     has_dog = kind in ("dog", "both")
@@ -901,7 +935,7 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
             else:
                 concerns.append(text)
     for i in items:  # a pet limit the listing says can be waived is a maybe, so the place "fits, but check" (it is not a plain Yes)
-        if "can be waived or needs approval" in str(i.get("detail") or "") and i["dealbreaker_status"] != "fail" and i["detail"] not in concerns:
+        if ("can be waived or needs approval" in str(i.get("detail") or "") or "it is a maybe, not a yes" in str(i.get("detail") or "")) and i["dealbreaker_status"] != "fail" and i["detail"] not in concerns:
             concerns.append(i["detail"])
     for i in items:  # cycle 24: a nice-to-have that is plainly not met (a dog search, "No dogs") is named in the fit headline, not only in the score
         if not i["dealbreaker"] and i.get("passes") is False and i["known"] and float(i["score"] or 0) <= 0 and i.get("gap") and i["gap"] not in concerns:
