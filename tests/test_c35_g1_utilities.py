@@ -239,3 +239,62 @@ def test_negative_quarterly_bill_that_is_included_is_not_a_pay_item():
 def test_negative_landlord_pays_the_quarterly_water_bill():
     r = P("Rent $3,600. Landlord pays the quarterly water bill. Tenant pays electric.")
     assert _set(r["tenant_pays"]) == {"electric"}
+
+
+def test_negative_landlord_list_after_a_label_keeps_its_first_item():
+    r = P(HEAD + "Utilities: water, sewer and trash covered by owner; electric & gas paid by resident, est. $100.")
+    assert r["utilities_included"] == "water, sewer, trash"
+    assert r["tenant_pays"] == "electric, gas"
+    assert r["utilities_estimate"] == 100
+
+
+# ---- 5. a typical total next to billed-back utilities
+BILLED_TYPICAL = [
+    "Utilities Billed Back: Gas, Water, Sewer. Resident pays electric. Typical total bills $140.",
+    "Gas, water and sewer are billed back. Resident pays electric. Typical total bills $140.",
+    "Utilities billed back (gas, water, sewer). Resident pays electric. Typical total bills $140.",
+    "Utilities Billed Back: Gas, Water, Sewer. Resident pays electric. Typical bills for the unit $140.",
+    "Resident pays electric. Gas, water, sewer billed back via RUBS. Typical total bills $140.",
+    "Utilities billed back: gas, water, sewer.\nResident pays electric.\nTypical total bills $140.",
+]
+
+
+@pytest.mark.parametrize("body", BILLED_TYPICAL)
+def test_typical_total_next_to_billed_back_keeps_the_cost_incomplete(body):
+    from prophelper import money
+    text = "Rent $2,880. " + body
+    r = P(text)
+    assert _set(r["tenant_pays"]) == {"electric", "gas", "water", "sewer"}, (r.get("tenant_pays"), notes(r))
+    assert r["utilities_estimate"] == 140
+    assert "Gas, water and sewer are listed as something you pay, with no amount" in notes(r)
+    assert "for all the utilities you pay" not in notes(r)
+    place = dict(r, listing_text=text, reader_notes=notes(r), status="saved")
+    assert money.rent_cost(place)["missing"] == ["gas, water and sewer"]
+
+
+def test_reviewer_listing_roommates_l8():
+    from prophelper import money
+    text = saved("r34-roommates-l8")
+    r = P(text)
+    assert _set(r["tenant_pays"]) == {"electric", "gas", "water", "sewer"}
+    assert r["utilities_estimate"] == 140
+    assert "does not say if that includes gas, water and sewer" in notes(r)
+    place = dict(r, listing_text=text, reader_notes=notes(r), status="saved")
+    assert "gas, water and sewer" in money.rent_cost(place)["missing"]
+
+
+def test_negative_typical_total_with_every_utility_on_one_pay_line_is_plain():
+    r = P("Rent $2,880. Resident pays electric, gas, water, sewer. Typical total bills $140.")
+    assert r["utilities_estimate"] == 140
+    assert "listed as something you pay" not in notes(r)
+
+
+def test_negative_total_utilities_figure_covers_all():
+    r = P("Rent $2,880. Resident pays electric. Gas, water, sewer billed back via RUBS. Total utilities about $140.")
+    assert r["utilities_estimate"] == 140
+    assert "listed as something you pay, with no amount" not in notes(r)
+
+
+def test_negative_billed_amount_plus_typical_figure_stay_added():
+    r = P("Rent $2,880. Gas, water, sewer billed back at $90/mo. Resident pays electric. Typical total bills $140.")
+    assert r["utilities_estimate"] == 230
