@@ -560,6 +560,201 @@ def _corrected_fact_note(label: str, new_text: str, old_text: str | None) -> str
     return f"The listing corrects itself about the {label}.{was} The later value is saved and the earlier one is not used. Check it with the landlord."
 
 
+# ----------------------------------------------------------------- cycle 27: one general correction step
+_GC_KW = re.compile(
+    r"(?P<named>\b(?:pet|parking|key|garage|holding|reservation|storage|fob|cleaning|move[- ]in|admin\w*|lease|late|utility|utilities|amenity|trash|internet)[ \t]+(?:rent|deposit|dep|fees?)\b)"
+    r"|(?P<dep>\b(?:(?:security|sec\.?|refundable|damage)[ \t]+)?(?:deposit|dep)\b)"
+    r"|(?P<hoa>\bhoa\b|\b(?:condo|association|assoc\.?)[ \t]+(?:fees?|dues)\b)"
+    r"|(?P<tax>\b(?:property[ \t]+)?tax(?:es)?\b)"
+    r"|(?P<app>\b(?:application|app)(?:[ \t]+fee)?\b)"
+    r"|(?P<park>\b(?:parking|garage|carport)\b)"
+    r"|(?P<rent>\b(?:monthly[ \t]+)?rent\b|\bprice\b|\basking\b)", re.I)
+_GC_FIELD = {"dep": "deposit", "hoa": "hoa", "tax": "property_tax", "app": "application_fee", "park": "parking_cost", "rent": "price"}
+_GC_LABEL = {"deposit": "deposit", "hoa": "HOA", "property_tax": "property tax", "application_fee": "application fee", "parking_cost": "parking cost", "price": "rent"}
+_GC_MONEY = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
+_GC_LEAD = re.compile(r"^[ \t\"'(\[*#-]*(?:(?:corrected?|corrections?|actually)\b|(?:update[ds]?|revised|edit(?:ed)?)[ \t]*[:,\-\u2013\u2014])", re.I)
+_GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)"
+_GC_CUE = re.compile(r"\b(?P<w>now|" + _GC_HARD + r"|new)\b", re.I)
+_GC_OLD = re.compile(r"\b(?:was|were|from|earlier|previously|before|originally|not|instead[ \t]+of|used[ \t]+to[ \t]+be|old|formerly|prior|said|listed[ \t]+as|posted[ \t]+as|ignore|disregard|than)\b", re.I)
+_GC_FILL = (r"(?:rent|price|asking|deposit|dep|security|sec|hoa|dues|fees?|tax(?:es)?|property|monthly|(?:condo|association)[ \t]+(?:fees?|dues)|application|app|parking|garage|carport|is|are|of|at|only|just|now|the|a|an|total|to|be|should|will|"
+            r"it'?s|its|this|unit|payment|charge|cost|costs|per|month|ad|listing|post|figure|number|version|as|had|showed|read|stated|gave|it|refundable|amount|for)")
+_GC_TAIL = re.compile(r"^[ \t:=\-–—(]*(?:" + _GC_FILL + r"\b[ \t:=\-–—(]*)*$", re.I)
+_GC_OLD_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly|annual\w*)?[ \t]*\)?[ \t]*[,;]?[ \t]*\(?[ \t]*(?:but[ \t]+)?(?:now|updated?|corrected|changed|->|=>|→|is[ \t]+now)\b", re.I)
+_GC_NEW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*(?:is|are)?[ \t]*(?:the[ \t]+)?(?:new|correct|current|updated)[ \t]+(?:rent|price|deposit|hoa|tax)", re.I)
+_GC_SPECIAL = re.compile(r"\b(?:special|promo\w*|concession|if[ \t]+you|when[ \t]+you|sign(?:ed|ing)?[ \t]+by|move[- ]?in[ \t]+by|first[ \t]+(?:\d+|one|two|three|six|twelve)[ \t]+months?|limited[ \t]+time|discount\w*|off\b|waive[ds]?|free[ \t]+rent|reduced[ \t]+from|price[ \t]+(?:cut|drop))", re.I)
+_GC_AFTER_KW = re.compile(r"^[ \t]*(?:/[ \t]*\w+[ \t]*)?(?:" + _GC_KW.pattern + r")", re.I)
+
+
+def _gc_tail_state(window: str) -> str | None:
+    """"old", "hard" (a correction word), "soft" (a bare "now") or None for the words just before an amount, looking only at what touches the amount."""
+    last_old = last_cue = None
+    for m in _GC_OLD.finditer(window):
+        if _GC_TAIL.match(window[m.end():]):
+            last_old = m
+    for m in _GC_CUE.finditer(window):
+        if _GC_TAIL.match(window[m.end():]):
+            last_cue = m
+    if last_old and (not last_cue or last_old.start() > last_cue.start()):
+        return "old"
+    if last_cue:
+        return "soft" if last_cue.group("w").lower() in ("now", "new") else "hard"
+    return None
+
+
+def _gc_unit_value(field: str, value: float, after: str) -> float:
+    """HOA is kept per month and property tax per year, so a figure written the other way is converted."""
+    a = after[:28]
+    monthly = bool(re.match(r"[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|monthly|a[ \t]+month)", a, re.I))
+    yearly = bool(re.match(r"[ \t]*(?:/[ \t]*(?:yr|year)\b|per[ \t]+(?:year|annum)|annual\w*|yearly|a[ \t]+year)", a, re.I))
+    quarterly = bool(re.match(r"[ \t]*(?:/[ \t]*(?:qtr|quarter)\b|per[ \t]+quarter|quarterly)", a, re.I))
+    if field == "hoa":
+        if yearly:
+            return round(value / 12, 2)
+        if quarterly:
+            return round(value / 3, 2)
+    if field == "property_tax":
+        if monthly:
+            return round(value * 12, 2)
+        if quarterly:
+            return round(value * 4, 2)
+    return value
+
+
+def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Cycle 27: one step for every named fact a "Corrected:", "Update:", "now" or "updated:" wording replaces: rent, deposit, HOA, property tax,
+    application fee and parking cost. Layouts: "Corrected: rent is now $1,360", "Rent $1,275. Corrected: now $1,325 per month.", "HOA was $340/mo, now $385/mo",
+    "Deposit is $1,275 (now $1,325)", "Property tax was $4,200, updated: $4,800/yr", "$2,300/mo. Corrected: rent now $2,250". Returns
+    ({field: {"new", "olds" (the figures the listing takes back), "sentence"}}, quoted sentences it could not place)."""
+    found: dict[str, dict[str, Any]] = {}
+    unplaced: list[str] = []
+    if not text or (_SALE_WORDS.search(text) and not buying):
+        return found, unplaced
+    sents = [(m.start(), m.group(0)) for m in re.finditer(r"(?:[^|\n.!?;]|(?<=\d)\.(?=\d))+", text) if m.group(0).strip()]
+    prev_fields: list[set[str]] = []  # the named fields of each earlier sentence that had an amount
+    for _off, s in sents:
+        amts = list(_GC_MONEY.finditer(s))
+        lead = bool(_GC_LEAD.match(s))
+        prev_end, chain = 0, None
+        sent_fields: set[str] = set()
+        for a in amts:
+            window = s[prev_end:a.start()]
+            after = s[a.end():a.end() + 40]
+            value = _num(a.group(1) + ("." + a.group(2) if a.group(2) else ""))
+            if _GC_OLD_AFTER.match(after):
+                role: str | None = "old"
+            else:
+                role = _gc_tail_state(window)
+                if role is None and lead:
+                    role = "hard"
+                if role is None and _GC_NEW_AFTER.match(after):
+                    role = "soft"
+            field: str | None = None
+            inherited = False
+            kws = list(_GC_KW.finditer(window))
+            if kws:
+                k = kws[-1]
+                field = "named" if k.lastgroup == "named" else _GC_FIELD[k.lastgroup]
+            elif chain is not None:
+                field = chain
+            else:
+                kk = _GC_AFTER_KW.match(after)
+                if kk and kk.lastgroup:
+                    field = "named" if kk.lastgroup == "named" else _GC_FIELD[kk.lastgroup]
+            hard = role == "hard" or lead
+            if field is None and role in ("hard", "soft") and hard:
+                for pf in reversed(prev_fields):  # "Corrected: now $1,325 per month": the fact is the one the sentence before it was about
+                    if len(pf) == 1:
+                        field = next(iter(pf))
+                        inherited = True
+                    break
+            if field is not None:
+                chain = field
+            prev_end = a.end()
+            if field and field != "named":
+                sent_fields.add(field)
+            if role is None or field == "named":
+                continue
+            if role == "soft" and _GC_SPECIAL.search(s):
+                continue  # "now $1,450 if you sign by Dec 15", "was $1,600, now $1,450 special": a special, never a correction
+            if _COND_AFTER.match(after) and role != "old":
+                continue
+            if field is None:
+                if hard and role != "old" and value >= 100 and re.search(r"\b(?:now|corrected?|corrections?|updated?|revised)\b", s, re.I) \
+                        and not re.search(r"\d[ \t]?[xX\u00d7][ \t]?\d|\b(?:bed(?:room)?s?|br|bd|bds)\b", s, re.I):
+                    q = " ".join(s.split())
+                    if q not in unplaced:
+                        unplaced.append(q)
+                continue
+            if buying and field in ("price", "deposit"):
+                continue
+            if inherited and field in ("deposit", "application_fee", "property_tax") and re.match(r"[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly)", after, re.I):
+                if hard and role != "old":  # "Corrected: now $1,450 per month" after a deposit line: a monthly figure is not a deposit, so it cannot be placed
+                    q = " ".join(s.split())
+                    if q not in unplaced:
+                        unplaced.append(q)
+                continue
+            value = _gc_unit_value(field, value, after)
+            ent = found.setdefault(field, {"new": None, "olds": [], "sentence": "", "spans": []})
+            ent["spans"].append((_off + a.start(), _off + a.end()))
+            if role == "old":
+                if value not in ent["olds"]:
+                    ent["olds"].append(value)
+            else:
+                if ent["new"] is not None and ent["new"] != value and ent["new"] not in ent["olds"]:
+                    ent["olds"].append(ent["new"])
+                ent["new"] = value
+                ent["sentence"] = " ".join(s.split())
+        if amts:
+            prev_fields.append(sent_fields)
+    ranges = {"price": (300, 30000), "deposit": (0, 50000), "hoa": (1, 6000), "property_tax": (50, 200000), "application_fee": (0, 1000), "parking_cost": (0, 1000)}
+    for fld in list(found):
+        ent = found[fld]
+        if ent["new"] is None or not ranges[fld][0] <= ent["new"] <= ranges[fld][1]:
+            del found[fld]
+            continue
+        ent["olds"] = [o for o in ent["olds"] if o != ent["new"]]
+    return found, unplaced
+
+
+def _gc_fmt(field: str, v: float) -> str:
+    return _usd(v) + (" a month" if field == "hoa" else " a year" if field == "property_tax" else "")
+
+
+def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str, dict[str, Any]], unplaced: list[str], buying: bool, only: set[str] | None = None) -> None:
+    """Apply the corrections to the read fields. Each applied correction gets one short note that names the old value as not used; an older note about
+    the old value goes. A correction that cannot be placed is quoted."""
+    for fld, ent in found.items():
+        if only is not None and fld not in only:
+            continue
+        if fld in ("hoa", "property_tax") and not buying and out.get(fld) is None and not _SALE_WORDS.search(text):
+            continue
+        if fld in ("application_fee", "parking_cost") and out.get(fld) is None:
+            continue
+        new = ent["new"]
+        before = out.get(fld)
+        olds = list(ent["olds"])
+        if not olds and isinstance(before, (int, float)) and not isinstance(before, bool) and not _same_num(before, new):
+            olds.append(float(before))
+        out[fld] = _tidy_number(new)
+        if not olds:
+            continue
+        label = _GC_LABEL[fld]
+        olds_txt = [_gc_fmt(fld, o) for o in olds]
+        kw = {"price": r"\b(?:rent|price)\b", "deposit": r"\bdeposit\b", "hoa": r"\b(?:hoa|condo)\b", "property_tax": r"\btax", "application_fee": r"\bapplication\b", "parking_cost": r"\bparking\b"}[fld]
+        have = [f for f in facts if "correct" in f.lower() and re.search(kw, f, re.I) and any(re.search(re.escape(_usd(o)) + r"(?![\d,])", f) for o in olds)]
+        facts[:] = [f for f in facts if f in have or "correct" in f.lower() or not re.search(kw, f, re.I) or not any(re.search(re.escape(_usd(o)) + r"(?![\d,])", f) for o in olds)]
+        if have:
+            continue
+        old_list = " and ".join(olds_txt) if len(olds_txt) <= 2 else ", ".join(olds_txt)
+        facts.append(f"The listing corrects the {label}: it is now {_gc_fmt(fld, new)}. The earlier {old_list} {'is' if len(olds_txt) == 1 else 'are'} not used. Ask the landlord to confirm it.")
+
+
+def _gc_quote_unplaced(facts: list[str], unplaced: list[str]) -> None:
+    for q in unplaced:
+        if not any(q[:60] in f for f in facts):
+            facts.append(f'The listing has a correction I could not match to one fact: "{q[:140]}". Nothing was changed from it, so the saved amounts may be out of date. Ask the landlord which amount is right.')
+
+
 _BB_PRICE = re.compile(r"(?<![\w$#/.,-])\d(?:\.\d)?[ \t]*(?:br|bd|bds|bed|beds|bedrooms?)(?![A-Za-z])[ \t]*[/|,\u00b7x-]?[ \t]*\d(?:\.\d)?[ \t]*(?:ba|bath|baths|bathrooms?)\b[ \t]*[-|,:\u2013\u2014\u00b7]?[ \t]*"
                        r"\$[ \t]?(\d{1,2},\d{3}|\d{3,5})(?![\d,])(?!\.\d)(?![ \t]*(?:deposit|fee|pet|hoa|/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person)|off\b))", re.I)
 
@@ -1290,7 +1485,7 @@ def _move_in_total_notes(text: str) -> list[str]:
     deposit and fees, so it only gets a note."""
     for pat in _MOVE_IN_TOTAL:
         m = pat.search(text)
-        if m and pat is _MOVE_IN_TOTAL[1] and re.search(r"\b(?:fees?|deposits?|charges?|cost|admin\w*|application|lease\w*|processing|amenity|key|cleaning|security|pet)[ \t:\-=]*$", text[max(0, m.start() - 20):m.start()], re.I):
+        if m and pat is _MOVE_IN_TOTAL[1] and re.search(r"\b(?:fees?|deposits?|dep|charges?|cost|admin\w*|application|lease\w*|processing|amenity|key|cleaning|security|sec|pet)\.?[ \t:\-=]*$", text[max(0, m.start() - 20):m.start()], re.I):
             continue  # "Cleaning fee $200 due at move-in": that is one fee, not the total to move in
         if m:
             return [f"The listing says it costs {_usd(_num(m.group(1)))} in total to move in. That is not the monthly rent and it is not split into deposit and fees, "
@@ -3875,6 +4070,48 @@ def _deposit_in_months(text: str) -> float:
             g = m.group(1).lower()
             return _WORD_NUM[g] if g in _WORD_NUM else float(g)
     return 0
+
+
+_DEP_PRE = r"(?:\b(?:(?:security|damage|refundable)[ \t]+)?deposits?\b|\bsec\.?[ \t]*dep\.?(?![a-z]))"
+_DEP_DUE = r"(?:[ \t]*(?:is[ \t]+|are[ \t]+)?(?:due|payable|required|collected)[ \t]+(?:at|on|before|by|upon)[ \t]+(?:lease[ \t]+)?(?:signing|move[- ]?in)?)?"
+_DEP_EQ = r"(?:(?:is|are|will[ \t]+be|of|equal[ \t]+to|equals|equivalent[ \t]+to|same[ \t]+as|about|approx\.?|=)[ \t]+)*(?:(?:the|a|an|your)[ \t]+)?"
+_DEP_NUM = r"(one[- ]and[- ]a[- ]half|one[- ]half|half(?:[ \t]+a)?|1/2|0?\.5|one|two|1\.25|1\.5|2\.5|\u00bd|1|2|a)"
+_DEP_MONTH = r"[- ]?(?:month|mo)s?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?(?:the[ \t]+)?(?:monthly[ \t]+)?rent)?(?![a-z])"
+_DEP_WORDS = {"one": 1.0, "a": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5, "half a": 0.5, "1/2": 0.5, ".5": 0.5, "0.5": 0.5, "\u00bd": 0.5, "one-half": 0.5, "one half": 0.5,
+              "1.5": 1.5, "2.5": 2.5, "1.25": 1.25, "one and a half": 1.5, "one-and-a-half": 1.5}
+
+
+def _deposit_months_general(text: str) -> tuple[float, str] | None:
+    """Cycle 27: the security deposit written as months of rent in any of the usual layouts: "Security deposit: half month", "Security deposit half month's rent",
+    "Half month security deposit", "Sec dep 1.5 months", "Security deposit due at signing: one month", "Deposit due at signing equal to one month". Returns
+    (months, the phrase) or None. Only a deposit with no kind word before it (pet, parking, key and so on) is the security deposit."""
+    for pat in (_DEP_PRE + _DEP_DUE + r"[ \t:\-=,]{0,4}" + _DEP_EQ + _DEP_NUM + _DEP_MONTH,
+                r"(?<![\d.$])" + _DEP_NUM + _DEP_MONTH + r"[ \t]+(?:(?:security|damage)[ \t]+)?deposit\b"):
+        for m in re.finditer(pat, text, re.I):
+            if _NOT_THIS_DEPOSIT.search(text[max(0, m.start() - 16):m.start()]):
+                continue
+            g = re.sub(r"[ \t]+", " ", m.group(1).lower())
+            if re.match(r"\s*(?:/|per\b)", text[m.end():]) or re.match(r"[ \t]*(?:old|lease|term|minimum|min\b)", text[m.end():], re.I):
+                continue  # "deposit one month lease", "1 month minimum": a lease length, not months of rent
+            if g in _DEP_WORDS:
+                return _DEP_WORDS[g], " ".join(m.group(0).split())
+    return None
+
+
+def _blank_named_month_deposits(text: str) -> str:
+    """Cycle 27: a deposit written in months inside a pet, parking, key or other named clause ("Pet deposit: one month", "Key deposit 1.5 months") is that thing's deposit, never the
+    security deposit. The clause is blanked (same length) before the months are read."""
+    pat = re.compile(r"\b" + _NAMED_DEP_WORDS + r"[ \t]+(?:refundable[ \t]+)?deposits?\b[ \t:\-=]{0,4}(?:(?:is|of|equal to|equals|=)[ \t]+)?(?:\d(?:\.\d+)?|one|two|a|half(?:[ \t]+a)?|1/2)[- ]?months?\b(?:'s?)?(?:[ \t]+(?:of[ \t]+)?rent)?", re.I)
+    return pat.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _deposit_or_fee_refundable(text: str) -> tuple[float, str] | None:
+    """Cycle 27: "Deposit or fee: $1,000 refundable", "Deposit/fee $800 (refundable)": one amount under a "deposit or fee" label that the listing says comes back,
+    so it is the security deposit. Without the word refundable it stays unread (a fee is not a deposit)."""
+    m = re.search(r"\bdeposit[ \t]*(?:or|/|and/or)[ \t]*(?:move[- ]in[ \t]+)?fee\b[ \t]*[:\-=]?[ \t]*\$[ \t]?(\d{1,2},\d{3}(?:\.\d\d)?|\d{2,5}(?:\.\d\d)?)(?![\d,])[ \t]*[,(\-]?[ \t]*(?:fully[ \t]+)?(?<!non-)(?<!non )(?<!not )refundable\b", text, re.I)
+    if not m or re.search(r"\bnon[- ]?refundable|\bnot[ \t]+refundable", m.group(0), re.I):
+        return None
+    return _num(m.group(1)), " ".join(m.group(0).split())
 
 
 def _three_months_up_front(text: str) -> bool:
@@ -8747,6 +8984,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         out[key] = _tidy_number(value) if isinstance(value, float) else value
 
     price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
+    gc_found, gc_unplaced = _try(lambda: _general_corrections(text, buying)) or ({}, [])  # cycle 27: one general correction step, rent here and the rest after the fee readers
+    text_all = text
+    other_vals = {v for f, e in gc_found.items() if f != "price" for v in (e["new"], *e["olds"])}
+    if other_vals:
+        # "Security deposit was $1,500, now $1,400" or "HOA was $340/mo, now $385/mo": a figure in another fact's correction is never the rent or the price,
+        # so the rent readers below see the text without those figures (the other readers get the whole text back after the rent is saved)
+        for f, e in gc_found.items():
+            if f != "price":
+                for a0, b0 in e["spans"]:
+                    text = text[:a0] + " " * (b0 - a0) + text[b0:]
+        price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
     facts: list[str] = list(pair_notes)
     price_range = _try(lambda: _rent_range(text, price_read)) if price_read and not buying else None
     saved_price = (current or {}).get("price")
@@ -8911,7 +9159,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 facts.append(f"The listing gives {_usd(price_read)} and also {_usd(big[0]['value'])}, and I could not tell which one is the monthly rent, so the rent is left empty. Ask what the rent is.")
                 price_read = None
+    if "price" in gc_found and not buying and not price_range:
+        gc_tmp = {"price": price_read}
+        _gc_apply(text, gc_tmp, facts, gc_found, [], buying, only={"price"})
+        price_read = gc_tmp["price"]
     put("price", price_read)
+    text = text_all
     if plan_fix and plan_fix[0] is None:
         put("beds", _try(lambda: _beds(_text_without_plans(text, None))))  # cycle 23: a bedroom count that only appears in the plan list is not the listing's own
     elif unit_pick and unit_pick[0] is None and _unit_price_beds(text) is None:
@@ -9607,13 +9860,21 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 dep = []
                 facts.append(f"The listing says the deposit is {_usd(float(wm.group('amt').replace(',', '')))} or {wm.group('pct')}% of rent, whichever is {word}, but the rent was not read, "
                              "so the deposit is left empty. Fill it in once you know the rent.")
-        by_months = _deposit_in_months(text)
+        by_months = _deposit_in_months(_blank_named_month_deposits(text))  # cycle 27: "Pet deposit: one month" is not the security deposit
+        by_phrase = ""
+        if not by_months and not _is_sale_text(text):  # cycle 27: "half month", "Sec dep 1.5 months", "due at signing: one month"
+            gm = _try(lambda: _deposit_months_general(dep_src))
+            if gm:
+                by_months, by_phrase = gm
         each_dep = _try(lambda: _deposit_each(text))
         dep_mult = None if dep else _try(lambda: _deposit_multiple(dep_src))
         if dep:
             put("deposit", dep[0])
         elif each_dep and not _SALE_WORDS.search(text):
             put("deposit", each_dep)  # cycle 17: "first, last and security deposit ($2,800 each)"
+        elif (or_fee_ref := (None if _SALE_WORDS.search(text) else _try(lambda: _deposit_or_fee_refundable(dep_src)))):
+            put("deposit", or_fee_ref[0])  # cycle 27: "Deposit or fee: $1,000 refundable": a refundable amount is a deposit
+            facts.append(f'The listing says "{or_fee_ref[1]}". It is refundable, so it is read as the security deposit, {_usd(or_fee_ref[0])}. Ask the landlord to confirm it.')
         elif dep_mult and isinstance(rent_now, (int, float)) and 200 <= rent_now <= 30000 and not _is_sale_text(text):
             put("deposit", dep_mult[0] * float(rent_now))  # cycle 21: "Security 1.5x rent", "Deposit: 1x1"
             facts.append(f"The listing gives the deposit as \"{dep_mult[1]}\", {dep_mult[0]:g} month{'s' if dep_mult[0] != 1 else ''} of rent. Worked out from the {_usd(float(rent_now))} rent that is "
@@ -9628,8 +9889,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if hm:  # cycle 25: "$1.5 months rent deposit hold": the dollar sign is a typo for the months, so the figure is explained here and no note repeats it
                 facts.append(f'The listing says "{" ".join(hm.group(0).split())}". It is read as a deposit of {by_months:g} months of rent, '
                              f"{_usd(by_months * float(rent_now))} from the {_usd(float(rent_now))} rent. Ask what the deposit is and whether it is a hold.")
+            elif by_phrase:  # cycle 27: months in a new wording turned into dollars from the rent, with one note that says so (the older readings keep their old behavior)
+                facts.append(f'The listing gives the deposit as "{by_phrase}", {_months_words(by_months)} of rent. Worked out from the {_usd(float(rent_now))} rent that is '
+                             f"{_usd(by_months * float(rent_now))}. Ask the landlord to confirm the deposit.")
         elif by_months and not _is_sale_text(text):
-            facts.append(f"The listing says the security deposit is {by_months:g} month{'s' if by_months != 1 else ''} of rent, but the rent was not read, so the deposit is left empty. Fill it in once you know the rent.")
+            facts.append(f"The listing says the security deposit is {_months_words(by_months)} of rent, but the rent was not read, so the deposit is left empty. Fill it in once you know the rent.")
         elif (bare_sec := _try(lambda: _bare_security_amount(dep_src))) and not _SALE_WORDS.search(text):
             put("deposit", bare_sec)  # cycle 20: "first month + $3,100 security + $200 move-in fee"
         elif best_case is None and re.search(r"\b(?:no|zero|\$0) (?:security )?deposit|\bdeposit\s*[:\-]?\s*(?:\$0|none|waived|zero)\b", text, re.I):
@@ -9727,8 +9991,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                     facts.append(f"The {_usd(v_x)} {label_x} is counted in the cash at move-in. The listing may say it comes back, so ask when you get it back.")
         if nonref_dep and not buying and not _is_sale_text(text):
             extra_one_time += nonref_dep[0]
-            facts.append(f"The {_usd(nonref_dep[0])} deposit is not refundable, so it is counted as a one-time move-in fee in the cash at move-in, not as a deposit you get back. "
-                         "Ask if there is also a refundable security deposit.")
+            _dep_read = out.get("deposit")
+            facts.append(f"The {_usd(nonref_dep[0])} deposit is not refundable, so it is counted as a one-time move-in fee in the cash at move-in, not as a deposit you get back."
+                         + ("" if isinstance(_dep_read, (int, float)) and not isinstance(_dep_read, bool) and _dep_read > 0 else " Ask if there is also a refundable security deposit."))  # cycle 27: a deposit that was read leaves no such question
         clean_in, clean_notes = _try(lambda: _cleaning_fee(text)) or (None, [])
         facts.extend(clean_notes)
         landlord_months = _try(lambda: _landlord_fee_months(text))
@@ -10167,6 +10432,15 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.extend(_try(lambda: _buyer_only_fees(text, out)) or [])
 
     _try(fees)
+    _try(lambda: _gc_apply(text, out, facts, gc_found, gc_unplaced, buying, only=set(gc_found) - {"price"}))
+    _try(lambda: _gc_quote_unplaced(facts, gc_unplaced))
+    if "price" in gc_found:  # one note for the old rent: a price-cut or old-figure note that already names it stays, and ours goes
+        _olds = [_usd(o) for o in gc_found["price"]["olds"]]
+        _mine = [f for f in facts if f.startswith("The listing corrects the rent:")]
+        _legacy = [f for f in facts if f not in _mine and re.search(r"price was cut from|rent dropped from|was a mistake or an old figure|is the old price|old price is not used|first said", f)
+                   and any(o in f for o in _olds)]
+        if _mine and _legacy and all(any(o in f for f in _legacy) for o in _olds):
+            facts[:] = [f for f in facts if f not in _mine]
     facts += _try(lambda: _internet_choice_notes(text, facts)) or [] if not buying else []  # cycle 22: optional internet is named, never counted
     for key, value in (_try(lambda: _address(text)) or {}).items():
         put(key, value)
@@ -10567,7 +10841,7 @@ def _filled(out: dict[str, Any], key: str) -> bool:
 
 # A note that is about one field goes away (or is rewritten) once that field is filled. (pattern, field or fields that settle it)
 _FIELD_NOTES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple((re.compile(pat, re.I), keys) for pat, keys in (
-    (r"so the rent is left empty|rent range of \$|that looks like a monthly amount, not an asking price|Check the asking price", ("price",)),
+    (r"so the rent is left empty|rent range of \$(?![\s\S]*higher figure)|that looks like a monthly amount, not an asking price|Check the asking price", ("price",)),
     (r"billed-back average of \$|billed back to you, but the listing gives no amount|Add a utilities estimate once you know", ("utilities_estimate",)),
     (r"seller credit is blank", ("seller_credit",)),
     (r"broker fee is left empty|so no amount is saved\. Ask what it comes to", ("broker_fee",)),
