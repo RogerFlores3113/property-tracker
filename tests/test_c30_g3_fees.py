@@ -154,3 +154,18 @@ def test_approval_wordings_unknown():
 def test_cats_ok_with_dog_approval_keeps_cats():
     r = P("Pets: Cats allowed. Approval required for dogs.")
     assert r["pets"] == "cats" and "Dogs need approval" in notes(r)
+
+
+def test_pet_application_fee_is_not_the_application_fee():
+    r = P("Rent $1,425. Pets: cats yes, one-time pet fee $250, pet application fee $40. Security deposit $500.")
+    assert not r.get("application_fee") and r["pet_fee"] == 250
+
+
+def test_admin_comma_amount_not_monthly():
+    r = P("Fees: $30 application per adult, $100 admin, $20 monthly amenity.")
+    assert r["move_in_fees"] == 100 and r["other_monthly_fees"] == 20 and r["application_fee"] == 30
+
+
+def test_split_pet_deposit_no_duplicate_nonrefundable_note():
+    r = P("Rent $1,800. Cats ok. Pet deposit $300 ($100 non-refundable).")
+    assert notes(r).count("not refundable") + notes(r).count("non-refundable") <= 2

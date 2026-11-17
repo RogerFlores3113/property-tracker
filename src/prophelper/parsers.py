@@ -10841,7 +10841,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if weight_note:
         facts.append(weight_note)
     nonref_pet = _try(lambda: _pet_fee_nonrefundable_note(ptext, out.get("pet_fee")))
-    if nonref_pet:
+    if nonref_pet and not any(f"${float(out.get('pet_fee') or 0):,.0f}" in f and re.search(r"non-?refundable|not refundable|does not|do not get|not get it back", f, re.I) for f in facts):
         facts.append(nonref_pet)
     utext = _util_text(text)
     facts.extend(_try(lambda: _only_scope_notes(text)) or [])
@@ -13742,8 +13742,8 @@ def _monthly_admin_spans(text: str) -> list[tuple[int, int, float]]:
     spans: list[tuple[int, int, float]] = []
     clean = _without_utility_admin_fee(text)
     amt = r"\$\s?(\d{1,4}(?:\.\d\d)?)(?![\d,])"
-    pats = (r"(?<![\w-])" + _ADMIN_WORD + r"[ \t:\-=,(]{0,4}(?:of[ \t]+)?" + amt + r"[ \t)]*" + _MONTHLY_AFTER,
-            r"(?<![\w-])monthly[ \t]+" + _ADMIN_WORD + r"[ \t:\-=,(]{0,4}(?:of[ \t]+)?" + amt,
+    pats = (r"(?<![\w-])" + _ADMIN_WORD + r"[ \t:\-=(]{0,4}(?:of[ \t]+)?" + amt + r"[ \t)]*" + _MONTHLY_AFTER,
+            r"(?<![\w-])monthly[ \t]+" + _ADMIN_WORD + r"[ \t:\-=(]{0,4}(?:of[ \t]+)?" + amt,
             r"(?<![\w-])" + amt + r"[ \t]*" + _MONTHLY_AFTER + r"[ \t]*(?:for[ \t]+)?(?:an?[ \t]+|the[ \t]+)?" + r"admin(?:istrative|istration)?(?:[ \t]+(?:fees?|charges?))?(?![ \t]*(?:for|on)[ \t]+utilit)")
     for pat in pats:
         for m in re.finditer(pat, clean, re.I):
