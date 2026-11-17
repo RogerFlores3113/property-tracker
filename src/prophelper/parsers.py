@@ -6934,6 +6934,7 @@ def _flat_forms(text: str) -> str:
     return text
 
 
+_HEAT_GAS_GROUP = re.compile(r"\b(?:heat(?:ing)?[ \t]*(?:&|and|/|\+)[ \t]*gas|gas[ \t]*(?:&|and|/|\+)[ \t]*heat(?:ing)?|gas[ \t]+heat(?:ing)?)\b", re.I)
 _STD_FIVE = ("electric", "gas", "water", "sewer", "trash")
 _EST_WORDS = r"(?:(?:est(?:imated|imate)?|approx(?:imately|imate)?|about|around|roughly|avg|average|approximately|~)\.?[ \t]*:?[ \t]*)"
 _MONEY_U = r"\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|total|combined))*"
@@ -9619,6 +9620,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if "gas" not in keep_pay and "gas" not in inc_words:
             keep_pay.append("gas")
         pays = _ordered_utilities(keep_pay)
+    if {"heat", "gas"} <= {w.strip() for w in pays.split(",")} and _HEAT_GAS_GROUP.search(utext):
+        # cycle 27: "Heat & gas: tenant" is one bill for the same thing, not two unknowns
+        pays = _ordered_utilities([w.strip() for w in pays.split(",") if w.strip() and w.strip() != "heat"])
     facts[:] = _try(lambda: _heat_is_gas_words(facts, text)) or facts
     put("utilities_included", included)
     if pays:
