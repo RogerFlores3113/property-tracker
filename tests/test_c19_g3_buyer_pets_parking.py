@@ -140,11 +140,11 @@ def test_parking_permit_yearly_still_counts_monthly():
 
 @pytest.mark.parametrize("text", ["Parking: $0 (open lot), Covered $45", "Parking: free surface lot\nCovered: $45/mo", "Parking: $0 open lot / $45 covered",
                                   "Parking:\n- Open lot $0\n- Covered $45/mo"])
-def test_parking_options_save_the_best_kind(text):
+def test_parking_options_save_the_free_spot(text):
     r = rent(text)
-    assert r["parking_cost"] == 45 and r["parking"] == "covered"
+    assert r["parking_cost"] == 0 and r["parking"] == "lot"  # cycle 26: a free spot beside a priced upgrade is $0, the upgrade is one optional note
     n = notes(r)
-    assert "surface lot for free" in n and "not counted" not in n
+    assert "$45" in n and "optional" in n
 
 
 def test_garage_beats_surface_lot_in_options():

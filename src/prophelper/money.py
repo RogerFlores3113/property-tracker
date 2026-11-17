@@ -972,6 +972,9 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
                 continue  # cycle 26: every figure is closed by meaning or placed by a field (a $35 electric counted, a $60 optional space): nothing is left out
         if _NOTE_CLOSED.search(note) and not re.search(r"\bOnly [^.]{1,80} of that\b", note):
             continue  # "counted once in other monthly fees", "not counted again": the note says the money IS counted
+        zero_figs = [m.group(1).replace(",", "") for m in _FIG.finditer(note)]
+        if zero_figs and all(re.fullmatch(r"0+(?:\.0+)?", z) for z in zero_figs):
+            continue  # cycle 26: a $0 figure ("1-car garage included ($0)") is free, never a cost left out
         if _NOTE_CONDITIONAL.search(note):
             continue  # a deposit that only applies on a condition ("if credit is poor") is a question for the landlord, not a cost left out of the monthly number
         if _NOTE_PLACED.search(note) and not re.search(r"not counted|no amount|not saved", note, re.I):
@@ -1099,6 +1102,7 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
     named: dict[float, list[str]] = {}
     for note in notes:
         values, used, placed = _note_open_figures(note, place, optional)
+        values = {v: a for v, a in values.items() if v != 0}  # cycle 26 join: a $0 figure is free, never named as missing
         for value, amount in values.items():
             seen.setdefault(value, amount)
             util = _util_names_of(note, amount)
