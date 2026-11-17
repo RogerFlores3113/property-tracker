@@ -75,8 +75,8 @@ _EMOJI_BLACK_FLAG = "\U0001F3F4"
 
 def read_tag_chars_in_place(text: object) -> str:
     """The text with each run of tag characters replaced by the ASCII it spells, where it sits (cycle 33: a short run such as "Ignore" in the
-    middle of a sentence is read too). A run is joined to the letters beside it when it sits inside a word, and is set off by a space
-    otherwise. An emoji flag sequence (a black flag, tag letters, the cancel tag) spells a region name, not a message: it is dropped."""
+    middle of a sentence is read too). A run of 8 or more characters is set off as a sentence of its own; a shorter one is joined to the
+    letters beside it when it sits inside a word, and is set off by a space otherwise. An emoji flag sequence (a black flag, tag letters, the cancel tag) spells a region name, not a message: it is dropped."""
     s = "" if text is None else str(text)
 
     def one(m: re.Match[str]) -> str:
@@ -87,6 +87,8 @@ def read_tag_chars_in_place(text: object) -> str:
         spelled = decode_tag_chars(run)
         if not spelled:
             return ""
+        if len(spelled) >= 8:
+            return ". " + spelled + ". "  # a long run is a sentence of its own (as before cycle 33)
         after = s[m.end()] if m.end() < len(s) else ""
         left = "" if (not before or before.isspace() or (before.isalnum() and spelled[0].isalnum())) else " "
         right = "" if (not after or after.isspace() or (after.isalnum() and spelled[-1].isalnum())) else " "

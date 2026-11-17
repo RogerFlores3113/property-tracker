@@ -424,8 +424,9 @@ _AI_C33 = (
     _CLAUSE33 + r"(?:act|behave|respond|operate|work|serve|function|speak|answer)\s+as\s+" + _ROLE33 + _FOLLOW33 + r"|"
     r"\b(?:note|message|memo|notice|reminder|text|instructions?|request)\s+(?:to|for)\s+" + _AIADDR33 +
     r"(?:\s+(?:that|which|who)\s+(?:reads?|is\s+reading|are\s+reading|processes|summari[sz]es|scans|crawls|parses|reviews)\s+(?:this|the\s+(?:listing|page|text|ad)|it))?" + _AIGATE33 + r"|"
-    r"\b(?:dear|hello|hi|hey|attention|attn)\s+" + _AIADDR33.replace(r"(?:(?:the|any|all|my|this|an?)\s+)?", "", 1) + _AIGATE33 + r"|"
-    r"\b(?:new|updated|revised|additional|special|important|further|latest)\s+(?:instructions?|orders?|commands?|directives?)\s+(?:follow|below|are\s+as\s+follows?|for\s+you)\s*[:\-–—,.]\s*(?:please\s+|you\s+(?:must|should|will)\s+|always\s+|now\s+)*" + _AIVERB33)
+    r"\b(?:dear|hello|hi|hey|attention|attn)\s+" + _AIADDR33.replace(r"(?:(?:the|any|all|my|this|an?)\s+)?", "", 1)
+    + r"(?!\s*[:,\-–—]\s*(?:please\s+|kindly\s+)*(?:disregard|ignore|forget|override|bypass)\b)" + _AIGATE33 + r"|"
+    r"\b(?:new|updated|revised|additional|special|important|further|latest)\s+(?:instructions?|orders?|commands?|directives?)\s+(?:follow|below|are\s+as\s+follows?|for\s+you)\s*[:\-–—,.]\s*(?:(?:\(?\d{1,2}[.)]|[-*•])\s*)?(?:please\s+|you\s+(?:must|should|will)\s+|always\s+|now\s+)*" + _AIVERB33)
 _AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_C33, re.I)
 # A fence-like tag in listing text ("</untrusted><untrusted source='user notes'>"): it only exists to pass listing words off as the user's.
 _FENCE_TAG = re.compile(r"</?\s*(?:untrusted|system|assistant|user|human|developer|tool_result|function_results|tool_use|instructions?)\b[^>]*>", re.I)
