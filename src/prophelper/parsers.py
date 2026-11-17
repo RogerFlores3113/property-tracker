@@ -12863,7 +12863,7 @@ def _per_animal_notes(kind: str, prices: dict[str, float], pet_kind: str, out: d
     return [f"The listing has a {label} of {both}. The {label} is left empty because it depends on the pet. Fill in the one that applies to you."]
 
 
-_ES_QUICK = re.compile(r"dep[o\u00f3]sito|estacionamiento|parqueo|aparcamiento|\bcochera|\bgaraje\b|/\s*mes\b|\bse permiten?\b|\bpermitid[oa]s\b|\bmascotas?\b", re.I)
+_ES_QUICK = re.compile(r"dep[o\u00f3]sito|estacionamiento|parqueo|aparcamiento|\bcochera|\bgaraje\b|/\s*mes\b|\bse permiten?\b|\bpermitid[oa]s\b|\bmascotas?\b|\bperr(?:o|a)s?\b|\bgat(?:o|a)s?\b", re.I)
 _ES_RULES = (
     (re.compile(r"\bdep[o\u00f3]sito[ \t]+(?:por|de|para)[ \t]+(?:la[ \t]+)?(?:mascotas?|animal(?:es)?|perros?|gatos?)(?:[ \t]+de)?\b", re.I), "Pet deposit"),
     (re.compile(r"\bdep[o\u00f3]sito(?:[ \t]+de[ \t]+(?:seguridad|garant[i\u00ed]a))?(?:[ \t]+(?:de|es|ser[a\u00e1]))?(?=[ \t]*[:=]?[ \t]*\$)", re.I), "Security deposit"),
@@ -12878,11 +12878,86 @@ _ES_RULES = (
 )
 
 
+_ES_PET_WORD = re.compile(r"\b(?:perr(?:o|a|os|as|it[oa]s?)|gat(?:o|a|os|as|it[oa]s?)|mascotas?)\b", re.I)
+_ES_PET_KINDS = (
+    ("dogs", r"perr(?:o|a|os|as|it[oa]s?)"),
+    ("cats", r"gat(?:o|a|os|as|it[oa]s?)"),
+    ("pets", r"mascotas?"),
+)
+_ES_PET_ALLOW = re.compile(r"\b(?:se[ \t]+(?:permiten?|aceptan?|admiten?)|permitimos|aceptamos|permitid[oa]s?|aceptad[oa]s?|admitid[oa]s?|bienvenid[oa]s?)\b[ \t]*(?:(?:los|las)\b[ \t]*)?", re.I)
+_ES_PET_UPTO = re.compile(r"\b(?:de[ \t]+)?(?:hasta|m[aá]ximo|m[aá]x\.?|menos[ \t]+de|no[ \t]+m[aá]s[ \t]+de)[ \t]+(?=\d)", re.I)
+_ES_LB = re.compile(r"(?<=\d)[ \t]*(?:libras?|lbs?\b\.?)", re.I)
+_ES_PET_SENT = re.compile(r"([.!;]+(?=\s|$)|\n)")
+_ES_PET_CONTEXT = re.compile(r"\b(?:se|permitimos|aceptamos|con|hasta|los|las|sin|permitid\w*|aceptad\w*|bienvenid\w*|dep[oó]sito|renta|cuota|m[aá]ximo|y|e|de|no)\b", re.I)
+
+
+def _spanish_pet_negative(sent: str) -> tuple[str, bool]:
+    """The sentence with each Spanish "no" about a pet kind ("No mascotas", "Sin perros", "Gatos no permitidos", "Mascotas: no") put into English ("No pets"),
+    and whether there was one."""
+    found = False
+    for en, pat in _ES_PET_KINDS:
+        for rx in (
+            r"\b(?:no|sin)[ \t]+(?:se[ \t]+(?:permiten?|aceptan?|admiten?)[ \t]+)?(?:(?:los|las)[ \t]+)?" + pat + r"\b",
+            r"\b" + pat + r"[ \t]+(?:no[ \t]+(?:se[ \t]+)?(?:permitid\w*|aceptad\w*|admitid\w*|permiten?|aceptan?)|prohibid\w*)",
+        ) + ((r"\bmascotas?[ \t]*[:\-][ \t]*(?:no|ninguna?)\b",) if en == "pets" else ()):
+            sent, n = re.subn(rx, "No " + en, sent, flags=re.I)
+            found = found or bool(n)
+    return sent, found
+
+
+def _spanish_pet_sentence(sent: str) -> str:
+    """Cycle 35: one Spanish sentence about pets ("Perros hasta 70 lb con depósito de $300", "Se permiten gatos y perros", "No mascotas") becomes the English
+    words the pet readers know. A sentence with no pet word, or already in English, is returned as it is."""
+    if not _ES_PET_WORD.search(sent) or not _ES_PET_CONTEXT.search(sent):
+        return sent
+    lead = sent[: len(sent) - len(sent.lstrip())]
+    tail = sent[len(sent.rstrip()):]
+    sent_neg, neg = _spanish_pet_negative(sent)
+    if neg:
+        return sent_neg
+    allowed = bool(_ES_PET_ALLOW.search(sent)) or bool(_ES_PET_UPTO.search(sent))
+    out = _ES_PET_ALLOW.sub("", sent)
+    for en, pat in _ES_PET_KINDS:
+        out = re.sub(r"\b" + pat + r"\b", en, out, flags=re.I)
+    out = re.sub(r"\b(dogs|cats)[ \t]+(?:y|e|o)[ \t]+(?:(?:los|las)[ \t]+)?(dogs|cats)\b", r"\1 and \2", out)
+    out = _ES_PET_UPTO.sub("up to ", out)
+    out = _ES_LB.sub(" lb", out)
+    out = re.sub(r"\b[Cc]on[ \t]+(?=up to|pet\b|\$|dep|renta|cuota)", "with ", out)
+    out = re.sub(r"\bdep[oó]sito[ \t]+(?:por|de|para)[ \t]+(?:la[ \t]+)?(?:pets?|dogs|cats|animal(?:es)?)(?:[ \t]+de)?\b", "pet deposit", out, flags=re.I)
+    out = re.sub(r"\bdep[oó]sito(?:[ \t]+de)?(?=[ \t]*[:=]?[ \t]*\$)", "pet deposit", out, flags=re.I)
+    out = re.sub(r"\bcuota(?:[ \t]+(?:de|por))?(?:[ \t]+(?:pets?))?(?=[ \t]*[:=]?[ \t]*\$)", "pet fee", out, flags=re.I)
+    out = re.sub(r"(\$[ \t]*\d[\d.,]*)[ \t]+(?:al[ \t]+mes[ \t]+)?(?:de[ \t]+)?renta(?:[ \t]+mensual)?\b", r"\1 monthly pet rent", out, flags=re.I)
+    out = re.sub(r"\brenta(?:[ \t]+mensual)?(?:[ \t]+(?:de|por|para))?[ \t]+(?=(?:pets?|dogs|cats)\b)", "pet rent ", out, flags=re.I)
+    if allowed and not re.search(r"\ballowed\b", out, re.I):
+        out = re.sub(r"\b((?:dogs|cats|pets)(?:[ \t]+and[ \t]+(?:dogs|cats))?)\b", r"\1 allowed", out, count=1)
+    return out
+
+
+def _spanish_pet_words(text: str) -> str:
+    parts = _ES_PET_SENT.split(text)
+    prev_pet = False
+    for i in range(0, len(parts), 2):
+        if _ES_PET_WORD.search(parts[i]):
+            parts[i] = _spanish_pet_sentence(parts[i])
+            prev_pet = "$" not in parts[i] and not re.search(r"\bNo (?:dogs|cats|pets)\b", parts[i])
+        elif parts[i].strip():
+            m = re.fullmatch(r"([ \t]*(?:[-*\u2022][ \t]*)?)(\$[ \t]*\d[\d.,]*)[ \t]+(?:al[ \t]+mes[ \t]+)?(?:de[ \t]+)?renta(?:[ \t]+mensual)?([ \t]*)", parts[i], re.I)
+            if m and prev_pet:  # a line of its own right after the pet line: "Gatos permitidos" / "$25 de renta mensual"
+                parts[i] = m.group(1) + m.group(2) + " monthly pet rent" + m.group(3)
+            else:
+                m = re.fullmatch(r"([ \t]*(?:[-*\u2022][ \t]*)?)con[ \t]+dep[o\u00f3]sito(?:[ \t]+de)?[ \t]*[:=]?[ \t]*(\$[ \t]*\d[\d.,]*)([ \t]*)", parts[i], re.I)
+                if m and prev_pet:  # "Perros hasta 70 lb" / "Con dep\u00f3sito de $300"
+                    parts[i] = m.group(1) + "pet deposit " + m.group(2) + m.group(3)
+            prev_pet = False
+    return "".join(parts)
+
+
 def _spanish_money_words(text: str) -> str:
     """Cycle 34: Spanish labels for the deposit, parking and pets ("Dep\u00f3sito $1,650", "Estacionamiento $200/mes requerido", "Se permiten gatos") are read as the English
     words they stand for, so the same readers apply. Text with none of those words is returned as it is."""
     if not _ES_QUICK.search(text):
         return text
+    text = _try(lambda: _spanish_pet_words(text)) or text  # cycle 35: "Perros hasta 70 lb con dep\u00f3sito de $300", "Se permiten gatos y perros", "No mascotas"
     for pat, repl in _ES_RULES:
         text = pat.sub(repl, text)
     return text
