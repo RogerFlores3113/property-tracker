@@ -200,10 +200,12 @@ def counted_vs_missing(text: str, buying: bool = False) -> list[str]:
     surfaces = [head.split(", ", 1)[1] if ", " in head else "", compare._not_counted_text(pl), *compare._missing_names(pl), *[str(x) for x in cost.get("missing") or []]]
     placed = {round(float(r[k]), 2) for k in _COUNTED_FIELDS if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)}
     figs = sorted({round(float(m.group(1).replace(",", "")), 2) for m in _MONEY_FIG.finditer(text)})
-    for key in ("other_monthly_fees", "move_in_fees"):  # a figure that is one part of a summed fee field (a corrected $45 beside $25 in fees of $70)
+    cue = re.compile(r"\b(?:correct(?:ed|ion)|updated?|revised|now|actually|new)\b", re.I)
+    given = {round(float(m.group(1).replace(",", "")), 2) for sent in re.split(r"(?<=[.!?])\s+|\n", text) if cue.search(sent) for m in _MONEY_FIG.finditer(sent)}
+    for key in ("other_monthly_fees", "move_in_fees"):  # a figure a correction gives that is one part of a summed fee field (a corrected $45 beside $25 in fees of $70)
         total = r.get(key)
         if isinstance(total, (int, float)) and not isinstance(total, bool) and total:
-            for v in figs:
+            for v in (x for x in figs if x in given):
                 rest = [x for x in figs if x != v and x < total]
                 if v < total and any(abs(sum(c) - (float(total) - v)) < 0.01 for k in (1, 2, 3) for c in itertools.combinations(rest, k)):
                     placed.add(v)

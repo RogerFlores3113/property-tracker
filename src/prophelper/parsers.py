@@ -9322,6 +9322,9 @@ def _clean_title(title: str) -> str:
     # "2 bedroom duplex 1400 dollars a month": a price written in words is a fact, not part of the name
     cut = re.sub(r"[ \t,\-|]*\$?\d[\d,]*[ \t]*(?:dollars|bucks)\b(?:[ \t]*(?:a|per|/)[ \t]*(?:month|mo)\b)?.*$", "", out, flags=re.I).strip(" -|:,")
     cut = cut if len(cut) >= 3 else out
+    sq = re.search(r"(?<![\d,])[ \t,/|]+(?:\d{1,3}(?:,\d{3})+|\d{3,5})[ \t]*(?:sq\.?[ \t]?ft\.?|sqft|sf)\.?[ \t]*$", cut, re.I)
+    if sq and _TITLE_BED_CUE.search(cut[:sq.start()]) and len(cut[:sq.start()].strip(" -|:,")) >= 3:
+        cut = cut[:sq.start()].strip(" -|:,")  # cycle 29: "West Loop 3bd 2ba 1,350 sqft": the size said at the end is a fact the name does not hold
     # cycle 24: "Hilltop 2BR Condo 2 bed 1 bath": the beds and baths said a second time at the end are facts the name already has
     again = _TITLE_BEDBATH_AGAIN.search(cut)
     if again and _TITLE_BED_CUE.search(cut[:again.start()]) and len(cut[:again.start()].strip(" -|:,")) >= 3:
@@ -12264,14 +12267,19 @@ def _sum_remainder_parts(out: dict[str, Any], text: str) -> set[float]:
     "amenity fee is $45" with other monthly fees $70 = $45 + $25 valet): the field minus that figure is the sum of other figures of the listing."""
     found: set[float] = set()
     figs = sorted(v for v in _dollar_values(text) if 0 < v < 3000)
-    if not figs or len(figs) > 25:
+    if not figs or len(figs) > 25 or not re.search(r"\b(?:correct(?:ed|ion)|updated?|revised|now|actually|new)\b", text, re.I):
         return found
+    # only a figure that a correction sentence gives is a candidate: any other figure that happens to fit a sum is a coincidence
+    cands: set[float] = set()
+    for sent in re.split(r"(?<=[.!?])\s+|\n", text):
+        if re.search(r"\b(?:correct(?:ed|ion)|updated?|revised|now|actually|new)\b", sent, re.I):
+            cands |= _dollar_values(sent)
     for key in ("other_monthly_fees", "move_in_fees"):
         f = out.get(key)
         if not isinstance(f, (int, float)) or isinstance(f, bool) or not f:
             continue
         for v in figs:
-            if v >= f:
+            if v >= f or v not in cands:
                 continue
             rest = [x for x in figs if x != v and x < f]
             if any(abs(sum(c) - (float(f) - v)) < 0.01 for size in (1, 2, 3) for c in itertools.combinations(rest, size)):

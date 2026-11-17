@@ -210,6 +210,8 @@ class TestTitleComma:
         ("Maple Court Apartments, 1,250 sf | 3 bed", "Maple Court Apartments"),
         ("Oak Flats, 2 bed, 1 bath", "Oak Flats"),
         ("Pine Court - 1,100 sqft", "Pine Court"),
+        ("West Loop 3bd 2ba 1,350 sqft", "West Loop 3bd 2ba"),
+        ("Oak Flats 2 bed 950 sq ft", "Oak Flats 2 bed"),
     ])
     def test_clean_title(self, raw, want):
         assert P._clean_title(raw) == want
