@@ -150,7 +150,7 @@ def test_total_per_room_and_other_unit():
 ])
 def test_buyer_transfer_fee_counted(text):
     r = read(text, buying=True)
-    assert r["closing_costs"] == 1500
+    assert "closing_costs" not in r  # cycle 35: a named one-time item, never the total closing costs
     assert "$1,500 transfer fee" in notes(r)
 
 

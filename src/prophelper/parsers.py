@@ -6582,6 +6582,36 @@ def _down_payment_assistance_notes(text: str, facts: list[str]) -> list[str]:
     return []
 
 
+_TRANSFER_FEE_PATS = (r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]+(?:\w+[ \t]+)?transfer[ \t]+fee\b", r"\btransfer[ \t]+(?:fee|tax)\b[ \t:\-=]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
+                      r"\btransfer[ \t]+fees?[ \t]+(?:is[ \t]+|are[ \t]+)?(?:paid|due|payable|covered|owed)[ \t]+by[ \t]+(?:the[ \t]+)?(?:buyer|seller)\b[ \t:\-=,]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
+                      r"\b(?:buyer|seller)[ \t]+(?:pays|will[ \t]+pay|to[ \t]+pay|covers|is[ \t]+responsible[ \t]+for)[ \t]+(?:the[ \t]+)?transfer[ \t]+fees?\b[ \t:\-=,]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
+                      r"\btransfer[ \t]+fee\b[^.\n;$]{0,30}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)")
+
+
+def buyer_transfer_fee(text: str) -> dict[str, Any] | None:
+    """Cycle 35: a transfer fee with a dollar amount on a sale listing ("Buyer pays $400 transfer fee.", "Transfer fee $400 paid by buyer").
+    Returns {"amount", "payer": "buyer" | "seller" | ""} or None. The fee is a named one-time closing item: it is never the total closing costs.
+    A fee inside a stated closing total ("closing costs $9,000 including a $400 transfer fee") has payer "" so nothing is added twice."""
+    for pat in _TRANSFER_FEE_PATS:
+        t = re.search(pat, text, re.I)
+        if not t:
+            continue
+        amount = _num(t.group(1))
+        sent = next((x for x in re.split(r"[.\n;]", text) if t.group(0) in x), "")
+        buyer_pays = bool(_PAYER_BUYER.search(sent) or re.search(r"\bbuyer'?s?\b[^.\n]{0,30}\btransfer[ \t]+fee", sent, re.I)) and not _PAYER_SELLER.search(sent)
+        next_payer = "" if (_PAYER_BUYER.search(sent) or _PAYER_SELLER.search(sent)) else (_try(lambda: _assessment_payer(text, sent)) or "")  # cycle 27: "- Transfer fee $350\n- Paid in full by the seller"
+        buyer_pays = buyer_pays or next_payer == "buyer"
+        if buyer_pays:
+            at = sent.find(t.group(0))
+            if re.search(r"\b(?:including|includes?|incl\.?|which[ \t]+covers?|covering|of[ \t]+which)\b", sent[:max(at, 0)], re.I) and _try(lambda: _closing_costs(sent[:max(at, 0)])):
+                return {"amount": amount, "payer": "", "inside": True}
+            return {"amount": amount, "payer": "buyer"}
+        if next_payer == "seller" or (_PAYER_SELLER.search(sent) and not _PAYER_BUYER.search(sent)):
+            return {"amount": amount, "payer": "seller"}
+        return {"amount": amount, "payer": ""}
+    return None
+
+
 def _buyer_only_fees(text: str, out: dict[str, Any], saved_closing: float | None = None) -> list[str]:
     """For a buy search. Parking cost and move-in fees are rent-side money: the buy cost and the cash to close do not count
     them, so they are not filled in (the reader never says "filled in" for money that is not counted). Each becomes a plain
@@ -6665,37 +6695,16 @@ def _buyer_only_fees(text: str, out: dict[str, Any], saved_closing: float | None
         or re.search(r"\b(\d{1,2}(?:\.\d+)?)[ \t]*%[ \t]+(?:buyer'?s?|buying)[ \t]+agent'?s?[ \t]+(?:commission|fee|compensation)\b", text, re.I)
     if cm:
         notes.append(f"The listing mentions a buyer agent commission of {float(cm.group(1)):g}%. No amount is saved and it is not counted anywhere. Ask who pays it and whether it changes what you owe.")
-    for pat in (r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]+(?:\w+[ \t]+)?transfer[ \t]+fee\b", r"\btransfer[ \t]+(?:fee|tax)\b[ \t:\-=]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
-                r"\btransfer[ \t]+fees?[ \t]+(?:is[ \t]+|are[ \t]+)?(?:paid|due|payable|covered|owed)[ \t]+by[ \t]+(?:the[ \t]+)?(?:buyer|seller)\b[ \t:\-=,]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
-                r"\b(?:buyer|seller)[ \t]+(?:pays|will[ \t]+pay|to[ \t]+pay|covers|is[ \t]+responsible[ \t]+for)[ \t]+(?:the[ \t]+)?transfer[ \t]+fees?\b[ \t:\-=,]{0,4}(?:of[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)",
-                r"\btransfer[ \t]+fee\b[^.\n;$]{0,30}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)"):
-        t = re.search(pat, text, re.I)
-        if t:
-            amount = _num(t.group(1))
-            sent = next((x for x in re.split(r"[.\n;]", text) if t.group(0) in x), "")
-            buyer_pays = bool(_PAYER_BUYER.search(sent) or re.search(r"\bbuyer'?s?\b[^.\n]{0,30}\btransfer[ \t]+fee", sent, re.I)) and not _PAYER_SELLER.search(sent)
-            next_payer = "" if (_PAYER_BUYER.search(sent) or _PAYER_SELLER.search(sent)) else (_try(lambda: _assessment_payer(text, sent)) or "")  # cycle 27: "- Transfer fee $350\n- Paid in full by the seller"
-            buyer_pays = buyer_pays or next_payer == "buyer"
-            if buyer_pays:  # cycle 17: a transfer fee the buyer pays is a closing cost, with or without the word "closing"
-                prior = out.get("closing_costs")
-                if prior in (None, "") and saved_closing:
-                    notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. The closing costs saved on this place ({_money_c(saved_closing)}) are what the cash to close uses, "
-                                 "so it is not added again. Ask whether that figure already includes it.")
-                elif prior in (None, "") and _seller_gives_toward_closing(text):
-                    notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. It is not saved as the closing costs, because the seller is also paying toward closing "
-                                 "and the fee alone would make the cash to close look too low. The cash to close uses an estimate of the closing costs. Ask for the full closing cost estimate.")
-                elif prior in (None, ""):
-                    out["closing_costs"] = _tidy_number(float(amount))
-                    notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. It is counted in the closing costs, so it is in the cash to close. "
-                                 "That is the only closing cost the listing gives, so the real total is likely higher. Ask for the full closing cost estimate.")
-                else:
-                    notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. The closing costs were already read from the listing, so it is not added again. "
-                                 "Ask whether the closing costs already include it.")
-            elif next_payer == "seller" or (_PAYER_SELLER.search(sent) and not _PAYER_BUYER.search(sent)):  # cycle 27: the listing says the seller pays it
-                notes.append(f"The listing says the seller pays the ${amount:,.0f} transfer fee. It is not a cost to you, so it is not counted in the cash to close.")
-            else:
-                notes.append(f"The listing mentions a ${amount:,.0f} transfer fee. It is not counted anywhere. Ask what it is for and who pays it.")
-            break
+    tf = _try(lambda: buyer_transfer_fee(text))
+    if tf:
+        amount, payer = tf["amount"], tf["payer"]
+        if payer == "buyer":  # cycle 35: a buyer-paid transfer fee is one named one-time closing item, never the total closing costs (cash_to_close adds it on top)
+            notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. It is counted in the cash to close as a one-time fee on top of the closing costs, "
+                         "not in the monthly cost and not as the whole closing costs. Ask whether the closing costs already include it.")
+        elif payer == "seller":  # cycle 27: the listing says the seller pays it
+            notes.append(f"The listing says the seller pays the ${amount:,.0f} transfer fee. It is not a cost to you, so it is not counted in the cash to close.")
+        else:
+            notes.append(f"The listing mentions a ${amount:,.0f} transfer fee. It is not counted anywhere. Ask what it is for and who pays it.")
     return notes
 
 

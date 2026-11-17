@@ -608,6 +608,13 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
         paid, unclear = [], []
     for label, amount in paid:
         parts.append({"label": f"One-time fee at closing ({label})", "amount": _r(amount), "estimated": False})
+    try:  # cycle 35: a transfer fee the buyer pays is one named one-time item on top of the closing costs, never the whole closing costs
+        from .parsers import buyer_transfer_fee
+        tf = buyer_transfer_fee(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        tf = None
+    if tf and tf["payer"] == "buyer" and not any(abs(a - tf["amount"]) < 0.005 for _l, a in paid):
+        parts.append({"label": "One-time fee at closing (transfer fee)", "amount": _r(tf["amount"]), "estimated": False})
     for label, amount in unclear:
         left_out.append(f"a {_dollars(amount)} {label} isn't counted because who pays it isn't known")
     try:  # cycle 28: a fee stated as months of HOA ("capital improvement fee equal to two months of HOA") counts once the HOA is known
