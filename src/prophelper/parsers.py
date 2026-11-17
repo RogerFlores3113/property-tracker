@@ -2135,7 +2135,7 @@ def _beds_converted(text: str) -> tuple[float, float] | None:
 _SLASH_HOME = re.compile(r"(?<![\d.,$/:-])\b(\d{1,2})[ \t]*/[ \t]*(\d(?:\.\d)?)(?![\d/.])(?=[ \t]*(?:br|ba|bd)?[ \t,-]*(?:single|house|home|condo|townhome|townhouse|duplex|apartment|apt|bungalow|ranch|villa|cottage|loft|flat)\b)")
 
 
-_SLASH_LOOSE = re.compile(r"(?<![\w.,$/:#-])([1-6])[ \t]?/[ \t]?([1-4](?:\.5)?)(?![\w/.$%:-]|,\d|[ \t]*(?:mile|miles|mi\b|bath|baths|off\b|acre|block|blocks|inch|in\b|month|mo\b|yr|year|%|am\b|pm\b|pets?\b|cats?\b|dogs?\b))")
+_SLASH_LOOSE = re.compile(r"(?<![\w.,$/:#-])([1-6])[ \t]?/[ \t]?([1-4](?:\.5)?)(?![\w/$%:-]|\.\d|,\d|[ \t]*(?:mile|miles|mi\b|bath|baths|off\b|acre|block|blocks|inch|in\b|month|mo\b|yr|year|%|am\b|pm\b|pets?\b|cats?\b|dogs?\b))")
 _SLASH_DATE_BEFORE = re.compile(r"\b(?:avail\w*|date|move|moving|start\w*|begin\w*|by|on|until|till|thru|through|ready|lease|due|from|since|open house|tour|expires?|deadline|posted|updated|built|before|after|today|tomorrow|sat|sun|mon|tue|wed|thu|fri|saturday|sunday|monday|tuesday|wednesday|thursday|friday|signed|renewal|rate|dated?|as of|effective)\b[ \t:]*$", re.I)
 
 
