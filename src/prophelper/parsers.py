@@ -6935,6 +6935,26 @@ def _flat_forms(text: str) -> str:
 
 
 _HEAT_GAS_GROUP = re.compile(r"\b(?:heat(?:ing)?[ \t]*(?:&|and|/|\+)[ \t]*gas|gas[ \t]*(?:&|and|/|\+)[ \t]*heat(?:ing)?|gas[ \t]+heat(?:ing)?)\b", re.I)
+_TRASH_FEE_RE = re.compile(r"\b(?:valet[ \t-]*(?:trash|waste)|trash[ \t-]*valet|trash[ \t]+removal|trash[ \t]+(?:pick-?up|service|fee|charge)|garbage[ \t]+(?:removal|pick-?up|service|fee|charge)|waste[ \t]+(?:removal|service))(?:[ \t]+(?:fee|service|charge))?[ \t]*[:\-=]?[ \t]*\$[ \t]?(\d{1,4}(?:\.\d\d)?)", re.I)
+
+
+def _trash_fee_covers_trash(text: str, out: dict[str, Any]) -> None:
+    """Cycle 27: a trash, valet trash or trash removal fee that is counted in other monthly fees is the trash bill: trash is not also an unknown utility."""
+    pays = [w.strip() for w in str(out.get("tenant_pays") or "").split(",") if w.strip()]
+    fees = out.get("other_monthly_fees")
+    if "trash" not in pays or not isinstance(fees, (int, float)) or isinstance(fees, bool):
+        return
+    for m in _TRASH_FEE_RE.finditer(text):
+        amt = float(m.group(1))
+        if 0 < amt <= float(fees) + 0.01 and not re.search(r"\b(?:optional|available|if you|on request)\b", text[max(0, m.start() - 20):m.end() + 25], re.I):
+            rest = [w for w in pays if w != "trash"]
+            if rest:
+                out["tenant_pays"] = ", ".join(rest)
+            else:
+                out.pop("tenant_pays", None)
+            return
+
+
 _STD_FIVE = ("electric", "gas", "water", "sewer", "trash")
 _EST_WORDS = r"(?:(?:est(?:imated|imate)?|approx(?:imately|imate)?|about|around|roughly|avg|average|approximately|~)\.?[ \t]*:?[ \t]*)"
 _MONEY_U = r"\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|total|combined))*"
@@ -10322,6 +10342,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         saved_est = out.get("utilities_estimate")
         est_replaced = isinstance(saved_est, (int, float)) and not isinstance(saved_est, bool) and (
             not isinstance(reader_estimate, (int, float)) or abs(float(saved_est) - float(reader_estimate)) >= 0.5)
+    if not buying:
+        _trash_fee_covers_trash(text_full, out)
     facts = _drop_placed_facts(facts, out, follow=bool(current))
     facts += _try(lambda: _safety_net(text, out, facts)) or []
     facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
@@ -11900,7 +11922,7 @@ def _money_monthly_fees(text: str) -> list[float]:
     """Required extras charged every month ("amenity fee $25/mo", "$10/month trash")."""
     text = _strip_choice_internet(text)  # cycle 22: an optional internet package is a choice, never a monthly fee that counts
     found: list[float] = []
-    label = r"(?:amenity|trash|valet trash|trash valet|valet waste|pest(?: control)?|package|technology|tech|community|convenience|internet|cable|smart home)(?:\s*(?:fee|fees|charge|package|service))?"
+    label = r"(?:amenity|trash removal|garbage removal|trash|valet trash|trash valet|valet waste|pest(?: control)?|package|technology|tech|community|convenience|internet|cable|smart home)(?:\s*(?:fee|fees|charge|package|service))?"
     back = re.compile(r"^[^.\n;$]{0,14}?\b(?:billed|charged|passed)\s*(?:back|through|on)\b", re.I)
     for m in re.finditer(r"\b" + label + r"(?:[ \t]*\([^)\n$]{1,25}\))?(?:[ \t]+(?:is|are|costs?|runs?|will[ \t]+be)\b)?[ \t:\-=]{0,4}\$\s?(\d{1,4}(?:\.\d\d)?)\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)", text, re.I):
         if re.match(r"(?:trash|internet|cable)", m.group(0), re.I) and (back.match(text[m.end():]) or re.match(r"[ \t,]*(?:is[ \t]+)?flat\b", text[m.end():], re.I)):
