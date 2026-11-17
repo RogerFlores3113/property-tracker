@@ -833,6 +833,8 @@ def _dict_factory(cursor: sqlite3.Cursor, row: tuple) -> dict[str, Any]:
 def _hidden_sentence(v: str, m: re.Match[str]) -> str:
     """The sentence (or line) around the first hidden character, cleaned, and at most about 60 characters each side: the check-first note
     quotes only this, never the whole listing."""
+    v = guards.bidi_visual(v)
+    m = _INVISIBLE_NOISY.search(v) or m
     clean = _INVISIBLE.sub("", v)
     pos = len(_INVISIBLE.sub("", v[:m.start()]))
     begin = max([clean.rfind(sep, 0, pos) + len(sep) for sep in (". ", "! ", "? ", "\n") if clean.rfind(sep, 0, pos) != -1] or [0])
@@ -857,7 +859,7 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
         if m:
             row["hidden_chars_context"] = _hidden_sentence(v, m)
             break
-    row = {k: (_INVISIBLE.sub("", v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
+    row = {k: (_INVISIBLE.sub("", guards.bidi_visual(v)) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
     if isinstance(row.get("title"), str):
         row["title"] = _BIDI.sub("", row["title"])  # a title that flips the text around it is shown plainly on every page, Today and the CSV
     if row.get("url"):

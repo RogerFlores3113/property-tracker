@@ -152,6 +152,9 @@ def _today() -> date:
 
 def _tidy(text: str) -> str:
     text = (text or "")[:MAX_CHARS]
+    if "\u202e" in text:
+        from . import guards as _guards  # cycle 28: text under a right-to-left override is read in the order it shows on screen
+        text = _guards.bidi_visual(text)
     for a, b in (("\u00a0", " "), ("\u2009", " "), ("\u202f", " "), ("\u200b", ""), ("\ufeff", ""), ("\r\n", "\n"), ("\r", "\n"),
                  ("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'), ("\u201d", '"'), ("\u2212", "-")):
         text = text.replace(a, b)

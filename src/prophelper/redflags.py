@@ -309,6 +309,13 @@ _WIDE_SPACED = re.compile(r"(?<![^\W\d_])(?:[^\W\d_] {2}){3,}[^\W\d_](?![^\W\d_]
 # joined too, but only next to a dotted word of five letters or more, so "U.S.A" or "a.k.a" on their own stay as they are
 _DOT_WORD = r"[^\W\d_](?:[.\-_][^\W\d_]){2,}\.?"
 _DOT_PHRASE = re.compile(r"(?<![^\W\d_.\-_])" + _DOT_WORD + r"(?:[ \t]+" + _DOT_WORD + r")+(?![^\W\d_])")
+# cycle 28: a whole phrase spelled letter by letter with wide gaps between the words ("i g n o r e   a l l   p r e v i o u s"): every word is
+# joined, one space stays between words. Only when at least one word has four or more letters, so "J R   K L" or "N Y C   U S A" stay as they are.
+_SP_WORD = r"[^\W\d_](?:[ \t][^\W\d_])*"
+_GAP_SPACED = re.compile(r"(?<![^\W\d_])" + _SP_WORD + r"(?:[ \t]{2,}" + _SP_WORD + r")+(?![^\W\d_])")
+# "t h e", "a n d" inside an otherwise normal sentence: only these common three-letter words are joined
+_SMALL_SPACED = re.compile(r"(?<![^\W\d_])([^\W\d_])[ \t]([^\W\d_])[ \t]([^\W\d_])(?![^\W\d_])")
+_SMALL_WORDS = frozenset("the and all you any are for not but your".split())
 _COMMENT = re.compile(r"<!--(.*?)(?:-->|$)", re.S)
 _LETTERS = re.compile(r"[^\W\d_]+")
 # Cyrillic and Greek letters that look like Latin ones (a small hand-written map, no packages)
@@ -337,6 +344,18 @@ def _join_letters(word: str, rest: str = "\x00") -> str:
         if not new_sentence:
             out = out[:-1]
     return out
+
+
+def _gap_join(m: re.Match[str]) -> str:
+    words = re.split(r"[ \t]{2,}", m.group(0))
+    if not any(len(re.sub(r"[ \t]", "", w)) >= 4 and " " in w.strip() for w in words):
+        return m.group(0)
+    return " ".join(re.sub(r"[ \t]", "", w) for w in words)
+
+
+def _small_join(m: re.Match[str]) -> str:
+    word = "".join(m.groups())
+    return word if word.lower() in _SMALL_WORDS else m.group(0)
 
 
 def _unsep(text: str) -> str:
@@ -576,7 +595,7 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     """The text as a reader would see it, for matching: HTML entities decoded, zero-width characters removed, HTML comments
     taken out of the text, whitespace collapsed. Returns ``(text, comment_contents)``. The contents of comments are also
     appended to the text so they are scanned too."""
-    out = str(text or "")
+    out = guards.bidi_visual(text or "")
     if guards.has_tag_chars(out):  # invisible tag characters spell ASCII: read what they say (a long run), drop the rest (emoji flags)
         out = guards.TAG_CHARS.sub(lambda m: (". " + d + ". ") if len(d := guards.decode_tag_chars(m.group(0))) >= 8 else "", out)
     for _ in range(2):  # twice, for text like &amp;#8203;
@@ -589,7 +608,9 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     out = "".join(ch for ch in out if unicodedata.category(ch) != "Mn")
     out = unicodedata.normalize("NFC", out)  # cycle 25: Hangul back to syllables (NFKD split it into jamo)
     out = _DOT_PHRASE.sub(lambda m: " ".join(_join_letters(w, m.string[m.end():] if i == len(m.group(0).split()) - 1 else "\x00") for i, w in enumerate(m.group(0).split())) if any(len(re.sub(r"[.\-_]", "", w)) >= 5 for w in m.group(0).split()) else m.group(0), out)
+    out = _GAP_SPACED.sub(_gap_join, out)
     out = _SPACED.sub(lambda m: re.sub(r"[ \t]", "", m.group(0)), out)
+    out = _SMALL_SPACED.sub(_small_join, out)
     out = _SEP_SPACED.sub(lambda m: _join_letters(m.group(0), m.string[m.end():]), out)
     out = _WIDE_SPACED.sub(lambda m: m.group(0).replace(" ", ""), out)
     out = _DOT_SPACED.sub(lambda m: _join_letters(re.sub(r"[ \t]", "", m.group(0)), m.string[m.end():]), out)
