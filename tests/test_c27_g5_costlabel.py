@@ -134,3 +134,16 @@ def test_best_fit_marks_a_lowest_unit_rent(store, client):
         assert "lowest unit rent" in text(call(server(store), "todays_list"))
     else:
         raise AssertionError("expected Flats among the best fits: " + str([x["title"] for x in d["fits"]]))
+
+
+def test_compare_cash_row_of_a_flagged_place_says_as_listed(store, client):
+    s, p, q = _setup(store)
+    es = enrich.enrich_places(store, s, [p, q])
+    cells = _rows_text(es, "cash_up_front")
+    assert cells and cells[0].endswith("as listed, not checked") and "as listed" not in cells[1], cells
+    assert "as listed, not checked" in client.get(f"/compare?ids={p['id']},{q['id']}").text
+    out = text(call(server(store), "compare_places", place_ids=[p["id"], q["id"]]))
+    cash = next(l for l in out.split("\n") if l.startswith("Cash needed up front") or "Cash needed" in l)
+    assert "as listed, not checked" in cash
+    gp = text(call(server(store), "get_place", place_id=p["id"]))
+    assert "(as listed, not checked). Not part of the monthly cost." in gp

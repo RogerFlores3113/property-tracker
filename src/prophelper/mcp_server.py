@@ -419,6 +419,7 @@ def _cash_lines(e: dict[str, Any]) -> list[str]:
         head = f"at least {helpers.money_exact(cash['total'])}; {', '.join(unknown)} not known yet" if unknown else helpers.money_exact(cash["total"])
         out.append(f"{label}: {head} (" + ", ".join(f"{pt['label']} {helpers.money_exact(pt['amount'])}" for pt in cash["parts"]) + ")"
                    + (" (security deposit not filled in, so this is at least that much)" if cost.get("mode") != "buy" and compare_mod._deposit_unknown(e, cash) else "")
+                   + (" (as listed, not checked)" if compare_mod.as_listed(e) else "")
                    + ". Not part of the monthly cost."
                    + "".join(f" Left out: {w}." for w in cash.get("left_out") or []))
     if cost.get("listing_estimate_note"):

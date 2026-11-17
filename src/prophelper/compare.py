@@ -486,6 +486,9 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         cell["text"] = f"at least {helpers.money_exact(c['total'])} ({_join_and(unknown)} not known)"
         cell["incomplete"] = True
+    if as_listed(p):  # cycle 27: the cash of a check-first place is as listed, not checked, like its monthly cost
+        cell["text"] += " " + AS_LISTED_WORDS
+        cell["incomplete"] = True
     return cell
 
 
