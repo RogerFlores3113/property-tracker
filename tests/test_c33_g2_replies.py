@@ -118,3 +118,11 @@ def test_update_other_field_does_not_add_the_rent_line_to_the_update_reply(store
     call(srv, "update_place", place_id=1, price=2400)
     out = text(call(srv, "update_place", place_id=1, beds=3))
     assert "Rent check" not in out
+
+
+def test_add_places_batch_repeat_names_the_new_rent(store):
+    srv = setup(store)
+    add(srv, address="800 W Jackson Blvd", title="Greektown 3BR", price=3640)
+    out = text(call(srv, "add_places", places=[{"listing_text": "800 W Jackson Blvd Chicago IL 60661. Rent $3,295/mo. 3 bed 2 bath.", "address": "800 W Jackson Blvd"}]))
+    assert "This paste gives a rent of $3,295 a month, but the rent saved on this place is $3,640." in out
+    assert "values for price" not in out

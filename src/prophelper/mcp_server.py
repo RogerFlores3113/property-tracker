@@ -1333,7 +1333,7 @@ def build_server(store: Store) -> FastMCP:
                     raise ValueError(_named_error(f"Place {i}", f, exc)) from None
                 e = _enrich(store, place)
                 lines.append(("Added " if created else "Already saved, updated ") + _line(e) + ("" if created else " (filled only empty fields)"))
-                lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "Read from the listing text", "The listing text was saved", "Also in the listing"))]
+                lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "This paste gives a rent", "Read from the listing text", "The listing text was saved", "Also in the listing"))]
                 lines += ["  " + n for n in seen_not_counted(place)]
                 lines += ["  " + n for n in insurance_warning(place) + rent_warning(place)]
                 out.append({"id": place["id"], "created": created})
