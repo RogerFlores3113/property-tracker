@@ -5406,8 +5406,8 @@ _BUYER_FEE_NAME = (r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contri
                    r"(?:(?:condo|hoa|association)[ \t]+)?(?:document|documents|docs?)[ \t]+fees?|"
                    r"prepaids?[ \t]+(?:property[ \t]+)?(?:taxes|insurance|interest|items|escrow|homeowners'?[ \t]+insurance)(?:[ \t]*(?:,|and|&)[ \t]*(?:property[ \t]+)?(?:taxes|insurance|interest|homeowners'?[ \t]+insurance))*|"
                    r"(?:(?:association|hoa|condo)[ \t]+)?move[- ]in[ \t]+deposit(?:[ \t]+(?:to|with|for)[ \t]+(?:the[ \t]+)?(?:association|hoa|condo[ \t]+association|building))?")
-_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+)?(?:one[- ]time[ \t]+|new[ \t]+)?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
-                        r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
+_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+)?(?:one[- ]time[ \t]+|new[ \t]+)?(?:(?:hoa|association|condo)[ \t]+)?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
+                        r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
 
 def buyer_one_time_fees(text: str, sa_amount: Any = None, sa_payer: str = "") -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
@@ -5742,6 +5742,16 @@ def _buyer_closing_charges(text: str):
                 yield amount, "one-time assessment", sent
 
 
+def _capital_only_closing_items(text: str) -> bool:
+    """Cycle 31: True when every one-time buyer charge in the listing is a (working) capital contribution and buyer_one_time_fees counts each of them
+    as a one-time closing fee. They are then counted there, under their own name, and never saved as a special assessment."""
+    charges = list(_buyer_closing_charges(text))
+    if not charges or any("capital contribution" not in c[1] for c in charges):
+        return False
+    counted, _unclear = buyer_one_time_fees(text)
+    return all(any(abs(c[0] - a) < 0.005 for _l, a in counted) for c in charges)
+
+
 def _buyer_closing_charge(text: str) -> tuple[float, str, str] | None:
     """The first one-time buyer charge at closing (see _buyer_closing_charges), or None."""
     return next(iter(_buyer_closing_charges(text)), None)
@@ -5840,6 +5850,8 @@ def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | 
             break
     if sentence is None:
         got = _buyer_closing_charge(text) if buying else None
+        if got and _capital_only_closing_items(text):
+            got = None  # cycle 31: a working capital or capital contribution the buyer pays at closing is a one-time closing item, not a special assessment
         if got:
             return got[0], "buyer", got[2]
         plain = _plain_assessment(text) if buying else None  # cycle 26: "Assessment due from buyer at closing: $2,200" (no word "special")
