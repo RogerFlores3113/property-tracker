@@ -173,7 +173,8 @@ def test_close_tours_note():
 def test_today_shows_close_tour_note(store):
     s = _search(store)
     a, b = _place(store, s["id"], title="A"), _place(store, s["id"], title="B")
-    start = datetime.now(timezone.utc) + timedelta(days=1)
+    # Midday tomorrow, so the two tours never fall on either side of midnight.
+    start = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=17, minute=0, second=0, microsecond=0)
     store.add_tour(a["id"], start.isoformat())
     store.add_tour(b["id"], (start + timedelta(minutes=20)).isoformat())
     assert "20 minutes apart; check the drive" in local_client(store).get("/today").text
