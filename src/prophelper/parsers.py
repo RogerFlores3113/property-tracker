@@ -9607,7 +9607,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         facts.extend(tail["facts"])
     if not buying and isinstance(out.get("utilities_estimate"), (int, float)) and not isinstance(out.get("utilities_estimate"), bool):
         # cycle 27: "Utility package $175/mo flat (heat, water, electric, trash) billed back" is the utilities, counted once: the fee readers must not see it
-        text = _UTIL_PACKAGE.sub(lambda m: " " if all(float(a.replace(",", "")) <= float(out["utilities_estimate"]) + 0.5 for a in re.findall(r"\$[ \t]?(\d[\d,]*(?:\.\d\d)?)", m.group(0))) else m.group(0), text)
+        text = _UTIL_PACKAGE.sub(lambda m: " " if any(abs(float(a.replace(",", "")) - float(out["utilities_estimate"])) < 0.5 for a in re.findall(r"\$[ \t]?(\d[\d,]*(?:\.\d\d)?)", m.group(0))) else m.group(0), text)
     _UTIL_TRACE.set({"amount": out.get("utilities_estimate"), "names": sorted(counted | set(add_names_seen))})
     if buying and included and included != "all":
         hm = re.search(r"\b(?:hoa|assessment|association|condo[ \t]+fees?|dues)\b[^.\n]{0,60}?\b(?:includes?|covers?)\b([^.\n]{0,80})", utext, re.I)
