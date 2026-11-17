@@ -263,6 +263,20 @@ _AI_C25 = (
     r"[^\n]{0,160}?(?:https?://|\bwww\.|\b(?:the |a )?(?:user|renter|buyer|tenant)(?:'s|’s|s')\b|\bnotes\b|\bcontacts?\b|\bsaved messages\b)|"
     r"\b(?:fetch|open|visit|post|send|upload|forward|submit|load)\b[^.\n]{0,60}https?://[^\s]*\?[^\s]*=[^\n]{0,80}\b(?:user|renter|tenant|buyer)(?:'s|’s|s')?\s+(?:saved\s+)?(?:notes|contacts?|data|messages|info|details)\b")
 _AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_C25, re.I)
+# cycle 26: a claim that the user allowed "you" (the AI) to send their data somewhere. Only the claim aimed at the assistant counts, so
+# "You may send your application to leasing@..." and "Tenants are allowed to share the patio" stay clear.
+_AI_SEND = r"(?:send|forward|e-?mail|share|post|upload|submit|disclose|transmit|mail|leak|give|hand over|pass|copy|relay|text)"
+_AI_DATA = r"(?:notes?|contacts?|messages?|data|information|details|files?|documents?|records?|conversations?|chats?|history|private|saved|address(?:es)?|phone|numbers?|budget|search)"
+_AI_C26 = (
+    r"\b(?:the\s+)?(?:user|renter|tenant|buyer|owner|client|customer|person)\s+(?:has|have|had|already\s+has|just\s+)?\s*(?:already\s+|explicitly\s+|now\s+|just\s+)?"
+    r"(?:authori[sz]ed|approved|allowed|permitted|consented|cleared|okayed|ok'?d|said\s+(?:it'?s\s+)?(?:ok|okay|fine)|given\s+(?:you\s+)?(?:permission|consent|approval|authori[sz]ation)|granted\s+(?:you\s+)?(?:permission|consent|access|approval))\b"
+    r"[^.\n]{0,40}\b(?:you|the\s+assistant|assistant|the\s+ai|ai|claude|the\s+agent|agent)\b[^.\n]{0,80}\b" + _AI_SEND + r"\b|"
+    r"\b(?:the\s+)?(?:user|renter|tenant|buyer|owner|client|customer|person)\s+(?:has|have|had)\s+(?:already\s+)?(?:given|granted)\s+you\s+(?:permission|consent|approval|authori[sz]ation|access)\b[^.\n]{0,60}\b" + _AI_SEND + r"\b|"
+    r"\byou\s+(?:are|have\s+been|were|are\s+now)\s+(?:now\s+)?(?:fully\s+)?(?:authori[sz]ed|permitted|allowed|cleared|approved)\s+to\s+[^.\n]{0,40}\b" + _AI_SEND + r"\b[^.\n]{0,40}"
+    r"\b(?:(?:the\s+)?(?:user|renter|tenant|buyer)(?:'s|\u2019s|s')|his|her|their|your\s+(?:owner|user)(?:'s|\u2019s))\s+(?:\w+\s+){0,2}" + _AI_DATA + r"\b|"
+    r"\byou\s+(?:have|now\s+have)\s+(?:the\s+user'?s?\s+)?(?:permission|consent|approval|authori[sz]ation)\s+to\s+[^.\n]{0,40}\b" + _AI_SEND + r"\b[^.\n]{0,40}"
+    r"\b(?:(?:the\s+)?(?:user|renter|tenant|buyer)(?:'s|\u2019s|s')|his|her|their)\s+(?:\w+\s+){0,2}" + _AI_DATA + r"\b")
+_AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_C26, re.I)
 # A fence-like tag in listing text ("</untrusted><untrusted source='user notes'>"): it only exists to pass listing words off as the user's.
 _FENCE_TAG = re.compile(r"</?\s*(?:untrusted|system|assistant|user|human|developer|tool_result|function_results|tool_use|instructions?)\b[^>]*>", re.I)
 
@@ -580,6 +594,7 @@ def hidden_order(text: str) -> bool:
     return bool(t) and bool(_HIDDEN_ORDER.search(t) or any(p.search(t) for p in (_AI_TARGETED, _AI_EXTRA, _AI_C17)))
 
 
+_HEX_BLOCK = re.compile(r"(?<![0-9A-Za-z])(?:0x)?(?:[0-9A-Fa-f]{2}){12,}(?![0-9A-Za-z])|(?<![0-9A-Za-z])(?:[0-9A-Fa-f]{2}[ :]){11,}[0-9A-Fa-f]{2}(?![0-9A-Za-z])")
 _B64 = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9+/=])")
 
 
@@ -625,6 +640,16 @@ def encoded_texts(text: str) -> list[str]:
             continue
         if (r := _readable(raw)):
             out.append(r)
+    for m in _HEX_BLOCK.finditer(str(text or "")):  # cycle 26: hex-encoded text ("69676e6f7265...")
+        digits = re.sub(r"[^0-9A-Fa-f]", "", m.group(0)[2:] if m.group(0).lower().startswith("0x") else m.group(0))
+        if len(digits) % 2:
+            continue
+        try:
+            raw = bytes.fromhex(digits)
+        except ValueError:
+            continue
+        if (r := _readable(raw)):
+            out.append(r)
     return out
 
 
@@ -632,6 +657,23 @@ def encoded_text(text: str) -> str:
     """The first base64 block that decodes to text reading as an instruction to an AI tool ('' when none). A block that decodes
     to harmless words is never flagged."""
     return next((r for r in encoded_texts(text) if reads_as_instruction(r)), "")
+
+
+def rot13_injection(text: str) -> str:
+    """The sentence that is aimed at an AI tool once it is read as ROT13 ('' when none). Needs a match after decoding and none before, so
+    ordinary English and non-English text (which decode to nonsense) never count."""
+    import codecs
+    t = " ".join(str(text or "").split())
+    if len(t) < 16:
+        return ""
+    for piece in re.split(r"(?<=[.!?])\s+|\n", t):
+        piece = piece.strip()
+        if len(piece) < 16 or not re.search(r"[A-Za-z]{3}", piece):
+            continue
+        plain = codecs.decode(piece, "rot13")
+        if reads_as_instruction(plain) and not reads_as_instruction(piece):
+            return plain
+    return ""
 
 
 def reversed_injection(text: str) -> str:
@@ -804,6 +846,12 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         if (rev := reversed_injection(normalise_text(str(place.get(k) or ""))[0])):
             extra_quotes.append(_quote(rev))
             break
+    if not decoded:
+        for k in ("listing_text", "notes", "ai_notes", "title"):
+            if (rot := rot13_injection(normalise_text(str(place.get(k) or ""))[0])):
+                encoded = rot  # cycle 26: ROT13 text, quoted as it reads once decoded
+                extra_quotes.append(_quote(rot))
+                break
     if ai_line is None and not extra_quotes:
         for k in ("listing_text", "title", "ai_notes", "notes", "hidden_text"):
             own = html.unescape(html.unescape(str(place.get(k) or "")))

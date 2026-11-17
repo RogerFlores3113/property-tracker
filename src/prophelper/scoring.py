@@ -42,6 +42,7 @@ CAP_SCAM = 50
 CAP_NEAR = 74  # a must-have missed by a little, only because of a guess
 CAP_FAR_COMMUTE = 69  # someone's commute is more than a quarter over their limit: not a "good" match
 CAP_MOSTLY_UNKNOWN = 59
+CAP_UNPRICED_PART = 95  # a cost part is unknown: never a score of 100
 CAP_UNKNOWN_COST = 85  # a price must-have that passes only while a cost is unknown
 NEAR_MISS_PCT = 0.03  # a must-have missed by less than this share is a near miss
 SORT_GROUPS = {"fits": 0, "near_miss": 1, "doesnt_fit": 2, "check_first": 3}
@@ -239,7 +240,22 @@ def fit_check_label(score: dict[str, Any]) -> str:
     return "Check the rent first" if score.get("rent_check") else "Fits, but check"
 
 
-def rent_looks_low(place: dict[str, Any], cost: dict[str, Any] | None, limit: Any = None, mode: str = "rent") -> str:
+def _under_half_of_peers(rent: float, beds: float, peers: Iterable[tuple[Any, Any]] | None) -> str:
+    """Cycle 26: '' or the plain reason when the search has at least three other places with a rent and this rent is under half their median.
+    The same bed count is compared when at least three others have it, else all of them. ``peers`` are (rent, beds) pairs of the OTHER places."""
+    rows = [(float(r), _num(b)) for r, b in (peers or ()) if _num(r) and float(r) > 0]
+    if len(rows) < 3:
+        return ""
+    same = [r for r, b in rows if b is not None and b == beds]
+    pool, kind = (same, f" for {_beds_word(beds).lower()}") if len(same) >= 3 else ([r for r, _ in rows], "")
+    typical = sorted(pool)[len(pool) // 2] if len(pool) % 2 else sum(sorted(pool)[len(pool) // 2 - 1:len(pool) // 2 + 1]) / 2
+    if typical > 0 and rent < typical / 2:
+        return f"less than half of what the other places in this search ask{kind} (about ${typical:,.0f})"
+    return ""
+
+
+def rent_looks_low(place: dict[str, Any], cost: dict[str, Any] | None, limit: Any = None, mode: str = "rent",
+                   peers: Iterable[tuple[Any, Any]] | None = None) -> str:
     """A plain reason ('' when fine) when a saved rent is implausibly low next to everything else: under $200, or under $400 for two or
     more bedrooms, or under about a seventh of the search's price limit, or smaller than another monthly part of the same place (a
     $200 rent next to a $3,200 listing figure is a misread, never a bargain)."""
@@ -259,6 +275,8 @@ def rent_looks_low(place: dict[str, Any], cost: dict[str, Any] | None, limit: An
         why = f"far below the ${float(limit):,.0f} limit of this search"
     elif rent < 600 and others and rent < max(others):
         why = "less than one of the other monthly costs of this place"
+    else:
+        why = _under_half_of_peers(rent, beds, peers)
     if not why:
         return ""
     return (f"the rent of ${rent:,.2f}".replace(".00", "") + f" a month is {why}, so the monthly cost looks too low. "
@@ -736,6 +754,20 @@ def _unknown_price_concerns(place: dict[str, Any], cost: dict[str, Any], mode: s
     return None
 
 
+def _cost_part_unknown(place: dict[str, Any], cost: dict[str, Any], items: list[dict[str, Any]]) -> bool:
+    """True when any part of the place's cost is unknown: a monthly part the cost math or the Compare page names as unknown, or cash to close or
+    move-in that leaves an amount out. The same names Compare's "Still unknown" row uses."""
+    if (cost or {}).get("uncounted") is None and not cost:
+        return False
+    if ((cost or {}).get("cash_to_close") or {}).get("left_out") or ((cost or {}).get("cash_at_move_in") or {}).get("left_out"):
+        return True
+    try:
+        from . import compare
+        return bool(compare.cost_unknowns({**place, "cost": cost, "score": {"items": items, "unknown": []}}))
+    except Exception:  # never let a display helper break the score
+        return False
+
+
 _MONTH_NUM = {m: i + 1 for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))}
 _MONTH_RE = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
 _SHORT_LEASE_WORD = re.compile(r"\b(?:sub-?let(?:ting)?|sub-?leas(?:e|es|ing)|short[- ]term (?:lease|rental|stay))\b", re.I)
@@ -811,8 +843,8 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
                 settings: dict[str, Any] | None = None, cost: dict[str, Any] | None = None,
                 serious_flag: bool | None = None, people: int = 1,
                 pets: dict[str, Any] | None = None, search: dict[str, Any] | None = None,
-                adults: Any = None) -> dict[str, Any]:
-    """Score a place. ``criteria`` rows have ``kind``, ``weight``, ``dealbreaker`` and ``target`` (a dict).
+                adults: Any = None, peers: Iterable[tuple[Any, Any]] | None = None) -> dict[str, Any]:
+    """Score a place. ``peers``: (rent, beds) of the search's other places, for the low-rent check. ``criteria`` rows have ``kind``, ``weight``, ``dealbreaker`` and ``target`` (a dict).
     ``commutes`` are the place's stored commute rows; ``cost`` can be passed to avoid computing it twice.
     ``pets`` is the search's pet profile ({kind, weight, count}); without it only the pet policy is checked.
     ``serious_flag`` says the listing shows a serious scam sign (worked out from the text when left as None).
@@ -873,7 +905,7 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
     fit = "fits"
     total = raw
     caps: list[str] = []
-    rent_check = rent_looks_low(place, ctx["cost"], budget_max, mode)
+    rent_check = rent_looks_low(place, ctx["cost"], budget_max, mode, peers)
     if rent_check:
         concerns.insert(0, rent_check[0].upper() + rent_check[1:])
 
@@ -896,6 +928,8 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
         cap(CAP_UNKNOWN_COST, "a cost is not known yet, so the price only passes if it is small")
     if unknown_bits:
         cap(CAP_UNKNOWN_COST, unknown_bits[1])
+    if total is not None and total > CAP_UNPRICED_PART and _cost_part_unknown(place, ctx["cost"], items):
+        cap(CAP_UNPRICED_PART, "a cost part is not known yet")  # cycle 26: a place with an unknown cost part never scores 100
     if check:  # unknown must-haves: neutral-ish, but never a high score
         cap({1: 80, 2: 65}.get(len(check), 55), f"{len(check)} must-have{'s' if len(check) != 1 else ''} not known yet")
     unknown_n = sum(1 for i in items if not i["known"])

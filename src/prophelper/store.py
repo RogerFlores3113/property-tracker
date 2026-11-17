@@ -645,6 +645,28 @@ HOST_PERCENT_REASON = ("That link's website name is written with percent codes (
                        "so I won't save it. Use the plain listing address.")
 
 
+HOST_MIXED_SCRIPT_REASON = ("That link's website name mixes letters from different alphabets (for example Latin and Cyrillic), so it can look like a "
+                            "well-known site while being another one. I won't save it. Copy the link again from the listing page.")
+
+
+def _script_of(ch: str) -> str:
+    if not ch.isalpha():
+        return ""
+    name = unicodedata.name(ch, "")
+    for script in ("LATIN", "CYRILLIC", "GREEK"):
+        if name.startswith(script):
+            return script
+    return ""
+
+
+def host_mixes_scripts(host: str) -> bool:
+    """True when one label of a host mixes Latin letters with Cyrillic or Greek ones (a look-alike host). A host in one script is fine."""
+    for label in re.split(r"[.\u3002\uff0e\uff61]", host):
+        if len({sc for sc in map(_script_of, label) if sc}) > 1:
+            return True
+    return False
+
+
 def link_host_text(link: Any) -> str:
     """The host part of a web link exactly as typed (no user name, no port), or ''."""
     rest = re.sub(r"^[a-z][a-z0-9+.-]*://", "", str(link or "").strip(), flags=re.I)
@@ -661,6 +683,8 @@ def link_host_problem(link: Any) -> str:
         return HOST_CONTROL_REASON
     if "%" in host and not host.startswith("["):
         return HOST_PERCENT_REASON
+    if host_mixes_scripts(host):
+        return HOST_MIXED_SCRIPT_REASON
     return ""
 
 

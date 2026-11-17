@@ -31,7 +31,8 @@ def _next_date(place: dict[str, Any], tours: list[dict[str, Any]]) -> dict[str, 
 def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *, anchors: list[dict[str, Any]] | None = None,
                  commutes: list[dict[str, Any]] | None = None, criteria: list[dict[str, Any]] | None = None,
                  tours: list[dict[str, Any]] | None = None, peer_prices: list[float] | None = None,
-                 settings: dict[str, Any] | None = None, protected: bool | None = None) -> dict[str, Any]:
+                 settings: dict[str, Any] | None = None, protected: bool | None = None,
+                 peer_rents: list[tuple[Any, Any]] | None = None) -> dict[str, Any]:
     """One place with the extra keys: ``cost`` (money breakdown), ``cost_total``, ``score`` (scoring result),
     ``score_total``, ``band``, ``commutes`` (all resolved), ``top_commute``, ``next``, ``flags`` (things to check),
     ``hidden_by_dealbreaker``, ``people`` and ``per_person`` (the cost split, when more than one person shares it).
@@ -50,7 +51,7 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     serious = redflags.is_serious(place, peer_prices or [])
     score = scoring.score_place(place, criteria, mode=search["mode"], anchors=anchors, commutes=commutes,
                                 custom_scores=store.custom_scores(place["id"]), budget_max=search.get("budget_max"),
-                                settings=settings, cost=cost, serious_flag=serious, people=people, search=search,
+                                settings=settings, cost=cost, serious_flag=serious, people=people, search=search, peers=peer_rents,
                                 pets={"kind": (search.get("pet_kind") or "") if money.has_pets(search.get("pet_kind")) else "", "weight": search.get("pet_weight"), "count": search.get("pet_count")})
     if protected is None:
         protected = place["id"] in store.protected_place_ids(search["id"])
@@ -95,7 +96,8 @@ def enrich_places(store: Store, search: dict[str, Any], places: list[dict[str, A
         tours_by.setdefault(t["place_id"], []).append(t)
     settings = store.buy_settings(search["id"])
     protected = store.protected_place_ids(search["id"])
-    all_prices = [p["price"] for p in store.list_places(search["id"]) if p.get("price")]
+    all_places = store.list_places(search["id"])
+    all_prices = [p["price"] for p in all_places if p.get("price")]
     out = []
     for p in places:
         peers = list(all_prices)
@@ -103,5 +105,6 @@ def enrich_places(store: Store, search: dict[str, Any], places: list[dict[str, A
             peers.remove(p["price"])
         out.append(enrich_place(store, p, search, anchors=anchors, commutes=commutes.get(p["id"], []), criteria=criteria,
                                 tours=tours_by.get(p["id"], []), peer_prices=peers, settings=settings,
-                                protected=p["id"] in protected))
+                                protected=p["id"] in protected,
+                                peer_rents=[(q["price"], q.get("beds")) for q in all_places if q["id"] != p["id"] and q.get("price")]))
     return out

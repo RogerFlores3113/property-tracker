@@ -319,11 +319,37 @@ def flat_cost_name(u: str) -> str:
     return f"{m.group(1)} utilities" if m else u
 
 
+def as_listed(p: dict[str, Any]) -> bool:
+    """True when a place's cost can only be shown "as listed, not checked": it is marked check first (a scam sign or text aimed at AI
+    tools) or its rent looks wrong. One rule for every surface (the page, Claude's tools, Compare): such a place never says "true cost"."""
+    s = p.get("score") or {}
+    return bool(p.get("check_first") or p.get("possible_scam") or s.get("scam") or s.get("rent_check") or s.get("fit") == "check_first")
+
+
+def cash_left_out(p: dict[str, Any]) -> bool:
+    c = p.get("cost") or {}
+    return bool((c.get("cash_to_close") or {}).get("left_out") or (c.get("cash_at_move_in") or {}).get("left_out"))
+
+
+def nothing_unknown_guard(p: dict[str, Any], text: str) -> str:
+    """"Nothing unknown" is never said for a place that is marked check first or leaves an amount out of its cash: it says what is not settled."""
+    if text != "Nothing unknown":
+        return text
+    if as_listed(p):
+        return "Not checked: this place is marked check first"
+    if cash_left_out(p):
+        return "Unknown: an amount left out of the cash needed up front"
+    return text
+
+
 def _cost_cell(p: dict[str, Any]) -> dict[str, Any]:
     cell = _money(p["cost_total"])
     unc = _uncounted(p)
     if cell["value"] is not None and unc:
         cell["text"] += f" ({', '.join(flat_cost_name(u) for u in unc)} not counted yet)"
+        cell["incomplete"] = True
+    if cell["value"] is not None and as_listed(p):
+        cell["text"] += " as listed, not checked"
         cell["incomplete"] = True
     return cell
 
@@ -805,7 +831,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     # ---- the headline numbers
     section("The short version", [
-        row("cost", "True monthly cost", [_cost_cell(p) for p in places], "low"),
+        row("cost", "Monthly cost" if any(as_listed(p) for p in places) else "True monthly cost", [_cost_cell(p) for p in places], "low"),
         row("per_person", "Each adult each month" if all(p.get("split_noun") == "adults" for p in places if p.get("per_person") is not None) else "Per person each month", [_per_person_cell(p) for p in places], "low", only_if_any=True)
         if any(p.get("per_person") is not None for p in places) else None,
         row("fit", "Does it fit?", [_fit_cell(p) for p in places]) if any(p["score"].get("fit", "fits") != "fits" or p["score"].get("fit_label") == "Fits, but check" or ai_text_only(p) or p["score"].get("notes") for p in places) else None,
@@ -844,7 +870,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 cell["text"] = "$0 (none)"
             cells.append(cell)
         cost_rows.append(row("cost-" + key, label, cells, "low", only_if_any=True))
-    cost_rows.append(row("missing", "Not counted yet", [_plain(_not_counted_text(p)) for p in places]))
+    cost_rows.append(row("missing", "Not counted yet", [_plain(nothing_unknown_guard(p, _not_counted_text(p))) for p in places]))
     section("What it really costs, line by line", cost_rows)
 
     # ---- the facts
@@ -911,7 +937,7 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 pct = round(item["score"] * 100)
                 cells.append(_cell(f"{pct}%" + (" (fails)" if item.get("dealbreaker_status") == "fail" else ""), float(pct)))
         score_rows.append(row("score-" + label, label, cells, "high"))
-    score_rows.append(row("unknown", "Still unknown", [_plain(still_unknown_text(p)) for p in places]))
+    score_rows.append(row("unknown", "Still unknown", [_plain(nothing_unknown_guard(p, still_unknown_text(p))) for p in places]))
     section("Score, one thing at a time", score_rows)
     return sections
 

@@ -171,7 +171,7 @@ def cost_unsettled(place: dict[str, Any]) -> str:
 
 def is_best_fit(place: dict[str, Any]) -> bool:
     return (fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place) and not cost_unsettled(place)
-            and not over_budget(place) and not unknown_cost_parts(place)
+            and not over_budget(place) and not unknown_cost_parts(place) and not compare.cash_left_out(place)
             and not (place.get("score") or {}).get("lease_gap"))  # one rule: an unknown cost part is never a best fit
 
 
@@ -243,6 +243,12 @@ def check_first(rows: list[dict[str, Any]], mode: str = "rent") -> list[dict[str
             first = next((str(f) for f in p.get("flags") or [] if f), "")
             generic = "Read it yourself before you rely on this score." if "aimed at AI tools" in first else AI_TEXT_CHECK_TEXT
             out.append({"place": p, "text": _own_reason(p, generic), "scam": False})
+        elif not fails_dealbreakers(p) and scam_hint_or_low_rent(p):
+            # cycle 26: a place left out of every other list for a scam hint or a rent that looks too low must still show somewhere
+            low = low_rent(p)
+            text = (("Check the rent first: " + low[0].upper() + low[1:] + ".") if low
+                    else _own_reason(p, "Read it yourself and ask for the exact address before you pay anything."))
+            out.append({"place": p, "text": text, "scam": False})
     out.sort(key=lambda r: (not r["scam"], r["place"]["title"].lower()))  # possible scams first, then by name
     return out
 
@@ -615,15 +621,26 @@ def late_availability(rows: list[dict[str, Any]], search: dict[str, Any], limit:
     return out[:limit]
 
 
+def _cap(items: list[Any], limit: int) -> tuple[list[Any], int]:
+    return items[:limit], max(0, len(items) - limit)
+
+
 def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> dict[str, Any]:
     """Everything the Today page and the MCP todays_list need for one search: the one place both read from, so every
     section holds the same places on the page and in Claude's list."""
     rows = enrich.enrich_places(store, search)
-    top = best_fits(rows)
+    all_top = best_fits(rows, 10 ** 6)
+    top, more_fits = _cap(all_top, TOP_FITS)
     needs = needs_price(rows)
     priceless = {p["id"] for p in needs}  # a place with no price shows under "Needs a price" only
-    near_closest = [] if top else closest(rows)
-    return {"fits": top, "unconfirmed": [] if top else unconfirmed(rows), "needs_price": needs, "cost_check": cost_check(rows, {c["place"]["id"] for c in near_closest}), "closest": near_closest, "check_first": check_first(rows, search.get("mode", "rent")),
-            "near_miss": [n for n in near_misses(rows) if n["place"]["id"] not in {c["place"]["id"] for c in near_closest}], "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
-            "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late_availability(rows, search),
-            "tours": store.upcoming_tours(days, search_id=search["id"])}
+    near_closest, more_closest = _cap([] if all_top else closest(rows, 10 ** 6), TOP_FITS)
+    unconf, more_unconf = _cap([] if all_top else unconfirmed(rows, 10 ** 6), TOP_FITS)
+    shown_closest = {c["place"]["id"] for c in near_closest}
+    near, more_near = _cap([n for n in near_misses(rows, 10 ** 6) if n["place"]["id"] not in shown_closest], TOP_FITS)
+    late, more_late = _cap(late_availability(rows, search, 10 ** 6), 5)
+    checks = check_first(rows, search.get("mode", "rent"))
+    return {"fits": top, "unconfirmed": unconf, "needs_price": needs, "cost_check": cost_check(rows, shown_closest), "closest": near_closest, "check_first": checks,
+            "near_miss": near, "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
+            "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late,
+            "tours": store.upcoming_tours(days, search_id=search["id"]),
+            "more": {"fits": more_fits, "closest": more_closest, "unconfirmed": more_unconf, "near_miss": more_near, "late": more_late}}

@@ -435,10 +435,11 @@ def _cost_text(e: dict[str, Any]) -> str:
     one = next((l for l in cost["lines"] if l["key"] == "one_time" and l["amount"]), None)
     if one:
         parts.append(f"fees spread {helpers.money(one['amount'])}")
-    text = f"True monthly cost {helpers.money(cost['total'])}" + (" (" + " + ".join(parts) + ")" if len(parts) > 1 else "")
+    asl = compare_mod.as_listed(e)
+    unknown_costs = compare_mod.cost_unknowns(e)
+    text = ("Monthly cost as listed, not checked " if asl else "Monthly cost so far, not complete " if unknown_costs else "True monthly cost ") + f"{helpers.money(cost['total'])}" + (" (" + " + ".join(parts) + ")" if len(parts) > 1 else "")
     if _per_person_text(e):
         text += "; " + _per_person_text(e)
-    unknown_costs = compare_mod.cost_unknowns(e)
     if unknown_costs:  # the same names the Compare page and "Still unknown" use
         text += "; missing: " + ", ".join(unknown_costs)
     return text + (". " + cost["notes"][0] if cost["notes"] and cost["mode"] == "buy" else "")
@@ -1599,7 +1600,8 @@ def build_server(store: Store) -> FastMCP:
                     else scoring.FIT_LABELS.get(e["score"].get("fit", "fits"), "Yes")
                     + (f" ({'; '.join(_t(n, 'fit note', 160) for n in e['score']['notes'])})" if e["score"].get("fit", "fits") == "fits" and not e["score"].get("concerns") and e["score"].get("notes") else "")
                     for e in es]),
-            ("True monthly cost", [_money(e["cost_total"]) for e in es]),
+            ("Monthly cost" if any(compare_mod.as_listed(e) for e in es) else "True monthly cost",
+             [_money(e["cost_total"]) + (" as listed, not checked" if e["cost_total"] is not None and compare_mod.as_listed(e) else "") for e in es]),
             *([(f"Each adult ({_split_count(search)} adults)" if _split_noun(search) == "adults" else f"Per person ({_split_count(search)} {_split_noun(search)})", [_money(e.get("per_person")) for e in es])]
               if _split_count(search) > 1 else []),
             ("Score", ["none" if e["score_total"] is None else str(e["score_total"]) for e in es]),
@@ -1633,7 +1635,7 @@ def build_server(store: Store) -> FastMCP:
             rows.append((f"{_t(person, 'person name', 40)}'s rating (1 to 5)",
                          [next((str(o["rating"]) for o in e["opinion_rows"] if o["person"] == person and o["rating"] is not None), "unknown")
                           for e in es]))
-        rows.append(("Still unknown", [_unknown_text(e) or "Nothing unknown" for e in es]))
+        rows.append(("Still unknown", [compare_mod.nothing_unknown_guard(e, _unknown_text(e) or "Nothing unknown") for e in es]))
         lines = ["Comparing: " + "; ".join(f"#{e['id']} {_title(e)}" for e in es)]
         differ = []
         for label, vals in rows:
@@ -1708,10 +1710,15 @@ def build_server(store: Store) -> FastMCP:
             lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}{_cost_word(p)}{each}"
                          + (", no address yet" if not str(p.get("address") or "").strip() else "")
                          + (f". {p['caution']}" if p.get("caution") else ""))
+        more = data.get("more") or {}
+        if more.get("fits"):
+            lines.append(f"  ... and {more['fits']} more. Use list_places for the rest.")
         if not fits and data.get("unconfirmed"):
             lines.append(today_view.UNCONFIRMED_TEXT)
             for c in data["unconfirmed"]:
                 lines.append(f"  - #{c['place']['id']} {_title(c['place'])} [{c['place']['stage']}], score {c['place']['score_total']}: {_t(c['text'], 'fit reason', 200)}")
+            if more.get("unconfirmed"):
+                lines.append(f"  ... and {more['unconfirmed']} more. Use list_places for the rest.")
         for c in data.get("cost_check") or []:
             lines.append(f"Needs a cost check: #{c['place']['id']} {_title(c['place'])} [{c['place']['stage']}], score {c['place']['score_total']}: {c['text']}")
         for p in data["needs_price"]:
@@ -1723,10 +1730,14 @@ def build_server(store: Store) -> FastMCP:
             lines.append("Closest so far (nothing fits yet):")
         for c in data["closest"]:
             lines.append(f"  - #{c['place']['id']} {_title(c['place'])} [{c['place']['stage']}], score {c['place']['score_total']}: {_t(c['text'], 'fit reason', 200)}")
+        if more.get("closest"):
+            lines.append(f"  ... and {more['closest']} more close places. Use list_places for the rest.")
         for n in data["near_miss"]:
             if n["place"]["id"] in shown_closest:
                 continue
             lines.append(f"Near miss: #{n['place']['id']} {_title(n['place'])}: {n['text']}.")
+        if more.get("near_miss"):
+            lines.append(f"... and {more['near_miss']} more near misses. Use list_places for the rest.")
         tours = data["tours"]
         lines.append(f"Tours in the next {days} days:" + (" none." if not tours else ""))
         for t in tours:
@@ -1737,18 +1748,26 @@ def build_server(store: Store) -> FastMCP:
         lines.append(f"Dates in the next {days} days:" + (" none." if not dates else ""))
         for d in dates[:8]:
             lines.append(f"  - {helpers.day_text(d['date'])}: {_t(d['label'], 'date label', 60)} at {_t(d['title'])}" + (f", {_t(d['note'], 'date note', 80)}" if d["note"] else ""))
+        if len(dates) > 8:
+            lines.append(f"  ... and {len(dates) - 8} more.")
         waiting = data["waiting"]
         lines.append("Waiting on a reply:" + (" none." if not waiting else ""))
         for w in waiting[:8]:
             pl = f" about {_t(w['place']['title'])}" if w.get("place") else ""
             lines.append(f"  - {_t(w['contact']['name'], 'contact name', 60)}{pl}: you wrote {w['days']} days ago. A nudge could help; ask the user before sending.")
+        if len(waiting) > 8:
+            lines.append(f"  ... and {len(waiting) - 8} more.")
         new = data["new"]
         lines.append("New places the user has not looked at:" + (" none." if not new else ""))
         for p in new[:8]:
             lines.append(f"  - #{p['id']} {_title(p)}" + (" (no price yet)" if p.get("cost_total") is None else "") + (f" (check first: {p['low_rent_note']})" if p.get("low_rent_note") else ""))
+        if len(new) > 8:
+            lines.append(f"  ... and {len(new) - 8} more.")
         late = data["late"]
         for item in late:
             lines.append(f"Heads up: {_title(item['place'])} (id {item['place']['id']}): {item['text']}.")
+        if more.get("late"):
+            lines.append(f"... and {more['late']} more heads-ups on the board.")
         if not store.list_criteria(cur["id"]):
             lines.append("This search has no criteria yet, so nothing is scored. update_search can add some from what the user told you.")
         todo = [c for c in store.visible_checklist(cur) if not c["done"]]
