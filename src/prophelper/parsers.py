@@ -10780,7 +10780,7 @@ def _uncounted_kind_sentence(phrase: str) -> str:
 
 
 _PLURAL_KIND = (("The seller pays it, so it is not your cost and it is not in the monthly cost.", "are paid by the seller, so they are not your cost and they are not in the monthly cost."),
-                ("It looks like an optional extra, so it is not counted in the monthly cost.", "look like optional extras, so they are not counted in the monthly cost."),
+                ("It looks like an optional extra, so it is not counted in the monthly cost.", "are optional extras, so they are not counted in the monthly cost."),
                 ("It is a one-time cost, so it is not in the monthly cost.", "are one-time costs, so they are not in the monthly cost."),
                 ("It looks like a utility cost and it is not counted anywhere.", "look like utility costs and they are not counted anywhere."),
                 ("It is a monthly fee and it is not counted anywhere.", "are monthly fees and they are not counted anywhere."),
