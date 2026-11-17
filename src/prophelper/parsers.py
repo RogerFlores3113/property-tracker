@@ -7294,6 +7294,18 @@ def listing_pmi_none(text: str) -> tuple[float, str] | None:
     return None
 
 
+def listing_pmi_condition(text: str) -> tuple[str, float | None] | None:
+    """Cycle 36 (buyer l54): "PMI not required with 20 percent down", "No PMI if you put 25% down". Returns (the sentence, the percent down it names or None), or None
+    when the listing has no such conditional line. It sets no value: the app's own PMI estimate stays when the search puts less down."""
+    for sent in re.split(r"(?<!\d)\.|\.(?!\d)|[\n;|]", text or ""):
+        m = _PMI_NONE.search(sent)
+        if not m or not _PMI_CONDITION.search(sent) or sent.strip().endswith("?"):
+            continue
+        pm = re.search(r"(\d{1,2}(?:\.\d+)?)[ \t]*(?:%|percent|per[ \t]+cent)", sent, re.I)
+        return " ".join(sent.split()), (float(pm.group(1)) if pm else None)
+    return None
+
+
 def listing_pmi_conflict(text: str) -> tuple[str, str] | None:
     """Cycle 35: a listing that quotes a PMI figure per month or year AND says there is no PMI. Returns (the figure's words, the no-PMI words) or None."""
     none = listing_pmi_none(text)
