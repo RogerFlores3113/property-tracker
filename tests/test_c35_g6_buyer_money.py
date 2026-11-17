@@ -101,8 +101,9 @@ def test_transfer_fee_with_seller_credit_keeps_the_credit_and_the_fee():
 def mcp_add(store, listing, **fields):
     from mcp_util import call, server, text as mtext
     s = store.add_search("Buy", "buy")
-    r = mtext(call(server(store), "add_place", title="T", address="9 Test St", price=250000, search_id=s["id"],
-                   hoa=200, property_tax=3000, insurance=600, listing_text=listing, **fields))
+    args = {"hoa": 200, "property_tax": 3000, "insurance": 600, **fields}
+    args = {k: v for k, v in args.items() if v is not None}
+    r = mtext(call(server(store), "add_place", title="T", address="9 Test St", price=250000, search_id=s["id"], listing_text=listing, **args))
     return r, store.list_places(search_id=s["id"])[0]
 
 
@@ -291,3 +292,42 @@ def test_a_pmi_quote_and_a_no_pmi_disagree_so_neither_is_used():
 def test_a_quoted_pmi_still_wins_without_a_no_pmi():
     pmi, _c = pmi_line(PMI_BASE + "PMI approx $85/mo.")
     assert pmi["amount"] == 85 and "quoted" in pmi["label"]
+
+
+# ---- item 5 (buyer V2): "HO6 insurance $40 monthly" is the insurance, $480 a year
+@pytest.mark.parametrize("line", [
+    "HO6 insurance $40 monthly.",
+    "Monthly HO6 insurance: $40.",
+    "Monthly insurance $40",
+    "HO6 insurance, $40 monthly",
+    "$40/month HO6",
+    "HO6 insurance runs about $40 a month",
+    "Condo insurance (HO6): $40 monthly",
+    "Insurance - HO6 policy - $40 per month",
+    "HO6 insurance required, $40 monthly",
+    "- HO6 insurance $40 monthly\n- Pets ok",
+])
+def test_ho6_monthly_is_the_insurance(line):
+    out = read(PMI_BASE.replace("Insurance $900/yr. ", "") + "PMI not required. " + line)
+    assert out["insurance"] == 480
+    assert "$40" not in notes(out).replace("$480", "") or "insurance" not in notes(out).lower().replace("mortgage insurance", "")
+    place = {**out, "listing_text": line}
+    cost = money.buy_cost(place)
+    assert next(l for l in cost["lines"] if l["key"] == "insurance")["amount"] == 40
+    assert not any("insurance" in m for m in cost["missing"])
+
+
+def test_ho6_monthly_through_add_place_is_not_missing_or_doubled(store):
+    r, place = mcp_add(store, "PMI not required. HO6 insurance $40 monthly.", insurance=None)
+    assert place["insurance"] == 480
+    assert "the $40 insurance in the listing notes" not in r and "missing: insurance" not in r
+
+
+def test_a_yearly_figure_without_a_unit_stays_a_year_and_a_monthly_word_before_the_name_is_a_month():
+    assert read(PMI_BASE.replace("Insurance $900/yr. ", "") + "Annual HO6 insurance: $480.")["insurance"] == 480
+    assert read(PMI_BASE.replace("Insurance $900/yr. ", "") + "Monthly homeowner's insurance $150.")["insurance"] == 1800
+
+
+@pytest.mark.parametrize("line", ["HO6 insurance optional $40 monthly.", "HO6 insurance not required, $40 monthly if you want it."])
+def test_optional_ho6_is_not_the_insurance(line):
+    assert read(PMI_BASE.replace("Insurance $900/yr. ", "") + line).get("insurance") in (None, "")

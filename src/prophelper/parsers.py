@@ -7014,15 +7014,17 @@ _ESCROW_ONE_TIME = re.compile(r"\b(?:initial[ \t]+)?escrow[ \t]+(?:set[- ]?up|de
 
 def _insurance(text: str) -> float | None:
     """Home insurance as a yearly amount (the field is per year). "est $1,100/yr" -> 1100; "$90/mo" -> 1080."""
-    text = re.sub(r"[ \t]*\((?:hoi|ho-?[36])\)", "", _ESCROW_ONE_TIME.sub(" ", text or ""), flags=re.I)  # "Insurance (HOI): $700/yr"  # cycle 34: "Escrow deposit for taxes and insurance $1,900 due at closing" is a one-time amount, never the insurance premium
+    text = re.sub(r"\b(monthly|annual|yearly)[ \t]+((?:(?:ho-?[36]|condo(?:minium)?|unit[- ]owner'?s?|home(?:owner'?s?)?|hazard|property)[ \t]+)?insurance|ho-?[36]|hoi)\b([ \t:\-=(),~]*(?:(?:about|around|approx\.?|est\.?|roughly)[ \t]*)?)(\$\s?\d[\d,]*(?:\.\d\d)?)(?![\d,])(?![ \t]*(?:/|per\b|a[ \t]+(?:month|year)|monthly|annual|yearly))",
+                  lambda m: f"{m.group(2)}{m.group(3)}{m.group(4)} {m.group(1)}", text or "", flags=re.I)  # cycle 35: "Monthly HO6 insurance: $40" is $40 a month, never $40 a year
+    text = re.sub(r"[ \t]*\((?:hoi|ho-?[36])\)", "", _ESCROW_ONE_TIME.sub(" ", text), flags=re.I)  # "Insurance (HOI): $700/yr"  # cycle 34: "Escrow deposit for taxes and insurance $1,900 due at closing" is a one-time amount, never the insurance premium
     m = re.search(r"\b(?:(?:hoi|ho-?[36](?:\s+(?:insurance|policy|coverage|premium))?|(?:condo(?:minium)?|unit[- ]owner'?s?)\s+(?:insurance|policy|coverage|premium))|(?:home(?:owner'?s?)?|hazard|property|dwelling)\s+(?:policy|coverage|premium)|(?:home(?:owner'?s?)?\s+|hazard\s+)?insurance)(?:\s+(?:est\w*\.?|estimate[d]?|quote[d]?|premium|policy|cost))*(?:[ \t]+(?:at|of|is))?[ \t:\-=]{0,6}(?:about |around |approx\.? |~)?"
                   r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly)?", text, re.I)
     if not m:  # "$55/mo HO6 insurance", "$660 a year condo insurance"
-        m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly)?[ \t]+(?:for[ \t]+)?(?:ho-?[36]|condo|home(?:owner'?s?)?)[ \t]+insurance\b", text, re.I)
+        m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly)?[ \t]+(?:for[ \t]+)?(?:ho-?[36](?:[ \t]+(?:insurance|policy|coverage))?|(?:condo|home(?:owner'?s?)?)[ \t]+insurance)\b", text, re.I)
     if not m:
         # cycle 20: "Homeowner's insurance (HO6) about $70 per month", "HO6 insurance (about $70/mo)": filler words between the name and the amount
         m = re.search(r"\b(?:ho-?[36]|(?:home(?:owner'?s?)?|hazard|condo(?:minium)?|unit[- ]owner'?s?|property)[ \t]+insurance|insurance)\b"
-                      r"(?:[ \t:\-=(),~]|\b(?:ho-?[36]|about|around|approx\w*\.?|est\w*\.?|roughly|of|at|is|cost|costs|premium|policy|coverage|insurance|condo|home\w*|hazard|owner'?s?|typically|runs|for)\b)*"
+                      r"(?:[ \t:\-=(),~]|\b(?:ho-?[36]|about|around|approx\w*\.?|est\w*\.?|roughly|of|at|is|cost|costs|premium|policy|coverage|insurance|condo|home\w*|hazard|owner'?s?|typically|runs|for|required|needed|mandatory)\b)*"
                       r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly|yearly)?", text, re.I)
     if not m:
         # cycle 22: "insurance included in your loan escrow $70 per month" (the escrow word ties the amount to the insurance)
