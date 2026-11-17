@@ -2295,6 +2295,10 @@ def _rent_range(text: str, price: float | None) -> tuple[float, float] | None:
 _MOVE_IN_TOTAL = (
     re.compile(r"\bmove[- ]?in[ \t]+(?:cost|costs|total|price|charges?|money|amount)(?:[ \t]+(?:is|are|of))?[ \t]*[:=\-]?[ \t]*(?:about |around |approx\.? |~)?\$?[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?\b(?![ \t]*(?:/|per|a)[ \t]*(?:mo|month))", re.I),
     re.compile(r"\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?[ \t]+(?:total[ \t]+)?(?:to[ \t]+move[- ]?in|due[ \t]+(?:at|before)[ \t]+(?:lease[ \t]+)?(?:signing|move[- ]?in)|move[- ]?in[ \t]+total)\b", re.I),
+    # cycle 34: "Total move-in about $2,600", "Total due at move-in: ~$2,600", "Move-in cost roughly $2,600", "Move-in about $2,600 total": the words "total" or "move-in cost" make it the all-in cash
+    re.compile(r"\btotal[ \t]+(?:due[ \t]+)?(?:(?:at|to|for)[ \t]+)?move[- ]?in(?:[ \t]+(?:cost|costs|amount|price|charges?|money|due))?(?:[ \t]+(?:is|are|of|will[ \t]+be|comes[ \t]+to))?[ \t]*[:=\-]?[ \t]*(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:/|per|a)[ \t]*(?:mo|month))", re.I),
+    re.compile(r"\bmove[- ]?in(?:[ \t]+(?:cost|costs|price|amount|money|charges?))?[ \t]*[:=\-]?[ \t]*(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?[ \t]+(?:in[ \t]+)?total\b", re.I),
+    re.compile(r"\bmove[- ]?in[ \t]+(?:cost|costs|price|amount|money|charges?)[ \t]*(?:is|are|of)?[ \t]*[:=\-]?[ \t]*(?:roughly|est\.?|estimated|approximately)[ \t]*\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:/|per|a)[ \t]*(?:mo|month))", re.I),
 )
 
 
@@ -12053,12 +12057,15 @@ _GREETING_CUT = re.compile(r"^(?:hi|hello|hey|hiya|howdy|greetings|good[ \t]+(?:
 _GREETING_ADJ = re.compile(r"^(?:(?:gorgeous|beautiful|lovely|stunning|amazing|charming|cute|cozy|adorable|wonderful|fabulous|spacious|sunny|bright)[ \t,]+(?:and[ \t]+)?)+(?=\S)", re.I)
 
 
-def _greeting_cut(line: str) -> str:
+def _greeting_cut(line: str, found: dict[str, Any] | None = None) -> str:
     """Cycle 34: a greeting and the praise words after it are not part of a name: "Hi!! Gorgeous 2 BR duplex Linden area!!!" -> "2 BR duplex Linden area!!!".
     Only when what is left reads as a place (a plan or a kind of place), else the line is left as it was."""
     m = _GREETING_CUT.match(line)
     if not m:
         return line
+    addr = str((found or {}).get("address") or "")
+    if addr and addr.lower() in line.lower():
+        return line  # a greeting line that holds the street address is already answered by the street address (see _chatty_title)
     rest = line[m.end():]
     rest2 = _GREETING_ADJ.sub("", rest) if (_PLAN_CUE.search(rest) or _PROPERTY_NOUN.search(rest)) else rest
     if not (_PLAN_CUE.search(rest2) or _PROPERTY_NOUN.search(rest2)) or len(rest2) < 6:
@@ -12101,7 +12108,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         line = re.sub(r"^(?:actually|update|updated|correction|edit|edited|note|ps|p\.s\.)[ \t]*[:,][ \t]*(?=\S)", "", line, flags=re.I)  # "Actually: Campustown Flats 1x1"
         if _ai_aimed(raw_line) or _ai_aimed(line):
             continue
-        line = _greeting_cut(line)  # cycle 34: "Hi!! Gorgeous 2 BR duplex Linden area!!!" is a duplex in Linden, never named "Hi Gorgeous ..."
+        line = _greeting_cut(line, found)  # cycle 34: "Hi!! Gorgeous 2 BR duplex Linden area!!!" is a duplex in Linden, never named "Hi Gorgeous ..."
         line = _LABEL_PREFIX.sub("", line, count=1)  # cycle 31: "Zillow-ish listing - Stadium View | 1 Bed | Rent $1,350": the site label goes before the parts are split
         if " | " in line or len(re.findall(r"[ \t]~[ \t]", line)) >= 2:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
             parts = [x.strip() for x in (re.split(r"[ \t]\|[ \t]", line) if " | " in line else re.split(r"[ \t]~[ \t]", line))]
