@@ -2517,9 +2517,10 @@ def _parking_general_prices(low: str) -> list[tuple[float, bool, str, str]]:
 
 
 _GARAGE_INCLUDED = re.compile(r"\b(?:garage|carport)(?:[ \t]+(?:parking|spaces?|spots?|stalls?))?s?\b[^.\n;$]{0,20}\b(?:included|free|at no (?:extra )?charge)\b|"
-                              r"\b(?:free|included)\b[^.\n;$]{0,10}\b(?:garage|carport)\b|\b(?:attached|detached)\b[ \t]+(?:\d[- ]?car[ \t]+)?garage\b|\b\d[- ]car[ \t]+garage\b", re.I)
+                              r"\b(?:free|included)\b[^.\n;$]{0,10}\b(?:garage|carport)\b", re.I)  # cycle 29: a bare "attached garage" or "2 car garage" gives no price, so it is not "included"
+_GARAGE_UNPRICED = re.compile(r"\b(?:tbd|tba|to be (?:determined|announced)|price\s+(?:tbd|tba|on\s+request|not\s+(?:listed|given|stated)|unknown|varies)|ask\s+(?:for|about|the)\s+(?:price|pricing|cost|rate|office|leasing|landlord|manager)|ask\s+(?:office|us|leasing)|call\s+(?:for|the\s+office)|inquire|enquire|unpriced|no\s+price|(?:price|cost|rate)s?\s+(?:upon|on)\s+request|upon\s+request|contact\s+(?:us|the\s+office|leasing))\b", re.I)
 _GARAGE_SAYS_INCLUDED = re.compile(r"\b(?:garage|carport)(?:[ \t]+(?:parking|spaces?|spots?|stalls?))?s?\b[^.\n;$]{0,20}\b(?:included|free|at no (?:extra )?charge)\b|\b(?:free|included)\b[^.\n;$]{0,10}\b(?:garage|carport)\b", re.I)
-_OPTIONAL_GARAGE_CLAUSE = re.compile(r"[^.\n;,$]*\b(?:garage|carport)\b[^.\n;,$]*")
+_OPTIONAL_GARAGE_CLAUSE = re.compile(r"[^.\n;,$|]*\b(?:garage|carport)\b[^.\n;,$|]*")
 
 
 def _a(w: str) -> str:
@@ -3195,6 +3196,7 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
             else:
                 notes.append(f"{_a(what)} is available for ${value:,.0f} a month. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
             rest = rest.replace(clause, " ")
+    opt_garage: list[str] = []
     for m in list(_OPTIONAL_GARAGE_CLAUSE.finditer(rest)):  # "Garage space available": offered, so not the place's parking
         clause = m.group(0)
         if _PARKING_OPTIONAL.search(clause) and not _PARKING_REQUIRED.search(clause) and not _GARAGE_SAYS_INCLUDED.search(clause) \
@@ -3202,9 +3204,16 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
             what = _parking_what(clause)
             if not any(what in n for n in notes):
                 notes.append(f"{_a(what)} is available but the listing gives no price. It looks optional, so it is not counted as the place's parking. Ask if it costs extra.")
+                if re.search(r"\bgarage\b", what):
+                    opt_garage.append(what)
             rest = rest.replace(clause, " ")
     required = [v for v, o, _c, _u in prices if not o]
     kind, cost = _parking_kind_cost(rest, required[0] if required else None)
+    if opt_garage and not kind and not prices and cost is None:
+        # cycle 29: an unpriced garage that is the only parking the listing names is saved the same way every time: a garage with the cost unknown, and one note
+        kind = "garage"
+        notes = [n for n in notes if "is available but the listing gives no price" not in n or not re.search(r"\bgarage\b", n)]
+        notes.append(f"{_a(opt_garage[0])[:1].upper() + _a(opt_garage[0])[1:]} is available but the listing gives no price. Parking is saved as a garage with the cost left empty. Ask if it is included or what it costs.")
     if cost is None and required:
         cost = required[0]
     for value, optional, _clause, unit in prices:
@@ -3216,6 +3225,9 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
         cost = 0.0
     if not kind and cost == 0 and _PARKING_FREE.search(low):
         kind = "lot"  # "Parking included (garage $90 optional)": the included spot, whose type the listing does not give, is a plain lot spot; the garage is the extra
+    if kind == "garage" and cost is None and not prices and not any(re.search(r"\bgarage\b", n, re.I) for n in notes):
+        gtxt = next((c.strip(" ,") for c in re.split(r"[.\n;|,]", low) if re.search(r"\bgarage\b", c)), "garage")
+        notes.append(f'The listing mentions a garage ("{gtxt[:60]}") but gives no price for it. Parking is saved as a garage with the cost left empty. Ask if it is included or what it costs.')
     if cost is None and kind == "lot" and not prices and re.search(r"\bdriveway\b", low) and not re.search(r"\bdriveway\b[^.\n;]{0,40}\$", low):
         notes.append("The listing mentions driveway parking but gives no price. The parking cost is left empty. Ask if it costs extra.")
     if kind == "none" and re.search(r"\bparking\s*(?:is\s*)?(?:not\s+available|unavailable)\b(?!\s+(?:on|along|at)\s+(?:the\s+)?(?:street|curb|road))|\bno\s+parking\s+available\b", low):
@@ -3299,7 +3311,9 @@ def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | No
         cost = 0.0  # cycle 20: "Off-street parking, free." / "Parking: off-street, no charge"
         kind = kind or "lot"
     if cost is None and kind in ("garage", "covered") and _GARAGE_INCLUDED.search(low):
-        cost = 0.0  # "Attached garage included in rent", "Attached 1-car garage"
+        gm_clause = next((c for c in re.split(r"[.\n;|]", low) if _GARAGE_INCLUDED.search(c)), "")
+        if not _GARAGE_UNPRICED.search(gm_clause):
+            cost = 0.0  # "Attached garage included in rent"; cycle 29: "Own garage included, price TBD" gives no price, so the cost stays unknown
     return kind, cost
 
 
@@ -3420,6 +3434,29 @@ _MAYBE_PETS = re.compile(r"\b(cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?
 _HARD_ONLY = re.compile(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b" + _HARD_APPROVAL, re.I)
 _APPROVAL_ONLY = re.compile(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?:case[- ]by[- ]case|" + _HARD_APPROVAL + ")", re.I)
 _SPECIES = ("cats", "dogs")
+_APPROVAL_FOR = re.compile(r"\b(?:(?:prior[ \t]+|written[ \t]+|landlord[ \t]+|owner[ \t]+|management[ \t]+)*(?:approval|permission|pre-?approval)[ \t]+(?:is[ \t]+|are[ \t]+)?(?:required|needed|necessary)"
+                           r"|(?:must|need(?:s)?[ \t]+to)[ \t]+be[ \t]+approved)[ \t]+(?:for|on|before[ \t]+(?:having|bringing|getting))[ \t]+(?:all[ \t]+|any[ \t]+|the[ \t]+)?(cats?|dogs?|pets?|animals?)\b", re.I)
+_APPROVAL_FOR_NOT = re.compile(r"\bwaiv\w*|\bexception|\bexempt|\boverrid\w*|\bexceed|\b(?:larger|bigger|heavier)\b|\bover[ \t]+\d|\blimits?\b|\bbreed|\bweight|\bsize|\blbs?\b|\bpounds?\b"
+                               r"|\b(?:credit|application|lease|loan|board|hoa|rental|income|background)[ \t]+(?:approval|check)|\b(?:no|without|not)[ \t]+(?:\w+[ \t]+)?(?:approval|permission)", re.I)
+
+
+def _approval_for_species(text: str) -> dict[str, str]:
+    """Cycle 29: "Pets ok ... approval required for dogs": an approval that names a kind of pet that no other part of the listing talks about. Returns {species: the sentence}.
+    When the listing also names cats or dogs anywhere else ("Cats allowed", "Dogs: 40 lb limit") it is left to the approval note, which keeps the pets that were read."""
+    found: dict[str, str] = {}
+    for sentence in re.split(r"(?<![\d])[.;\n?!|]+", text):
+        for piece in re.split(r",", sentence):
+            for m in _APPROVAL_FOR.finditer(piece):
+                if _APPROVAL_FOR_NOT.search(sentence):
+                    continue
+                word = m.group(1).lower().rstrip("s")
+                kinds = ("cat", "dog") if word in ("pet", "animal") else (word,)
+                rest = text.replace(sentence, " ")
+                if re.search(r"\b(?:cats?|dogs?)\b", rest, re.I):
+                    continue  # a kind that the listing names itself ("Cats allowed") keeps the older reading and the approval note
+                for k in kinds:
+                    found[k + "s"] = " ".join(piece.split())
+    return found
 
 
 def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
@@ -3446,6 +3483,10 @@ def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
                 says[m.group(1).lower().rstrip("s") + "s"] = "no"
             for m in _LABELLED_OK.finditer(piece):  # "Dogs: up to 40 lbs", "Dogs: no pets over 70 lbs"
                 says[m.group(1).lower().rstrip("s") + "s"] = "yes"
+            if _APPROVAL_FOR.search(piece):  # cycle 29: "Pets ok ... approval required for dogs" is the same as "Pets ok. Dogs need approval."
+                for sp_a, said_a in _approval_for_species(text).items():
+                    if said_a == " ".join(piece.split()) and says.get(sp_a) != "no":
+                        says[sp_a] = "appr"
             for m in _MAYBE_PETS.finditer(piece):
                 word = m.group(1).lower().rstrip("s")
                 hard = bool(re.search(_HARD_APPROVAL, m.group(0), re.I))
@@ -4609,6 +4650,25 @@ def _surety_option(text: str) -> tuple[float, str, bool] | None:
     return None
 
 
+_SURETY_PLAIN_WORD = r"(?:surety(?:[ \t]+bonds?)?|deposit[ \t-]+(?:alternative|waiver|insurance|replacement))"
+
+
+def _surety_plain_note(text: str) -> str:
+    """Cycle 29: a surety bond offered instead of the deposit with no price ("Surety bond in lieu of deposit", "surety bond option available instead of deposit").
+    One plain note that it is offered instead of the deposit; the deposit itself is not changed. "" when there is no such offer, or when the offer has a price
+    (the priced reading explains that one)."""
+    for m in re.finditer(_SURETY_PLAIN_WORD, text, re.I):
+        after = re.split(r"[.;\n|]", text[m.end():m.end() + 60])[0]
+        before = text[max(0, m.start() - 14):m.start()].split("\n")[-1]
+        if re.search(r"[$\uff04]\s?\d|\d\s?(?:dollars|usd)\b", after, re.I) or re.search(r"(?:[$\uff04]\s?\d[\d,]*(?:\.\d\d)?|\d\s?(?:dollars|usd))[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|monthly|a[ \t]+month)?[ \t]*(?:a[ \t]+|for[ \t]+(?:a[ \t]+)?)?$", before, re.I):
+            continue
+        if re.search(r"\b(?:no|not|without)[ \t]+(?:a[ \t]+)?(?:surety|deposit[ \t-]+(?:alternative|waiver))", text[max(0, m.start() - 12):m.end()], re.I):
+            continue
+        return ("The listing offers a surety bond instead of the deposit. It is an option, not a cost on top of the rent, and the deposit saved is the one the listing gives. "
+                "Ask what the bond costs and which one you would pick.")
+    return ""
+
+
 def _deposit_in_months(text: str) -> float:
     """The security deposit written as a number of months of rent ("security deposit one month", "deposit equal to one month's
     rent"), as that number of months. 0 when the text gives none."""
@@ -4634,7 +4694,7 @@ _DEP_DUE = r"(?:[ \t]*(?:is[ \t]+|are[ \t]+)?(?:due|payable|required|collected)[
 _DEP_EQ = r"(?:(?:is|are|will[ \t]+be|of|equal[ \t]+to|equals|equivalent[ \t]+to|same[ \t]+as|about|approx\.?|=)[ \t]+)*(?:(?:the|a|an|your)[ \t]+)?"
 _DEP_NUM = r"(one[- ]and[- ]a[- ]half|one[- ]half|half(?:[ \t]+a)?|1/2|0?\.5|one|two|1\.25|1\.5|2\.5|\u00bd|1|2|a)"
 _DEP_MONTH = r"[- ]?(?:month|mo)s?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?(?:the[ \t]+)?(?:monthly[ \t]+)?rent)?(?![a-z])"
-_DEP_HALF_OF = r"(?P<half>half|one[- ]half|1/2|50[ \t]*%|fifty[ \t]+percent)[ \t]+of[ \t]+(?:(?:a|one|1|the|first|your|one[ \t]+full)[ \t]+)*(?:(?:full|monthly)[ \t]+)?(?:month(?:'s?|ly)?[ \t]+)?rent(?![a-z])"
+_DEP_HALF_OF = r"(?P<half>half|one[- ]half|1/2|50[ \t]*%|fifty[ \t]+percent)[ \t]+(?:of[ \t]+)?(?:(?:a|one|1|the|first|your|one[ \t]+full)[ \t]+)*(?:(?:full|monthly)[ \t]+)?(?:month(?:'s?|ly)?[ \t]+)?rent(?![a-z])"
 _DEP_WORDS = {"one": 1.0, "a": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5, "half a": 0.5, "1/2": 0.5, ".5": 0.5, "0.5": 0.5, "\u00bd": 0.5, "one-half": 0.5, "one half": 0.5,
               "1.5": 1.5, "2.5": 2.5, "1.25": 1.25, "one and a half": 1.5, "one-and-a-half": 1.5}
 
@@ -8423,6 +8483,8 @@ def _really_included(text: str, amount: float, names: str) -> list[str]:
     rest = [c for c in re.split(r"\n|;|\.(?=\s|$)", text) if not re.search(r"\$\s?" + re.escape(f"{amount:g}") + r"(?![\d,])", c)]
     inc = _utilities("\n".join(rest))
     have = set(_ALL_UTILITIES) if inc == "all" else {w.strip() for w in inc.split(",") if w.strip()}
+    for em in re.finditer(r"\b(?:everything|all(?:[ \t]+utilities)?|all[ \t]+the[ \t]+utilities)[ \t]+(?:but|except(?:[ \t]+for)?)[ \t]+([a-z/, \t]{3,40}?)(?=[ \t]+(?:is|are|paid|included|covered)\b|[.,;\n]|$)", "\n".join(rest), re.I):
+        have -= {w for w in _ALL_UTILITIES if re.search(r"\b" + w + r"\b", em.group(1), re.I)}  # cycle 29: "Everything but gas is paid by the landlord" never says gas is included
     return [w for w in sorted(gone) if w in have]
 
 
@@ -10336,7 +10398,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     kind_cost = _try(lambda: _parking_detail(ptext)) or ("", None, [])
     put("parking", kind_cost[0])
     put("parking_cost", kind_cost[1])
-    facts += [n for n in kind_cost[2] if not (buying and re.search(r"is counted\.|are counted\.|counted in the monthly cost\.? Check|, so .{1,40} is counted", n) and "not counted" not in n)]
+    facts += [n for n in kind_cost[2] if not (buying and re.search(r"is counted\.|are counted\.|counted in the monthly cost\.? Check|, so .{1,40} is counted", n) and "not counted" not in n) and not ((buying or _is_sale_text(text)) and "Parking is saved as a garage with the cost left empty" in n)]  # cycle 29: a garage of a home for sale needs no price note
     if kind_cost[1] and not kind_cost[2] and re.search(r"\bparking\b[^.\n;$]{0,40}\$\s?" + f"{kind_cost[1]:.0f}" + r"(?!\d)(?:\.\d\d)?[^.\n;$]{0,25}\b(?:per|each|a|/)\s*(?:vehicle|car|space|spot)\b"
                                                     r"|\bparking\b[^.\n;$]{0,40}\b(?:per|each)\s+(?:vehicle|car)\b[^.\n;$]{0,15}\$\s?" + f"{kind_cost[1]:.0f}" + r"(?!\d)", ptext, re.I) \
             and not re.search(r"\b(?:optional|available)\b", ptext[max(0, ptext.lower().find("parking") - 20):ptext.lower().find("parking") + 80], re.I):
@@ -11104,6 +11166,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if sur:
             facts.append(f'The listing offers a surety bond ("{sur[1]}") that you can pick instead of paying the deposit' + (f", at {_usd(sur[0])} a month" if sur[2] else f", for {_usd(sur[0])}")
                          + ". It is an option, not a cost on top of the rent and not a missing monthly cost, so it is not counted." + (" The deposit saved is the one the listing gives." if out.get("deposit") else " The listing gives no deposit amount to save.") + " Ask which one you would pick and what each costs.")
+        if not sur and not buying:
+            sur_plain = _try(lambda: _surety_plain_note(text))
+            if sur_plain:
+                facts.append(sur_plain)
         dcn = _try(lambda: _deposit_credit_note(text, out.get("deposit")))
         if dcn:
             facts.append(dcn)
@@ -11349,12 +11415,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 known_fee_values.add(round(v, 2))
                 facts.append(f'The listing says "{clause[:90]}". It is a required fee, so {_money_words(v)}{" a month" if says_monthly else ""} is counted once in other monthly fees.'
                              + ("" if says_monthly else " The listing does not say how often, so it is counted as monthly. Ask if that is right."))
+        svc_repeats = _try(lambda: _service_fee_repeats(text)) or []
+        svc_repeated = {(rl, ra) for rl, ra, _rn in svc_repeats}
         for label, v in _try(lambda: _service_fee_items(text)) or []:  # cycle 18: every named fee of a list counts once, whatever the layout
             if v in added:
                 added.remove(v)  # a reader above already counted this one
             else:
                 monthly += v
-                facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month, counted in other monthly fees. If it is optional, take it out.")
+                if (label, v) not in svc_repeated:
+                    facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month, counted in other monthly fees. If it is optional, take it out.")
+        for rl, ra, rn in svc_repeats:  # cycle 29: an identical fee line repeated is one fee, with one note
+            facts.append(f"{rl[:1].upper() + rl[1:]} is ${ra:,.0f}/month, counted once in other monthly fees. The listing repeats that same line {rn} times, so it is not added again. If it is optional, take it out.")
         if monthly:
             put("other_monthly_fees", monthly)
             est = out.get("utilities_estimate")
@@ -13051,6 +13122,25 @@ _SVC_BAD_TAIL = re.compile(r"\b(?:optional|billed|passed|deposit|one[- ]time|onc
 
 
 def _service_fee_items(text: str) -> list[tuple[str, float]]:
+    """Cycle 29: the named monthly services of the listing, an identical line (same label, same amount) counted once. Two different services with the same amount both count."""
+    return list(dict.fromkeys(_service_fee_items_all(text)))
+
+
+def _service_fee_repeats(text: str) -> list[tuple[str, float, int]]:
+    """Cycle 29: the named monthly services that the listing repeats word for word, as (label, amount, times)."""
+    counts: dict[tuple[str, float], int] = {}
+    for item in _service_fee_items_all(text):
+        counts[item] = counts.get(item, 0) + 1
+    listed: dict[tuple[str, float], int] = {}
+    for item in _monthly_list_items(text):
+        listed[item] = listed.get(item, 0) + 1
+    for (lb, a), n in listed.items():
+        if n > 1 and not any(a == a2 and (lb in lb2 or lb2 in lb) for (lb2, a2) in counts):
+            counts[(lb, a)] = n
+    return [(lb, a, n) for (lb, a), n in counts.items() if n > 1]
+
+
+def _service_fee_items_all(text: str) -> list[tuple[str, float]]:
     """Cycle 18: the general step for a list of named monthly services, in any layout: "Monthly pest control $6, package locker $4, valet trash
     $20", "Fees: $25 amenity fee monthly, $10 monthly package locker fee", "$35/month for lawn care and snow removal", "flat $10/mo package
     for trash valet". Returns (label, amount) for each named service with an amount that is monthly (a period beside it, a "monthly" word
@@ -13152,7 +13242,7 @@ def _is_sale_text(text: str) -> bool:
 
 _ONE_TIME_LABELS = (
     r"admin(?:istrative|istration)?(?:[ \t]+fees?)?", r"lease[- ](?:processing|up|initiation|signing|admin\w*|set-?up|start-?up)(?:[ \t]+fees?)?",
-    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"(?:parking|garage|carport)[ \t]+deposit", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
+    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"(?:(?:key[ \t]*)?fobs?|key[ \t]*cards?|access[ \t]+(?:cards?|fobs?)|gate[ \t]+(?:remote|opener|card|clicker)s?|garage[ \t]+(?:door[ \t]+)?(?:remote|opener|clicker)s?)[ \t]+deposit", r"(?:parking|garage|carport)(?:[ \t]+(?:pass|permit|space|spot|sticker|tag|decal))?[ \t]+deposit", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
     r"(?:amenity|community|technology|tech)[ \t]+fees?",
     r"(?:one[- ]?time|non[- ]?refundable)[ \t]+(?:amenity|community|technology|tech)(?:[ \t]+fees?)?",  # cycle 22: "one-time amenity $200"
     r"move[- ]?in(?![ \t]*(?:fees?|total|costs?|specials?|date|day|ready|cash|charges?|money|price|amount|incentive|offer|-)\b)",
@@ -13198,7 +13288,7 @@ def _one_time_fee_items(text: str) -> list[tuple[str, float, str]]:
                     if not _ONE_TIME_CUE.search(around):
                         continue
                 apos = m.start(2 if i == 0 else 1)
-                item = (label, v, "key" if label.startswith(("key", "parking", "garage", "carport")) else "fee")
+                item = (label, v, "key" if label.startswith(("key", "parking", "garage", "carport", "fob", "access", "gate")) else "fee")
                 if apos in out_pos:  # the same amount again under a second label: keep the longer label, count it once
                     j = out_pos.index(apos)
                     if len(label) > len(out[j][0]):
@@ -13288,10 +13378,15 @@ _LIST_FEE_LABEL = re.compile(r"\b(?:amenit(?:y|ies)|community|trash|valet|pest|p
 
 
 def _monthly_list_fees(text: str) -> list[float]:
+    """Cycle 29: each item of a "Monthly:" list counts, an identical item (same label, same amount) repeated counts once."""
+    return [a for _l, a in dict.fromkeys(_monthly_list_items(text))]
+
+
+def _monthly_list_items(text: str) -> list[tuple[str, float]]:
     """Cycle 17: a list under a "Monthly:" heading, where only some items carry the period ("Monthly: Pest control $5, Valet trash
     $25, Internet $60/mo required"). Every named fee in the list is a monthly fee. Internet counts only when the item says it is
     required; an item that says optional, billed back or per use is left to the other readers."""
-    found: list[float] = []
+    found: list[tuple[str, float]] = []
     for m in re.finditer(r"\bmonthly(?:[ \t]+(?:fees?|charges|costs|extras))?[ \t]*[:\-][ \t]*([^\n]*)", text, re.I):
         body = re.split(r"\.(?=\s+[A-Z])|\.\s*$", m.group(1))[0]
         for item in re.split(r"[,;]|\band\b(?=[ \t]+[A-Za-z][A-Za-z \t-]*\$)", body):
@@ -13304,7 +13399,7 @@ def _monthly_list_fees(text: str) -> list[float]:
                 continue
             if re.search(r"internet|wi-?fi|cable", label) and not re.search(r"\b(?:required|mandatory|must)\b", tail, re.I):
                 continue
-            found.append(float(im.group(2)))
+            found.append((" ".join(label.split()), float(im.group(2))))
     return found
 
 

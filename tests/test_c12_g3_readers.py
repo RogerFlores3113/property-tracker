@@ -111,8 +111,8 @@ def test_optional_garage_with_price_is_not_counted_and_gets_a_note():
 
 def test_optional_garage_without_price_is_not_free():
     out = fields("Detached garage available. Rent $1200")
-    assert "parking_cost" not in out
-    assert "available" in out["found_in_listing"]
+    assert "parking_cost" not in out and out["parking"] == "garage"  # cycle 29: saved as a garage with the cost unknown
+    assert "available" in out["found_in_listing"] and "gives no price" in out["found_in_listing"]
 
 
 def test_required_garage_counts():
