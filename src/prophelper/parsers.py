@@ -992,7 +992,7 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
                 olds.append(olds_found[0])
             elif olds_found or ent.get("sentence"):
                 # the earlier figure is unclear (or the saved rent already holds the new one): one short note, without an old figure, so the correction never goes unmentioned
-                if not any(f.startswith(_RENT_MOVE_NOTE_START) for f in facts):
+                if not any(f.startswith(_RENT_MOVE_NOTE_START) or "corrects the rent" in f for f in facts):
                     facts.append(f"{_gc_rent_lead(ent, new)} Ask the landlord to confirm it.")
         if fld == "price" and not buying and olds and not (_REDUCED_FROM.search(text) or _WAS_PRICE.search(text)):  # cycle 32: the rent figure stated before the correction is an old figure too, named in the same note
             for v in _gc_earlier_rents(text, ent, new):
@@ -13347,7 +13347,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if "price" in gc_found:  # one note for the old rent: a price-cut or old-figure note that already names it stays, and ours goes
         _olds = [_usd(o) for o in gc_found["price"]["olds"]]
         _mine = [f for f in facts if f.startswith(_RENT_MOVE_NOTE_START)]
-        _legacy = [f for f in facts if f not in _mine and re.search(r"price was cut from|rent dropped from|was a mistake or an old figure|is the old price|old price is not used|first said", f)
+        _legacy = [f for f in facts if f not in _mine and re.search(r"price was cut from|rent dropped from|was a mistake or an old figure|is the old price|old price is not used|first said|rent was \$[\d,]+ before", f)
                    and any(o in f for o in _olds)]
         if _mine and _legacy and all(any(o in f for f in _legacy) for o in _olds):
             facts[:] = [f for f in facts if f not in _mine]
