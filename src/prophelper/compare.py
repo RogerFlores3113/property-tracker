@@ -180,7 +180,7 @@ def cost_unknowns(p: dict[str, Any]) -> list[str]:
     """Every unknown cost part the cost math knows about, in plain words: unfilled costs, utilities the tenant pays or the
     listing does not include, and pet charges (a search with a pet, a place that allows pets, no fee or deposit). The one
     source for "Not counted yet", "Still unknown" and Claude's unknowns."""
-    return list(dict.fromkeys([*_missing_names(p), *pet_charges_unknown_text(p), *_left_out_of_notes(p)]))
+    return list(dict.fromkeys([*_missing_names(p), *_pet_unknown_names(p), *_left_out_of_notes(p)]))
 
 
 def _left_out_of_notes(p: dict[str, Any]) -> list[str]:
@@ -223,6 +223,7 @@ def _uncounted(p: dict[str, Any]) -> list[str]:
     names = partial_utilities(p)
     if names:
         out.append(f"utilities ({_join_and(names)})")
+    out.extend(n for n in _pet_unknown_names(p) if n not in out)  # cycle 30: a pet rent nobody gave is not counted, so the place is not "complete" or "lowest"
     return out
 
 
@@ -238,6 +239,25 @@ def cost_may_be_higher(p: dict[str, Any]) -> str:
 
 def pet_charges_unknown_text(p: dict[str, Any]) -> list[str]:
     return ["pet charges"] if (p.get("cost") or {}).get("mode") == "rent" and _pet_charges_unknown(p) else []
+
+
+def _pet_unknown_names(p: dict[str, Any]) -> list[str]:
+    """["pet charges"] or ["pet rent"] when the pet side of a rental's cost is unknown (the one rule behind cost_unknowns and the "not counted" lists)."""
+    return pet_charges_unknown_text(p) or (["pet rent"] if pet_rent_unset(p) else [])
+
+
+def pet_rent_unset(p: dict[str, Any]) -> bool:
+    """Cycle 30: THE pet rent rule, used by Today, the place page, Claude's tools and Compare. True when the search has a pet that the cost counts, the place does
+    not rule pets out or rule out this kind of pet, and the listing gave no pet rent (not even $0). A pet fee or deposit alone does not say what a pet costs
+    each month, so the monthly cost is not complete. False when the search has no pets (the pet charges are then left out on purpose and said so)."""
+    c = p.get("cost") or {}
+    if c.get("mode") != "rent" or not c.get("pets_counted", True) or str(p.get("pets") or "") == "none":
+        return False
+    kind, pets = str(c.get("search_pet_kind") or ""), str(p.get("pets") or "")
+    if (kind == "dog" and pets == "cats") or (kind == "cat" and pets == "dogs"):
+        return False  # the place does not take your pet at all
+    ln = next((x for x in c.get("lines") or [] if x.get("key") == "pet_rent"), None)
+    return bool(ln and ln.get("unset") and not ln.get("not_counted"))
 
 
 def unknown_text(unknown: list[str], guessed: list[str]) -> str:
