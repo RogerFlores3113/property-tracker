@@ -1149,7 +1149,7 @@ def _clean_sentence(sentence: str) -> tuple[str, bool]:
             continue
         enc = _enclosing(sentence, a, b)
         if enc and enc[0] >= pos:
-            cuts.append((enc[0], enc[1], " "))
+            cuts.append((enc[0], enc[1], " <!-- --> " if sentence.startswith("<!--", enc[0]) else " "))  # a removed HTML comment stays as an empty one, the break the readers already know
             pos = enc[1]
         else:
             m = re.search(r"[.!?](?=\s|$)", sentence[b:])

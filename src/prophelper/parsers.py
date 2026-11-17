@@ -13220,11 +13220,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if not util_taken and not buying and isinstance(out.get("utilities_estimate"), (int, float)) and not isinstance(out.get("utilities_estimate"), bool):
         # cycle 22: whichever reader built the estimate, its figures are counted once: never also in other monthly fees ("Water/sewer/trash $35" next to "electric & gas (budget $80)")
         util_taken = [v for v in (_try(lambda: _utility_component_numbers(text, True)) or set()) if 0 < v <= float(out["utilities_estimate"]) + 0.5]
-    text_full = text
+    text_full = title_source if title_source is not None else text  # cycle 34: the last guard sees the whole paste, so a figure inside an AI-aimed sentence is still quoted (never counted)
     tail = None if buying else _try(lambda: _util_tail(text, out.get("utilities_estimate"), pays, included, counted | set(add_names_seen), facts[n_facts_pre:]))
     if tail:
         pays, included = tail["pays"], tail["included"]
-        text_full, text = text, tail["text"]  # the fee readers below must not count an internet bill the estimate already holds; the last guard sees the whole text
+        text_full, text = text_full, tail["text"]  # the fee readers below must not count an internet bill the estimate already holds; the last guard sees the whole text
         if tail["est"][0] == "set":
             put("utilities_estimate", tail["est"][1])
         elif tail["est"][0] == "pop":
