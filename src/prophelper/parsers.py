@@ -4148,7 +4148,7 @@ def _pets(text: str, weight_rules: bool = True) -> str:
     if re.search(r"(?<!\bno )(?<!\bnot )(?<!\bwithout )\b(?:one |a |1 )?(?:cats?|dogs?) or (?:one |a |1 )?(?:(?:small|medium|large|big|little|tiny|young|well[- ]behaved)\s+)*(?:dogs?|cats?)\b(?!\s+(?:is |are )?(?:not|prohibited|banned))", work) \
             and not re.search(r"\b(?:no|not|without)\s+(?:\w+\s+)?(?:cats?|dogs?) or\b", work):
         cats = dogs = True  # "We allow one cat or small dog": both kinds are taken (one animal of either kind)
-    for gm in re.finditer(r"\bpet[- ]friendly\b|\bpets (?:ok|okay|allowed|welcome|accepted)\b(?!\s+(?:with|by|on|upon|subject to)\s+(?:landlord\s+|owner\s+|management\s+)?(?:approval|permission))|\bpets\s*[:\-]\s*(?:yes|ok|okay|allowed|welcome)\b", work):
+    for gm in re.finditer(r"\bpet[- ]friendly\b|\bpets (?:(?:are|is) )?(?:ok|okay|allowed|welcome|accepted)\b(?!\s+(?:with|by|on|upon|subject to)\s+(?:landlord\s+|owner\s+|management\s+)?(?:approval|permission))|\bpets\s*[:\-]\s*(?:yes|ok|okay|allowed|welcome)\b", work):
         seg = work[max(work.rfind(c, 0, gm.start()) for c in ".;\n|!?") + 1:]
         seg = re.split(r"[.;\n|!?]", seg)[0]
         named = re.sub(r"\bno\s+(?:cats?|dogs?)\b|\b(?:cats?|dogs?)\s+(?:are\s+)?not\s+(?:allowed|permitted|accepted)", " ", seg)
@@ -12980,6 +12980,19 @@ def _deposit_abbreviation(text: str) -> str:
     return re.sub(r"\b(pets?|cats?|dogs?|animal|key|fob|parking|garage)([ \t]+)dep\b(?!\.?[ \t]*\d)", r"\1\2deposit", text, flags=re.I)
 
 
+_PET_NOW = re.compile(r"\b((?:cats?|dogs?|pets?|animals?|puppies|kittens?)(?:[ \t]+(?:are|is))?)[ \t]+(?:now|currently|also|still|even|just)[ \t]+(?=(?:allowed|permitted|accepted|welcome|ok|okay|fine|friendly|ok'd)\b)", re.I)
+_PET_NOW_VERB = re.compile(r"\b(?:now|currently|also|still)[ \t]+(?=(?:accepting|allowing|welcoming|permitting)[ \t]+(?:cats?|dogs?|pets?|animals?)\b)", re.I)
+
+
+def _pet_adverbs(text: str) -> str:
+    """Cycle 35: "Dogs now allowed under 30 lbs" and "Pets are now welcome" are the same rule as "Dogs allowed under 30 lbs": a word like now, also or still between the
+    pet and its "allowed" does not hide the yes from the pet readers."""
+    if not re.search(r"\b(?:now|currently|also|still|even|just)\b", text, re.I):
+        return text
+    text = _PET_NOW.sub(r"\1 ", text)
+    return _PET_NOW_VERB.sub("", text)
+
+
 def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "", pet_count: Any = None) -> dict[str, Any]:
     """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
@@ -12989,6 +13002,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     text = _try(lambda: _redflags_strip(raw_text)) or raw_text  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
     title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(raw_text)))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(text or ""))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    text = _pet_adverbs(text)  # cycle 35: "Dogs now allowed under 30 lbs"
     text = _deposit_abbreviation(text)  # cycle 35: "Dep $1,350" and "$1500 dep" are the deposit
     text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility

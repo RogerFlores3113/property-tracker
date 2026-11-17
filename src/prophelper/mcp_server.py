@@ -1071,6 +1071,11 @@ def build_server(store: Store) -> FastMCP:
                          + " Only empty fields are filled; nothing the user wrote was changed, and its stage did not move.")
             kept = [k.replace("_", " ") for k, v in fields.items() if k in PLACE_KEYS and k not in ("ai_notes", "photo_urls", "listing_text")
                     and dup and not _is_blank(dup.get(k)) and not _same(dup.get(k), v)]
+            if dup and place.get("pets") != dup.get("pets"):
+                kept = [k for k in kept if k != "pets"]  # cycle 35: a correction that added a kind of pet changed pets; it is not "ignored"
+            if dup and _is_blank(dup.get("pet_weight_limit")) and _is_blank(place.get("pet_weight_limit")) and not _is_blank(fields.get("pet_weight_limit")):
+                notes.append(f"The paste gives a {fields['pet_weight_limit']:g} lb pet limit for {fields.get('pets') or 'another kind of pet'}, but this place is saved with pets: {dup.get('pets')}, "
+                             "so the limit was not saved as that pet's limit. If that is right, call update_place with pets and pet_weight_limit.")
             pay_added = _pay_list_added(dup, place)
             if pay_added:  # cycle 34: a correction that names more utilities the tenant pays adds them to the pay list, and the reply says so
                 kept = [k for k in kept if k != "tenant pays"]

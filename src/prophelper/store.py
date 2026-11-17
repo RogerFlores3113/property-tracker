@@ -1929,6 +1929,20 @@ class Store:
                     sets[key] = ", ".join(w for w in TENANT_PAYS_CHOICES if w in have or w in add)
                     filled.append("pay list (added " + ", ".join(add) + ")")
                 continue
+            if key == "pets" and not empty_old and not empty_new and old != new and old != "none":
+                # cycle 35: a correction pasted onto a saved place ("Dogs now allowed under 30 lbs") adds the kind it names to the pets that were saved; nothing is taken away
+                kinds = {"cats": {"cats"}, "dogs": {"dogs"}, "both": {"cats", "dogs"}}
+                if _CORRECTION_PASTE.search(str(values.get("listing_text") or "")) and new in kinds and old in kinds and not kinds[new] <= kinds[old]:
+                    merged = kinds[old] | kinds[new]
+                    sets[key] = "both" if len(merged) == 2 else next(iter(merged))
+                    filled.append("pets (now " + ("cats and dogs" if sets[key] == "both" else sets[key]) + ")")
+                continue
+            if key == "pet_weight_limit" and empty_old and not empty_new:
+                # cycle 35: a weight limit that belongs to a kind the saved place does not take ("Dogs allowed under 30 lbs" on a cats-only place) is not filled in as if it were the cats' limit
+                saved_pets, pasted_pets = str(existing.get("pets") or ""), str(values.get("pets") or "")
+                if saved_pets in ("cats", "dogs") and pasted_pets in ("cats", "dogs") and pasted_pets != saved_pets \
+                        and not _CORRECTION_PASTE.search(str(values.get("listing_text") or "")):
+                    continue
             if empty_old and not empty_new:
                 sets[key] = new
                 filled.append(key.replace("_", " "))
