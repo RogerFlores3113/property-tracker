@@ -175,5 +175,5 @@ def test_buyer_dues_monthly(text):
 
 def test_buyer_assessment_for_months_is_not_hoa():
     r = P("Flat - $264,900\nAssessment for windows: $150/month for 24 months.", buying=True)
-    # cycle 19: the monthly assessment is counted in the monthly cost (saved in the HOA field), with a note
-    assert r["hoa"] == 150 and "special_assessment" not in r
+    # cycle 30: the monthly assessment is counted in the monthly cost as other monthly fees, kept apart from the HOA
+    assert "hoa" not in r and r["other_monthly_fees"] == 150 and "special_assessment" not in r

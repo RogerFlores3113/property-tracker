@@ -59,16 +59,16 @@ def test_l21_whole_listing():
 # ---- item 2: regular plus special assessment
 def test_l16_regular_plus_special():
     r = buy("Monthly assessment $415. Special assessment: $250 a month through 2028 for the parking deck. HO-6 $48/mo.")
-    assert r["hoa"] == 665 and "special_assessment" not in r
+    assert r["hoa"] == 415 and r["other_monthly_fees"] == 250 and "special_assessment" not in r  # cycle 30: kept apart from the HOA
     n = notes(r)
-    assert "$415" in n and "$250" in n and "2028" in n and "$665" in n
+    assert "$415" in n and "$250" in n and "2028" in n and "$665" not in n
 
 
 def test_regular_plus_special_one_line_and_bullets():
     r = buy("Assessment: $300/month plus special assessment of $100 per month until 2027.")
-    assert r["hoa"] == 400
+    assert r["hoa"] == 300 and r["other_monthly_fees"] == 100
     r = buy("- Monthly assessment: $300\n- Special assessment: $100/mo for 24 months")
-    assert r["hoa"] == 400 and "24 months" in notes(r)
+    assert r["hoa"] == 300 and r["other_monthly_fees"] == 100 and "24 months" in notes(r)
 
 
 def test_l22_hoa_dues_and_assessment_conflict_stays_unknown():
@@ -135,9 +135,15 @@ def test_offers_not_counted(text):
     "Expect lender fees ~$3,200 and title and escrow roughly $2,100.",
 ])
 def test_itemized_closing_costs(text):
+    # cycle 30 (rule j): a few named parts are only part of the bill and never replace the larger 3 percent guess
     r = buy(text)
-    assert r["closing_costs"] == 5300
-    assert "$5,300" in notes(r) and "instead of a guess" in notes(r)
+    assert "closing_costs" not in r
+    assert "$5,300" in notes(r) and "only part of the closing costs" in notes(r) and "instead of a guess" not in notes(r)
+
+
+def test_itemized_closing_costs_bigger_than_the_guess_are_saved():
+    r = parse_listing("Condo $100,000\n2 bed. Title and escrow about $2,100 plus lender fees about $3,200.", buying=True)
+    assert r["closing_costs"] == 5300 and "instead of a guess" in notes(r)
 
 
 def test_itemized_not_used_when_total_given():

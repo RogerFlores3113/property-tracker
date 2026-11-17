@@ -317,5 +317,5 @@ def test_hoa_half_year_has_a_note():
 def test_closing_costs_in_parts_with_plus_are_not_additional():
     out, place = read(BASE + "HOA $300/mo. Buyer closing: title and escrow $2,100 plus lender fees $3,200.")
     cash, p = parts(place)
-    assert cash["total"] == 60000 + 5300
+    assert cash["total"] == 60000 + 9000  # cycle 30: the named parts are only part of the bill, so the larger 3 percent guess stays
     assert "additional" not in notes(out)
