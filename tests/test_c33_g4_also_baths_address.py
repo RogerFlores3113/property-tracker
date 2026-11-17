@@ -56,7 +56,7 @@ def test_own_bath_count_is_kept(line):
 
 def test_uiuc_l7_whole_listing():
     r = read(fixture("r32-uiuc-l7.txt"))
-    assert r["beds"] == 1 and r.get("baths") is None and r["price"] == 1560
+    assert r["beds"] == 1 and r.get("baths") is None and r["price"] == 1545  # "Rent reduced to $1,545" (cycle 33 G2)
     assert r["title"] == "Neil Street Station"
 
 

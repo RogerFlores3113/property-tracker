@@ -204,7 +204,7 @@ def test_a_breed_line_about_dogs_or_pets_is_kept(t, note):
 def test_family_l12_whole_listing():
     r = P(F("r32-family-l12.txt"), "dog")
     assert "pet_breed_note" not in r and "pets" not in r and r["price"] == 2325
-    assert "$4,800" not in notes(r) and "Only" not in notes(r)
+    assert "not counted anywhere" not in notes(r) and "Only" not in notes(r)  # G4 may explain the matching $4,800 total plainly
 
 
 # ---- no pets in the search: pet amounts are one quiet note, never a gap (uiuc l11)
