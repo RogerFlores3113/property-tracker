@@ -1366,6 +1366,38 @@ def _bare_obo_rent(text: str) -> tuple[float, str] | None:
     return None
 
 
+_UNIT_WORD_NEAR = re.compile(r"(?:studio|\b\d(?:\.\d)?[ \t-]*(?:br|bd|bds|beds?|bedrooms?)\b|\b(?:one|two|three|four)[ \t-]*(?:bed|bedroom)s?\b|\bunit\b|\bplan\b|\bfloor ?plan\b|\broom\b|\bper\b)", re.I)
+_RENT_OLD_NEAR = re.compile(r"(?:\b(?:was|were|previously|formerly|originally|old|before|prior|not|from|corrected?|correction|update[d]?|now|then|special|promo\w*|reduced|starting|starts|from|as[ \t]+low|up[ \t]+to|first|months?|if|with|for)\b[^$\n]{0,24}|[-\u2013][ \t]*)$", re.I)
+
+
+def _other_rent_figures(text: str, price: float) -> list[float]:
+    """Cycle 34: two different rents in one text ("Rent $2,300/mo ... Rent is $2,450 per month", "$2,300/mo. ... Monthly rent $2,450"), neither of them a corrected,
+    old, promo, per-bed, lease-length or other-unit figure. Returns the other figures (never the saved one), so the reader can say there are two rents."""
+    out: list[float] = []
+    for a in _amounts(text):
+        v = a["value"]
+        if a["fee"] or a["range"] or a.get("conditional") or a["marker"] == "per bed" or not 300 <= v <= 30000 or abs(v - price) < 0.005:
+            continue
+        strict = bool(_STRICT_RENT_LABEL.search(text[max(0, a["start"] - 22):a["start"]]))
+        if not (strict or a["marker"] == "monthly"):
+            continue
+        before = text[max(text.rfind("\n", 0, a["start"]), text.rfind(". ", 0, a["start"]), text.rfind("|", 0, a["start"]), text.rfind(";", 0, a["start"])) + 1:a["start"]]
+        after = text[a["end"]:a["end"] + 40]
+        lab = _STRICT_RENT_LABEL.search(before)
+        pre = before[:lab.start()] if lab else before
+        if _UNIT_WORD_NEAR.search(before[-30:]) or _RENT_OLD_NEAR.search(pre[-34:]):
+            continue
+        if re.match(r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:with|for|on|if|before|previously|was|\(|plus|\+|per[ \t]+(?:bed|room|person)|each|/[ \t]*(?:bed|person|room))", after, re.I) and not re.match(r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:plus|\+)[ \t]*(?:all[ \t]+)?utilit", after, re.I):
+            continue
+        if _side_clause_amount(text, a["start"]) or _bills_clause_amount(text, a["start"]) or _in_open_question(text, a["end"]):
+            continue
+        if any(s0 <= a["start"] < e0 for s0, e0 in _now_if_spans(text)):
+            continue
+        if v not in out:
+            out.append(v)
+    return out
+
+
 def _price(text: str) -> float | None:
     """The monthly rent if the text gives one, else the asking price of a home for sale."""
     corrected = None if _SALE_WORDS.search(text) else _corrected_rent(text)
@@ -12519,6 +12551,15 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if rent_fix[1] is not None and not any(_usd(rent_fix[1]) in f for f in facts):
                 facts.append(f"The listing corrects the rent. It first said {_usd(rent_fix[1])} and then says {_usd(rent_fix[0])}, so the {_usd(rent_fix[1])} is the old price and is not used. "
                              "Check the rent with the landlord.")
+    if not buying and not price_range and price_read is not None and not (unit_pick or two_prices or su_units or first_months or cond_now or "price" in gc_found):
+        others = _try(lambda: _other_rent_figures(text, price_read)) or []
+        if others:  # cycle 34: two different rents with nothing saying one replaces the other: the higher is saved, both are named, never "a monthly fee not counted anywhere"
+            hi = max([price_read, *others])
+            lo = [v for v in [price_read, *others] if v != hi]
+            price_read = hi
+            vals_ = [_usd(v) for v in sorted([hi, *lo])]
+            facts.append(f"The listing gives {'two' if len(vals_) == 2 else 'three' if len(vals_) == 3 else len(vals_)} different rents: {', '.join(vals_[:-1])} and {vals_[-1]}. The higher {_usd(hi)} is saved as the rent so the cost is not understated. "
+                         "Ask which rent is right.")
     if buying and isinstance(price_read, (int, float)) and price_read < 20000:
         # A monthly figure ("monthly cost about $1,988") is not the asking price of a home for sale.
         was_figure = bool(re.search(r"\b(?:was|were|previously|formerly|earlier|old|not)[ \t:]*\$[ \t]?" + re.escape(f"{price_read:,.0f}") + r"(?![\d,])", text, re.I)) \
