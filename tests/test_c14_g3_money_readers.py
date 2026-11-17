@@ -193,8 +193,10 @@ def test_condo_assessment_payable_by_buyer_is_cash_to_close():
 
 def test_capital_contribution_at_closing_is_cash_to_close():
     r = buy("$1,000 one-time capital contribution at closing")
-    assert r["special_assessment"] == 1000 and r["special_assessment_payer"] == "buyer"
-    assert "capital contribution" in notes(r) and "not counted anywhere" not in notes(r)
+    # cycle 31: a capital contribution is a one-time closing fee under its own name, not a special assessment
+    assert not r.get("special_assessment") and "capital contribution" in notes(r) and "not counted anywhere" not in notes(r)
+    parts = money.cash_to_close({**r, "price": 500000, "listing_text": "$1,000 one-time capital contribution at closing"})["parts"]
+    assert any(p["amount"] == 1000 and "capital contribution" in p["label"] for p in parts)
 
 
 def test_monthly_assessment_is_not_a_one_time_buyer_cost():
