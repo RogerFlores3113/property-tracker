@@ -12964,6 +12964,22 @@ def _spanish_money_words(text: str) -> str:
     return text
 
 
+_DEP_ABBREV = (
+    re.compile(r"(?<![\w$.])dep\b\.?(?=[ \t]*[:=\-]?[ \t]*\$)", re.I),
+    re.compile(r"(?<=\d)([ \t]*(?:\(|-|,)?[ \t]*)dep\b(?!\.?[ \t]*\d)", re.I),
+)
+
+
+def _deposit_abbreviation(text: str) -> str:
+    """Cycle 35: "Dep $1,350", "Dep: $1,350", "$1500 dep" and "Pet dep $300" are deposits: the abbreviation next to a dollar amount is read as the word.
+    "dep" with no amount beside it (a departure, "dep. 5/1") is left alone."""
+    if not re.search(r"\bdep\b", text, re.I):
+        return text
+    text = _DEP_ABBREV[0].sub("deposit", text)
+    text = _DEP_ABBREV[1].sub(lambda m: m.group(1) + "deposit", text)
+    return re.sub(r"\b(pets?|cats?|dogs?|animal|key|fob|parking|garage)([ \t]+)dep\b(?!\.?[ \t]*\d)", r"\1\2deposit", text, flags=re.I)
+
+
 def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "", pet_count: Any = None) -> dict[str, Any]:
     """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
@@ -12973,6 +12989,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     text = _try(lambda: _redflags_strip(raw_text)) or raw_text  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
     title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(raw_text)))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(text or ""))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    text = _deposit_abbreviation(text)  # cycle 35: "Dep $1,350" and "$1500 dep" are the deposit
     text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
