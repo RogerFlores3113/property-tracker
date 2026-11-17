@@ -178,9 +178,9 @@ _K_NOT_MONEY = re.compile(r"^\s*(?:sq|sf|ft|run|tv|video|mi\b|miles?|steps|lbs|p
 
 
 _GROUP_NUM = r"(?:\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d{2})?"
-_GROUP_TAIL = re.compile(r"[ \t]*(?:$|[.,;:)|\]•\-]|/|\(|\+|per\b|a[ \t]+(?:month|mo)\b|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mo\b|mes\b|mois\b|monat|total\b|"
+_GROUP_TAIL = re.compile(r"[ \t]*(?:$|[.,;:)|\]•\-]|/|\(|\+|per\b|a[ \t]+(?:month|mo|year|quarter)\b|annual|yearly|quarterly|each\b|every\b|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mo\b|mes\b|mois\b|monat|total\b|"
                          r"and\b|to\b|with\b|plus\b|obo\b|for\b|due\b|at\b|each\b|flat\b|if\b|then\b|incl|y\b|con\b|no\b|firm\b|negotiable|only\b|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I | re.M)
-_GROUP_UNIT = re.compile(r"[ \t]*(?:/|per\b|a[ \t]+(?:month|mo)\b|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mes\b|mois\b|monat|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I)
+_GROUP_UNIT = re.compile(r"[ \t]*(?:/|per\b|a[ \t]+(?:month|mo|year|quarter)\b|annual|yearly|quarterly|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mes\b|mois\b|monat|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I)
 _GROUP_LABEL = (r"(?:rent|renta|alquiler|loyer|miete|kaltmiete|warmmiete|asking|price|precio|prix|preis|costs?|deposit|dep[oó]sito|d[eé]p[oô]t|kaution|dep|fees?|hoa|dues|"
                 r"parking|estacionamiento|garage|carport|tax|taxes|insurance|total|monthly|mensual|payment|charge|cuota|tarifa)")
 _GROUP_PAT = re.compile(r"(?<![\w$.,/#\-])(?:" + _GROUP_LABEL + r"(?:[ \t]+(?:is|are|of|at|equals?|was|now)\b)?[ \t]*[:=\-]?[ \t]*(?:(?:about|approx\.?|around|only|just)[ \t]+)?|(?=\d))"
@@ -273,7 +273,7 @@ def normalize_money(text: str) -> str:
         def _spaced(m: re.Match[str]) -> str:
             return "$" + m.group(1).replace(" ", ",") + (("." + m.group(2)) if m.group(2) and m.group(2) != "00" else "")
         text = re.sub(r"(?<![\w$.,])(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?[ \t]?\$(?![ \t]?\d)", _spaced, text)
-        text = re.sub(r"\$[ \t]?(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?(?![\d])(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|a[ \t]+month|mensu|monat|mois|mes\b|mo\b|monthly|por\b|[.,;)]|$))", _spaced, text, flags=re.M)
+        text = re.sub(r"\$[ \t]?(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?(?![\d])(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|a[ \t]+(?:month|year|quarter)|mensu|monat|mois|mes\b|mo\b|monthly|yearly|annual|quarterly|semi|bi-?annual|each\b|every\b|twice\b|por\b|for\b|due\b|and\b|plus\b|total\b|before\b|[.,;)]|$))", _spaced, text, flags=re.M)
     if re.search(r"\d \d{3}", text):  # cycle 34: "Loyer 2 300 par mois", "Miete: 2 300 pro Monat": a rent label then a spaced number with no sign
         text = re.sub(r"(?i)\b(loyer|miete|kaltmiete|warmmiete|alquiler|renta|rent)\b([ \t:=-]*(?:mensuel(?:le)?|mensual|monatlich|monthly)?[ \t:=-]*)(\d{1,3}(?: \d{3})+)(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|por\b|a[ \t]+month|mois|mes\b|monat))",
                       lambda m: m.group(1) + m.group(2) + "$" + m.group(3).replace(" ", ","), text)
@@ -3160,9 +3160,19 @@ def _baths(text: str) -> float | None:
     return min(hits)[1] if hits else None
 
 
+def unsure_sqft_notes(text: str) -> list[str]:
+    """Cycle 36 (rule ee): "3 2 100 sf" could be 3 bed, 2 bath and 100 sf, or 2,100 sf. _sqft leaves it unread; this quotes it so the size is not silently lost."""
+    if _sqft(text) is not None:
+        return []
+    m = re.search(r"(?<![\d,.$])\d[ \t]\d{1,2}[ .]\d{3}(?!\d)[ \t]*(?:sq\.?\s?ft\.?|sqft|sq\.? ?feet|square\s*(?:feet|foot|ft)|\bsf\b)", text, re.I)
+    if not m:
+        return []
+    return [f'The listing says "{m.group(0).strip()}". I could not tell which part is the size in square feet, so none is saved. Check it.']
+
+
 def _sqft(text: str) -> int | None:
     low = text.lower()
-    num = r"(\d{1,2},\d{3}|\d{3,5})"
+    num = r"(\d{1,2},\d{3}|\d{1,2}[ .]\d{3}(?!\d)|\d{3,5})"  # cycle 36 (rule ee): "1 180 sq ft" and "1.100 sf" are 1180 and 1100, never 180 or nothing
     pats = [r"(?<![\d,.])" + num + r"(?:[ \t]*-[ \t]*(?:\d{1,2},\d{3}|\d{3,5}))?[ \t]*(?:sq\.?\s?ft\.?|sqft|sq\.? ?feet|square\s*(?:feet|foot|ft)|\bsf\b|ft2|ft\u00b2|s\.f\.)",
             r"\b(?:sq\.?\s?ft\.?|square (?:feet|footage)|living area|floor area|size)\s*[:\-]\s*" + num,
             r"\b(?:sq\.?\s?ft\.?|sqft)[ \t]+" + num + r"\b(?![ \t]*(?:[/$%]|min|mi\b|ft\b|feet|blocks?|away))"]
@@ -3171,7 +3181,9 @@ def _sqft(text: str) -> int | None:
         for m in re.finditer(pat, low):
             if re.search(r"\blot\b|\blot size\b|acre", low[max(0, m.start() - 22):m.start()]):
                 continue
-            v = int(m.group(1).replace(",", ""))
+            if re.fullmatch(r"\d{1,2}[ .]\d{3}", m.group(1)) and re.search(r"\d[ \t]$", low[max(0, m.start(1) - 2):m.start(1)]):
+                continue  # "3 2 100 sf" could be 3 bed, 2 bath, 100 sf: unclear, so left unread (the note says so)
+            v = int(re.sub(r"[ ,.]", "", m.group(1)))
             if 150 <= v <= 20000 and (best is None or m.start() < best[0]):
                 best = (m.start(), v)
     return best[1] if best else None
@@ -13688,6 +13700,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                     text = text[:a0] + " " * (b0 - a0) + text[b0:]
         price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
     facts: list[str] = list(pair_notes) + corr_notes
+    facts.extend(_try(lambda: unsure_sqft_notes(text)) or [])  # cycle 36 (rule ee): a spaced size after another number is quoted, never read as a smaller part
     facts.extend(_try(lambda: unsure_grouped_notes(text)) or [])  # cycle 35 rule (ee): a spaced or dotted number after a money word that was not read is quoted, never read as its last three digits
     price_range = _try(lambda: _rent_range(text, price_read)) if price_read and not buying else None
     saved_price = (current or {}).get("price")
