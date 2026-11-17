@@ -2685,6 +2685,8 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
         elif unpriced and not extras and not any(re.search(r"\b(?:driveway|street|lot|surface|open|uncovered|assigned|spots?|spaces?)\b", f) for f in free):
             continue
         own_garage = [u for u in unpriced if re.search(r"\bgarages?\b", u) and not re.search(r"\b(?:avail\w*|optional|options?|extra|additional|upgrade|offered|rent(?:al|ed)?|request|if[ \t]+(?:you|needed|wanted)|upon|ask)\b|\$", u)]
+        if own_garage and re.search(r"\b(?:garages?|carports?)\b[ \t]*(?:and|&|\+|plus|,[ \t]*and)[ \t]+[\w \t-]{0,25}?\bfree\b|\bboth[ \t]+free\b|\ball[ \t]+free\b", line, re.I):
+            own_garage = []  # "Garage and driveway both free": the free word covers the garage too
         if own_garage and not extras and len(own_garage) == len(unpriced) and not any(re.search(r"\b(?:garages?|carports?|covered)\b", f) for f in free):
             # cycle 28: "Parking: 1 car garage, driveway free": the garage is the unit's own and the listing gives it no price, so the parking is a garage with the cost unknown, and the free driveway is a note
             gname = own_garage[0].strip(" .,;")
@@ -3098,6 +3100,8 @@ def _pets_approval_note(text: str) -> str:
         m = _APPROVAL_NEED.search(sentence)
         if not m or re.search(r"\b(?:no|without|not|n't)[ \t]+(?:\w+[ \t]+)?(?:approval|permission)|(?:approval|permission)[ \t]+(?:is[ \t]+)?not[ \t]+(?:needed|required)", sentence, re.I):
             continue
+        if re.search(r"\bwaiv\w*|\bexception|\bexempt|\boverrid\w*|\bexceed|\b(?:larger|bigger|heavier)\b|\bover[ \t]+\d|\blimits?\b|\bbreed|\bweight|\bsize|\blbs?\b|\bpounds?\b", sentence, re.I):
+            continue  # approval that lifts a limit ("60 lb limit can be waived with approval") is not approval to have the pet at all
         if re.search(r"\b(?:credit|application|lease|loan|board|hoa|rental|income|background)[ \t]+(?:approval|check)|\bapproved[ \t]+(?:credit|applicants?|tenants?)", sentence, re.I):
             continue
         sp = [w.lower().rstrip("s") for w in re.findall(r"\b(cats?|dogs?)\b", sentence, re.I)]

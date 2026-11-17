@@ -196,7 +196,7 @@ def test_deposit_months_from_saved_listings():
     for name, mult in (("r26-uiuc-l9.txt", 0.5), ("r26-uiuc-l16.txt", 1.5), ("r26-uiuc-l18.txt", 1), ("r26-nontech-l31.txt", 0.5), ("r26-family-l24.txt", 0.5),
                        ("r26-family-l27.txt", 1), ("r26-roommates-l27.txt", 0.5)):
         r = read(saved(name))
-        base = r["deposit"] - (50 if name.endswith("roommates-l27.txt") else 0)  # l27 adds a $50 key deposit
+        base = r["deposit"]  # cycle 28: a key deposit is a move-in fee, not part of the deposit
         assert abs(base - mult * r["price"]) < 0.01, name
 
 
