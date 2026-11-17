@@ -1037,6 +1037,20 @@ def build_server(store: Store) -> FastMCP:
         return [f"Rent check: the rent changed from {_money(old)} to {_money(new)} a month, a change of more than 30 percent, and the cost now uses {_money(new)}. "
                 f"The old rent is on the timeline. Check which one is right with the landlord."]
 
+    def price_change_check(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+        """Cycle 36 (buyer): the same safety line as rent for a home for sale. update_place changes the asking price by more than about 30 percent: one plain line says so,
+        naming only the two saved prices (never a figure from the listing text), because a mistyped price makes every cost and the cash to close wrong."""
+        try:
+            if store.place_mode(after["id"]) != "buy":
+                return []
+            old, new = float(before.get("price")), float(after.get("price"))
+        except (TypeError, ValueError, KeyError):
+            return []
+        if old <= 0 or new <= 0 or abs(new - old) / old <= 0.30:
+            return []
+        return [f"Price check: the asking price changed from {_money(old)} to {_money(new)}, a change of more than 30 percent, and the cost and the cash to close now use {_money(new)}. "
+                f"The old price is on the timeline. Check which one is right with the seller's agent."]
+
     def _newer_rent_note(search: dict[str, Any], dup: dict[str, Any] | None, fields: dict[str, Any]) -> str:
         """Cycle 33: add_place on a place that is already saved, and the paste gives another rent ("$3,295 now, not $3,640"). The saved rent is not changed by a repeat
         add, so one line names both figures and says how to apply the new one."""
@@ -1461,6 +1475,7 @@ def build_server(store: Store) -> FastMCP:
             lines += rc_lines
             if not rc_lines:
                 lines += rent_change_check(before, after)
+            lines += price_change_check(before, after)
         lines += covers_lines
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
