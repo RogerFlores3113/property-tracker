@@ -1677,8 +1677,8 @@ def _slash_beds_baths(text: str) -> tuple[int, float, float] | None:
     for m in _SLASH_LOOSE.finditer(text):
         if m.group(1) == "1" and m.group(2) == "2":
             continue
-        if _SLASH_DATE_BEFORE.search(text[max(0, m.start() - 22):m.start()]):
-            continue
+        if _SLASH_DATE_BEFORE.search(text[max(0, m.start() - 22):m.start()]) and not re.search(r"\bfor[ \t]+(?:lease|rent)[ \t:\-\u2013]*$", text[max(0, m.start() - 22):m.start()], re.I):
+            continue  # cycle 28: "FOR LEASE 3/2 at 55 Birch Ln" is a title, not a lease date
         if re.match(r"[ \t]*[-/]\d", text[m.end():m.end() + 4]):
             continue
         if _shorthand_retracted(text, m.end()):
