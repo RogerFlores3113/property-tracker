@@ -91,6 +91,8 @@ def test_in_unit_laundry(laundry):
     "Lavandería en el edificio.",
     "Lavandería compartida.",
     "Lavandería comunitaria en el sótano.",
+    "Lavadora y secadora en el edificio.",
+    "Lavadoras compartidas.",
 ])
 def test_building_laundry(laundry):
     assert read(HEAD + laundry + TAIL)["laundry"] == "in_building"

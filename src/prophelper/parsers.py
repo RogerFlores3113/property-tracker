@@ -2531,7 +2531,7 @@ def _periodic_fee_notes(text: str) -> list[str]:
         notes.append(f"The listing has a {m.group(1).lower() if m.group(1).lower() == 'quarterly' else 'yearly'} {label + ' ' if label else ''}fee of ${n:,.0f} (about ${n / divisor:,.0f} a month). "
                      f"It is not counted in the monthly cost. Ask if you have to pay it.")
     # cycle 35: the same quarterly or yearly fee written with the amount first or the period after it: "Assessment $90 per quarter", "$90 quarterly fee", "Quarterly dues $90"
-    for rx, kinds in _PERIODIC_FEE_FORMS:
+    for rx, kinds in (() if _SALE_WORDS.search(text) else _PERIODIC_FEE_FORMS):  # a home for sale has its own assessment readers
         for m in rx.finditer(text):
             n = _num(m.group("amt"))
             word = (m.groupdict().get("per") or m.groupdict().get("q") or "").lower()
@@ -3903,6 +3903,8 @@ def _parking_spot_kind_unknown(text: str, kind: str, cost: float | None, notes: 
     lot). A kind word anywhere in the listing's parking words ("surface lot", "off-street", "driveway") keeps the lot."""
     if kind != "lot" or cost != 0 or not _PARK_SPOT_INCLUDED.search(text) or _PARK_LOT_EVIDENCE.search(text) or re.search(r"\bstreet\b", text, re.I):
         return kind, notes
+    if any(re.search(r"parking (?:space|spot) is included", n) for n in notes):
+        return "", notes  # "one parking space is included and a second space is $90" already says it
     return "", notes + ["The listing says a parking spot is included in the rent, so the parking costs $0. It does not say what kind of parking it is (lot, covered or garage), "
                         "so the kind is left empty. Ask which kind it is."]
 
@@ -13011,7 +13013,7 @@ def _es_laundry_repl(m: "re.Match[str]") -> str:
         return "No laundry"
     if m.group("hook"):
         return "Washer and dryer hookups"
-    if m.group("bldg"):
+    if m.group("bldg") or m.group("bldg2"):
         return "Shared laundry in the building"
     if m.group("inunit"):
         return "Washer and dryer in unit"
@@ -13040,7 +13042,7 @@ _ES_RULES = (
     (re.compile(r"\b(?:(?P<sin>(?:sin|no[ \t]+hay|no[ \t]+tiene)[ \t]+(?:lavadora|lavander[ií]a|secadora))|"
                 r"(?P<hook>(?:conexi[oó]n(?:es)?|instalaci[oó]n(?:es)?|tomas?)[ \t]+(?:de|para)[ \t]+(?:la[ \t]+)?(?:lavadora|secadora)(?:[ \t]*(?:y|/)[ \t]*(?:la[ \t]+)?secadora)?)|"
                 r"(?P<bldg>lavander[ií]a[ \t]+(?:compartida|comunitaria|com[uú]n|del[ \t]+edificio|en[ \t]+(?:el[ \t]+)?(?:edificio|s[oó]tano|sitio|complejo))|lavadoras?[ \t]+(?:compartidas?|comunitarias?|en[ \t]+(?:el[ \t]+)?edificio))|"
-                r"(?P<w>lavadora(?:[ \t]*(?:y|/|&)[ \t]*(?:la[ \t]+)?secadora)?)(?:[ \t]+(?:(?P<inunit>(?:dentro[ \t]+de|en|adentro[ \t]+de|dentro[ \t]+del)[ \t]+(?:la[ \t]+|el[ \t]+|cada[ \t]+)?(?:unidad|apartamento|departamento|casa|vivienda|piso)|adentro|dentro)|(?P<inc>incluid[oa]s?)))?)", re.I), _es_laundry_repl),
+                r"(?P<w>lavadora(?:[ \t]*(?:y|/|&)[ \t]*(?:la[ \t]+)?secadora)?)(?:[ \t]+(?:(?P<inunit>(?:dentro[ \t]+de|en|adentro[ \t]+de|dentro[ \t]+del)[ \t]+(?:la[ \t]+|el[ \t]+|cada[ \t]+)?(?:unidad|apartamento|departamento|casa|vivienda|piso)|adentro|dentro)|(?P<bldg2>(?:en|del)[ \t]+(?:el[ \t]+)?(?:edificio|s[o\u00f3]tano|sitio|complejo))|(?P<inc>incluid[oa]s?)))?)", re.I), _es_laundry_repl),
     (re.compile(r"\b(?:patio|jard[ií]n)(?:[ \t]+(?:trasero|delantero))?(?:[ \t]+(?:compartido|comunitario))?[ \t]+(?:totalmente[ \t]+|completamente[ \t]+)?(?:cercad[oa]|vallad[oa]|con[ \t]+(?:cerca|valla|reja))(?:[ \t]+(?:compartido|comunitario))?(?![A-Za-záéíóúñ])", re.I), _es_yard_repl),
     (re.compile(r"\b(?:estacionamiento|parqueo|aparcamiento|cochera|garaje)\b(?:[ \t]+(?:de|es))?(?=[ \t]*[:=]?[ \t]*\$|[ \t]+(?:incluid[oa]|gratis|requerid[oa]|opcional))", re.I), "Parking"),
     (re.compile(r"(?<=[\d\s])/\s*mes\b", re.I), "/mo"),
