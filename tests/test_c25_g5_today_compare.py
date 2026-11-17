@@ -23,7 +23,10 @@ def test_low_rent_is_check_first_not_fit(store, rent, beds, listing):
     assert not today.is_best_fit(row) and today.low_rent(row)
     t = text(call(server(store), "list_places"))
     assert "Check the rent first" in t and "Fit: Fits" not in t and "true cost" not in t
-    assert "Low" not in text(call(server(store), "todays_list")).split("Best fits right now:")[1].split("Tours")[0].replace("none yet.", "")
+    today_text = text(call(server(store), "todays_list"))
+    # Cycle 26: a check-first place is not in the fit or best sections; it shows under its own Check first section.
+    assert "Low" not in today_text.split("Best fits right now:")[1].split("Check first:")[0].split("Tours")[0].replace("none yet.", "")
+    assert any(line.startswith("Check first:") and "Low" in line and "check the rent first" in line for line in today_text.splitlines())
 
 
 def test_normal_cheap_rent_is_still_fine(store):

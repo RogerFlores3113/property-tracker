@@ -32,7 +32,8 @@ def test_scam_place_never_says_true_cost(store, scam):
     assert "True monthly cost" not in got and "as listed, not checked" in got
     cmp = text(call(srv, "compare_places", place_ids=[1, 2]))
     assert "True monthly cost: #1" not in cmp and "#1 $1,900 as listed, not checked" in cmp
-    assert "Nothing unknown" not in cmp
+    # The clean, complete place may say "Nothing unknown"; the flagged place's own row never does.
+    assert "#1 Nothing unknown" not in cmp and "#1 Best fit" not in cmp and "#1 100" not in cmp
 
 
 def test_compare_row_label_for_flagged_and_clean(store):

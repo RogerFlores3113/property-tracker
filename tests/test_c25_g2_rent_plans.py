@@ -269,7 +269,7 @@ def test_sanity_does_not_touch_a_normal_rent():
 def test_range_low_end_never_shows_as_missing(store):
     srv = _place(store, open(P + "r24-nontech-l19.txt").read())
     out = text(call(srv, "get_place", place_id=1))
-    cost = next(line for line in out.splitlines() if line.startswith("True monthly cost"))
+    cost = next(line for line in out.splitlines() if line.startswith(("True monthly cost", "Monthly cost so far")))
     assert "rent $1,525" in cost and "$1,475" not in cost
 
 
