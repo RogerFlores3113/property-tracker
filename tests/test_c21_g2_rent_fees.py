@@ -196,12 +196,12 @@ def test_nontech_l10_other_fields_stay():
 
 
 @pytest.mark.parametrize("text,total,dep", [
-    ("Spacious townhouse 3 bed / 2.5 bath, $2,295.\nFees: Application $45/adult; Admin $150; Lease-up $100; Key deposit $50 refundable.\nDeposit $1,500.", 250, 1550),
-    ("3 bed, $2,295. Admin $80, lease-up $40, key deposit $20. Deposit $1,500.", 120, 1520),
-    ("3 bed, $2,295.\n- Admin: $60\n- Lease-up fee: $35\n- Key deposit: $25\nDeposit $1,500.", 95, 1525),
+    ("Spacious townhouse 3 bed / 2.5 bath, $2,295.\nFees: Application $45/adult; Admin $150; Lease-up $100; Key deposit $50 refundable.\nDeposit $1,500.", 300, 1500),
+    ("3 bed, $2,295. Admin $80, lease-up $40, key deposit $20. Deposit $1,500.", 140, 1500),
+    ("3 bed, $2,295.\n- Admin: $60\n- Lease-up fee: $35\n- Key deposit: $25\nDeposit $1,500.", 120, 1500),
 ])
 def test_every_item_of_a_fee_list_is_counted(text, total, dep):
-    # cycle 23: a key deposit comes back, so it is added once to the deposit and not spread as a move-in fee
+    # cycle 28: a key deposit is never the security deposit; it is counted once in the move-in fees
     r = read(text)
     assert r["move_in_fees"] == total
     assert r["deposit"] == dep

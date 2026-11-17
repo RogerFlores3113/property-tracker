@@ -41,7 +41,7 @@ def test_cents_reviewer_listing_l12():
     ("2BR $1,800/mo. Fees: application $42.50, admin $60.25, lease processing $30.75", {"application_fee": 42.5, "move_in_fees": 91}),
     ("2BR $1,800/mo. $42.50 application fee. $75.25 admin fee. $1,000.75 security deposit.", {"application_fee": 42.5, "move_in_fees": 75.25, "deposit": 1000.75}),
     ("2BR $1,800/mo\nCleaning fee $87.50 due at move-in\nKey deposit $25.50 refundable\nSecurity deposit: $1,200.25\nApp fee $38.50/adult",
-     {"application_fee": 38.5, "move_in_fees": 87.5, "deposit": 1225.75}),
+     {"application_fee": 38.5, "move_in_fees": 113, "deposit": 1200.25}),
     ("2BR $1,800/mo. Credit check fee $29.50 per adult. Deposit $900.", {"application_fee": 29.5, "deposit": 900}),
     ("2BR $1,800/mo. Move-in fee $99.99. Non-refundable deposit $350.50. Background check $25.50 each.", {"application_fee": 25.5, "move_in_fees": 450.49, "deposit": 0}),
 ])

@@ -1979,8 +1979,8 @@ def _slash_beds_baths(text: str) -> tuple[int, float, float] | None:
     for m in _SLASH_LOOSE.finditer(text):
         if m.group(1) == "1" and m.group(2) == "2":
             continue
-        if _SLASH_DATE_BEFORE.search(text[max(0, m.start() - 22):m.start()]):
-            continue
+        if _SLASH_DATE_BEFORE.search(text[max(0, m.start() - 22):m.start()]) and not re.search(r"\bfor[ \t]+(?:lease|rent)[ \t:\-\u2013]*$", text[max(0, m.start() - 22):m.start()], re.I):
+            continue  # cycle 28: "FOR LEASE 3/2 at 55 Birch Ln" is a title, not a lease date
         if re.match(r"[ \t]*[-/]\d", text[m.end():m.end() + 4]):
             continue
         if _shorthand_retracted(text, m.end()):
@@ -2986,6 +2986,14 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
             pass
         elif unpriced and not extras and not any(re.search(r"\b(?:driveway|street|lot|surface|open|uncovered|assigned|spots?|spaces?)\b", f) for f in free):
             continue
+        own_garage = [u for u in unpriced if re.search(r"\bgarages?\b", u) and not re.search(r"\b(?:avail\w*|optional|options?|extra|additional|upgrade|offered|rent(?:al|ed)?|request|if[ \t]+(?:you|needed|wanted)|upon|ask)\b|\$", u)]
+        if own_garage and re.search(r"\b(?:garages?|carports?)\b[ \t]*(?:and|&|\+|plus|,[ \t]*and)[ \t]+(?!free\b)[\w-]+(?:[ \t]+[\w-]+){0,2}?[ \t]+(?:(?:both|are|is)[ \t]+)*free\b|\bboth[ \t]+free\b|\ball[ \t]+free\b", line, re.I):
+            own_garage = []  # "Garage and driveway both free": the free word covers the garage too
+        if own_garage and not extras and len(own_garage) == len(unpriced) and not any(re.search(r"\b(?:garages?|carports?|covered)\b", f) for f in free):
+            # cycle 28: "Parking: 1 car garage, driveway free": the garage is the unit's own and the listing gives it no price, so the parking is a garage with the cost unknown, and the free driveway is a note
+            gname = own_garage[0].strip(" .,;")
+            fname = free[0].strip(" .,;")
+            return "garage", None, [f'The listing says "{gname}" and also "{fname}", but gives no price for the garage. Parking is saved as a garage with the cost left empty, and the free parking in that line is not counted as the parking cost. Ask if the garage costs extra.']
         kind = _parking_kind_words(" ".join(free)) or "lot"
         if kind in ("garage", "covered") and not any(re.search(r"\b(?:garages?|carports?|covered)\b", f) for f in free):
             kind = "lot"
@@ -3381,6 +3389,34 @@ def _pets_doubt(text: str) -> str:
     if clash:
         return f"The listing is not clear about pets. It says {said}. Pets is left empty, so ask {who} which pets are allowed before you count on it."
     return f"The listing says pets depend on approval ({said}). Pets is left empty, so ask {who} which pets are allowed."
+
+
+_APPROVAL_NEED = re.compile(r"\b(?:(?:prior[ \t]+|written[ \t]+)?(?:approval|permission|pre-?approval)[ \t]+(?:is[ \t]+|are[ \t]+)?(?:required|needed|necessary|first)\b|(?:need|needs|require|requires|required|must[ \t]+(?:be|get)|subject[ \t]+to|pending|with|upon)[ \t]+(?:prior[ \t]+|written[ \t]+|landlord[ \t]+|management[ \t]+|owner[ \t]+)?(?:approval|permission|approved))", re.I)
+
+
+def _pets_approval_note(text: str) -> str:
+    """Cycle 28: pets are saved from the rest of the listing, but one sentence says a kind of pet needs approval in a word order the pet reader
+    does not treat as a doubt: "Approval required for dogs.", "Dogs OK, approval needed.". "Dogs need approval." for the kinds named, "" when there is none."""
+    kinds: list[str] = []
+    for sentence in re.split(r"(?<![\d])[.;\n?!|]+", text):
+        m = _APPROVAL_NEED.search(sentence)
+        if not m or re.search(r"\b(?:no|without|not|n't)[ \t]+(?:\w+[ \t]+)?(?:approval|permission)|(?:approval|permission)[ \t]+(?:is[ \t]+)?not[ \t]+(?:needed|required)", sentence, re.I):
+            continue
+        if re.search(r"\bwaiv\w*|\bexception|\bexempt|\boverrid\w*|\bexceed|\b(?:larger|bigger|heavier)\b|\bover[ \t]+\d|\blimits?\b|\bbreed|\bweight|\bsize|\blbs?\b|\bpounds?\b", sentence, re.I):
+            continue  # approval that lifts a limit ("60 lb limit can be waived with approval") is not approval to have the pet at all
+        if re.search(r"\b(?:credit|application|lease|loan|board|hoa|rental|income|background)[ \t]+(?:approval|check)|\bapproved[ \t]+(?:credit|applicants?|tenants?)", sentence, re.I):
+            continue
+        sp = [w.lower().rstrip("s") for w in re.findall(r"\b(cats?|dogs?)\b", sentence, re.I)]
+        if not sp and re.search(r"\b(?:pets?|animals?)\b", sentence, re.I):
+            sp = ["pet"]
+        for w in sp:
+            if w not in kinds:
+                kinds.append(w)
+    if not kinds:
+        return ""
+    names = {"dog": "Dogs", "cat": "Cats", "pet": "Pets"}
+    who = " and ".join(names[k] for k in kinds)
+    return f"{who} need approval. Ask {_ask_who(text)} what it takes."
 
 
 def _pets_soft_note(text: str) -> str:
@@ -4444,6 +4480,26 @@ def _bare_security_amount(text: str) -> float | None:
     return v if 100 <= v <= 50000 else None
 
 
+_SURETY_WORD = r"(?:surety(?:[ \t]+bonds?)?|deposit[ \t-]+(?:alternative|waiver|insurance|replacement)|(?:zero|no)[- ]deposit[ \t]+(?:option|program|bond))"
+_SURETY_AMT = r"\$[ \t]?(\d{1,3}(?:,\d{3})*(?:\.\d\d)?|\d+(?:\.\d\d)?)(?![\d,])(?:[ \t]*(?:/[ \t]*(?:mo(?:nth)?|month)\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month))?"
+
+
+def _surety_option(text: str) -> tuple[float, str, bool] | None:
+    """Cycle 28: a surety bond (or deposit alternative) offered next to the deposit: "Deposit $1,000 or $49/mo surety", "or choose a surety bond at $39 per month instead".
+    It is an option the renter can pick instead of the deposit, never a missing monthly cost. Returns (amount, the phrase, monthly) or None."""
+    for pat in (_SURETY_AMT + r"[ \t]*(?:\)|,)?[ \t]*(?:" + _SURETY_WORD + r")",
+                r"(?:" + _SURETY_WORD + r")[^.\n;$]{0,40}?" + _SURETY_AMT):
+        m = re.search(pat, text, re.I)
+        if m:
+            amount = _num(m.group(1) if pat.startswith(r"\$") else m.group(m.lastindex))
+            if re.search(r"\bor\b[^$\n;.]{0,60}\b(?:surety|bond|waiver|guarantor|alternative)\b[^$\n;.]{0,12}$", text[max(0, m.start() - 70):m.start(m.lastindex)].rstrip("$ \t"), re.I) and not pat.startswith(r"\$"):
+                continue  # "Deposit $300 or Surety Bond ($35/mo)": the missing-amount guard already explains this form
+            if 0 < amount <= 5000:
+                phrase = " ".join(m.group(0).split())
+                return amount, phrase + (")" if phrase.count("(") > phrase.count(")") else ""), bool(re.search(r"/|per[ \t]+month|a[ \t]+month|monthly", m.group(0), re.I))
+    return None
+
+
 def _deposit_in_months(text: str) -> float:
     """The security deposit written as a number of months of rent ("security deposit one month", "deposit equal to one month's
     rent"), as that number of months. 0 when the text gives none."""
@@ -4469,6 +4525,7 @@ _DEP_DUE = r"(?:[ \t]*(?:is[ \t]+|are[ \t]+)?(?:due|payable|required|collected)[
 _DEP_EQ = r"(?:(?:is|are|will[ \t]+be|of|equal[ \t]+to|equals|equivalent[ \t]+to|same[ \t]+as|about|approx\.?|=)[ \t]+)*(?:(?:the|a|an|your)[ \t]+)?"
 _DEP_NUM = r"(one[- ]and[- ]a[- ]half|one[- ]half|half(?:[ \t]+a)?|1/2|0?\.5|one|two|1\.25|1\.5|2\.5|\u00bd|1|2|a)"
 _DEP_MONTH = r"[- ]?(?:month|mo)s?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?(?:the[ \t]+)?(?:monthly[ \t]+)?rent)?(?![a-z])"
+_DEP_HALF_OF = r"(?P<half>half|one[- ]half|1/2|50[ \t]*%|fifty[ \t]+percent)[ \t]+of[ \t]+(?:(?:a|one|1|the|first|your|one[ \t]+full)[ \t]+)*(?:(?:full|monthly)[ \t]+)?(?:month(?:'s?|ly)?[ \t]+)?rent(?![a-z])"
 _DEP_WORDS = {"one": 1.0, "a": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5, "half a": 0.5, "1/2": 0.5, ".5": 0.5, "0.5": 0.5, "\u00bd": 0.5, "one-half": 0.5, "one half": 0.5,
               "1.5": 1.5, "2.5": 2.5, "1.25": 1.25, "one and a half": 1.5, "one-and-a-half": 1.5}
 
@@ -4478,10 +4535,13 @@ def _deposit_months_general(text: str) -> tuple[float, str] | None:
     "Half month security deposit", "Sec dep 1.5 months", "Security deposit due at signing: one month", "Deposit due at signing equal to one month". Returns
     (months, the phrase) or None. Only a deposit with no kind word before it (pet, parking, key and so on) is the security deposit."""
     for pat in (_DEP_PRE + _DEP_DUE + r"[ \t:\-=,]{0,4}" + _DEP_EQ + _DEP_NUM + _DEP_MONTH,
+                _DEP_PRE + _DEP_DUE + r"[ \t:\-=,]{0,4}" + _DEP_EQ + _DEP_HALF_OF,  # cycle 28: "half of one month's rent", "50% of the monthly rent"
                 r"(?<![\d.$])" + _DEP_NUM + _DEP_MONTH + r"[ \t]+(?:(?:security|damage)[ \t]+)?deposit\b"):
         for m in re.finditer(pat, text, re.I):
             if _NOT_THIS_DEPOSIT.search(text[max(0, m.start() - 16):m.start()]):
                 continue
+            if m.groupdict().get("half"):
+                return 0.5, " ".join(m.group(0).split())
             g = re.sub(r"[ \t]+", " ", m.group(1).lower())
             if re.match(r"\s*(?:/|per\b)", text[m.end():]) or re.match(r"[ \t]*(?:old|lease|term|minimum|min\b)", text[m.end():], re.I):
                 continue  # "deposit one month lease", "1 month minimum": a lease length, not months of rent
@@ -9937,6 +9997,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         soft = _try(lambda: _pets_soft_note(ptext)) or ""
         if soft:
             facts.append(soft)
+        if out.get("pets") and not soft:
+            appr = _try(lambda: _pets_approval_note(ptext)) or ""
+            if appr:
+                facts.append(appr)  # cycle 28: "Dogs ok, $300 pet fee. Approval required for dogs." keeps pets and says dogs need approval
         if not out.get("pets"):
             no_kind = _try(lambda: _pets_no_species_note(ptext)) or ""
             if no_kind:
@@ -10651,6 +10715,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if fx_dep[1] is not None or (old_dep is not None and not _same_num(old_dep, fx_dep[0])):
                 facts.append(_corrected_fact_note("deposit", _usd(fx_dep[0]), _usd(float(old_dep)) if old_dep is not None else None))
             put("deposit", fx_dep[0])
+        sur = None if buying else _try(lambda: _surety_option(text))
+        if sur:
+            facts.append(f'The listing offers a surety bond ("{sur[1]}") that you can pick instead of paying the deposit' + (f", at {_usd(sur[0])} a month" if sur[2] else f", for {_usd(sur[0])}")
+                         + ". It is an option, not a cost on top of the rent and not a missing monthly cost, so it is not counted." + (" The deposit saved is the one the listing gives." if out.get("deposit") else " The listing gives no deposit amount to save.") + " Ask which one you would pick and what each costs.")
         dcn = _try(lambda: _deposit_credit_note(text, out.get("deposit")))
         if dcn:
             facts.append(dcn)
@@ -10725,15 +10793,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 if label_x.startswith(("admin", "processing")) and per_applicant and v_x == per_applicant[0]:
                     continue
                 extra_one_time += v_x  # cycle 21: "Fees: application $50, admin $120, lease processing $60", "$250 amenity fee one-time"
-                if kind_x == "key" and isinstance(out.get("deposit"), (int, float)) and not isinstance(out.get("deposit"), bool) and out["deposit"] > 0 and label_x.startswith("key deposit"):
-                    # cycle 23: a key deposit is money you get back, so it is added once to the deposit (not spread over the lease like a fee)
-                    extra_one_time -= v_x
-                    sec_x = float(out["deposit"])
-                    out["deposit"] = _tidy_number(sec_x + v_x)
-                    facts.append(f"The security deposit is {_usd(sec_x)} and the key deposit is {_usd(v_x)}, so the deposit saved is both together, {_usd(sec_x + v_x)}. "
-                                 "The key deposit is counted once in the cash at move-in and not spread over the lease. Ask when you get it back.")
-                elif kind_x == "key":
-                    facts.append(f"The {_usd(v_x)} {label_x} is counted in the cash at move-in. The listing may say it comes back, so ask when you get it back.")
+                if kind_x == "key":  # cycle 28: a key or parking deposit is never the security deposit; it is counted once in the move-in fees
+                    facts.append(f"The {_usd(v_x)} {label_x} is counted once in the cash at move-in as a one-time amount. It is not the security deposit. The listing may say it comes back, so ask when you get it back.")
         if nonref_dep and not buying and not _is_sale_text(text):
             extra_one_time += nonref_dep[0]
             _dep_read = out.get("deposit")
@@ -12698,7 +12759,7 @@ def _is_sale_text(text: str) -> bool:
 
 _ONE_TIME_LABELS = (
     r"admin(?:istrative|istration)?(?:[ \t]+fees?)?", r"lease[- ](?:processing|up|initiation|signing|admin\w*|set-?up|start-?up)(?:[ \t]+fees?)?",
-    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
+    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"(?:parking|garage|carport)[ \t]+deposit", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
     r"(?:amenity|community|technology|tech)[ \t]+fees?",
     r"(?:one[- ]?time|non[- ]?refundable)[ \t]+(?:amenity|community|technology|tech)(?:[ \t]+fees?)?",  # cycle 22: "one-time amenity $200"
     r"move[- ]?in(?![ \t]*(?:fees?|total|costs?|specials?|date|day|ready|cash|charges?|money|price|amount|incentive|offer|-)\b)",
@@ -12744,7 +12805,7 @@ def _one_time_fee_items(text: str) -> list[tuple[str, float, str]]:
                     if not _ONE_TIME_CUE.search(around):
                         continue
                 apos = m.start(2 if i == 0 else 1)
-                item = (label, v, "key" if label.startswith("key") else "fee")
+                item = (label, v, "key" if label.startswith(("key", "parking", "garage", "carport")) else "fee")
                 if apos in out_pos:  # the same amount again under a second label: keep the longer label, count it once
                     j = out_pos.index(apos)
                     if len(label) > len(out[j][0]):

@@ -51,7 +51,7 @@ def test_one_time_amenity(text, fees):
 
 def test_saved_roommates_l30():
     o = _saved("r21-roommates-l30.txt")
-    assert o["move_in_fees"] == 450 and o["deposit"] == 1335 and o["application_fee"] == 25 and o["application_fee_per_adult"] == 1
+    assert o["move_in_fees"] == 525 and o["deposit"] == 1260 and o["application_fee"] == 25 and o["application_fee_per_adult"] == 1
     assert "background check" in _notes(o)
 
 

@@ -133,14 +133,14 @@ def test_saved_roommates_l51():
 # ---- 5. key deposit
 def test_saved_roommates_l30():
     o = _saved("r22-roommates-l30.txt")
-    assert o["deposit"] == 1335 and o["move_in_fees"] == 450
-    assert "$1,260" in _notes(o) and "$75" in _notes(o)
+    assert o["deposit"] == 1260 and o["move_in_fees"] == 525
+    assert "$75" in _notes(o)  # cycle 28: the key deposit is a move-in fee, so no note sums it into the deposit
 
 
 @pytest.mark.parametrize("text,dep,fees", [
-    ("Security deposit $1,000. $75 key deposit.", 1075, None),
-    ("Key deposit: $75 (refundable). Deposit: $1,000. Admin fee $100.", 1075, 100),
-    ("- Security $1,000\n- Key deposit $50", 1050, None),
+    ("Security deposit $1,000. $75 key deposit.", 1000, 75),
+    ("Key deposit: $75 (refundable). Deposit: $1,000. Admin fee $100.", 1000, 175),
+    ("- Security $1,000\n- Key deposit $50", 1000, 50),
 ])
 def test_key_deposit_counted_once_not_spread(text, dep, fees):
     o = parse_listing("2 bed 1 bath, $1,500/mo. " + B + text)

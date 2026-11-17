@@ -196,7 +196,7 @@ def test_deposit_months_from_saved_listings():
     for name, mult in (("r26-uiuc-l9.txt", 0.5), ("r26-uiuc-l16.txt", 1.5), ("r26-uiuc-l18.txt", 1), ("r26-nontech-l31.txt", 0.5), ("r26-family-l24.txt", 0.5),
                        ("r26-family-l27.txt", 1), ("r26-roommates-l27.txt", 0.5)):
         r = read(saved(name))
-        base = r["deposit"] - (50 if name.endswith("roommates-l27.txt") else 0)  # l27 adds a $50 key deposit
+        base = r["deposit"]  # cycle 28: a key deposit is a move-in fee, not part of the deposit
         assert abs(base - mult * r["price"]) < 0.01, name
 
 
@@ -263,7 +263,9 @@ def test_compare_names_the_parking_deposit():
     place["reader_notes"] = r.get("found_in_listing")
     c = money.true_monthly_cost(place, "rent")
     label = c.get("listing_notes_label") or ""
-    assert "$200 parking deposit" in label and label != "the $200 deposit in the listing notes"
+    # cycle 28: the parking deposit is counted once in the move-in fees, so it is no longer an unknown
+    assert "the $200 deposit in the listing notes" not in label
+    assert place["move_in_fees"] >= 200 and "$200 parking deposit" in (r.get("found_in_listing") or "")
 
 
 # ---- item 5: a narrow range keeps its note on a saved place too
