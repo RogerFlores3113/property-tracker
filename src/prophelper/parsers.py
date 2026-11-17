@@ -273,7 +273,7 @@ def normalize_money(text: str) -> str:
         def _spaced(m: re.Match[str]) -> str:
             return "$" + m.group(1).replace(" ", ",") + (("." + m.group(2)) if m.group(2) and m.group(2) != "00" else "")
         text = re.sub(r"(?<![\w$.,])(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?[ \t]?\$(?![ \t]?\d)", _spaced, text)
-        text = re.sub(r"\$[ \t]?(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?(?![\d])(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|a[ \t]+month|mensu|monat|mois|mes\b|mo\b|monthly|por\b|[.,;)]|$))", _spaced, text, flags=re.M)
+        text = re.sub(r"\$[ \t]?(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?(?![\d])(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|a[ \t]+month|mensu|monat|mois|mes\b|mo\b|monthly|por\b|[.,;)]|$|(?:usd|us[ \t]+dollars?|dollars?|d[o\u00f3]lares|bucks|eur|obo|o\.b\.o|flat|total|only|plus|\+|-|\u2013|\u2014|\|)(?![a-z])))", _spaced, text, flags=re.M | re.I)  # cycle 36: "Rent $2 300 dollars a month"
     if re.search(r"\d \d{3}", text):  # cycle 34: "Loyer 2 300 par mois", "Miete: 2 300 pro Monat": a rent label then a spaced number with no sign
         text = re.sub(r"(?i)\b(loyer|miete|kaltmiete|warmmiete|alquiler|renta|rent)\b([ \t:=-]*(?:mensuel(?:le)?|mensual|monatlich|monthly)?[ \t:=-]*)(\d{1,3}(?: \d{3})+)(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|por\b|a[ \t]+month|mois|mes\b|monat))",
                       lambda m: m.group(1) + m.group(2) + "$" + m.group(3).replace(" ", ","), text)
@@ -334,6 +334,37 @@ _PROMO_TOTAL_NOTE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(
 _SPLIT_RENT = re.compile(r"\b(?:split(?:ting)?|shared?|divided?)[ \t]+(?:it[ \t]+)?(?:evenly|equally|between|among|w/|with|by|in[ \t]+(?:half|two))[^.\n;]{0,40}?\b(?:roommates?|room[- ]?mates?|tenants?|housemates?|occupants?|people|persons?|two|2|friends?|partner|each[ \t]+other)\b", re.I)
 _SPLIT_WORD = re.compile(r"\b(?:split|shared?|divided?)\b", re.I)
 _SPLIT_OTHER = re.compile(r"\b(?:utilit\w*|bills?|electric\w*|gas|water|sewer|trash|internet|wi-?fi|cable|owners?|buyers?|sellers?|closing|assessment|hoa|tax(?:es)?|insurance|fees?|parking|deposit)\b", re.I)
+
+
+_SHARE_WHO = r"(?:roommates?|room[- ]?mates?|housemates?|tenants?|people|persons?|person|occupants?|friends?|students?|each[ \t]+of[ \t]+you|each[ \t]+of[ \t]+(?:the[ \t]+)?\w+)"
+_SHARE_EACH = re.compile(r"\b(?:each[ \t]+(?:roommate|person|tenant|housemate)|(?:roommates?|tenants?|housemates?|you[ \t]+and[ \t]+(?:your|\w+)[ \t]+\w+))[ \t]+(?:would[ \t]+|will[ \t]+|each[ \t]+|only[ \t]+)?(?:pays?|owes?|is[ \t]+about|splits?)[ \t]+(?:(?:about|around|roughly|approx\.?|approximately|only|just|~)[ \t]+)?\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d)(?=[ \t]*(?:each|apiece|a[ \t]+head|per[ \t]+(?:person|roommate)|/[ \t]*(?:person|roommate)|[.,;)]|$))"
+                         r"|(?:\b(?:split|sharing|shared?|divided?)\b[^.\n;|$]{0,70}?|\b(?:that(?:'s|[ \t]+is)|which[ \t]+is|comes[ \t]+to|works[ \t]+out[ \t]+to|about|only|just|roughly|approx\.?)[ \t]+)(?:(?:about|around|roughly|approx\.?|approximately|only|just|~)[ \t]+)?\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d)[ \t]*(?:each|apiece|a[ \t]+head|per[ \t]+(?:person|roommate|head|tenant)|/[ \t]*(?:person|roommate|head|tenant))"
+                         r"|\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d)[ \t]*(?:/[ \t]*mo\w*[ \t]*|a[ \t]+month[ \t]*|per[ \t]+month[ \t]*)?(?:each|apiece|a[ \t]+head|per[ \t]+(?:person|roommate|head|tenant)|/[ \t]*(?:person|roommate|head|tenant))\b[^.\n;|]{0,30}?" + _SHARE_WHO, re.I)
+
+
+def _roommate_share_notes(text: str, price: float | None) -> list[str]:
+    """Cycle 36: "Split evenly among roommates that's about $1,017 each" gives one person's share of the rent. It is never the rent and never a cost on top, so the saved rent
+    stays the whole figure and one plain note says what the share was. It is a note about a share, so it is not a missing cost."""
+    notes: list[str] = []
+    if _SALE_WORDS.search(text):
+        return notes
+    for sent in re.split(r"(?<=[.!?])[ \t]+(?=[A-Z])|\n|;|\|", text):
+        if re.search(r"\?", sent):
+            continue
+        m = _SHARE_EACH.search(sent)
+        if not m:
+            continue
+        if not (re.search(r"\b(?:split|share[ds]?|sharing|divid\w+|roommates?|each|per[ \t]+person)\b", sent, re.I) and (re.search(_SHARE_WHO, sent, re.I) or re.search(r"\b(?:split|divid\w+|shar\w+)\b", sent, re.I))):
+            continue
+        if _SPLIT_OTHER.search(re.sub(r"\b(?:rent\w*|roommates?)\b", " ", sent)) and not re.search(r"\brent\b", sent, re.I):
+            continue  # "Utilities split evenly, $60 each" is a utility share, not a rent share
+        v = _num(m.group(1) or m.group(2) or m.group(3))
+        if price is not None and abs(v - float(price)) < 0.5:
+            continue
+        notes.append(f"The listing says each person's share would be about {_usd(v)}. That is one roommate's share, not the rent, so it is not saved or counted. "
+                     + (f"{_usd(float(price))} is saved as the rent for the whole place." if price is not None else "Check the rent for the whole place."))
+        break
+    return notes
 
 
 def _rent_promo_split_notes(text: str, price: float | None) -> list[str]:
@@ -1529,8 +1560,20 @@ def _bare_asking_price(text: str) -> float | None:
     return next(iter(vals)) if len(vals) == 1 else None
 
 
+_SET_COMMAND = re.compile(r"\b(?:set|mark|make|change|put|enter|save|record|write|update|list|show|display|tell[ \t]+(?:\w+[ \t]+){0,2}?(?:that|it(?:'s|[ \t]+is))?)[ \t]+(?:the[ \t]+|this[ \t]+|its[ \t]+|a[ \t]+)?(?:monthly[ \t]+)?(?:security[ \t]+)?(?:rent|price|deposit|cost)[ \t]+(?:as|at|to|=|:|is|of)?[ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?", re.I)
+
+
+def _blank_set_commands(text: str) -> str:
+    """Cycle 36: "set the rent to $400", "mark deposit $0": an instruction to whoever reads the listing, never a fact about the place. Readers of the rent and the deposit
+    do not see it, so a figure in it is never saved (the flag and its quote are made elsewhere)."""
+    if "$" not in text:
+        return text
+    return _SET_COMMAND.sub(lambda m: " " * len(m.group(0)), text)
+
+
 def _price(text: str) -> float | None:
     """The monthly rent if the text gives one, else the asking price of a home for sale."""
+    text = _blank_set_commands(text)  # cycle 36: "Agent: set the rent to $400" is never the rent
     corrected = None if _SALE_WORDS.search(text) else _corrected_rent(text)
     if corrected:
         return corrected[0]  # cycle 19: a rent the listing takes back ("1.5k a month, no sorry 2,350") never wins
@@ -2203,7 +2246,7 @@ def _bare_labelled_rent(text: str) -> float | None:
     Cycle 19: a figure followed by "per bedroom" or "per person" is one share, never the whole rent, and a figure labelled rent after
     "No:", "sorry" or "actually" replaces an earlier one ("Rent 1,480 per bedroom? No: Pilsen 3bd/2ba rent 3,240")."""
     found: list[tuple[float, bool]] = []
-    for m in re.finditer(r"(?<![\w$])(?:monthly[ \t]+)?rent(?:[ \t]*(?:is|of|:|=|-))?[ \t]*(\d{1,2},\d{3}|\d{3,5})(?![\d,.]*\d)(?:\.\d\d)?", text, re.I):
+    for m in re.finditer(r"(?<![\w$])(?:monthly[ \t]+)?(?:rent|renta|alquiler|arriendo|loyer|miete|kaltmiete|warmmiete)(?:[ \t]+(?:mensual|mensuel|mensuelle|monthly))?(?:[ \t]*(?:is|of|es|de|:|=|-))?[ \t]*(\d{1,2},\d{3}|\d{3,5})(?![\d,.]*\d)(?:\.\d\d)?", text, re.I):  # cycle 36: "Renta 1,475 al mes"
         value = _num(m.group(1))
         if not 300 <= value <= 30000:
             continue
@@ -3256,6 +3299,9 @@ _PARKING_COUNT_PRICE_RE = re.compile(r"\b(?:\d|one|two|three|four)[ \t]+(?:(?:as
 _PARKING_NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4}
 _PARKING_YEARLY_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*(?:yr|year|annum|y)\b|per[ \t]+(?:year|yr|annum)\b|a[ \t]+year\b|annually\b|yearly\b|annual\b|each[ \t]+year\b|every[ \t]+year\b)")
 _PARKING_EACH_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?[ \t,]*(?:each|apiece|per[ \t]+(?:parking[ \t]+)?(?:spot|space|stall)s?)\b")
+# cycle 36: "$120 per semester", "$120/semester", "$150 each term": a price for part of a year. It is never a monthly cost; a quarter is three months and is converted, the rest is left for a note
+_PARKING_TERM_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*(?:sem\w*|term|trimester|season|school[ \t]+year|academic[ \t]+year|summer|fall|spring|qtr|quarter)\b|(?:per|a|each|every|for[ \t]+(?:the|a|each|one))[ \t]+(?:semester|term|trimester|season|school[ \t]+year|academic[ \t]+year|summer|fall|spring|quarter|qtr)\b|semesterly\b|quarterly\b)", re.I)
+_PARKING_QUARTER_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*(?:qtr|quarter)\b|(?:per|a|each|every|for[ \t]+(?:the|a|each|one))[ \t]+(?:quarter|qtr)\b|quarterly\b)", re.I)
 _PARKING_PRICE_RES = (
     re.compile(r"(?:garage|carport|covered parking|reserved parking|parking(?: fee| rate| cost)?|parking space|parking spot|parking permit|street permit)s?[ \t]*(?:space|spot|stall|fee|rental|rent|permit)?s?[ \t:\-=(,]{0,6}(?:(?:is|are|from|starting at|for|at|only|available|offered)[ \t,]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
     # "Parking: assigned covered spot $60/mo", "garage parking available for $110 a month": a few describing words in between
@@ -3318,7 +3364,12 @@ def _parking_prices(low: str) -> list[tuple[float, bool, str, str]]:
             if not optional and not required and free_anywhere and not _PARKING_FREE.search(clause):
                 optional = True  # free parking is listed elsewhere, so this priced one is a different, extra choice
             value, unit = float(m.group(1)), ""
-            if _PARKING_YEARLY_AFTER.match(after_amount) or (re.search(r"\b(?:yearly|annual|annually)\b", low[a:m.start(1)]) and not re.search(r"month|/[ \t]*mo", after_amount[:40])):
+            if _PARKING_QUARTER_AFTER.match(after_amount):
+                value, unit = round(value / 3, 2), "quarter"
+                clause = low[a:m.end(1) + len(after_amount)]
+            elif _PARKING_TERM_AFTER.match(after_amount):
+                continue  # cycle 36: "$120 per semester" is not a monthly cost; _parking_term_notes says what it said
+            elif _PARKING_YEARLY_AFTER.match(after_amount) or (re.search(r"\b(?:yearly|annual|annually)\b", low[a:m.start(1)]) and not re.search(r"month|/[ \t]*mo", after_amount[:40])):
                 value, unit = round(value / 12, 2), "year"
                 clause = low[a:m.end(1) + len(after_amount)]
             elif not optional and _PARKING_EACH_AFTER.match(after_amount):
@@ -4151,6 +4202,27 @@ def _parking_detail_inner(text: str) -> tuple[str, float | None, list[str]]:
     return kind, cost, notes
 
 
+_PARKING_TERM_PRICE = re.compile(r"(?P<quote>[^\n.;|]{0,40}?\b(?:parking|garage|carport|permits?|spots?|spaces?)\b[^\n.;|$]{0,40}?\$[ \t]?(?P<n>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?P<tail>[ \t]*(?:/[ \t]*\w+|(?:per|a|each|every|for[ \t]+(?:the|a|each|one))[ \t]+(?:school[ \t]+|academic[ \t]+)?\w+|semesterly|quarterly)))", re.I)
+
+
+def _parking_term_notes(text: str) -> list[str]:
+    """Cycle 36: "Street parking permits $120 per semester" is a price for part of a year. It is not saved as a monthly parking cost (a semester is not a month, and the listing does
+    not say how many months it covers), so one plain note quotes it and says to ask what a month comes to. A quarter is three months and is converted elsewhere."""
+    notes: list[str] = []
+    seen: set[str] = set()
+    for m in _PARKING_TERM_PRICE.finditer(text):
+        tail = m.group("tail")
+        if not _PARKING_TERM_AFTER.match(tail) or _PARKING_QUARTER_AFTER.match(tail):
+            continue
+        quote = " ".join(m.group("quote").split()).strip(" ,:-")
+        if quote in seen:
+            continue
+        seen.add(quote)
+        notes.append(f'The listing says "{quote}". That price is for a semester or other part of a year, not for a month, so no monthly parking cost is saved. '
+                     "Ask how many months it covers and whether you need one.")
+    return notes
+
+
 def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[str]]:
     either = _parking_either_priced(low)
     if either:
@@ -4164,7 +4236,9 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
     for value, optional, clause, unit in prices:
         if optional:
             what = _parking_what(clause)
-            if unit == "year":
+            if unit == "quarter":
+                notes.append(f"{_a(what)} is available for ${value * 3:,.0f} a quarter. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
+            elif unit == "year":
                 notes.append(f"{_a(what)} is available for ${value * 12:,.0f} a year. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
             else:
                 notes.append(f"{_a(what)} is available for ${value:,.0f} a month. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
@@ -4180,6 +4254,7 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
                 if re.search(r"\bgarage\b", what):
                     opt_garage.append(what)
             rest = rest.replace(clause, " ")
+    notes.extend(_parking_term_notes(text))
     required = [v for v, o, _c, _u in prices if not o]
     kind, cost = _parking_kind_cost(rest, required[0] if required else None)
     if opt_garage and not kind and not prices and cost is None:
@@ -4190,7 +4265,9 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
     if cost is None and required:
         cost = required[0]
     for value, optional, _clause, unit in prices:
-        if not optional and value == required[0] and unit == "year":
+        if not optional and value == required[0] and unit == "quarter":
+            notes.append(f"The listing gives the parking as ${value * 3:,.0f} a quarter, so ${value:,.2f} a month is counted. Check that the quarterly amount is right.")
+        elif not optional and value == required[0] and unit == "year":
             notes.append(f"The listing gives the parking as ${value * 12:,.0f} a year, so ${value:,.2f} a month is counted. Check that the yearly amount is right.")
         elif not optional and value == required[0] and unit == "each":
             notes.append(f"The listing says the parking is required at that price for each space, so ${value:,.0f} a month (all the spaces) is counted.")
@@ -5898,6 +5975,44 @@ def _best_case_deposit(text: str) -> tuple[float | None, str]:
         if m:
             return _num(m.group(1)), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
     return None, text
+
+
+_WAIVE_COND = r"(?:with|for|upon|on|w/|if|when|given|subject[ \t]+to)[ \t]+(?:an?[ \t]+)?(?:approved|good|qualifying|qualified|excellent|great|strong|passing)[ \t]+(?:credit|approval)|(?:with|upon|subject[ \t]+to)[ \t]+credit[ \t]+approval|o\.?a\.?c\.?\b|if[ \t]+(?:you[ \t]+)?(?:qualify|(?:are|get)[ \t]+approved)"
+_WAIVE_AMT = r"\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d+(?:\.\d\d)?)(?!\d|,\d)"
+_WAIVABLE_DEPOSIT = (
+    # "No security deposit with approved credit, otherwise $1,000"
+    re.compile(r"\b(?:no|zero|\$0|waived|waive[ds]?|without(?:[ \t]+a)?)[ \t]+(?:security[ \t]+|sec\.?[ \t]+)?deposits?[ \t]*(?:" + _WAIVE_COND + r")[ \t]*[,;:.()\-\u2013\u2014]*[ \t]*(?:otherwise|else|or[ \t]+else|if[ \t]+not|if[ \t]+(?:your|the)[ \t]+credit[ \t]+(?:is[ \t]+not|isn'?t)[ \t]+[a-z ]{0,20}|for[ \t]+(?:everyone|others|all[ \t]+others|other[ \t]+applicants|the[ \t]+rest)|other\s*wise)[ \t]*[,:]?[ \t]*(?:it(?:'s|[ \t]+is)[ \t]+|the[ \t]+deposit[ \t]+is[ \t]+|deposit[ \t]+(?:is[ \t]+)?|then[ \t]+)?" + _WAIVE_AMT, re.I),
+    # "Security deposit waived with approved credit, otherwise $1,000"
+    re.compile(r"\b(?:security[ \t]+|sec\.?[ \t]+)?deposits?[ \t]+(?:is[ \t]+)?(?:waived|waivable|can[ \t]+be[ \t]+waived|may[ \t]+be[ \t]+waived|not[ \t]+required|zero|\$0)[ \t]*(?:" + _WAIVE_COND + r")[ \t]*[,;:.()\-\u2013\u2014]*[ \t]*(?:otherwise|else|if[ \t]+not|for[ \t]+(?:everyone|others|all[ \t]+others|other[ \t]+applicants))[ \t]*[,:]?[ \t]*(?:it(?:'s|[ \t]+is)[ \t]+|the[ \t]+deposit[ \t]+is[ \t]+|deposit[ \t]+(?:is[ \t]+)?|then[ \t]+)?" + _WAIVE_AMT, re.I),
+    # "Deposit $1,000, waived with approved credit" / "$1,000 deposit (waived for good credit)"
+    re.compile(_WAIVE_AMT + r"[ \t]*(?:security[ \t]+)?deposit[ \t]*[,;:.()\-\u2013\u2014]*[ \t]*(?:can[ \t]+be[ \t]+|may[ \t]+be[ \t]+|is[ \t]+|will[ \t]+be[ \t]+)?(?:waived|waivable|reduced|zero)[ \t]*(?:" + _WAIVE_COND + r")", re.I),
+    re.compile(r"\b(?:security[ \t]+|sec\.?[ \t]+)?deposits?[ \t]*(?:is[ \t]+|of[ \t]+|[:\-=][ \t]*)?" + _WAIVE_AMT + r"[ \t]*[,;:.()\-\u2013\u2014]*[ \t]*(?:can[ \t]+be[ \t]+|may[ \t]+be[ \t]+|is[ \t]+|will[ \t]+be[ \t]+)?(?:waived|waivable|reduced|zero)[ \t]*(?:" + _WAIVE_COND + r")", re.I),
+)
+
+
+def _waivable_deposit(text: str) -> tuple[float, str] | None:
+    """Cycle 36: "No security deposit with approved credit, otherwise $1,000" never means a $0 deposit for everyone. The deposit the listing gives for a renter without
+    the good credit is the one to plan for, saved with a note that it may be waived. Returns (amount, the quoted phrase) or None."""
+    for pat in _WAIVABLE_DEPOSIT:
+        m = pat.search(text)
+        if m:
+            amount = _num(m.group(1))
+            if 0 < amount <= 50000:
+                phrase = " ".join(m.group(0).split()).strip(" ,;")
+                if phrase.count("(") > phrase.count(")"):
+                    phrase += ")"
+                return amount, phrase
+    return None
+
+
+_WAIVE_NO_AMOUNT = re.compile(r"\b(?:(?:no|zero|\$0|without(?:[ \t]+a)?)[ \t]+(?:security[ \t]+|sec\.?[ \t]+)?deposits?|(?:security[ \t]+|sec\.?[ \t]+)?deposits?[ \t]+(?:is[ \t]+)?(?:waived|zero|\$0|not[ \t]+required))[ \t]*(?:" + _WAIVE_COND + r")(?![ \t]*[,;:.()\-\u2013\u2014]*[ \t]*(?:otherwise|else)\b)", re.I)
+
+
+def _waived_deposit_no_amount(text: str) -> str:
+    """Cycle 36: "No security deposit with approved credit." gives no deposit for anyone else. It is not a $0 deposit for every renter, so the deposit stays empty and
+    a note says what it said. Returns the quoted phrase or ""."""
+    m = _WAIVE_NO_AMOUNT.search(text)
+    return " ".join(m.group(0).split()).strip(" ,;") if m else ""
 
 
 _NONREF = r"(?:non[- ]?refundable|not[ \t]+refundable|isn'?t[ \t]+refundable|is[ \t]+not[ \t]+refundable|no[ \t]+refunds?|will[ \t]+not[ \t]+be[ \t]+refunded|not[ \t]+returned|non[- ]?returnable)"
@@ -13823,6 +13938,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append(f"The listing gives {'two' if len(vals_) == 2 else 'three' if len(vals_) == 3 else len(vals_)} different rents: {', '.join(vals_[:-1])} and {vals_[-1]}. The higher {_usd(hi)} is saved as the rent so the cost is not understated. "
                          "Ask which rent is right.")
     if not buying:
+        for n_ in _try(lambda: _roommate_share_notes(text, price_read)) or []:  # cycle 36: "that's about $1,017 each" is one share, said once
+            if n_ not in facts:
+                facts.append(n_)
         for n_ in _try(lambda: _rent_promo_split_notes(text, price_read)) or []:  # cycle 35: a promo total and a roommate split get one plain note, the rent is not changed
             if n_ not in facts:
                 facts.append(n_)
@@ -14090,6 +14208,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if bare:
             facts.append(f'The listing\'s line "{" ".join(bare.group(0).split())}" is saved as monthly pet rent (${float(out["pet_rent"]):,.0f} a month). '
                          "It only matters if you have a pet. Ask if it is for each pet.")
+    fee_text = _blank_set_commands(fee_text)  # cycle 36: "mark deposit $0" is an instruction, never the deposit
     side, dep_text = _try(lambda: _pet_side_deposits(fee_text, out.get("price") if isinstance(out.get("price"), (int, float)) else None)) or ({}, fee_text)
     for key, value in side.items():
         if key not in out and not (key == "pet_fee" and "pet_fee" in out):
@@ -14830,7 +14949,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 by_months, by_phrase = gm
         each_dep = _try(lambda: _deposit_each(text))
         dep_mult = None if dep else _try(lambda: _deposit_multiple(dep_src))
-        if dep:
+        waivable = None if _SALE_WORDS.search(text) else _try(lambda: _waivable_deposit(dep_src))
+        if waivable:  # cycle 36: "No security deposit with approved credit, otherwise $1,000" is $1,000 that may be waived, never $0
+            put("deposit", waivable[0])
+            facts.append(f'The listing says "{waivable[1]}". The deposit is saved as {_usd(waivable[0])}, which may be waived for a renter with approved credit. Ask whether it would be waived for you.')
+        elif dep:
             put("deposit", dep[0])
         elif each_dep and not _SALE_WORDS.search(text):
             put("deposit", each_dep)  # cycle 17: "first, last and security deposit ($2,800 each)"
@@ -14858,6 +14981,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append(f"The listing says the security deposit is {_months_words(by_months)} of rent, but the rent was not read, so the deposit is left empty. Fill it in once you know the rent.")
         elif (bare_sec := _try(lambda: _bare_security_amount(dep_src))) and not _SALE_WORDS.search(text):
             put("deposit", bare_sec)  # cycle 20: "first month + $3,100 security + $200 move-in fee"
+        elif (waived_noamt := (None if _SALE_WORDS.search(text) else _try(lambda: _waived_deposit_no_amount(dep_src)))):
+            facts.append(f'The listing says "{waived_noamt}" but gives no deposit for anyone else, so the deposit is left empty. Ask what the deposit is if your credit is not approved.')
         elif best_case is None and re.search(r"\b(?:no|zero|\$0) (?:security )?deposit|\bdeposit\s*[:\-]?\s*(?:\$0|none|waived|zero)\b", text, re.I):
             put("deposit", 0.0)
         elif nonref_dep and best_case is None and not cond_dep and not wired:
