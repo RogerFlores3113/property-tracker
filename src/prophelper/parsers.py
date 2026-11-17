@@ -733,7 +733,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     role = "hard"
                 if role is None and _GC_NEW_AFTER.match(after):
                     role = "soft"
-            was_paren = role is None and bool(_GC_WAS_PAREN.match(after))  # cycle 29: "HOA $350/mo (was $325)": the figure in front is the new one
+            was_paren = buying and role is None and bool(_GC_WAS_PAREN.match(after))  # cycle 29: "HOA $350/mo (was $325)": the figure in front is the new one
             if was_paren:
                 role = "soft"
             field: str | None = None
