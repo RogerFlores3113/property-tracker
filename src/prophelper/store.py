@@ -1850,6 +1850,23 @@ class Store:
             return f"Listing on {host}" if host else "Untitled place"
         return "Untitled place"
 
+    @staticmethod
+    def _utilities_source_note(existing: dict[str, Any], values: dict[str, Any], amount: Any) -> str:
+        """Cycle 34: a repeat paste (a correction) that fills an empty utilities estimate the pasted text itself gives ("Tenant pays electric about $75") keeps that
+        source on the place, because the saved listing text is still the first paste. Without it the amount would be called "a guess, not from the listing".
+        Returns the AI-notes text to save ("" when the pasted text does not give that amount)."""
+        try:
+            from . import parsers
+            new_text = str(values.get("listing_text") or "")
+            got = parsers.listing_billed_amount(new_text) if new_text else None
+            if got is None or abs(float(got) - float(amount)) >= 0.5:
+                return ""
+            line = f"Utilities estimate ${float(amount):,.0f}/month: from the listing."
+            old = str(existing.get("ai_notes") or "")
+            return line if not old else (old if line in old else old + "\n" + line)
+        except Exception:  # noqa: BLE001
+            return ""
+
     def _merge_into(self, existing: dict[str, Any], values: dict[str, Any], by: str) -> dict[str, Any]:
         """Fill only the empty fields of ``existing`` from ``values``. Returns the place."""
         filled: list[str] = []
@@ -1874,6 +1891,10 @@ class Store:
                 sets[key] = ((old + "\n") if old else "") + new
                 filled.append("AI notes")
         pid = existing["id"]
+        if "utilities_estimate" in sets and "ai_notes" not in sets:
+            sets["ai_notes"] = self._utilities_source_note(existing, values, sets["utilities_estimate"])
+            if not sets["ai_notes"]:
+                del sets["ai_notes"]
         if sets:
             sets["updated_at"] = now_iso()
             self._exec(f"UPDATE places SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?", (*sets.values(), pid))
