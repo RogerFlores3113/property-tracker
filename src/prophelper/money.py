@@ -590,6 +590,13 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
         if any(abs(amount - a2) < 0.005 for _n, a2 in addl_paid):
             continue
         parts.append({"label": "Closing item on top of the closing costs" + ("" if what == "an extra amount" else f" ({what})"), "amount": _r(amount), "estimated": False})
+    try:  # cycle 34: "Origination fee 1% of loan" is a one-time lender fee: named as left out with what it comes to on this loan, never a monthly gap
+        from .parsers import listing_origination_percent
+        loan_now = price - down
+        for pct, _quote in listing_origination_percent(str(place.get("listing_text") or "")):
+            left_out.append(f"a lender fee of {pct:g}% of the loan (about {_dollars(loan_now * pct / 100)} on this loan) isn't added, because it is usually part of the closing costs. Ask whether the closing costs include it")
+    except Exception:  # the listing text is only a hint
+        pass
     sa = num(place.get("special_assessment"))
     payer = _assessment_payer_of(place)
     if sa and payer == "buyer":
@@ -1424,6 +1431,15 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     left_units = [u for u in note_units(place.get("reader_notes"))
                   if mode == "buy" and ONE_TIME_NOTE.search(u) and re.search(r"not counted|not saved|not used|not in the monthly cost", u, re.I) and re.search(r"\$\s?\d", u)
                   and not _note_is_stale(u, place) and not _COUNTED_OR_NOT_A_COST.search(u)]
+    cash_now = out.get("cash_to_close") or {}
+    if left_units and mode == "buy":
+        # cycle 34 (bb): a one-time amount the cash to close counts (a part) or names as left out is settled there, so it never marks the monthly cost incomplete
+        held = {round(abs(float(p_.get("amount") or 0)), 2) for p_ in cash_now.get("parts") or []}
+        said = " ".join(str(x) for x in cash_now.get("left_out") or [])
+        def _settled(unit: str) -> bool:
+            figs = [round(float(f.replace("$", "").replace(",", "").strip()), 2) for f in re.findall(r"\$\s?\d[\d,]*(?:\.\d\d)?", unit)]
+            return bool(figs) and all(f in held or re.search(r"\$\s?" + re.escape(f"{f:,.0f}") + r"(?!\d)", said) for f in figs)
+        left_units = [u for u in left_units if not _settled(u)]
     one_time_left = bool(left_units)
     if left_units:
         out["one_time_left"] = [a for a in dict.fromkeys(re.findall(r"\$\s?\d[\d,]*(?:\.\d\d)?", " ".join(left_units)))]  # cycle 31: the amounts a buyer one-time note leaves out, so "not all in" can name them

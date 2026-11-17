@@ -761,7 +761,7 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
     priced = [p for p in places if p["cost_total"] is not None]
     eligible = [p for p in priced if not _ineligible(p, True) and _fits(p)]  # only places that fully fit; a near miss never wins
     base = [p for p in eligible if not over_limit_text(p)] or eligible
-    complete = [p for p in base if not _uncounted(p)]
+    complete = [p for p in base if not _uncounted(p) and not cost_incomplete(p)]  # cycle 34: the one completeness check, so a place shown as "not complete" never wins the lowest cost
     pool = complete or base
     out: dict[str, Any] = {"winners": [], "amount": None, "same": False, "all_unknown": bool(pool) and not complete and len(priced) > 1,
                            "of_fit": len(eligible) < len(priced),
@@ -808,6 +808,13 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
     sa = num(p.get("special_assessment"))
     if sa is None:
         if re.search(r"\bspecial\b[^.\n]{0,60}\bassessments?\b|\bassessments?\b[^.\n]{0,60}\bspecial\b", str(p.get("listing_text") or ""), re.I):
+            try:  # cycle 34: a seller-paid assessment quoted per month or over months has no one-time amount to enter, and it is not the buyer's cost
+                from .parsers import _special_assessment_facts
+                _amt, who, _sent = _special_assessment_facts(str(p.get("listing_text") or ""), True)
+            except Exception:  # the listing text is only a hint
+                who = ""
+            if who == "seller":
+                return _cell("Paid by the seller (not your cost)", 0.0)
             cell = _cell("Mentioned in the listing, amount not entered")
             cell["incomplete"] = True
             return cell

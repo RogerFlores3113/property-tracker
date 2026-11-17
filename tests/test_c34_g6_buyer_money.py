@@ -76,3 +76,84 @@ def test_real_buyer_seller_split_still_halves(line):
     out = read(BASE + line)
     assert out["other_monthly_fees"] == 250
     assert "Your half is $9,000" in notes(out)
+
+
+# ---- shared helpers for the cost checks
+HOA_TAX = "HOA $200/month. Taxes $3,600/yr. Insurance $900/yr. "
+
+
+def cost_of(text_, down=15, current=None):
+    out = parse_listing(text_, buying=True, current=current)
+    place = {**out, "listing_text": text_, "reader_notes": out.get("found_in_listing", "")}
+    if current:
+        place.update(current)
+    cost = money.true_monthly_cost(place, "buy", {"down_payment_pct": str(down)})
+    return out, place, cost
+
+
+# ---- item 2 (l37): an escrow deposit is a one-time amount, never the insurance; HOI is the insurance
+@pytest.mark.parametrize("line", [
+    "HOI $700 per year. Escrow deposit for taxes and insurance $1,900 due at closing.",
+    "Escrow deposit for taxes and insurance $1,900 due at closing. HOI $700 per year.",
+    "Insurance (HOI): $700/yr. At closing, buyer funds an escrow deposit for taxes and insurance of $1,900.",
+    "HOI $700 per year\nEscrow deposit for taxes and insurance: $1,900 due at closing",
+    "Escrow deposit for taxes and insurance, $1,900, due at closing | HOI $700 per year",
+    "HOI $700 per year; initial escrow deposit $1,900 (taxes and insurance) due at closing",
+    "Homeowners insurance $700 a year. Buyer pays escrow deposit for taxes and insurance, $1,900, at closing.",
+])
+def test_escrow_deposit_is_one_time_and_hoi_is_the_insurance(line):
+    out, place, cash = full(BASE + "HOA $255/mo. " + line)
+    assert out["insurance"] == 700
+    assert 1900 in [p["amount"] for p in cash["parts"] if "escrow" in p["label"]]
+    assert "HOI $700" not in notes(out) or "not counted anywhere" not in notes(out)
+    assert "$1,900 a year" not in notes(out)
+
+
+def test_l37_whole_listing():
+    t = fixture("r33-buyer-l37.txt")
+    out, place, cost = cost_of(t)
+    assert out["insurance"] == 700 and out["hoa"] == 255 and out["property_tax"] == 3800
+    cash = cost["cash_to_close"]
+    assert 1900 in [p["amount"] for p in cash["parts"] if "escrow deposit" in p["label"]]
+    assert cost["pmi"] == 0 and "set to $0" in notes(out)
+    assert "HOI" not in notes(out) and cost["all_in"] is True
+    assert [l["amount"] for l in cost["lines"] if l["key"] == "insurance"] == [pytest.approx(700 / 12, abs=0.01)]
+
+
+@pytest.mark.parametrize("line", [
+    "Homeowners insurance $58 a month. Escrow account for taxes and insurance is required.",
+    "Insurance included in your loan escrow $70 per month.",
+])
+def test_insurance_negatives_keep_the_monthly_figure(line):
+    out = read(BASE + "HOA $200/mo. " + line)
+    assert out["insurance"] in (696, 840)
+
+
+def test_escrow_deposit_alone_leaves_insurance_empty():
+    out = read(BASE + "HOA $200/mo. Escrow deposit for taxes and insurance $1,900 due at closing.")
+    assert out.get("insurance") in (None, "") and out.get("deposit") in (None, "")
+
+
+# ---- item 2: PMI $0 with a VA loan
+@pytest.mark.parametrize("line", [
+    "Mortgage insurance: $0 with VA loan.",
+    "Great price. PMI: $0 (VA loan). Seller motivated.",
+    "Mortgage insurance $0 for VA buyers",
+    "$0 mortgage insurance with a VA loan",
+    "Mortgage insurance: $0 with VA loan\nClose in 30 days",
+    "PMI $0/mo with a VA loan | HOA $200/mo",
+])
+def test_pmi_zero_with_a_note(line):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert cost["pmi"] == 0
+    assert "set to $0" in notes(out) and "only true for the loan the listing names" in notes(out)
+
+
+@pytest.mark.parametrize("line", [
+    "Mortgage insurance premium is $0.55% of loan annually.",
+    "PMI $0 if you put 20% down.",
+    "PMI about $120/mo",
+])
+def test_pmi_not_zero_negatives(line):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert cost["pmi"] != 0 and "set to $0" not in notes(out)
