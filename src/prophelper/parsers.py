@@ -8731,7 +8731,8 @@ _ES_WORDS = (
     (r"\bservicios[ \t]+no[ \t]+(?:est[\u00e1a]n[ \t]+)?incluid[oa]s\b", "Utilities not included"),
     (r"\bservicios[ \t]+(?:est[\u00e1a]n[ \t]+)?incluid[oa]s\b", "Utilities included"),
     (r"\b(?:el[ \t]+|la[ \t]+)?(?:inquilinos?|arrendatario)[ \t]+(?:paga|pagan|pagar[\u00e1a]n?)\b", "Tenant pays"),
-    (r"\b(?:a[ \t]+cargo[ \t]+del|pagado[ \t]+por[ \t]+el|paga[ \t]+el)[ \t]+inquilino\b", "paid by tenant"),
+    (r"\b(?:a[ \t]+cargo[ \t]+del|pagad[oa]s?[ \t]+por[ \t]+el|paga[ \t]+el|por[ \t]+cuenta[ \t]+del|por[ \t]+parte[ \t]+del|de[ \t]+parte[ \t]+del|por[ \t]+el|corre[ \t]+por[ \t]+cuenta[ \t]+del)[ \t]+(?:inquilinos?|arrendatario)\b", "paid by tenant"),
+    (r"\b(?:a[ \t]+cargo[ \t]+del|pagad[oa]s?[ \t]+por[ \t]+el|por[ \t]+cuenta[ \t]+del|por[ \t]+parte[ \t]+del|de[ \t]+parte[ \t]+del|por[ \t]+el)[ \t]+(?:propietario|due[\u00f1n]o|arrendador|casero)\b", "paid by landlord"),
     (r"\b(?:el[ \t]+|la[ \t]+)?(?:propietario|due[\u00f1n]o|arrendador|casero)[ \t]+(?:paga|pagan|cubre|incluye)\b", "Landlord pays"),
     (r"\bno[ \t]+incluid[oa]s?\b", "not included"),
     (r"\bincluid[oa]s?\b", "included"),
@@ -8744,16 +8745,24 @@ _ES_WORDS = (
 )
 
 
+_ES_NAMES_ONLY = re.compile(r"[ \t\u2022*\-]*(?:(?:luz|agua|gas|basura|electricidad|calefacci[\u00f3o]n|alcantarillado|drenaje|water|sewer|trash|electric|heat)[ \t]*(?:,|/|&|\+|\by\b|\band\b)?[ \t]*)+(?<=[a-z\u00f3])(?=[ \t]*$)[ \t]*", re.I)
+_ES_EN_PAYER = re.compile(r"\b(?:tenants?|residents?|renters?|you|landlord|owner|included|pays?|paid)\b", re.I)
+
+
 def _spanish_utilities(text: str) -> str:
     """Cycle 34: "Servicios no incluidos, el inquilino paga luz y gas" and "agua incluida" are read like their English words. Only a sentence that holds a Spanish
     utility cue (inquilino, servicios, incluido, propietario) is changed, and only for the pay words and the utility names, never the rest of the listing."""
-    if not _ES_UTIL_CUE.search(text) or not re.search(r"\b(?:luz|agua|gas|basura|electricidad|servicios|calefacci[\u00f3o]n|alcantarillado|drenaje)\b", text, re.I):
+    if not (_ES_UTIL_CUE.search(text) or re.search(r"\bluz[ \t]*(?:y|,|/|&)|(?:y|,|/|&)[ \t]*luz\b|\b(?:pays?|paid|included)[ \t:]+(?:luz|agua|basura)\b|^[ \t\u2022*\-]*luz[ \t]*$", text, re.I | re.M)) \
+            or not re.search(r"\b(?:luz|agua|gas|basura|electricidad|servicios|calefacci[\u00f3o]n|alcantarillado|drenaje)\b", text, re.I):
         return text
 
     def clause(m: re.Match[str]) -> str:
         c = m.group(0)
         if not re.search(r"\b(?:inquilinos?|arrendatario|servicios|incluid[oa]s?|propietario|due[\u00f1n]o|arrendador|casero)\b", c, re.I) \
-                or not re.search(r"\b(?:luz|agua|gas|basura|electricidad|servicios|calefacci[\u00f3o]n|alcantarillado|drenaje)\b", c, re.I):
+                and not (_ES_EN_PAYER.search(c) and re.search(r"\b(?:luz|agua|basura|electricidad)\b", c, re.I)) \
+                and not _ES_NAMES_ONLY.fullmatch(c):  # cycle 35: "Tenant pays luz y gas" is English with a Spanish name; a bare line "luz y gas" under "Tenant pays"
+            return c
+        if not re.search(r"\b(?:luz|agua|gas|basura|electricidad|servicios|calefacci[\u00f3o]n|alcantarillado|drenaje)\b", c, re.I):
             return c
         for pat, word in _ES_WORDS:
             c = re.sub(pat, word, c, flags=re.I)
