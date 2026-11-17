@@ -471,6 +471,8 @@ def _fit_text(e: dict[str, Any]) -> str:
     """'Fit: Near miss ($51 over because ...)' / 'Fit: Fits, but check (reason)': the one shared fit state."""
     s = e["score"]
     fit = s.get("fit", "fits")
+    if fit == "fits" and compare_mod.ai_text_only(e) and not s.get("rent_check"):
+        return "Fit: " + compare_mod.AI_TEXT_FIT  # cycle 31: never a plain "Fit: Yes" beside text aimed at AI tools
     if fit == "fits" and not s.get("concerns"):
         notes = s.get("notes") or []
         # a nice-to-have a little over its limit (a commute of 24 min against 20) is named here, not only in the score reason
@@ -1660,7 +1662,7 @@ def build_server(store: Store) -> FastMCP:
         elif lc["no_fit"]:
             lines.append(compare_mod.no_fit_sentence(es))
         for e, why in lc["over_limit"]:
-            lines.append(f"#{e['id']} is cheapest, but {why}.")
+            lines.append(f"#{e['id']} is cheapest, but {why}{compare_mod._leaves_out_clause(e)}.")
         if not tail:
             lines.extend(compare_mod.skipped_unknown_sentences(lc, ref))
         priced_ = [e for e in compare_mod._live(es) if e["cost_total"] is not None]
