@@ -6994,6 +6994,9 @@ def listing_billed_names(text: str) -> list[str]:
                 # an amount that names no utility: assume water, sewer and trash, minus anything named as tenant-paid elsewhere
                 utext = _util_text(_tidy(text or ""))
                 paid = set(_utility_roles(utext)["tenant"]) | set(w.strip() for w in _tenant_pays(utext).split(",")) | set(_util_sections(utext)["pays"])
+                paid.discard("")
+                if paid and re.search(r"Utilities estimate \$" + re.escape(f"{billed[1]:g}") + r"/month\.", utext):
+                    return [w for w in _ALL_UTILITIES if w in paid and w != "cable"]  # cycle 31: "Typical total utilities for the unit about $95" covers what the tenant pays
                 names = [w for w in ("water", "sewer", "trash") if w not in paid]
             return names
         roles_b = _utility_roles(_util_text(_tidy(text or "")))
@@ -7556,6 +7559,9 @@ def _util_general(text: str, pipes: bool = False) -> dict[str, Any] | None:
                 def tight(ps: list[tuple[tuple, tuple]]) -> int:
                     return sum(abs(max(a[0], b[0]) - min(a[1], b[1])) for a, b in ps)
                 pairs = amount_first if (len(amount_first), -tight(amount_first)) > (len(name_first), -tight(name_first)) else name_first
+                if pairs is amount_first and len(name_first) >= len(amount_first) and any(
+                        re.match(r"^[ \t]*\([ \t]*(?:(?:about|around|approx\w*\.?|est\w*\.?|~|roughly|avg\.?|average|typically|typical)[ \t]*)*$", seg[a[1]:b[0]]) and re.match(r"^[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*\)", seg[b[1]:]) for a, b in name_first):
+                    pairs = name_first  # cycle 31: "electric ($65), water/sewer flat $40, internet": a figure in brackets right after a name is that name's, not the next name's
                 other_pairs = name_first if pairs is amount_first else amount_first
                 for op in other_pairs:  # "elec + gas (avg $155 total) + $22 sewer": the figure before a name still belongs to it
                     if not any(op[0] is p[0] or op[1] is p[1] for p in pairs):
@@ -8356,7 +8362,7 @@ def _standalone_estimates(text: str) -> str:
     """Cycle 29: a sentence that is only an estimate ("Typical total $115", "Typical bills run about $150 monthly for everyone here", "Estimated $110 per month",
     "Estimated electric+gas $120") right after a line that says what the tenant pays is that line's utilities estimate. It is written as
     "Utilities estimate $X/month." (or "Estimated $X/month for NAMES.") so the estimate readers see one plain form."""
-    segs = re.split(r"(?<=[.!?])([ \t]+)|(\n)", text)
+    segs = re.split(r"(?<=[.!?;])([ \t]+)|(\n)", text)  # cycle 31: a semicolon ends a piece too ("Tenant pays electric and gas; typical bills for the unit about $165.")
     # re.split keeps the separators; rebuild pieces as (text, separator) pairs
     pieces: list[tuple[str, str]] = []
     cur = ""
@@ -8382,13 +8388,21 @@ def _standalone_estimates(text: str) -> str:
     for k, (seg, sep) in enumerate(pieces):
         if "$" not in seg or len(seg) > 90 or not _SE_SENTENCE.match(seg) or _SE_NOT.search(seg):
             continue
+        if k and pieces[k - 1][0].rstrip().endswith(";") and not re.search(r"\b(?:bills?|utilit)", seg, re.I):
+            continue  # cycle 31: after a semicolon only "typical bills for the unit about $165" is read here; "; estimate $140 total" keeps the older reading
         prev = " ".join(p[0] for p in pieces[max(0, k - 2):k])
         if not _SE_PAYER.search(prev) and re.search(r"\ball utilities included except\b", prev, re.I):
             prev = "Tenant pays " + prev  # cycle 30: "Everything but electric included. Typical total bills for the unit about $140/mo." the figure is for what the tenant pays
         if not _SE_PAYER.search(prev) or not re.search(_ROLE_ITEM + r"|\butilit", prev, re.I) or re.search(r"\$[ \t]?\d", pieces[k - 1][0] if k else ""):
             # cycle 30: the estimate may come first ("Typical bills for the unit run about $140/mo. Tenant pays electric and gas.")
-            nxt = pieces[k + 1][0] if k + 1 < len(pieces) else ""
-            if not (re.match(r"[ \t]*Tenant pays\b", nxt) and "$" not in nxt and re.search(r"\b(?:bills?|total|utilit)", seg, re.I)):
+            nxt = ""
+            for _p in pieces[k + 1:k + 4]:  # cycle 31: "Typical bills for the unit about $140. Gas and water included. Resident pays electric and internet."
+                if re.match(r"[ \t]*(?:Tenants?|Residents?|Renters?)[ \t]+pays?\b", _p[0]):
+                    nxt = _p[0]
+                    break
+                if not re.search(r"\bincluded\b", _p[0], re.I) or "$" in _p[0]:
+                    break
+            if not (nxt and "$" not in nxt and re.search(r"\b(?:bills?|total|utilit)", seg, re.I)):
                 continue
         if re.search(r"\butilit", prev, re.I) and not re.search(r"\bbilled[ \t-]*back\b|\bflat\b|\bpackage\b|\brubs\b", text, re.I) and _UTIL_NEXT_AMOUNT.match(re.sub(r"^[-*\u2022\u2013\u2014][ \t]+", "", seg)):
             continue  # "Tenant pays all utilities. Approx $180/month." is read by the older step
@@ -11144,6 +11158,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         pays = _ordered_utilities([w.strip() for w in (pays + ", " + ", ".join(through)).split(",") if w.strip()])
     pays_pre, included_pre, n_facts_pre = pays, included, len(facts)  # cycle 18: what the words alone said, before any figure moved a utility
     billed = _try(lambda: _billed_back(utext))
+    if billed and not billed[0] and pays and re.search(r"Utilities estimate \$" + re.escape(f"{billed[1]:g}") + r"/month\.", utext):
+        billed = None  # cycle 31: "...resident pays electric and gas. Typical total utilities for the unit about $95. Utilities are billed back by a third party.": the figure is the estimate for what the tenant pays
     flat = _try(lambda: _flat_util_fee(utext))
     counted: set[str] = set()  # the utilities the estimate counted so far (cycle 17: the figures for the others are added after)
     base_kind = ""
@@ -11250,9 +11266,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 put("utilities_estimate", plan["amount"])
                 facts.append(f"{_join_names(names.split(', ')).capitalize()} {_util_verb(names)} about {_money_cents(plan['amount'])} a month from the listing, counted as your utilities estimate.")
                 really = _try(lambda: _really_included(utext, plan["amount"], moved)) if moved else []
-                if really:
+                merged_dropped = bool(really and plan["dropped"] and all(d["names"] and set(d["names"]) == set(names.split(", ")) for d in plan["dropped"]))
+                if merged_dropped:
+                    # cycle 31: "Electric included. Electric about $55 a month. Electric around $60.": one plain note, not three
+                    figs = sorted({d["amount"] for d in plan["dropped"]} | {plan["amount"]})
+                    facts.append(f"The listing says {_join_names(really)} {_util_verb(', '.join(really))} included, but it also gives {_join_names(names.split(', '))} at "
+                                 f"{_join_names([_money_cents(x) + ' a month' for x in figs])}. {_join_names(names.split(', ')).capitalize()} {_util_verb(names)} left as something you pay, "
+                                 f"and the higher figure, {_money_cents(plan['amount'])}, is counted. Ask the landlord which is right.")
+                elif really:
                     facts.append(f"The listing also says {_join_names(really)} {_util_verb(', '.join(really))} included, but it gives you a monthly amount for it, so it is not counted as included.")
-            for d in plan["dropped"]:
+            for d in ([] if (plan["total"] is False and locals().get("merged_dropped")) else plan["dropped"]):
                 what = _join_names(d["names"]) if d["names"] else "utilities"
                 facts.append(f"The listing also gives {what} at about {_money_cents(d['amount'])} a month. Only the figure that covers more or is higher, {_money_cents(plan['amount'])}, is counted.")
     if "utilities_estimate" not in out:
@@ -11325,7 +11348,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if dup_i is not None:
             facts[rubs_i:rubs_i + 1] = []  # one note, not two: the figure the listing gives answers the "no amount" note
             facts[dup_i - 1] = (f"The listing says utilities are billed back to you (RUBS), about {_money_cents(out['utilities_estimate'])}/month, counted as your utilities estimate. "
-                                + (f"It is for the utilities you pay: {_join_names([w.strip() for w in pays.split(',') if w.strip()])}." if pays and included != "all" and re.search(r"Estimated? \$|Utilities estimate \$", utext) and re.search(r"\btenants?\b[^.\n]{0,15}\bpays?\b", utext, re.I) else "It does not say which utilities you pay, so ask."))
+                                + (f"It is for the utilities you pay: {_join_names([w.strip() for w in pays.split(',') if w.strip() and w.strip() != 'cable'])}." if pays and included != "all" and re.search(r"Estimated? \$|Utilities estimate \$", utext) and re.search(r"\b(?:tenants?|residents?|renters?)\b[^.\n]{0,15}\bpays?\b", utext, re.I) else "It does not say which utilities you pay, so ask."))
     if every is None and re.search(r"\bcable\b", utext, re.I) and not any("Cable is" in f for f in facts):
         if re.search(r"\bcable\b[^.\n;]{0,25}\b(?:extra|separate|not included|tenant|resident|you|paid|additional)\b|\b(?:extra|separate|not included|tenant|resident|you pay|excluding|except|plus)\b[^.\n;]{0,25}\bcable\b", utext, re.I):
             facts.append("Cable is not included. Cable is TV, not internet, so internet is left blank. Ask whether internet is included.")
