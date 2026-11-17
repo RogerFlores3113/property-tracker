@@ -163,7 +163,7 @@ def cost_unsettled(place: dict[str, Any]) -> str:
         parts.append("utilities")
     if any(u.startswith("parking") for u in unc):
         parts.append("parking")
-    if any(l.get("key") == "pet_rent" and l.get("unset") and not l.get("not_counted") for l in cost.get("lines") or []):
+    if compare.pet_rent_unset(place):
         parts.append("pet rent")
     if len(parts) >= 2:
         return f"{_join(parts)} are not counted yet"
@@ -440,7 +440,7 @@ def unknown_cost_parts(place: dict[str, Any]) -> list[str]:
             continue  # a bare "utilities" nobody said the tenant pays is no cost part to ask about
         if name and name not in out:
             out.append(name)
-    if cost.get("mode") != "buy" and any(l.get("key") == "pet_rent" and l.get("unset") and not l.get("not_counted") for l in cost.get("lines") or []):
+    if cost.get("mode") != "buy" and compare.pet_rent_unset(place) and not any(x.startswith("pet") for x in out):
         out.append("pet rent")
     return out
 
@@ -626,7 +626,10 @@ def new_places(store: Store, search: dict[str, Any]) -> list[dict[str, Any]]:
     if not unseen:
         return []
     rows = enrich.enrich_places(store, search, unseen)
-    out = [p for p in rows if not fails_dealbreakers(p) and not possible_scam(p) and not ai_text_only(p)]
+    # cycle 30: a place that already shows under Check first because of a scam hint is not listed here too. A very low rent stays here with its
+    # warning (that is what this list is for, see below), even when the low-price hint is its only flag.
+    out = [p for p in rows if not fails_dealbreakers(p) and not possible_scam(p) and not ai_text_only(p)
+           and (low_rent(p) or not redflags.scam_sign_flags(p.get("flags") or []))]
     for p in out:
         p["low_rent_note"] = low_rent(p)  # a very low rent stays visible here now that cost check leaves such places out
     return out
