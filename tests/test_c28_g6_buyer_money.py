@@ -87,7 +87,7 @@ def test_stated_title_items_are_inside_the_guess(line):
     parts = labels(cash)
     assert cash["total"] == 60000 + 9000  # the 3 percent guess only, the $1,900 is not added
     guess = [l for l in parts if l.startswith("Closing costs")]
-    assert len(guess) == 1 and "includes the $1,900 for title and recording" in guess[0]
+    assert len(guess) == 1 and "$1,900 for title and recording" in guess[0] and "only part of the closing costs and is not added on top" in guess[0]
     assert cash["has_estimate"]
     assert "closing_costs" not in out
     assert "not added on top" in out["found_in_listing"]

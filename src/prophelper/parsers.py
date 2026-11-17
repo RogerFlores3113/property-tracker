@@ -4763,7 +4763,7 @@ _CLOSE_BUYER_NOUN = (r"\bbuyer(?:'?s)?[ \t]+(?:(?:est\w*\.?|expected|total)[ \t]
 def _closing_costs(text: str) -> float | None:
     """"Estimated closing costs $9,800" -> 9800. What the seller pays ("Seller will pay $7,000 in closing costs", "seller-paid closing
     costs $5,000", "closing costs paid by seller") is a credit and never the buyer's closing costs, and neither is a seller's cap."""
-    pats = (r"\bclosing costs?(?:[ \t]*\((?:buyer'?s?|est\w*\.?)\)|[ \t]+for[ \t]+(?:the[ \t]+)?buyer(?:'?s)?|[ \t]+(?:runs?|totals?|comes?[ \t]+to)|[ \t]+(?:paid|due|payable|covered|owed)[ \t]+(?:by|from)[ \t]+(?:the[ \t]+)?buyer(?:'?s?)?|\s+(?:(?:are|is)\s+)?(?:est\w*\.?|estimate[d]?)(?:\s+(?:at|to be|of|around|about))?)?[ \t:\-=]{0,6}(?:(?:of|about|around|approx\.?|approximately|roughly|est\.?|at)[ \t]+|~[ \t]*)*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)",
+    pats = (r"\bclosing costs?(?:[ \t]*\((?:buyer'?s?|est\w*\.?)\)|[ \t]+for[ \t]+(?:the[ \t]+)?buyer(?:'?s)?|[ \t]+(?:runs?|totals?|comes?[ \t]+to)|[ \t]+(?:paid|due|payable|covered|owed)[ \t]+(?:by|from)[ \t]+(?:the[ \t]+)?buyer(?:'?s?)?|\s+(?:(?:are|is)\s+)?(?:est\w*\.?|estimate[d]?)(?:\s+(?:at|to be|of|around|about))?)?[ \t:\-=]{0,6}(?:(?:of|about|around|approx\.?|approximately|roughly|est\.?|at|are|is)[ \t]+|~[ \t]*)*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)",
             r"\bclosing[ \t]*(?::|is\b|runs?\b|around\b|about\b|approx\b\.?|roughly\b|~)[ \t]*(?:(?:around|about|approx\.?|roughly|is)[ \t]+|~[ \t]*)*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)",
             r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:in |for )?(?:est\w*\.?[ \t]+)?closing costs?\b",
             # cycle 22: "Buyer will need about $7,000 for closing"
@@ -4794,6 +4794,19 @@ _CLOSING_ITEM = re.compile(r"\b((?:title(?:[ \t]+(?:and|&)[ \t]+escrow)?|escrow|
                            r"[ \t:\-=(]{0,4}(?:(?:of|about|around|approx\.?|approximately|roughly|est\.?|estimated|at)[ \t]+|~[ \t]*)*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
 
+def _closing_items_parts(text: str) -> list[tuple[str, float]]:
+    """Cycle 30: the named closing parts _closing_items adds up, as (name, amount), when there are two or more and the listing does not say they are the total."""
+    parts: list[tuple[str, float]] = []
+    for sent in re.split(r"[.\n;](?!\d)", text):
+        if re.search(r"\bseller|\bcredit|\bconcession|\bcash[ \t]+(?:needed|to[ \t]+close)", sent, re.I):
+            continue
+        for m in _CLOSING_ITEM.finditer(sent):
+            name, amount = " ".join(m.group(1).lower().split()), _num(m.group(2))
+            if amount >= 50 and name not in [n for n, _a in parts]:
+                parts.append((name, amount))
+    return parts if len(parts) >= 2 and not _closing_parts_are_total(text) else []
+
+
 def _closing_items(text: str) -> tuple[float, str] | None:
     """Cycle 23: closing costs the listing gives in parts ("title and escrow about $2,100 plus lender fees about $3,200"): two or more named
     parts in one sentence are added up. Returns (the total, a plain phrase naming each part) or None. A sentence about the seller is skipped."""
@@ -4809,6 +4822,15 @@ def _closing_items(text: str) -> tuple[float, str] | None:
         total = round(sum(a for _n, a in parts), 2)
         return total, " plus ".join(f"{n} ${a:,.0f}" for n, a in parts)
     return None
+
+
+def _closing_parts_are_total(text: str) -> bool:
+    """Cycle 30: True when the listing says the named closing parts are the whole bill ("Total closing costs: lender fee $1,900 and appraisal $550",
+    "closing costs in all: ..."). Otherwise a sum of a few named parts is only part of the closing costs."""
+    for sent in re.split(r"[.\n;](?!\d)", text):
+        if _CLOSING_ITEM.search(sent) and re.search(r"\b(?:totals?|in[ \t]+all|all[- ]in|altogether|that'?s[ \t]+all|nothing[ \t]+else|only[ \t]+costs?)\b", sent, re.I):
+            return True
+    return False
 
 
 _EXTRA_MONTHLY_LABEL = (r"(?:capital[ \t]+(?:reserves?|improvements?)|reserves?|amenit(?:y|ies)|club[ \t]?house|master[ \t]+association|master[ \t]+assoc\.?|sinking[ \t]+fund|"
@@ -5166,7 +5188,7 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
             notes.append(f"The listing says parking is ${cost:,.0f}/month. The cost of buying does not count parking, so it is not counted anywhere. "
                          "Ask whether it is required, and add it to your own budget if it is.")
     fee = out.pop("move_in_fees", None)
-    counted_fees, unclear_fees = _try(lambda: buyer_one_time_fees(text)) or ([], [])
+    counted_fees, unclear_fees = _try(lambda: buyer_one_time_fees(text, out.get("special_assessment"), str(out.get("special_assessment_payer") or ""))) or ([], [])
     for label, amount in counted_fees:
         notes.append(f"The listing says the buyer pays the ${amount:,.0f} {label} at closing. It is counted in the cash to close as a one-time fee, not in the monthly cost. "
                      "Ask the seller's agent to confirm it.")
@@ -5174,7 +5196,7 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
     if len(stated) == 1:  # cycle 28: one stated item is never added on top of the closing costs (a guess or a figure already read)
         name, amount = stated[0]
         if out.get("closing_costs") in (None, ""):
-            notes.append(f"The listing says the buyer pays {name} about ${amount:,.0f}. The cash to close uses a guess for the whole closing costs, and the guess includes it, "
+            notes.append(f"The listing says the buyer pays {name} about ${amount:,.0f}. The cash to close uses a guess for the whole closing costs. This item is only part of them, "
                          "so it is not added on top. The rest of the closing costs is not known. Ask for the full closing cost estimate.")
     addl_paid, addl_unclear = _try(lambda: buyer_closing_items_additional(text)) or ([], [])
     for name, amount in addl_paid:
@@ -5182,6 +5204,10 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
                      "Ask the lender or title company to confirm it.")
     for name, amount in addl_unclear:
         notes.append(f"The listing says {name} {_money_c(amount)} is additional but does not say who pays it, so it is not counted in the cash to close. Ask who pays it.")
+    for what, amount in _try(lambda: buyer_closing_additional_unnamed(text)) or []:
+        if not any(abs(amount - a2) < 0.005 for _n, a2 in addl_paid):
+            notes.append(f"The listing says {_money_c(amount)}{' for ' + what if what != 'an extra amount' else ''} is additional to the closing costs. It is added on top of the closing costs and counted in the cash to close. "
+                         "Ask the lender or title company what it covers.")
     hoa_paid, hoa_unclear = _try(lambda: buyer_hoa_month_fees(text)) or ([], [])
     for label, months in hoa_paid:
         words = f"{months:g} month{'s' if months != 1 else ''} of HOA"
@@ -5245,12 +5271,16 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
 
 
 _BUYER_FEE_NAME = (r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contribution|charge))?|reserve(?:s)?(?:[ \t]+fund)?(?:[ \t]+(?:contribution|fee|deposit|payment))|"
-                   r"reserve[ \t]+fund|move[- ]in[ \t]+fee|initiation[ \t]+fee|working[ \t]+capital(?:[ \t]+(?:contribution|fee))?|capital[ \t]+contribution")
-_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:one[- ]time[ \t]+|new[ \t]+)?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
+                   r"reserve[ \t]+fund|move[- ]in[ \t]+fee|initiation[ \t]+fee|working[ \t]+capital(?:[ \t]+(?:contribution|fee))?|capital[ \t]+contribution|"
+                   # cycle 30: one-time buyer items at closing: a condo document fee, prepaid taxes and insurance, a move-in deposit to the association
+                   r"(?:(?:condo|hoa|association)[ \t]+)?(?:document|documents|docs?)[ \t]+fees?|"
+                   r"prepaids?[ \t]+(?:property[ \t]+)?(?:taxes|insurance|interest|items|escrow|homeowners'?[ \t]+insurance)(?:[ \t]*(?:,|and|&)[ \t]*(?:property[ \t]+)?(?:taxes|insurance|interest|homeowners'?[ \t]+insurance))*|"
+                   r"(?:(?:association|hoa|condo)[ \t]+)?move[- ]in[ \t]+deposit(?:[ \t]+(?:to|with|for)[ \t]+(?:the[ \t]+)?(?:association|hoa|condo[ \t]+association|building))?")
+_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+)?(?:one[- ]time[ \t]+|new[ \t]+)?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
                         r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,]|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
 
-def buyer_one_time_fees(text: str) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+def buyer_one_time_fees(text: str, sa_amount: Any = None, sa_payer: str = "") -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
     """Cycle 18: one-time fees on a home for sale that the buyer pays at closing ("Buyer to pay $2,400 capital improvement fee at closing",
     "$1,800 reserve fund contribution at closing", "Buyer pays $800 move-in fee to the association"). Returns (counted, unclear): counted
     when the sentence says the buyer pays or says at closing (and not the seller), unclear when no payer is named. A fee the seller pays,
@@ -5262,13 +5292,17 @@ def buyer_one_time_fees(text: str) -> tuple[list[tuple[str, float]], list[tuple[
         for m in _BUYER_FEE.finditer(sent):
             label = " ".join((m.group("n1") or m.group("n2")).lower().split())
             amount = _num(m.group(1) if m.group("n1") else m.group(m.lastindex))
-            if re.fullmatch(r"(?:working[ \t]+)?capital[ \t]+contributions?", label):
-                continue  # read with the special assessment (it is already in the cash to close)
+            if re.fullmatch(r"(?:working[ \t]+)?capital[ \t]+contributions?", label) and sa_payer == "buyer" and isinstance(sa_amount, (int, float)) and sa_amount >= amount - 0.005:
+                continue  # cycle 30: read with the special assessment the buyer pays (it is already in the cash to close); on its own it is counted here
             if (label, amount) in seen or not 50 <= amount <= 100000:
                 continue
             seen.add((label, amount))
             if _PAYER_SELLER.search(sent) and not _PAYER_BUYER.search(sent):
                 continue
+            if sent.count("(", 0, m.start()) > sent.count(")", 0, m.start()) and _try(lambda: _closing_costs(sent[:sent.rfind("(", 0, m.start())])):
+                continue
+            if re.search(r"\b(?:including|includes?|incl\.?|which[ \t]+covers?|covering|of[ \t]+which)\b", sent[:m.start()], re.I) and _try(lambda: _closing_costs(sent[:m.start()])):
+                continue  # "closing costs about $7,000, including a $350 condo document fee": inside the total  # cycle 30: "Buyer closing costs about $7,000 (title $1,600, lender $2,900, prepaid taxes $2,500)": a part of the stated total, never added again
             if _PAYER_BUYER.search(sent) or re.search(r"\bat[ \t]+closing\b|\bat[ \t]+settlement\b|\bdue[ \t]+at[ \t]+(?:closing|signing)\b", sent, re.I):
                 counted.append((label, amount))
             else:
@@ -5353,11 +5387,42 @@ def buyer_closing_items_additional(text: str) -> tuple[list[tuple[str, float]], 
             if amount < 50 or name in seen:
                 continue
             seen.add(name)
-            if _PAYER_BUYER.search(sent) or re.search(r"\bbuyer", sent, re.I):
+            if _PAYER_BUYER.search(sent) or re.search(r"\bbuyer|\bclosing[ \t]+costs?\b", sent, re.I):  # cycle 30: "Closing costs $4,000 plus an additional $1,200 for title" is the buyer's closing cost sentence
                 counted.append((name, amount))
             else:
                 unclear.append((name, amount))
     return counted, unclear
+
+
+_ADDL_UNNAMED = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)[ \t]*(?:(?:additional|extra|more)\b(?![ \t]+(?:per|each|a[ \t]+month|monthly))|(?:on[ \t]+top|in[ \t]+addition)\b)"
+                           r"|\b(?:additional|extra)(?:ly)?[ \t]*(?:of[ \t]+|:[ \t]*|-[ \t]*|\(|is[ \t]+)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)", re.I)
+
+
+def buyer_closing_additional_unnamed(text: str) -> list[tuple[str, float]]:
+    """Cycle 30: "Closing costs $4,000 plus $1,200 additional", "Closing costs: $4,000 (additional $1,200)", "Closing costs $4,000. Additional $1,200 for the
+    survey". An amount called additional that sits in (or right after) a sentence about the buyer's closing costs and names no item the other
+    readers know. Returns [(what it is for, amount)]. A seller's sentence, a credit and a monthly or yearly amount are left out."""
+    found: list[tuple[str, float]] = []
+    prev_closing = False
+    for sent in re.split(r"(?<!\d)\.|\.(?!\d)|[\n;]", text):
+        is_closing = bool(re.search(r"\bclosing[ \t]+(?:costs?|fees?|charges?)\b|\bcosts?[ \t]+(?:to|at)[ \t]+close\b", sent, re.I))
+        context = is_closing or (prev_closing and re.match(r"\s*(?:additional|extra|plus)\b", sent, re.I))
+        prev_closing = is_closing
+        if not context or re.search(r"\bseller|\bowner|\bcredit|\bconcession|\bwire\b|\bearnest|\bcash[ \t]+(?:needed|to[ \t]+close)|\bno[ \t]+additional|\bnot[ \t]+additional", sent, re.I):
+            continue
+        if _try(lambda: _ADDL_ITEM.search(sent)) and _ADDL_WORDS.search(sent):
+            continue  # a named item: buyer_closing_items_additional reads it
+        for m in _ADDL_UNNAMED.finditer(sent):
+            raw, cents = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            amount = _num(raw) + (int(cents) / 100 if cents else 0)
+            tail = sent[m.end():m.end() + 60]
+            if re.match(r"\s*(?:/|per\b|a[ \t]+(?:month|year)|monthly|annual|each\b)", tail, re.I) or amount < 50:
+                continue
+            what = re.match(r"[ \t]*(?:for|in|toward|towards)[ \t]+(?:the[ \t]+)?([A-Za-z][A-Za-z ,&'-]{2,40}?)(?=[ \t]*(?:[,.;)]|$|\band\b|\bplus\b))", tail, re.I)
+            label = " ".join(what.group(1).lower().split()) if what else "an extra amount"
+            if (label, amount) not in found:
+                found.append((label, amount))
+    return found
 
 
 _STATED_ITEM_NAME = r"(?:title|escrow|recording|attorney|settlement|survey|appraisal|lender|origination)"
@@ -11874,9 +11939,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if closing:
             put("closing_costs", closing)
         elif (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)) and (items := _try(lambda: _closing_items(text))):
-            put("closing_costs", items[0])
-            facts.append(f"The listing gives the closing costs in parts ({items[1]}). They are added up and saved as ${items[0]:,.0f} closing costs, used instead of a guess. "
-                         "Ask the lender for the full estimate, because other fees may be missing.")
+            price_now = out.get("price")
+            guess_now = price_now * 0.03 if isinstance(price_now, (int, float)) and price_now else None
+            if not _try(lambda: _closing_parts_are_total(text)) and (guess_now is None or items[0] < guess_now):
+                # cycle 30: a few named parts are not the whole bill. They never replace a larger guess (and with no price there is nothing to compare), so no closing cost is saved.
+                facts.append(f"The listing names some closing costs ({items[1]}, ${items[0]:,.0f} in all). That is only part of the closing costs, so it is not saved as the closing costs "
+                             "and the cash to close keeps its own estimate. Ask the lender for the full closing cost estimate.")
+            else:
+                put("closing_costs", items[0])
+                facts.append(f"The listing gives the closing costs in parts ({items[1]}). They are added up and saved as ${items[0]:,.0f} closing costs, used instead of a guess. "
+                             "Ask the lender for the full estimate, because other fees may be missing.")
         elif (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)) and (single := _try(lambda: _closing_single(text))):
             put("closing_costs", single[0])
             facts.append(f"The listing says \"{single[1]}\". It is read as the closing costs and saved as {_money_c(single[0])}, used instead of a guess. Ask the lender for the full estimate.")
@@ -11951,10 +12023,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                              + " Ask what the total monthly HOA and assessment is.")
                 hoa = None
             elif spec_items:
+                # cycle 30: a special assessment with an end is kept apart from the HOA (other monthly fees), so the HOA stays the HOA and the end is named
                 base = reg_amts[0]
-                hoa = round(base + sum(i["amount"] for i in spec_items), 2)
-                facts.append(f"The listing has a regular monthly assessment of ${base:,.0f} (the HOA) and a special assessment of {spec_words}. Both are added, so the HOA is saved as "
-                             f"${hoa:,.0f} a month. The special assessment is not forever: ask who pays it and when it ends.")
+                hoa = base
+                spec_total = round(sum(i["amount"] for i in spec_items), 2)
+                put("other_monthly_fees", round((out.get("other_monthly_fees") or 0) + spec_total, 2))
+                facts.append(f"The listing has a regular monthly assessment of ${base:,.0f} (the HOA) and a special assessment of {spec_words}. The special assessment is kept apart from the HOA "
+                             "and counted in the monthly cost as other monthly fees, because it is not forever. Ask who pays it and when it ends.")
             elif hoa is None:
                 hoa = reg_amts[0]
                 facts.append(f"The listing gives a monthly assessment of ${hoa:,.0f}, read as the regular monthly HOA.")
@@ -11965,12 +12040,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if not (hoa is not None and plain == amt_m and _try(lambda: _hoa(text)) is None):  # not when it was already read as the HOA itself
                 end_year = _try(lambda: _assessment_monthly_end(text)) or ""
                 length = f" through {end_year}" if end_year else (f" for {months_m} months (${amt_m * months_m:,.0f} in all)" if months_m else "")
-                base = hoa
-                hoa = round((base or 0) + amt_m, 2)
-                how = f"on top of the ${base:,.0f} HOA, so the HOA is saved as ${hoa:,.0f} a month" if base else f"so the HOA is saved as ${hoa:,.0f} a month"
+                # cycle 30: kept apart from the HOA (other monthly fees) with its end named, so the HOA is not overstated once it ends
+                put("other_monthly_fees", round((out.get("other_monthly_fees") or 0) + amt_m, 2))
+                how = f"It is kept apart from the ${hoa:,.0f} HOA and counted in the monthly cost as other monthly fees" if hoa else "It is counted in the monthly cost as other monthly fees, and the HOA is not changed"
+                ends = (f" It ends after {months_m} months, so the monthly cost drops by ${amt_m:,.0f} after that." if months_m
+                        else (f" It ends in {end_year}, so the monthly cost drops by ${amt_m:,.0f} after that." if end_year else " The listing does not say when it ends."))
                 facts[:] = [f for f in facts if not f.startswith("The listing mentions an assessment of")]
-                facts.append(f"The listing has a special assessment of ${amt_m:,.0f} a month{length}. It is added to the monthly cost, {how}. "
-                             f"It is not a one-time cost. Ask who pays it and when it ends.")
+                facts.append(f"The listing has a special assessment of ${amt_m:,.0f} a month{length}. {how}. It is not a one-time cost.{ends} Ask who pays it and when it ends.")
         if not buying and _try(lambda: listing_hoa_in_rent(text)):
             # HOA dues that are part of the rent are already in the rent: nothing is saved or added on top
             hoa = None

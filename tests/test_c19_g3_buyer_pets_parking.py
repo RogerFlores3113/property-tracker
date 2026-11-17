@@ -77,14 +77,14 @@ def test_percent_cap_or_percent_of_closing_stays_unknown(text):
                                       ("- $150/month special assessment until 2029", "2029")])
 def test_monthly_assessment_counts_in_hoa(text, end):
     r = buy(text)
-    assert r["hoa"] == 450
+    assert r["hoa"] == 300 and r["other_monthly_fees"] == 150  # cycle 30: kept apart from the HOA, with its end named
     assert "special_assessment" not in r
     assert end in notes(r) and "$150" in notes(r)
 
 
-def test_monthly_assessment_alone_becomes_the_hoa():
+def test_monthly_assessment_alone_is_not_the_hoa():
     r = parse_listing("Condo for sale $400,000. 2 bed. Special assessment $150/mo through 2029", buying=True)
-    assert r["hoa"] == 150 and "2029" in notes(r)
+    assert "hoa" not in r and r["other_monthly_fees"] == 150 and "2029" in notes(r)  # cycle 30: the HOA stays unknown
 
 
 def test_monthly_assessment_the_seller_pays_is_not_added():

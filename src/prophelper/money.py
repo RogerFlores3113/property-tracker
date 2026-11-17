@@ -528,12 +528,23 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
             stated = buyer_closing_items_stated(str(place.get("listing_text") or ""))
         except Exception:  # the listing text is only a hint
             stated = []
+        named: list[tuple[str, float]] = []
+        if not stated:  # cycle 30: closing parts the listing names but that were not saved as the closing costs (they are only part of the bill)
+            try:
+                from .parsers import _closing_items_parts
+                named = _closing_items_parts(str(place.get("listing_text") or ""))
+            except Exception:  # the listing text is only a hint
+                named = []
         stated_total = sum(a for _n, a in stated)
         names = _join_words([f"{_dollars(a)} for {n}" for n, a in stated])
         if stated and stated_total > guess:
             parts.append({"label": f"Closing costs (only what the listing names: {names}; the rest is not known)", "amount": _r(stated_total), "estimated": True})
         elif stated:
-            parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price, which includes the {names} the listing names)", "amount": _r(guess), "estimated": True})
+            parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price; the listing names {names}, which is only part of the closing costs and is not added on top)", "amount": _r(guess), "estimated": True})
+        elif named and sum(a for _n, a in named) > guess:
+            parts.append({"label": f"Closing costs (only what the listing names: {_join_words([f'{_dollars(a)} for {n}' for n, a in named])}; the rest is not known)", "amount": _r(sum(a for _n, a in named)), "estimated": True})
+        elif named:
+            parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price; the listing names {_join_words([f'{_dollars(a)} for {n}' for n, a in named])}, which is only part of the closing costs)", "amount": _r(guess), "estimated": True})
         else:
             parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price)", "amount": _r(guess), "estimated": True})
     else:
@@ -548,13 +559,22 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
         parts.append({"label": f"Closing item on top of the closing costs ({name})", "amount": _r(amount), "estimated": False})
     for name, amount in addl_unclear:
         left_out.append(f"{_dollars(amount)} for {name} (called additional) isn't counted because who pays it isn't known")
+    try:  # cycle 30: "Closing costs $4,000 plus $1,200 additional": an amount called additional next to the buyer's closing costs comes on top
+        from .parsers import buyer_closing_additional_unnamed
+        addl_plain = buyer_closing_additional_unnamed(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        addl_plain = []
+    for what, amount in addl_plain:
+        if any(abs(amount - a2) < 0.005 for _n, a2 in addl_paid):
+            continue
+        parts.append({"label": "Closing item on top of the closing costs" + ("" if what == "an extra amount" else f" ({what})"), "amount": _r(amount), "estimated": False})
     sa = num(place.get("special_assessment"))
     payer = _assessment_payer_of(place)
     if sa and payer == "buyer":
         parts.append({"label": "Special assessment (you pay it)", "amount": _r(sa), "estimated": False})
     try:  # one-time fees the listing says the buyer pays at closing (capital improvement, reserve contribution, move-in fee)
         from .parsers import buyer_one_time_fees
-        paid, unclear = buyer_one_time_fees(str(place.get("listing_text") or ""))
+        paid, unclear = buyer_one_time_fees(str(place.get("listing_text") or ""), sa, payer)
     except Exception:  # the listing text is only a hint
         paid, unclear = [], []
     for label, amount in paid:
@@ -687,7 +707,18 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
         lines.append(_line("hoa", "HOA", hoa))
     other_fees = num(place.get("other_monthly_fees"))
     if other_fees:  # cycle 24: another monthly charge (capital reserve, amenity) entered on a buy place is part of the monthly cost
-        lines.append(_line("other", "Other monthly fees", other_fees))
+        label, why = "Other monthly fees", ""
+        try:  # cycle 30: a monthly special assessment kept apart from the HOA says so, and names when it ends
+            from .parsers import _assessment_monthly, _assessment_monthly_end
+            lt = str(place.get("listing_text") or "")
+            got = _assessment_monthly(lt) if lt else None
+            if got and abs(got[0] - other_fees) < 0.01:
+                label = "Special assessment (monthly, kept apart from the HOA)"
+                end = _assessment_monthly_end(lt)
+                why = (f"ends after {got[1]} months ({_dollars(got[0] * got[1])} in all)" if got[1] else (f"ends in {end}" if end else "the listing does not say when it ends"))
+        except Exception:  # the listing text is only a hint
+            pass
+        lines.append(_line("other", label, other_fees, why))
     total = None if pi is None else _r(sum(l["amount"] or 0 for l in lines))
     cash = cash_to_close(place, cfg)
     sa, payer = num(place.get("special_assessment")), _assessment_payer_of(place)
