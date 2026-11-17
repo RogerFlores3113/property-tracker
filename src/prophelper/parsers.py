@@ -2877,6 +2877,21 @@ _SHARED_LAUNDRY = re.compile(
     r"|\$\s?\d+(?:\.\d\d)?\s*(?:per|/|a)\s*(?:load|wash)\b", re.I)
 
 
+_WD_FEATURE_ITEM = re.compile(
+    r"^(?:(?:new|newer|stacked|stackable|stack|full[- ]size|full|front[- ]load(?:ing|er)?|side[- ]by[- ]side|brand[- ]new|energy[- ]efficient|high[- ]efficiency|lg|ge|samsung|whirlpool|maytag|in[- ]unit)[ \t]+)+"
+    r"(?:washer[ \t]*(?:/|and|&|\+|,)?[ \t]*dryer|washers?|dryers?|w/d|laundry)(?:[ \t]+(?:set|units?|machines?|included|provided))?$")
+
+
+def _washer_dryer_feature_item(low: str) -> bool:
+    """Cycle 34: "Stacked washer and dryer, dishwasher, one-car garage $90" lists what is in the unit. A list item that is only a kind of washer
+    (stacked, full size, front load, side by side) with the dryer is in-unit laundry. Shared, coin and building machines are removed before this is asked."""
+    for item in re.split(r"[,;\n|•·*]+|\.(?=\s|$)|[ \t]+[-–—][ \t]+|[ \t]+(?:and|&)[ \t]+(?=(?:a[ \t]+)?(?:dishwasher|garage|microwave|a/c|central))", low):
+        item = " ".join(item.split()).strip(" .:-!")
+        if _WD_FEATURE_ITEM.match(item) and not re.search(r"hook|connect|rent|fee|\$|avail|optional|extra", item):
+            return True
+    return False
+
+
 def _laundry(text: str) -> str:
     low = re.sub(r"\bw\s?&(?:amp;)?\s?d\b", "w/d", text.lower())  # "W&D in unit" is the same as "W/D in unit"
     low = re.sub(r"(?<![\w/&-])(?:wd|w-d|w\.d\.?)(?![\w/&-])", "w/d", low)  # cycle 27: "WD in unit" is the same as "W/D in unit"
@@ -2897,7 +2912,7 @@ def _laundry(text: str) -> str:
                 r"|\b(?:on[- ]?site|shared|community|common|coin[- ]?op\w*|building|bldg)\s*laundry|\blaundry\s*(?:is\s*)?(?:available\s*)?(?:on[- ]?site|in bldg|in building)"
                 r"|\bwasher\s*(?:/|and|&)\s*dryer\s*(?:in|on)\s*(?:the\s*)?(?:building|bldg|floor|site)")
     positive = _SHARED_LAUNDRY.sub(" ", re.sub(negated, " ", low))  # shared machines never count as in the unit
-    if re.search(in_unit, positive):
+    if re.search(in_unit, positive) or _washer_dryer_feature_item(positive):
         return "in_unit"
     if re.search(building, low) or _SHARED_LAUNDRY.search(low):
         return "in_building"
@@ -15077,6 +15092,18 @@ def _comma_after(text: str, end: int, hi: int) -> int:
 _NET_SEGMENT_SEPS = (" * ", " ~ ")
 
 
+def _laundry_quote(text: str, m: re.Match[str]) -> str:
+    """Cycle 34: the laundry note quotes the laundry words, never a whole feature list ("Stacked washer and dryer, dishwasher, one-car garage $90"):
+    in a clause made of several comma or semicolon items only the item that holds the laundry word is quoted."""
+    clause = _net_clause(text, m.start(), m.end())
+    pieces = [p.strip() for p in re.split(r"[;,][ \t]+|[ \t]+[|•][ \t]+", clause) if p.strip()]
+    if len(pieces) >= 3:
+        for p in pieces:
+            if re.search(r"\b(?:laundry|washer|dryer|w\s*/\s*d|washing machines?|coin[- ]op)\b", p, re.I):
+                return p
+    return clause
+
+
 def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
     """The short phrase around text[start:end]: the clause it sits in. A clause that fits ``limit`` is quoted whole, never
     cut in the middle; a longer one is narrowed to the comma-separated piece that holds the match, and only a piece that is
@@ -15378,7 +15405,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         notes.append(f'The listing says "{_net_clause(text, m.start(), m.end())}". The fee is given as {"a share" if "%" in _net_clause(text, m.start(), m.end()) else "months"} of the rent, so no amount is saved. Ask what it comes to.')
     m = re.search(r"\b(?:laundry|washer|dryer|w\s*/\s*d|washing machines?|coin[- ]op)\b", text, re.I)
     if m and not out.get("laundry") and not re.search(r"laundry|washer|dryer|hookup", low_facts) and not any("laundry" in n for n in notes):
-        notes.append(f'The listing mentions laundry ("{_net_clause(text, m.start(), m.end())}"), but I could not tell what kind. Ask if it is in the unit, in the building or off site.')
+        notes.append(f'The listing mentions laundry ("{_laundry_quote(text, m)}"), but I could not tell what kind. Ask if it is in the unit, in the building or off site.')
     m = next((pm for pm in re.finditer(r"\b(?:parking|garage|carport|driveway|off[- ]street)\b", text, re.I)
               if not re.search(r"\bassessments?\b|\brepair|\breplacement|\bresurfac|\bsealcoat", _net_clause(text, pm.start(), pm.end()), re.I)), None)  # "assessment for the parking deck repair" is a cost, not parking
     if m and not out.get("parking") and out.get("parking_cost") is None and not re.search(r"parking|garage|carport|driveway", low_facts) \
