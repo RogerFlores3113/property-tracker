@@ -6392,6 +6392,7 @@ def seller_paid_fees(text: str) -> list[tuple[str, float]]:
                 continue  # a credit toward the buyer's costs is read by the seller credit readers, never as a named item
             bare = re.sub(r"\b(?:the[ \t]+)?(?:seller|owner|vendor)(?:'s)?[ \t]+(?:(?:will|to|shall|should)[ \t]+)*(?:pays?|covers?|paying|is[ \t]+paying|is[ \t]+responsible[ \t]+for|responsible[ \t]+for)[ \t:]*(?:for[ \t]+)?(?:the[ \t]+)?"
                           r"|[ \t]*[(,]?[ \t]*(?:(?:paid|covered|provided)[ \t]+(?:in[ \t]+full[ \t]+)?by[ \t]+(?:the[ \t]+)?(?:seller|owner|vendor)|(?:seller|owner)[- ]paid)[ \t]*\)?", " ", sent, flags=re.I)
+            bare = re.sub(r"^[ \t*\u2022-]*(?:at[ \t]+)?closing(?:[ \t]+(?:costs?|items?|notes?))?[ \t]*[:\-][ \t]*|[ \t]+(?:at|by|before)[ \t]+(?:closing|close|settlement)\b", " ", bare, flags=re.I)
             for label, amount in _closing_bound_items(bare, insurance=False) or []:  # cycle 35: "Seller pays $1,500 title policy": a closing item the seller pays is named, never silently dropped
                 if 50 <= amount <= 100000 and (label, amount) not in got:
                     got.append((label, amount))
