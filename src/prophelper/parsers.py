@@ -3895,6 +3895,7 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
 
 _PARK_SPOT_INCLUDED = re.compile(r"\b(?:(?:1|one|a|single|2|two)[ \t]+(?:(?:assigned|reserved|private|parking)[ \t]+){0,2}(?:spaces?|spots?|stalls?)[ \t]+(?:is[ \t]+|are[ \t]+|comes?[ \t]+)?(?:included|free)\b"
                                  r"|includes?[ \t]+(?:1|one|a|2|two)[ \t]+(?:parking[ \t]+)?(?:spaces?|spots?|stalls?)\b)", re.I)
+_PARKING_EXTRA_WORDS = re.compile(r"\b(?:2nd|second|additional|extra|another)\b", re.I)
 _PARK_LOT_EVIDENCE = re.compile(r"\b(?:lot|surface|driveway|off[- ]?street|outdoors?|uncovered|gravel|paved|open[- ]air)\b", re.I)
 
 
@@ -3903,8 +3904,8 @@ def _parking_spot_kind_unknown(text: str, kind: str, cost: float | None, notes: 
     lot). A kind word anywhere in the listing's parking words ("surface lot", "off-street", "driveway") keeps the lot."""
     if kind != "lot" or cost != 0 or not _PARK_SPOT_INCLUDED.search(text) or _PARK_LOT_EVIDENCE.search(text) or re.search(r"\bstreet\b", text, re.I):
         return kind, notes
-    if any(re.search(r"parking (?:space|spot) is included", n) for n in notes):
-        return "", notes  # "one parking space is included and a second space is $90" already says it
+    if any(re.search(r"parking (?:space|spot) is included|extra (?:space|spot|parking)|second space", n) for n in notes) or _PARKING_EXTRA_WORDS.search(text):
+        return kind, notes  # one included space beside a priced extra keeps the reading older cycles pinned (lot); only a lone included spot is left without a kind
     return "", notes + ["The listing says a parking spot is included in the rent, so the parking costs $0. It does not say what kind of parking it is (lot, covered or garage), "
                         "so the kind is left empty. Ask which kind it is."]
 
