@@ -416,6 +416,21 @@ def cost_text_short(p: dict[str, Any]) -> str:
     return helpers.money(t) + w
 
 
+def pet_charges_not_counted(p: dict[str, Any]) -> str:
+    """Cycle 29: "Pet rent $35 a month is in the listing but is not counted, because this search has no pets. ..." for a rental whose listing gave
+    a pet charge the cost leaves out (the search has no pet). The place page and Claude's get_place both say it. '' when nothing was left out."""
+    c = p.get("cost") or {}
+    if c.get("mode") != "rent" or c.get("pets_counted", True):
+        return ""
+    rent, fee, dep = (money_mod.num(p.get(k)) for k in ("pet_rent", "pet_fee", "pet_deposit"))
+    parts = [x for x in (f"pet rent {money_mod.exact_dollars(rent)} a month" if rent else "", f"a pet fee of {money_mod.exact_dollars(fee)}" if fee else "",
+                         f"a pet deposit of {money_mod.exact_dollars(dep)}" if dep else "") if x]
+    if not parts:
+        return ""
+    return (parts[0][0].upper() + parts[0][1:] + (" and " + " and ".join(parts[1:]) if len(parts) > 1 else "") + " " + ("is" if len(parts) == 1 else "are")
+            + " in the listing but not counted, because this search has no pets. If you have a pet, add it to the search and the cost will change.")
+
+
 def cash_left_out(p: dict[str, Any]) -> bool:
     c = p.get("cost") or {}
     return bool((c.get("cash_to_close") or {}).get("left_out") or (c.get("cash_at_move_in") or {}).get("left_out"))

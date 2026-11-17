@@ -443,7 +443,8 @@ def _cost_text(e: dict[str, Any]) -> str:
         text += "; " + _per_person_text(e)
     if unknown_costs:  # the same names the Compare page and "Still unknown" use
         text += "; missing: " + ", ".join(unknown_costs)
-    return text + (". " + cost["notes"][0] if cost["notes"] and cost["mode"] == "buy" else "")
+    pets_note = compare_mod.pet_charges_not_counted(e)
+    return text + (". " + cost["notes"][0] if cost["notes"] and cost["mode"] == "buy" else "") + (". " + pets_note if pets_note else "")
 
 
 def _score_text(e: dict[str, Any]) -> str:

@@ -69,7 +69,7 @@ def make_templates(store: Store) -> Jinja2Templates:
         "version": __version__, "today": lambda: helpers.today().isoformat(), "has_sample": store.has_sample_data,
         "setting": lambda key, default="": store.get_setting(key, default),
         "cost_heading": compare.cost_heading, "cost_headline": compare.cost_headline, "lowest_unit": compare.lowest_unit, "unknown_basis": compare.score_unknown_basis, "cost_short": compare.cost_text_short,
-        "cost_total_label": compare.cost_total_row_label, "cost_incomplete": compare.cost_incomplete, "as_listed": compare.as_listed,
+        "cost_total_label": compare.cost_total_row_label, "cost_incomplete": compare.cost_incomplete, "as_listed": compare.as_listed, "pet_not_counted": compare.pet_charges_not_counted,
         "scam_sign_flags": redflags.scam_sign_flags, "plain_hints": lambda flags: [f for f in flags if redflags.is_plain_hint(f)],
         "current_search": store.current_search, "searches": store.list_searches,
     })
