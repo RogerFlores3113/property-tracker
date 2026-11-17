@@ -6894,8 +6894,20 @@ _UTIL_SAYS_PAYS = re.compile(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n;]{0
 _UTIL_NEXT_AMOUNT = re.compile(r"^[ \t]*(?:about|approx\.?|approximately|around|roughly|est\.?|estimated|~|avg\.?|average|typically|usually)[ \t]*\$[ \t]*(\d{2,4}(?:\.\d\d)?)[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)\b", re.I)
 
 
+_TENANT_WORD_U = r"(?:tenants?|residents?|renters?|lessees?|you)"
+_ALL_UTIL_PAID_BY = re.compile(
+    r"\b(?:all|every)[ \t]+(?:the[ \t]+)?utilit(?:y|ies)(?:[ \t]+(?:are[ \t]+|is[ \t]+|to[ \t]+be[ \t]+|will[ \t]+be[ \t]+)?(?:paid|covered|billed|handled|arranged|set[ \t]+up|provided|the[ \t]+responsibility|responsibility|expense|cost)(?:[ \t]+(?:of|by|to|for|on))?[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
+    r"|[ \t]+(?:are|is)[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?|lessees?)(?:'s|s')?[ \t]+(?:responsibility|expense|cost|bill|account)\b"
+    r"|[ \t]+on[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
+    r"|[ \t]*[:\-\u2013][ \t]*(?:the[ \t]+)?(?:tenants?|residents?|renters?|lessees?)\b(?![ \t]+(?:pays?|paid)\b[^.\n;]{0,12}\b(?:none|nothing)\b))"
+    r"|\b(?:tenants?|residents?|renters?)(?:'s|s')?[- ](?:paid|responsible)[ \t]+(?:for[ \t]+)?(?:all|every)[ \t]+(?:the[ \t]+)?utilit(?:y|ies)\b"
+    r"|\butilit(?:y|ies)[ \t]*:?[ \t]*(?:all|every)[ \t]+(?:are[ \t]+)?paid[ \t]+(?:of|by)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b", re.I)
+
+
 def _say_all_utilities(text: str) -> str:
-    """"Resident pays all except trash" -> "Resident pays all utilities except trash" so every reader sees the same words."""
+    """"Resident pays all except trash" -> "Resident pays all utilities except trash" so every reader sees the same words.
+    Cycle 27: "all utilities paid by tenant", "all utilities: tenant", "tenant-paid all utilities" are "Tenant pays all utilities" in every word order."""
+    text = _ALL_UTIL_PAID_BY.sub("Tenant pays all utilities", text)
     return re.sub(r"\b((?:tenants?|residents?|renters?|lessees?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for|is[ \t]+responsible[ \t]+for|responsible[ \t]+for|will[ \t]+pay|must[ \t]+pay)[ \t]+(?:for[ \t]+)?)(?:everything|all)(?=[ \t]+(?:except(?:[ \t]+for)?|other[ \t]+than|besides)\b)", r"\1all utilities", text, flags=re.I)
 
 
