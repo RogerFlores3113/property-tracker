@@ -161,7 +161,7 @@ def test_family_l34_beds_baths():
 ])
 def test_dogs_need_approval_note(text):
     r = read(text)
-    assert r["pets"] == "both"
+    assert not r.get("pets")  # cycle 30: a kind of pet that needs approval is never a plain yes, so pets stays unknown
     assert "Dogs need approval" in notes(r)
 
 

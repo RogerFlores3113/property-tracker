@@ -1885,7 +1885,7 @@ def _move_in_total_notes(text: str) -> list[str]:
 
 def _holding_fee_notes(text: str) -> list[str]:
     """"Holding fee equal to one week's rent": a fee with no dollar amount, so it is a note, not a number."""
-    m = re.search(r"\b(?:holding|reservation)[ \t]+(?:fee|deposit)\b[ \t]*(?:is[ \t]+)?(?:equal(?:s)?[ \t]+to|=|of)[ \t]+((?:one|two|a|1|2|half(?: a)?)[ \t]+(?:week|month)s?'?s?(?:'s)?[ \t]+(?:of[ \t]+)?rent)", text, re.I)
+    m = re.search(r"\b(?:holding|reservation)[ \t]+(?:fee|deposit)\b[ \t]*(?:is[ \t]+)?(?:equal(?:s)?[ \t]+to|equivalent[ \t]+to|=|of|:|-|is)[ \t]*((?:one|two|a|1|2|1\.5|half(?: a| of a| of one)?)[ \t]+(?:week|month)s?'?s?(?:'s)?(?:[ \t]+(?:of[ \t]+)?(?:the[ \t]+)?(?:monthly[ \t]+)?rent)?)(?![ \t]*(?:/|\$))", text, re.I)
     if m:
         return [f"The listing asks for a holding fee equal to {' '.join(m.group(1).split())}. It is not counted in the cost, because no dollar amount is given. Ask if it is taken off what you owe at move-in."]
     return []
@@ -3569,6 +3569,19 @@ def _pets_approval_note(text: str) -> str:
     return f"{who} need approval. Ask {_ask_who(text)} what it takes."
 
 
+def _pet_fee_nonrefundable_note(text: str, fee: Any) -> str:
+    """Cycle 30: "Pet fee $300 non-refundable per pet", "$300 non-refundable pet fee", "Pet fee (non-refundable) $300": the saved pet fee is money you do not get
+    back, so one note says so (a pet deposit is the part that comes back). "" when the fee is not saved or the listing does not say it."""
+    if not isinstance(fee, (int, float)) or isinstance(fee, bool) or fee <= 0:
+        return ""
+    amt = f"{float(fee):,.0f}".replace(",", ",?")
+    for sent in re.split(r"[.;\n|](?:\s|$)|\n", text):
+        if re.search(r"\$\s?" + amt + r"(?!\d)", sent) and re.search(r"\bnon[- ]?refundable\b|\bnot[ \t]+refundable\b|\bnever[ \t]+refunded\b", sent, re.I) \
+                and re.search(r"\b(?:pets?|dogs?|cats?|animals?)\b", sent, re.I) and not re.search(r"\bdeposit\b[^,;]{0,25}\bnon[- ]?refundable|\bnon[- ]?refundable[ \t]+(?:pet[ \t]+)?deposit\b", sent, re.I):
+            return f"The ${float(fee):,.0f} pet fee is not refundable, so you do not get it back when you move out."
+    return ""
+
+
 def _pets_soft_note(text: str) -> str:
     """"Cats welcome. Dogs considered case by case": cats is saved, and this says dogs are not a yes. "" when there is nothing to say."""
     stances, quoted = _pet_stances(text)
@@ -4301,8 +4314,9 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
             note = ", ".join(pieces[:3])
             out["pet_breed_note"] = note[0].upper() + note[1:]
     # a fenced patio, balcony, courtyard, deck, porch, terrace or dog run is not a fenced yard
+    text_y = re.sub(r"\b(?:fenced|gated|walled)[- ]?(?:in\b)?[ \t]*(?:(?:back|front|private|small|outdoor)[ \t]+)*(?:patio|balcon\w*|courtyard|deck|porch|terrace)s?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:a[ \t]+|the[ \t]+|an[ \t]+)?(?:(?:back|front|private)[ \t]*)?(?:yard|garden)\b(?![ \t]*(?:is[ \t]+)?(?:shared|common|communal))", "fenced yard", text, flags=re.I)  # cycle 30: "Fenced patio and yard" fences both
     ytext = re.sub(r"\b(?:fenced|fence|fencing|gated|walled)[- ]?(?:in\b)?[ \t]*(?:around[ \t]+)?(?:the[ \t]+|a[ \t]+|an[ \t]+)?(?:(?:back|front|private|small|shared|tiny|little|outdoor)[ \t]+)*(?:patio|balcon\w*|courtyard|deck|porch|terrace|dog[- ]?run|dog[- ]?park)s?\b(?![ \t]*(?:yard|garden|lot)\b)"
-                   r"|\b(?:patio|balcon\w*|courtyard|deck|porch|terrace|dog[- ]?run)s?\b[^.\n;,]{0,15}?\b(?:fenced|fence|fencing)\b", " ", text, flags=re.I)
+                   r"|\b(?:patio|balcon\w*|courtyard|deck|porch|terrace|dog[- ]?run)s?\b[^.\n;,]{0,15}?\b(?:fenced|fence|fencing)\b", " ", text_y, flags=re.I)
     if re.search(r"\b(?:no|not a|without a)\s+(?:\w+\s+)?fenc(?:ed|e|ing)\b|\bunfenced\b|\bnot fenced\b|\b(?:no|not an?|without an?)\s+(?:fully\s+)?enclosed\s+(?:\w+\s+)?(?:yard|backyard|garden)\b", text, re.I):
         out["fenced_yard"] = 0
     elif re.search(r"\bfenced[- ](?:in[- ])?(?:(?:back|front|private)[ ]?(?:yard|garden|lot|patio)?|yard|garden|lot|patio|(?:single[- ]family[ ]|detached[ ])?(?:house|home|property|townhome|townhouse|duplex|cottage|bungalow))\b|\b(?:yard|backyard)\s+(?:is\s+)?(?:fully\s+)?fenced|\b(?:fully|completely|totally)[ -]fenced\b"
@@ -10685,7 +10699,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if out.get("pets") and not soft:
             appr = _try(lambda: _pets_approval_note(ptext)) or ""
             if appr:
-                facts.append(appr)  # cycle 28: "Dogs ok, $300 pet fee. Approval required for dogs." keeps pets and says dogs need approval
+                got_pets = str(out.get("pets") or "")
+                said_kinds = {"dogs": "dogs", "cats": "cats", "pets": "pets"}
+                needs = {said_kinds[w] for w in re.findall(r"\b(dogs|cats|pets)\b", appr.split(" need approval")[0].lower())}
+                covered = {"both": {"dogs", "cats"}, "dogs": {"dogs"}, "cats": {"cats"}}.get(got_pets, set())
+                if needs & (covered | ({"pets"} & needs and covered)):
+                    # cycle 30: a kind of pet that needs approval is never a plain yes ("Dogs: 2 max, 40 lb limit. Cats ok. Approval required for dogs.")
+                    out.pop("pets", None)
+                    facts.append(appr + f" Pets is left empty, so ask {_ask_who(ptext)} which pets are allowed before you count on it.")
+                else:
+                    facts.append(appr)  # cycle 28: "Pets: Cats allowed. Approval required for dogs." keeps cats and says dogs need approval
         if not out.get("pets"):
             no_kind = _try(lambda: _pets_no_species_note(ptext)) or ""
             if no_kind:
@@ -10817,6 +10840,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     weight_note = _try(lambda: _pet_weight_unclear(ptext)) or ""
     if weight_note:
         facts.append(weight_note)
+    nonref_pet = _try(lambda: _pet_fee_nonrefundable_note(ptext, out.get("pet_fee")))
+    if nonref_pet:
+        facts.append(nonref_pet)
     utext = _util_text(text)
     facts.extend(_try(lambda: _only_scope_notes(text)) or [])
     included = _try(lambda: _utilities(utext)) or ""
