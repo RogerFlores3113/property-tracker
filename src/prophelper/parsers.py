@@ -1308,7 +1308,7 @@ _PROMO_THEN = re.compile(_AMT_G + r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+
 _PROMO_THEN2 = re.compile(r"\b(?:first|1st)[ \t]+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[ \t-]*(?:months?|mos?)[ \t:,\-]*(?:is|are|at|only)?[ \t]*" + _AMT_G + r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month)?[ \t]*[,;:.\-]*[ \t]*(?:and[ \t]+)?(?:then|after(?:wards?)?|thereafter)[ \t:,]*(?:it(?:'s|[ \t]+is)[ \t]+|(?:goes|rises?|increases?)[ \t]+to[ \t]+)?" + _AMT_G + r"(?![\d,])", re.I)
 
 
-def _promo_then_rent(text: str) -> tuple[float, str, float] | None:
+def _promo_then_rent(text: str, rent: float | None = None) -> tuple[float, str, float] | None:
     """Cycle 21: "$2,100 first 6 months then $2,350", "$2,100 for the first 6 months, then $2,350": a lower rent for a while and a higher ongoing rent.
     Returns (promo rent, months as written, ongoing rent). The ongoing rent is the one that lasts, so it is the one saved."""
     for m in _PROMO_THEN.finditer(text):
@@ -1319,6 +1319,49 @@ def _promo_then_rent(text: str) -> tuple[float, str, float] | None:
         mo, a, b = m.group(1), _num(m.group(2)), _num(m.group(3))
         if 300 <= a < b <= 30000:
             return a, mo, b
+    for m in _PROMO_THEN3.finditer(text):  # cycle 31: "$2,100 (first 6 months)" then "Then $2,250 per month" on the next line
+        a, mo, b = _num(m.group(1)), m.group(2), _num(m.group(3))
+        if 300 <= a < b <= 30000:
+            return a, mo, b
+    for m in _STEP_UP_IN.finditer(text):  # cycle 31: "$2,100/mo for the first six months; rent increases to $2,250 in month 7"
+        a, b = _num(m.group(1)), _num(m.group(2))
+        mo = (m.group("n") or m.group("m7") or "").strip()
+        if m.group("m7") and mo.isdigit():
+            mo = str(int(mo) - 1)  # "in month 7" means the first 6 months
+        if mo and 300 <= a < b <= a * 1.6 and b <= 30000:
+            return a, mo, b
+    if rent is not None:  # "Rent $2,100/mo. Rent goes up to $2,250 after the first 6 months."
+        for m in _STEP_UP_ONLY.finditer(text):
+            b = _num(m.group(1))
+            mo = (m.group("n") or m.group("m7") or "").strip()
+            if m.group("m7") and mo.isdigit():
+                mo = str(int(mo) - 1)
+            if mo and 300 <= rent < b <= rent * 1.6 and b <= 30000:
+                return rent, mo, b
+    return None
+
+
+_NUM_WORDS_RE = r"\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
+_PROMO_THEN3 = re.compile(_AMT_G + r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*\([ \t]*(?:for[ \t]+)?(?:the[ \t]+)?(?:first|1st)[ \t]+(" + _NUM_WORDS_RE + r")[ \t-]*(?:months?|mos?)\b[ \t]*\)?[ \t]*[,;:.\-\n\u2022*|]*[ \t]*(?:and[ \t]+)?(?:then|after(?:wards?)?|thereafter)[ \t:,]*(?:it(?:'s|[ \t]+is)[ \t]+|rent[ \t]+(?:is|of)[ \t]+)?" + _AMT_G + r"(?![\d,])", re.I)
+_STEP_UP_ONLY = re.compile(r"\b(?:(?:the[ \t]+|your[ \t]+)?(?:rent|price)[ \t]+)?(?:goes|rises?|increases?|steps?|jumps?|climbs?|resets?)[ \t]+(?:up[ \t]+)?to[ \t]+" + _AMT_G + r"(?![\d,])[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*"
+                           r"(?:(?:in|from|starting(?:[ \t]+(?:in|with))?|beginning(?:[ \t]+(?:in|with))?|at)[ \t]+month[ \t]+(?P<m7>\d{1,2})\b|(?:after|following)[ \t]+(?:the[ \t]+)?first[ \t]+(?P<n>" + _NUM_WORDS_RE + r")[ \t-]*(?:months?|mos?)\b)", re.I)
+_STEP_UP_IN = re.compile(_AMT_G + r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:for[ \t]+)?(?:the[ \t]+)?(?:first|1st)?[ \t]*(?:(?:" + _NUM_WORDS_RE + r")[ \t-]*(?:months?|mos?)\b)?[ \t]*(?:only)?[ \t]*[,;:.\-\n\u2022*|]*[ \t]*(?:and[ \t]+)?"
+                         r"(?:(?:the[ \t]+|your[ \t]+)?(?:rent|price|it)[ \t]+)?(?:goes|rises?|increases?|steps?|jumps?|climbs?|resets?|reverts?|changes?)[ \t]+(?:up[ \t]+)?to[ \t]+" + _AMT_G + r"(?![\d,])[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*"
+                         r"(?:(?:in|from|starting(?:[ \t]+(?:in|with))?|beginning(?:[ \t]+(?:in|with))?|at)[ \t]+month[ \t]+(?P<m7>\d{1,2})\b|(?:after|following)[ \t]+(?:the[ \t]+)?(?:first[ \t]+)?(?P<n>" + _NUM_WORDS_RE + r")[ \t-]*(?:months?|mos?)\b)", re.I)
+
+
+_FIRST_MONTHS_REG = re.compile(_AMT_G + r"(?![\d,])[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:for[ \t]+|during[ \t]+|\()?(?:the[ \t]+)?(?:first|1st)[ \t]+(" + _NUM_WORDS_RE + r")[ \t-]*(?:months?|mos?)\b[ \t)]*[,;:.\-]*[ \t]*(?:and[ \t]+)?(?:then|after(?:wards?)?|thereafter)[ \t:,]*(?:(?:it(?:'s|[ \t]+is)|goes[ \t]+(?:up[ \t]+)?to|returns?[ \t]+to|reverts?[ \t]+to)[ \t]+)?(?:the[ \t]+)?(?:regular|normal|standard|full|usual|listed|base)[ \t]+(?:rent|price|rate)\b", re.I)
+
+
+def _first_months_special(text: str, rent: float | None) -> tuple[float, str] | None:
+    """Cycle 31: "Special: $1,200/mo for the first 6 months, then regular rent": a lower price for the first months with no new figure. Not a fee and not the rent.
+    Returns (the promo amount, the months as written) when it is below the rent that was read."""
+    if rent is None:
+        return None
+    for m in _FIRST_MONTHS_REG.finditer(text):
+        a = _num(m.group(1))
+        if 300 <= a < rent:
+            return a, m.group(2)
     return None
 
 
@@ -10742,16 +10785,23 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         price_read = two_prices[0]
         if two_prices[2] == "net" or not (_REDUCED_FROM.search(text) or _WAS_PRICE.search(text)):  # those two already get a "price was cut" note
             facts.append(_rent_two_prices_note(*two_prices))
-    promo = None if buying or price_range or unit_pick or two_prices else _try(lambda: _promo_then_rent(text))
+    promo = None if buying or price_range or unit_pick else _try(lambda: _promo_then_rent(text, price_read))
+    if promo and two_prices and promo[0] != two_prices[0]:
+        promo = None  # cycle 31: "Previously $3,150, now $3,075 ... $3,075 for the first 6 months, then $3,200": the promo is the current price; any other pair stays with the two-price read
     if promo:  # cycle 21: "$2,100 first 6 months then $2,350": the rent that lasts is saved, the promo rent is a note
         price_read = promo[2]
         mo = promo[1]
         facts.append(f"The listing gives ${promo[0]:,.0f} a month for the first {mo} month{'' if mo in ('1', 'one') else 's'}, then ${promo[2]:,.0f}. "
                      f"The ongoing ${promo[2]:,.0f} is saved as the rent, so the first months cost less than the saved rent. Ask what you pay after the special ends.")
+    first_months = None if buying or promo or price_range or unit_pick else _try(lambda: _first_months_special(text, price_read))
+    if first_months and price_read is not None:  # cycle 31: the lower first months are named, the regular rent is the saved one
+        mo = first_months[1]
+        facts.append(f"The listing gives {_usd(first_months[0])} a month for the first {mo} month{'' if mo in ('1', 'one') else 's'}, then the regular rent. "
+                     f"The regular rent, {_usd(price_read)}, is saved, so the first months cost less than the saved rent. Ask what you pay after the special ends.")
     cond_now = None if buying or promo else _try(lambda: _conditional_now_price(text, price_read))
     if cond_now and price_read is not None:
         facts.append(f"The listing also gives ${cond_now[0]:,.0f} a month {cond_now[1]}. That price depends on the condition, so the saved rent stays ${price_read:,.0f}. Ask if the lower price applies to you.")
-    elif not (buying or promo or price_range or unit_pick or two_prices):
+    elif not (buying or promo or price_range or unit_pick or two_prices or first_months):
         special = _try(lambda: _special_price(text, price_read))
         if special:  # cycle 26: "$3,600/MO $3,000 IF YOU SIGN BY DEC 1 (SPECIAL)": the regular rent stays, one short note names the special and its deadline
             if special[2] is not None:
@@ -10857,7 +10907,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 facts.append(f"The listing gives {_usd(price_read)} and also {_usd(big[0]['value'])}, and I could not tell which one is the monthly rent, so the rent is left empty. Ask what the rent is.")
                 price_read = None
-    if "price" in gc_found and not buying and not price_range:
+    if "price" in gc_found and not buying and not price_range and not (promo and gc_found["price"].get("new") == promo[0]):  # cycle 31: the "now" price that starts a step-up is the first months' rent, not the steady one
         gc_tmp = {"price": price_read}
         _gc_apply(text, gc_tmp, facts, gc_found, [], buying, only={"price"})
         price_read = gc_tmp["price"]
