@@ -11290,7 +11290,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         # cycle 30: "Landlord pays sewer and trash, tenant pays electric, gas, water ... Utilities: Landlord pays all utilities." is a conflict, whichever line comes first
         ll_all = _LL_ALL_PLAIN.search(utext)
         clash_pay = [w.strip() for w in pays.split(",") if w.strip() and w.strip() not in ("internet", "cable")]
-        if ll_all and clash_pay and included != "all" and not _try(lambda: _everything_except(utext)) and not any("it also says you pay" in f for f in facts):
+        # "Landlord pays all utilities. Tenant electric only total $110" is "all except electric": a plain exception, not a conflict. It is a conflict only when
+        # a tenant-pays line comes before the "all" line, or the listing also names a smaller list the landlord pays next to a tenant-pays line.
+        before_all = bool(ll_all and re.search(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n;]{0,15}\b(?:pays?|responsible|will pay|must pay)\b", utext[:ll_all.start()], re.I))
+        small_list = bool(ll_all and re.search(r"\b(?:landlord|owner|management)[ \t]+(?:pays?|covers?|provides?)[ \t]+(?:for[ \t]+)?(?!all\b)(?:the[ \t]+)?" + _ROLE_LIST_RAW, utext, re.I)
+                          and re.search(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n;]{0,15}\b(?:pays?|responsible)\b", utext, re.I))
+        if ll_all and (before_all or small_list) and clash_pay and included != "all" and not _try(lambda: _everything_except(utext)) and not any(("it also says you pay" in f or "landlord pays" in f or "(RUBS)" in f or "billed back to you" in f) for f in facts):
             est_c = out.get("utilities_estimate")
             if isinstance(est_c, (int, float)) and not isinstance(est_c, bool):
                 out.pop("utilities_estimate", None)  # two lines that disagree: nothing is counted, as with every other utilities conflict

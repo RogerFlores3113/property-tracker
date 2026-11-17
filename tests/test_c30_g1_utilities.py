@@ -200,3 +200,17 @@ def test_uiuc_l15_listing():
     assert _set(r["tenant_pays"]) == {"internet"}
     assert "unclear about internet" not in notes(r)
     assert r["other_monthly_fees"] == 12
+
+
+def test_older_rubs_conflict_is_not_noted_twice():
+    r = P(listing("r13-uiuc-l2.txt"))
+    assert r["utilities_estimate"] == 45
+    assert notes(r).count("landlord pays") == 1
+    assert "also says you pay" not in notes(r)
+
+
+def test_landlord_pays_all_then_tenant_electric_only_is_not_a_conflict():
+    r = P("Rent $1,590. Landlord pays all utilities. Tenant electric only total $110.")
+    assert r["utilities_estimate"] == 110
+    assert _set(r["tenant_pays"]) == {"electric"}
+    assert "disagree" not in notes(r)
