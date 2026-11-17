@@ -323,7 +323,16 @@ def as_listed(p: dict[str, Any]) -> bool:
     """True when a place's cost can only be shown "as listed, not checked": it is marked check first (a scam sign or text aimed at AI
     tools) or its rent looks wrong. One rule for every surface (the page, Claude's tools, Compare): such a place never says "true cost"."""
     s = p.get("score") or {}
-    return bool(p.get("check_first") or p.get("possible_scam") or s.get("scam") or s.get("rent_check") or s.get("fit") == "check_first")
+    return bool(p.get("check_first") or p.get("possible_scam") or s.get("scam") or s.get("rent_check") or s.get("fit") == "check_first"
+                or has_hidden_chars(p))
+
+
+def has_hidden_chars(p: dict[str, Any]) -> bool:
+    """Cycle 29: True when hidden characters were removed from the listing text. That is the only flag some places have, and it is
+    not a scam sign, but what the listing says is not what the text really held: its cost is shown as listed, never as a true cost, and
+    the place never wins "lowest cost"."""
+    from . import redflags
+    return any(redflags.is_hidden_note(f) for f in p.get("flags") or [])
 
 
 _LOWEST_UNIT = re.compile(r"lowest unit price|lowest price of any size", re.I)
@@ -403,6 +412,8 @@ def nothing_unknown_guard(p: dict[str, Any], text: str) -> str:
             text += "; Unknown: " + ", ".join(missing)
         return text
     if as_listed(p):
+        if has_hidden_chars(p) and not (p.get("check_first") or p.get("possible_scam") or (p.get("score") or {}).get("fit") == "check_first"):
+            return "Not checked: hidden characters were removed from the listing text"
         return "Not checked: this place is marked check first"
     cash = cash_unknown_parts(p)
     if cash:  # cycle 27: a deposit or pet charge nobody filled in is an unknown, so "Nothing unknown" never sits beside "deposit not known"
@@ -557,7 +568,7 @@ def _ineligible(p: dict[str, Any], best_of: bool = False) -> bool:
     (a small overage, often from a guess) can still win, and its Fit cell says it is a near miss. In a best-of line
     (``best_of``: lowest cost, highest score) a place with text aimed at AI tools is left out too."""
     return (p["score"].get("fit", "fits") not in ("fits", "near_miss") or bool(p.get("possible_scam"))
-            or (best_of and (ai_text_only(p) or p.get("stage") == "Passed" or bool(p["score"].get("rent_check")))))  # a place the user passed on never wins a best-of line
+            or (best_of and (ai_text_only(p) or has_hidden_chars(p) or p.get("stage") == "Passed" or bool(p["score"].get("rent_check")))))  # a place the user passed on never wins a best-of line
 
 
 def _live(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -674,6 +685,8 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
             out["blocked"].append((p, "check it first: possible scam"))
         elif ai_text_only(p):
             out["blocked"].append((p, "check it first: text aimed at AI tools in the listing"))
+        elif has_hidden_chars(p):
+            out["blocked"].append((p, "check it first: hidden characters were removed from the listing text"))
         elif p["score"].get("rent_check"):
             out["blocked"].append((p, "check the rent first: the saved rent looks too low to be right"))
         elif p["score"].get("fit") == "near_miss":
@@ -1150,7 +1163,7 @@ def lowest_cost_sentences(places: list[dict[str, Any]], name) -> list[str]:
     out: list[str] = []
     places = _live(places)
     priced = [p for p in places if p["cost_total"] is not None]
-    if priced and all(p["score"].get("fit") == "check_first" or p.get("possible_scam") or has_ai_text(p) for p in priced):
+    if priced and all(p["score"].get("fit") == "check_first" or p.get("possible_scam") or has_ai_text(p) or has_hidden_chars(p) for p in priced):
         # every priced place has a check-first flag: none is "cheapest", and the price is not a fair comparison yet
         out.append("Every place has something to check first, so none of them can be compared on price until you have checked them.")
         out.extend(unpriced_sentences(places, name))

@@ -1663,7 +1663,7 @@ def build_server(store: Store) -> FastMCP:
         if not tail:
             lines.extend(compare_mod.skipped_unknown_sentences(lc, ref))
         priced_ = [e for e in compare_mod._live(es) if e["cost_total"] is not None]
-        if priced_ and all(e["score"].get("fit") == "check_first" or e.get("possible_scam") or compare_mod.has_ai_text(e) for e in priced_):
+        if priced_ and all(e["score"].get("fit") == "check_first" or e.get("possible_scam") or compare_mod.has_ai_text(e) or compare_mod.has_hidden_chars(e) for e in priced_):
             lines.append("Every place has something to check first, so none of them can be compared on price until you have checked them.")
         elif lc["blocked"]:
             lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({why})" for e, why in lc["blocked"]) + ".")
