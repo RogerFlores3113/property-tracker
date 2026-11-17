@@ -3239,12 +3239,17 @@ def _dishwasher(text: str) -> int | None:
     return None
 
 
+_PARKING_INDOOR = re.compile(r"\b(?:indoor|underground|enclosed)\b[^.\n;|]{0,20}\b(?:parking|spaces?|spots?|stalls?)\b|\bparking\b[^.\n;|]{0,25}\b(?:indoor|underground)\b", re.I)
+
+
 def _parking_kind_words(low: str) -> str:
     """The parking type from the words around a parking price ("covered spot", "surface lot", "street permit")."""
     if re.search(r"\bgarage\b(?! door)", low):
         return "garage"
     if re.search(r"\bcarports?\b|\bcovered\b", low):
         return "covered"
+    if _PARKING_INDOOR.search(low):
+        return "garage"  # cycle 36 (roommates l10): "1 indoor space REQUIRED" is indoor parking, never a surface lot
     if re.search(r"\b(?:surface|off[- ]?street|assigned|reserved|paved|gravel|on[- ]?site)\b|\blot\b", low):
         return "lot"
     if re.search(r"\bstreet\b", low):
@@ -3271,6 +3276,9 @@ _PARKING_PRICE_RES = (
     # cycle 24: "Covered spot $75", "Reserved indoor garage space: $90": a kind word and a spot word with the price right after (the only parking when nothing else is said)
     re.compile(r"\b(?:covered|garage|carport|reserved|assigned|indoor|underground|attached|private|heated|designated)[ \t]+(?:(?:covered|indoor|garage|underground|reserved|assigned|private|heated|parking|outdoor|surface)[ \t]+)*"
                r"(?:spots?|spaces?|stalls?)[ \t]*[:\-=(,]{0,3}[ \t]*(?:(?:is|are|for|at|only|from|just|costs?|rents?[ \t]+for)[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|included|incl\b|free\b|in[ \t]+(?:the[ \t]+)?rent|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
+    # cycle 36: "1 indoor spot is required ($150/mo)", "one covered space required, $90": a counted spot, its word "required" and then the price
+    re.compile(r"\b(?:\d|one|a|an)[ \t]+(?:(?:indoor|covered|garage|underground|reserved|assigned|private|heated|outdoor|surface|parking)[ \t]+){0,3}"
+               r"(?:spots?|spaces?|stalls?)[ \t]+(?:is[ \t]+|are[ \t]+)?(?:required|mandatory)[ \t:,\-(]{0,4}\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
     # "additional spaces $60": an extra space (optional, so it never counts)
     re.compile(r"\b(?:additional|extra)[ \t]+(?:parking[ \t]+)?(?:spots?|spaces?|stalls?|cars?|vehicles?)[ \t:\-=,]*(?:are[ \t]+|is[ \t]+|for[ \t]+|at[ \t]+|cost[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
 )
@@ -4026,6 +4034,26 @@ def _parking_spot_kind_unknown(text: str, kind: str, cost: float | None, notes: 
                         "so the kind is left empty. Ask which kind it is."]
 
 
+_PARK_CLAUSE_WORDS = re.compile(r"\b(?:parking|garages?|carports?|driveway|spots?|spaces?|stalls?|lot)\b", re.I)
+
+
+def _parking_lot_unproven(text: str, kind: str, cost: float | None, notes: list[str]) -> tuple[str, list[str]]:
+    """Cycle 36 (roommates l4, l8, l10): the parking kind is never guessed. "Parking included", "Free parking", "Parking available" and "1 spot included" say nothing
+    about the kind, so a lot is saved only when a parking sentence itself carries a lot word (lot, surface, off-street, driveway, assigned, reserved, outdoor, gravel, paved).
+    Otherwise the kind is left empty with one short note."""
+    if kind != "lot":
+        return kind, notes
+    for clause in re.split(r"[.\n;|]+", text):
+        if _PARK_CLAUSE_WORDS.search(clause) and (_PARK_LOT_EVIDENCE.search(clause) or re.search(r"\bstreet\b", clause, re.I)):
+            return kind, notes
+    notes = [n for n in notes if "does not say what kind of parking it is" not in n]
+    if cost == 0:
+        say = "The listing says the parking is included in the rent, so the parking costs $0. "
+    else:
+        say = "The listing mentions parking. "
+    return "", notes + [say + "It does not say what kind of parking it is (lot, covered or garage), so the kind is left empty. Ask which kind it is."]
+
+
 _PARK_EITHER_KIND = r"(?:(?:attached|detached|private|heated|reserved|underground)[ \t]+)?(?:garages?|covered|carports?)(?:[ \t]+parking)?"
 _PARK_EITHER_PRICE = r"\$[ \t]?(\d{1,4}(?:\.\d\d)?)(?![\d,])[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?"
 _PARK_EITHER_LIST = rf"{_PARK_EITHER_KIND}(?:[ \t]*(?:,|/|\bor\b|\band/or\b)[ \t]*{_PARK_EITHER_KIND})+"
@@ -4080,6 +4108,7 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
         kind = ""  # cycle 24: "1 deeded parking space" is its own thing: the schema has no deeded kind, so the kind is left empty and named in a note
         notes = notes + ["The listing says the parking is a deeded space" + (" that comes with the home, so there is no monthly parking charge" if cost == 0 else "") + ". "
                          "It does not say if the space is a garage, covered or outdoor, so check which one."]  # cycle 25: no "left empty / ask" words: an included deeded space is not a missing parking cost
+    kind, notes = _parking_lot_unproven(text, kind, cost, notes)
     extra = _try_note(lambda: _parking_unpriced_kind_note(text, cost, notes))
     return kind, cost, zero_notes + notes + extra
 

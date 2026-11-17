@@ -64,14 +64,14 @@ def test_offstreet_parking_included_is_zero():
 
 def test_included_parking_with_optional_garage():
     r = read("Parking included in rent. Free parking. Garage $90 optional")
-    assert r["parking"] == "lot" and r["parking_cost"] == 0
+    assert not r.get("parking") and r["parking_cost"] == 0  # cycle 36: the kind of an included spot is never guessed
     assert "garage is available for $90" in notes(r)
     assert "could not tell" not in notes(r)
 
 
 def test_parking_zero_included():
     r = read("Parking $0 included")
-    assert r["parking_cost"] == 0 and r["parking"] == "lot"
+    assert r["parking_cost"] == 0 and not r.get("parking")  # cycle 36: "Parking $0 included" names no kind
     assert "could not tell" not in notes(r)
 
 

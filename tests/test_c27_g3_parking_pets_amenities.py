@@ -27,7 +27,7 @@ def notes(r):
 def test_free_first_spot_with_priced_extras_is_zero(text):
     r = read(text)
     assert r["parking_cost"] == 0, r
-    assert r["parking"] in ("lot", "street", "covered", "garage")
+    assert (r.get("parking") or "") in ("", "lot", "street", "covered", "garage")  # cycle 36: no kind is guessed
     n = notes(r)
     assert "$75" in n or "$100" in n
 

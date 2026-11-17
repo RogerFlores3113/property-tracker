@@ -107,7 +107,7 @@ def _cost(text):
 ])
 def test_parking_included_optional_garage_is_zero_in_full_listing(text):
     r, cost = _cost(text)
-    assert r["parking_cost"] == 0 and r["parking"] in ("lot", "street")
+    assert r["parking_cost"] == 0 and (r.get("parking") or "") in ("", "lot", "street")  # cycle 36: no kind is guessed
     assert "parking cost" not in cost["missing"]
     line = next(l for l in cost["lines"] if l["key"] == "parking")
     assert line["amount"] == 0

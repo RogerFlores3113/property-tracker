@@ -34,12 +34,12 @@ def test_included_garage_is_free_garage(text):
 @pytest.mark.parametrize("text", ["free parking behind building"])
 def test_free_parking_behind_building(text):
     r = parse_listing(text)
-    assert r["parking"] == "lot" and r["parking_cost"] == 0
+    assert not r.get("parking") and r["parking_cost"] == 0  # cycle 36: "behind building" is not a kind; no kind is guessed
 
 
 def test_off_street_parking_included():
     r = parse_listing("off-street parking included")
-    assert r["parking"] == "lot" and r["parking_cost"] == 0
+    assert not r.get("parking") and r["parking_cost"] == 0  # cycle 36: "behind building" is not a kind; no kind is guessed
 
 
 def test_optional_garage_is_not_the_parking_type():

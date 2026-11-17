@@ -165,4 +165,4 @@ def test_utilities_extra_approx_is_the_estimate_from_the_listing():
 @pytest.mark.parametrize("phrase", ["Off-street parking at no charge", "free parking"])
 def test_free_parking_is_zero(phrase):
     r = parse_listing(BASE + f"$1,800/mo. {phrase}")
-    assert r["parking_cost"] == 0 and r["parking"] == "lot"
+    assert r["parking_cost"] == 0 and (r.get("parking") or "") in ("", "lot")  # cycle 36: "free parking" names no kind
