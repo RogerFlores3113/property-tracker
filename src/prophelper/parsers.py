@@ -4280,11 +4280,11 @@ def _in_pet_sentence(text: str, pos: int) -> bool:
     if start > 0 and text[start - 1] == "|":  # the pet line may sit mid-paragraph: it starts at the last sentence break before the pipe
         line_start = max(line_start, max(_sentence_break(text, start - 1, c) for c in ".!?;") + 1)
     if start > line_start and text[start - 1] == "|" and _PET_LEAD.match(text[line_start:pos]) \
-            and not re.search(r"\bsecurity\b|\bdamage\b|\blease\b|\brent\b(?!\s*:)", text[line_start:pos], re.I) \
+            and not re.search(r"\bsecurity\b|\bdamage\b|\blease\b|(?<!pet )(?<!pets )(?<!dog )(?<!cat )\brent\b(?!\s*:)", text[line_start:pos], re.I) \
             and not sent.strip() and text[pos:pos + 1] == "$":
         return True  # "Pets: 1 pet, max 55 lbs., $300 deposit | $25 monthly": a pipe goes on with the same pet line
-    if _PET_LEAD.match(sent) and not re.search(r"\bsecurity\b|\bdamage\b|\blease\b|\brent\b(?!\s*:)", sent, re.I):
-        return True
+    if _PET_LEAD.match(sent) and not re.search(r"\bsecurity\b|\bdamage\b|\blease\b|(?<!pet )(?<!pets )(?<!dog )(?<!cat )\brent\b(?!\s*:)", sent, re.I):
+        return True  # cycle 34: "pet rent per dog" inside a pet sentence is the pet's charge, never the lease rent
     op = text.rfind("(", 0, pos)
     return op >= 0 and text.find(")", op, pos) < 0 and bool(_PET_WORD.search(text[max(0, op - 30):op + 1]))
 
@@ -4641,6 +4641,10 @@ def _pet_application(text: str) -> tuple[float, bool, str] | None:
     m = re.search(r"\bpet[ \t]+(?:application|screening|app)(?:[ \t]+fee)?[ \t:\-=]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])(" + _PER_PET_TAIL + r")"
                   r"|\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])(" + _PER_PET_TAIL + r")[ \t]*pet[ \t]+(?:application|screening|app)\b(?:[ \t]+fee)?(" + _PER_PET_TAIL + r")", text, re.I)
     if not m:
+        # cycle 34: "$35 application per pet" (amount first, no "pet" before "application") in a sentence about pets
+        m2 = re.search(r"(?<![\w$])\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])[ \t]*(?:pet[ \t]+)?(?:application|screening)(?:[ \t]+fee)?[ \t]*(?:per|each|/)[ \t]*(?:pet|animal|dog|cat)s?\b", text, re.I)
+        if m2 and (_PET_WORD.search(text[max(0, m2.start() - 90):m2.start()]) or _in_pet_sentence(text, m2.start())):
+            return float(m2.group(1)), True, text[:m2.start()] + " " * (m2.end() - m2.start()) + text[m2.end():]
         return None
     return float(m.group(1) or m.group(3)), bool((m.group(2) or m.group(4) or m.group(5) or "").strip()), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
 
@@ -4828,6 +4832,28 @@ def _range_deposit_not_pet(text: str, start: int, end: int) -> bool:
     return not _PET_WORD.search(clause)
 
 
+def _pet_line_list_deposit(text: str, start: int, end: int, amount: float, rent: float | None) -> bool:
+    """Cycle 34 (rule dd): a bare "$350 deposit" item in a list (joined by ; , | or "and") on a line that starts with a pet word and lists other pet charges
+    ("Pets: dogs ok; $35 application per pet; $45 monthly pet rent; $350 deposit") is the pet deposit. The item has no other words, the amount is well below a
+    month's rent, and the line never says security, lease, damage, first or last."""
+    ls = text.rfind("\n", 0, start) + 1
+    le = text.find("\n", end)
+    line = text[ls:le if le >= 0 else len(text)]
+    if not _PET_LEAD.match(line.strip()) or re.search(r"\bsecurity\b|\bdamage\b|\blease\b|\b(?:first|last)\b|\bmove[- ]in\b", line, re.I):
+        return False
+    if rent and amount >= rent * 0.6:
+        return False
+    item_s = max(text.rfind(c, ls, start) for c in ";,|") + 1
+    item_s = max(item_s, ls)
+    if text[item_s:start].strip(" \t") not in ("", "and", "plus", "+"):
+        return False
+    tail = re.match(r"[ \t]*(?:non[- ]?refundable|refundable|one[- ]time)?[ \t]*(?:[;,|.]|$|\n|and\b)", text[end:end + 25], re.I)
+    if not tail:
+        return False
+    others = line[:start - ls] + " " + line[end - ls:]
+    return bool(re.search(r"\bpet[ \t]+(?:rent|fee)\b|\bapplication\b|\bper[ \t]+(?:pet|dog|cat)\b|/[ \t]*mo(?:nth)?\b|\bmonthly\b", others, re.I))
+
+
 def _pet_side_deposits(text: str, rent: float | None) -> tuple[dict[str, float], str]:
     """A "$250 deposit non-refundable" written next to the pets is a pet charge, never the security deposit. Returns
     ({"pet_fee" or "pet_deposit": amount}, text with those amounts blanked so the security deposit search skips them)."""
@@ -4856,9 +4882,11 @@ def _pet_side_deposits(text: str, rent: float | None) -> tuple[dict[str, float],
             ss = max(_sentence_break(text, m.start(), c) for c in ".!?;\n|") + 1
             se = min([i for i in (text.find(c, m.end()) for c in ".!?;\n|") if i >= 0] or [len(text)])
             if not pet and m.group(1) and not text[ss:m.start()].strip() and _after_pet_sentence(text, ss) and amount > 0 and (rent is None or amount < rent * 0.6) \
-                    and re.search(r"/[ \t]*mo\b|\bmonthly\b|per[ \t]+month|a[ \t]+month", text[m.end():se], re.I) \
+                    and re.search(r"/[ \t]*mo(?:nth)?\b|\bmonthly\b|per[ \t]+month|a[ \t]+month", text[m.end():se], re.I) \
                     and not re.search(r"\b(?:credit|approv\w*|security|lease|first|last|refundable|if|else)\b", text[ss:se], re.I):
                 pet = True  # cycle 23: "Cats ok. $250 deposit, $30/mo.": a sentence right after a pet sentence that starts with a deposit and lists a monthly pet charge
+        if not pet and m.group(1) and not nonref and _pet_line_list_deposit(text, m.start(), m.end(), amount, rent):
+            pet = True  # cycle 34: "Pets: dogs ok; $35 application per pet; $45 monthly pet rent; $350 deposit": an item of a pet line that lists pet charges
         if pet and not nonref and _range_deposit_not_pet(text, m.start(), m.end()):
             pet = False  # cycle 33: "Pet policy: ... 2 max. Deposit $1,200 - $3,100.": a deposit range in a sentence of its own is the security deposit, never the pet deposit
         if not pet:
