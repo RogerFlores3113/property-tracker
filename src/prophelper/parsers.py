@@ -576,7 +576,7 @@ _GC_LEAD = re.compile(r"^[ \t\"'(\[*#-]*(?:(?:corrected?|corrections?|actually)\
 _GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)"
 _GC_CUE = re.compile(r"\b(?P<w>now|" + _GC_HARD + r"|new)\b", re.I)
 _GC_OLD = re.compile(r"\b(?:was|were|from|earlier|previously|before|originally|not|instead[ \t]+of|used[ \t]+to[ \t]+be|old|formerly|prior|said|listed[ \t]+as|posted[ \t]+as|ignore|disregard|than)\b", re.I)
-_GC_FILL = (r"(?:rent|price|asking|deposit|dep|security|sec|hoa|dues|fees?|tax(?:es)?|property|monthly|condo|association|application|app|parking|garage|carport|is|are|of|at|only|just|now|the|a|an|total|to|be|should|will|"
+_GC_FILL = (r"(?:rent|price|asking|deposit|dep|security|sec|hoa|dues|fees?|tax(?:es)?|property|monthly|(?:condo|association)[ \t]+(?:fees?|dues)|application|app|parking|garage|carport|is|are|of|at|only|just|now|the|a|an|total|to|be|should|will|"
             r"it'?s|its|this|unit|payment|charge|cost|costs|per|month|ad|listing|post|figure|number|version|as|had|showed|read|stated|gave|it|refundable|amount|for)")
 _GC_TAIL = re.compile(r"^[ \t:=\-–—(]*(?:" + _GC_FILL + r"\b[ \t:=\-–—(]*)*$", re.I)
 _GC_OLD_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly|annual\w*)?[ \t]*\)?[ \t]*[,;]?[ \t]*\(?[ \t]*(?:but[ \t]+)?(?:now|updated?|corrected|changed|->|=>|→|is[ \t]+now)\b", re.I)
@@ -4095,6 +4095,13 @@ def _deposit_months_general(text: str) -> tuple[float, str] | None:
             if g in _DEP_WORDS:
                 return _DEP_WORDS[g], " ".join(m.group(0).split())
     return None
+
+
+def _blank_named_month_deposits(text: str) -> str:
+    """Cycle 27: a deposit written in months inside a pet, parking, key or other named clause ("Pet deposit: one month", "Key deposit 1.5 months") is that thing's deposit, never the
+    security deposit. The clause is blanked (same length) before the months are read."""
+    pat = re.compile(r"\b" + _NAMED_DEP_WORDS + r"[ \t]+(?:refundable[ \t]+)?deposits?\b[ \t:\-=]{0,4}(?:(?:is|of|equal to|equals|=)[ \t]+)?(?:\d(?:\.\d+)?|one|two|a|half(?:[ \t]+a)?|1/2)[- ]?months?\b(?:'s?)?(?:[ \t]+(?:of[ \t]+)?rent)?", re.I)
+    return pat.sub(lambda m: " " * len(m.group(0)), text)
 
 
 def _deposit_or_fee_refundable(text: str) -> tuple[float, str] | None:
@@ -9852,7 +9859,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 dep = []
                 facts.append(f"The listing says the deposit is {_usd(float(wm.group('amt').replace(',', '')))} or {wm.group('pct')}% of rent, whichever is {word}, but the rent was not read, "
                              "so the deposit is left empty. Fill it in once you know the rent.")
-        by_months = _deposit_in_months(text)
+        by_months = _deposit_in_months(_blank_named_month_deposits(text))  # cycle 27: "Pet deposit: one month" is not the security deposit
         by_phrase = ""
         if not by_months and not _is_sale_text(text):  # cycle 27: "half month", "Sec dep 1.5 months", "due at signing: one month"
             gm = _try(lambda: _deposit_months_general(dep_src))
@@ -10427,6 +10434,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     _try(fees)
     _try(lambda: _gc_apply(text, out, facts, gc_found, gc_unplaced, buying, only=set(gc_found) - {"price"}))
     _try(lambda: _gc_quote_unplaced(facts, gc_unplaced))
+    if "price" in gc_found and any(f.startswith("The listing corrects the rent:") for f in facts):  # one note for the old rent, not a price-cut note beside it
+        _olds = [_usd(o) for o in gc_found["price"]["olds"]]
+        facts[:] = [f for f in facts if not (re.search(r"price was cut from|rent dropped from", f) and any(o in f for o in _olds))]
     facts += _try(lambda: _internet_choice_notes(text, facts)) or [] if not buying else []  # cycle 22: optional internet is named, never counted
     for key, value in (_try(lambda: _address(text)) or {}).items():
         put(key, value)
