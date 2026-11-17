@@ -187,3 +187,18 @@ def test_update_search_to_dog_stops_counting_a_cat_fee(store, t, amount):
     e = enrich.enrich_places(store, store.get_search(s["id"]), [store.get_place(1)])[0]
     assert e["pet_fee"] is None
     assert e["cost_total"] < cat_total
+
+
+# ---- a monthly "fee" is the pet rent, and "+ $N/mo" after a fee is the rent of the same kind
+@pytest.mark.parametrize("t,kind,want", [
+    ("Rent $3,300. Dog fee $400 + $30/mo. Parking $0.", "dog", {"pet_fee": 400, "pet_rent": 30}),
+    ("Rent $3,300. Dog fee $400 plus $30 per month.", "dog", {"pet_fee": 400, "pet_rent": 30}),
+    ("Rent $3,300. Dog fee $400 + $30/mo. Parking $0.", "cat", {}),
+    ("Rent $1,700. Cat fee $26 monthly. Concierge $17 monthly.", "cat", {"pet_rent": 26}),
+    ("Rent $1,700. Cat fee $26 monthly.", "dog", {}),
+    ("Rent $1,700. Cat fee: $26 a month.", "cat", {"pet_rent": 26}),
+])
+def test_monthly_fee_and_plus_monthly(t, kind, want):
+    r = parse_listing(t, "", pet_kind=kind)
+    for k in ("pet_fee", "pet_rent", "pet_deposit"):
+        assert r.get(k) == want.get(k), (k, r)

@@ -184,9 +184,9 @@ def test_a_question_with_no_answer_is_still_only_a_question(t):
 # ---- "No breed restrictions apply to cats" is not a breed note for dogs (family l12)
 @pytest.mark.parametrize("t", [
     "Rent $2,325. Pet policy: dogs considered, ask for details. No breed restrictions apply to cats.",
-    "Rent $2,325. No breed restrictions apply to cats. Cats ok.",
+    "Rent $2,325. No breed restrictions apply to cats. Dogs ok up to 40 lbs.",
     "Rent $2,325\nNo breed restrictions for cats\nDogs ok up to 30 lbs\n",
-    "Rent $2,325. Cats ok (no breed restrictions on cats).",
+    "Rent $2,325. Cats ok (no breed restrictions on cats). Dogs considered.",
 ])
 def test_cat_only_breed_line_is_not_a_breed_note(t):
     assert "pet_breed_note" not in P(t, "dog")
@@ -240,3 +240,11 @@ def test_a_cat_fee_for_a_dog_search_is_not_a_listed_missing_amount(store):
     srv, e = _flow(store, "Rent $1,420. 1 bed. Cats ok. Cat fee $300. Security deposit $1,420.", pet_kind="dog")
     out = mtext(call(srv, "get_place", place_id=1))
     assert "$300 amount" not in out
+
+
+@pytest.mark.parametrize("t", [
+    "Rent $2,325. Cats allowed, 2 max, no breed restrictions.",
+    "Rent $2,325. Cat friendly (breed restrictions apply).",
+])
+def test_a_cat_only_listing_keeps_its_breed_line(t):
+    assert "pet_breed_note" in P(t, "cat")

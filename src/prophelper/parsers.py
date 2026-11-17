@@ -4523,6 +4523,7 @@ _KC_LABEL = re.compile(r"\b(?:pet[ \t]+)?(rent|fee|deposit)s?\b", re.I)
 _KC_MONTHLY = re.compile(r"[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b)", re.I)
 _KC_LEAD_LABEL = re.compile(r"(?<![\w-])(cat|dog)s?[ \t]*:", re.I)
 _KC_TYPE_AFTER = re.compile(r"[ \t]*(?:/[ \t]*mo(?:nth)?[ \t]*|per[ \t]+month[ \t]*|monthly[ \t]*|one[- ]?time[ \t]*|non[- ]?refundable[ \t]*|refundable[ \t]*)?(?:pet[ \t]+)?(fee|rent|deposit)s?\b", re.I)
+_KC_PLUS_MONTHLY = re.compile(r"[ \t]*(?:\+|plus|and|,)[ \t]*\$[ \t]?(\d{1,4}(?:,\d{3})?(?:\.\d\d)?)[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b)", re.I)
 _KC_SENT = re.compile(r"(?<!\d)[.!?](?=\s|$)|[;\n|]")
 
 
@@ -4577,7 +4578,12 @@ def _kinded_pet_charges(text: str) -> list[tuple[str, str, float, int, int]]:
                                 break
             if typ not in ("fee", "rent", "deposit"):
                 continue
+            if typ == "fee" and _KC_MONTHLY.match(text[end:hi]):
+                typ = "rent"  # "Cat fee $26 monthly": a charge every month is the pet rent
             found.append((typ, kind, float(am.group(1).replace(",", "")), s, end))
+            plus = _KC_PLUS_MONTHLY.match(text[end:hi])
+            if plus and typ in ("fee", "deposit"):
+                found.append(("rent", kind, float(plus.group(1).replace(",", "")), end + plus.start(1) - 1, end + plus.end()))  # "Dog fee $400 + $30/mo"
     return found
 
 
@@ -4917,7 +4923,7 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
                     out["pet_count_limit"] = count
                     break
     b = next((c for c in _clauses(text) if re.search(r"\b(?:breed|breeds|breed restrictions?)\b", c, re.I)
-              and not (re.search(r"\bcats?\b", c, re.I) and not re.search(r"\b(?:dogs?|pets?|animals?|puppy|puppies|canines?)\b", c, re.I))), None)  # cycle 33: "No breed restrictions apply to cats" says nothing about dogs
+              and not (re.search(r"\bcats?\b", c, re.I) and re.search(r"\bdogs?\b", text, re.I) and not re.search(r"\b(?:dogs?|pets?|animals?|puppy|puppies|canines?)\b", c, re.I))), None)  # cycle 33: "No breed restrictions apply to cats" says nothing about dogs
     if b:
         clause = " ".join(b.split()).strip(" -:,")
         if "," in clause and "(" not in clause and not re.search(r"\bbreeds?[ \t]*[:\-]", clause, re.I):  # "Dogs OK, 1 dog max, breed restrictions apply": keep the pieces that are about breeds
