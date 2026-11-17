@@ -43,6 +43,7 @@ CAP_NEAR = 74  # a must-have missed by a little, only because of a guess
 CAP_FAR_COMMUTE = 69  # someone's commute is more than a quarter over their limit: not a "good" match
 CAP_MOSTLY_UNKNOWN = 59
 CAP_UNPRICED_PART = 95  # a cost part is unknown: never a score of 100
+CAP_AI_TEXT = 69  # text aimed at AI tools in the listing: never a "good" score (70 and up), and it always carries the check-first mark
 CAP_UNKNOWN_COST = 85  # a price must-have that passes only while a cost is unknown
 NEAR_MISS_PCT = 0.03  # a must-have missed by less than this share is a near miss
 SORT_GROUPS = {"fits": 0, "near_miss": 1, "doesnt_fit": 2, "check_first": 3}
@@ -1010,6 +1011,15 @@ def score_place(place: dict[str, Any], criteria: Iterable[dict[str, Any]], *, mo
             "conditional_costs": [i["conditional"] for i in items if i.get("conditional") and i["dealbreaker_status"] == "pass"],
             "late_penalty": LATE_PENALTY if late else 0, "late_note": late, "lease_gap": lease_gap, "notes": notes,
             "scam": scam, "rent_check": rent_check, "sort_group": SORT_GROUPS[fit], "cost": ctx["cost"]}
+
+
+def cap_for_ai_text(score: dict[str, Any]) -> None:
+    """A place whose listing has text aimed at AI tools never scores in the "good" band, so a high number can't look trustworthy beside the
+    check-first mark. Changes ``score`` in place (``total`` and ``caps``)."""
+    total = score.get("total")
+    if total is not None and total > CAP_AI_TEXT:
+        score["total"] = CAP_AI_TEXT
+        score.setdefault("caps", []).append("the listing has text aimed at AI tools")
 
 
 def _flagged(p: dict[str, Any]) -> int:

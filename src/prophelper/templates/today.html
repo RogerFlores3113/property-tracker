@@ -137,7 +137,7 @@
     {% endfor %}
   </ul>
   {% if capped and capped.near_miss %}<p class="fine">and {{ capped.near_miss|num }} more on the <a href="/board">board</a>.</p>{% endif %}
-  <p class="fine">These miss your budget by under 3 percent and nothing else. They are not in Best fits.</p>
+  <p class="fine">{{ near_miss_footer }}</p>
 </section>
 {% endif %}
 

@@ -53,6 +53,8 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
                                 custom_scores=store.custom_scores(place["id"]), budget_max=search.get("budget_max"),
                                 settings=settings, cost=cost, serious_flag=serious, people=people, search=search, peers=peer_rents,
                                 pets={"kind": (search.get("pet_kind") or "") if money.has_pets(search.get("pet_kind")) else "", "weight": search.get("pet_weight"), "count": search.get("pet_count")})
+    if any("aimed at AI tools" in str(f) for f in flags):
+        scoring.cap_for_ai_text(score)  # cycle 31: a place with text aimed at AI tools never scores in the "good" band
     if protected is None:
         protected = place["id"] in store.protected_place_ids(search["id"])
     prefer = next((c["target"].get("mode") for c in criteria if c["kind"] == "commute"), None)
