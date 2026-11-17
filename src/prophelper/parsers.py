@@ -10662,6 +10662,14 @@ def strip_site_label(title: str) -> str:
         if cut == t or len(cut) < 3:
             break
         t = cut
+    # cycle 32: the label can come after a name and a bar ("Hartwell Place | Zillow-ish listing - 1 Bed Rent $1,425")
+    mid = re.sub(r"(?<=[|\u2013\u2014]) (?:fb marketplace|facebook marketplace|marketplace|craigslist|zillow|trulia|redfin|hotpads|zumper|apartments\.com|realtor\.com)(?:-?ish)?(?:[ \t]+(?:style|listing|post|ad))?[ \t]*[-:|\u2013\u2014][ \t]+(?=\S)", " ", t, count=1, flags=re.I)
+    if len(mid) >= 3:
+        t = mid
+    # a bracket that was never closed and holds a price or an old-price word ("... (previously $1,490") is cut off the end
+    dang = re.search(r"[ \t]*[(\[][^)\]]*$", t)
+    if dang and re.search(r"\$|\b(?:previously|formerly|was|reduced|originally|now)\b", dang.group(0), re.I) and len(t[:dang.start()].strip(" ,;:-|")) >= 3:
+        t = t[:dang.start()].strip(" ,;:-|")
     return t if t != " ".join(str(title or "").split()) else title
 
 

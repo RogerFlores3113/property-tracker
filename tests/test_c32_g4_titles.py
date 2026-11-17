@@ -79,3 +79,21 @@ def test_nontech_l3_whole_listing():
 ])
 def test_real_area_or_building_names_still_win(text, name):
     assert read(text)["title"] == name
+
+
+@pytest.mark.parametrize("sent,want", [
+    ("Hartwell Place | Zillow-ish listing - 1 Bed Rent $1,425 (previously $1,490", "Hartwell Place | 1 Bed Rent $1,425"),
+    ("Stadium View | 1 Bed (was $1,350", "Stadium View | 1 Bed"),
+    ("Cozy 2BR [reduced from $1,600", "Cozy 2BR"),
+    ("Zillow-ish listing - Stadium View | 1 Bed (formerly $1,350", "Stadium View | 1 Bed"),
+    ("Hartwell Place \u2014 Craigslist: 1 Bed", "Hartwell Place \u2014 1 Bed"),
+])
+def test_sent_title_label_and_dangling_bracket(sent, want):
+    assert P.strip_site_label(sent) == want
+
+
+@pytest.mark.parametrize("sent", [
+    "Hartwell Place (Building A)", "Hartwell Place (reduced from $1,490)", "Zillow Heights Apartments", "Cozy 2BR (pets ok",
+])
+def test_sent_title_negatives(sent):
+    assert P.strip_site_label(sent) == sent
