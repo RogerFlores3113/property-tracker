@@ -1,6 +1,7 @@
 """Cycle 25 G6: buyer money reader. Who pays a special assessment, buyer closing costs in more wordings, a maintenance fee as the HOA,
 a "$2,000 or 1%, whichever is greater" seller credit, a percent the listing itself gives for closing costs, and year built wordings."""
 from __future__ import annotations
+import os
 
 from pathlib import Path
 
@@ -212,7 +213,7 @@ def test_year_built_not_lease_or_renovation(text):
 
 
 # ---- the reviewer's listing files
-P = Path("/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
+P = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "")
 
 
 @pytest.mark.skipif(not (P / "r24-buyer-l10.txt").exists(), reason="reviewer files not here")

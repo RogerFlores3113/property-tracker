@@ -1,11 +1,12 @@
 """Cycle 23 G2: floor-plan prices, rent tied to a lease length, non-refundable deposit, deposit in months, key deposit, one per-adult note."""
+import os
 from pathlib import Path
 
 import pytest
 
 from prophelper.parsers import app_fee_note_for_people, parse_listing
 
-P = Path("/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
+P = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "")
 B = "12 Oak St, Champaign IL 61820. "
 
 

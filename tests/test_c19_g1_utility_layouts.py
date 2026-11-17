@@ -2,6 +2,7 @@
 seasonal figures, pipe lists, one figure after a list of names, and "included in rent" lists. Each item has the reviewer's
 phrasing plus other layouts (commas, dashes, bullets, pipes, separate lines)."""
 from __future__ import annotations
+import os
 
 import pytest
 
@@ -246,7 +247,7 @@ def test_quarry_gas_is_counted_and_not_called_missing(text):
 
 
 # the reviewers' saved listings (skipped when the panel folder is not on this machine) --------------------------------------------------
-PANEL = "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel"
+PANEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + ""
 
 
 def listing_exists(name: str) -> bool:

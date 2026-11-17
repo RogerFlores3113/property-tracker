@@ -1,10 +1,11 @@
 """Cycle 26 G2: corrections name a fact, specials, extra-space figures, narrow ranges, deposits, and the correction path in update_place."""
+import os
 import pytest
 
 from mcp_util import call, server, text
 from prophelper.parsers import parse_listing
 
-P = "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel/"
+P = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "/"
 
 
 def read(t):

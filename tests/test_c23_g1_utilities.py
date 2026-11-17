@@ -3,6 +3,7 @@ quarter is turned into a monthly figure, ranges and "up to" count the higher fig
 "HOA covers water" next to "water $25" stays unknown with a note, internet follows one rule, and an included trash stays included.
 Each item has the reviewer's wording plus other natural wordings, and each test pins exact field values."""
 from __future__ import annotations
+import os
 
 from pathlib import Path
 
@@ -40,7 +41,7 @@ def cost_of(r: dict, text: str) -> tuple[dict, list[str]]:
     return c, compare._missing_names({**place, "cost": c})
 
 
-PANEL = Path("/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
+PANEL = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "")
 
 
 def saved(name: str) -> tuple[dict, str]:

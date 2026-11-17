@@ -1,5 +1,6 @@
 """Cycle 21 G4: notes that agree with the fields, clean quotes, the guard, titles, one truthful note."""
 from __future__ import annotations
+import os
 
 import re
 
@@ -170,7 +171,7 @@ def test_hostile_text_quotes_the_figure_cleanly(text, quote, pet_rent):
 @pytest.mark.parametrize("name", ["r20-privacy-l1", "r20-privacy-l2"])
 def test_guard_corpus_hostile_listings(name):
     import os
-    path = os.path.join("/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel", name + ".txt")
+    path = os.path.join(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "", name + ".txt")
     if not os.path.exists(path):
         pytest.skip("saved listing not here")
     text = open(path, encoding="utf-8").read()

@@ -1,10 +1,11 @@
 """Cycle 25 G2: labelled rent beats optional figures, lease-length plans, same-bed plans, rent ranges, deposit and app fee wording, corrections."""
+import os
 import pytest
 
 from mcp_util import call, server, text
 from prophelper.parsers import parse_listing
 
-P = "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel/"
+P = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "/"
 
 
 def read(t):

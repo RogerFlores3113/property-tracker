@@ -8,7 +8,7 @@ import pytest
 from prophelper import compare, money
 from prophelper.parsers import parse_listing
 
-PANEL = os.environ.get("PH_PANEL", "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
+PANEL = os.environ.get("PH_PANEL", os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "")
 HEAD = "Rent $1,800. "
 
 

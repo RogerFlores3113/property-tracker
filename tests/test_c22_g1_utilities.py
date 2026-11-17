@@ -2,6 +2,7 @@
 figure in every layout, a bi-monthly figure in brackets restates the monthly one, plain totals are read, and the notes name every part.
 Each item has the reviewer's phrasing plus other layouts, and each test pins the exact field values."""
 from __future__ import annotations
+import os
 
 import re
 from pathlib import Path
@@ -30,7 +31,7 @@ def included_set(r: dict) -> set[str]:
     return {w.strip() for w in str(r.get("utilities_included") or "").split(",") if w.strip()}
 
 
-PANEL = Path("/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
+PANEL = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "")
 
 
 def saved(name: str) -> dict:

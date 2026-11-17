@@ -1,11 +1,12 @@
 """Cycle 22 G2: one-time fees counted once, optional amenity, background check per adult, last month's rent, beds/baths shorthand, promo notes."""
+import os
 from pathlib import Path
 
 import pytest
 
 from prophelper.parsers import parse_listing
 
-P = Path("/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
+P = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "")
 B = "2 bed 1 bath, $1,500/mo. 12 Oak St, Champaign IL 61820. "
 
 

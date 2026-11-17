@@ -3,6 +3,7 @@
 conflict, "tenant pays all, estimate USD 220/mo" is a total, "gas incl. in rent?" is a question, and cents are kept. Each item has the reviewer's
 wording plus other natural wordings, and each test pins exact field values."""
 from __future__ import annotations
+import os
 
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from prophelper import compare, money
 from prophelper.parsers import parse_listing
 
 HEAD = "2 bed apartment, $1,450/mo."
-PANEL = Path("/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
+PANEL = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "")
 
 
 def read(text: str, head: str = HEAD) -> dict:
