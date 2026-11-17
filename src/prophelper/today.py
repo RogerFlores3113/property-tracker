@@ -705,6 +705,7 @@ def more_incomplete_text(hidden: list[dict[str, Any]]) -> str:
 def closing_target(store: Store, search: dict[str, Any], today_: date | None = None) -> dict[str, str] | None:
     """Cycle 32: the closing countdown on Today. A closing date saved on a place still in play beats the search's target date (the place page already
     does this); with several, the nearest one that has not passed is used and the place is named, unless it is the same day as the search's target.
+    Cycle 34: a place in the Closing stage comes first: its own date is used (the nearest ahead, else the latest past one, like its place page) and it is always named.
     With none in the future the search's target is used, and with no target either the most recent past one ("Closing was ...")."""
     if not search or search.get("mode") != "buy":
         return None
@@ -718,7 +719,16 @@ def closing_target(store: Store, search: dict[str, Any], today_: date | None = N
         return base
     now = (today_ or helpers.today()).isoformat()
     future = sorted((d for d in rows if str(d["date"]) >= now), key=lambda d: (str(d["date"]), str(d.get("title") or "")))
-    if future:
+    # cycle 34: a place that is in the Closing stage is the one the countdown is about. Its own date is used (the nearest one ahead, else the latest one
+    # that has passed, as its place page does) and the line names it, even when the date is the search's target day or later than another place's date
+    in_closing = [d for d in rows if d.get("stage") == "Closing"]
+    closing_ahead = [d for d in future if d.get("stage") == "Closing"]
+    named = False
+    if closing_ahead:
+        pick, named = closing_ahead[0], True
+    elif in_closing:
+        pick, named = sorted(in_closing, key=lambda d: (str(d["date"]), str(d.get("title") or "")))[-1], True
+    elif future:
         pick = future[0]
     elif base is not None:
         return base
@@ -727,7 +737,7 @@ def closing_target(store: Store, search: dict[str, Any], today_: date | None = N
     info = helpers.closing_info({"mode": "buy", "target_close": str(pick["date"])[:10]}, today_)
     if info is None:
         return base
-    if base is not None and str(search.get("target_close") or "")[:10] == str(pick["date"])[:10]:
+    if base is not None and not named and str(search.get("target_close") or "")[:10] == str(pick["date"])[:10]:
         return base  # the same day as the search's own target: the plain line
     if str(pick["date"]) < now:
         info["today_line"] = info["today_line"].replace("Closing target was", "Closing was")

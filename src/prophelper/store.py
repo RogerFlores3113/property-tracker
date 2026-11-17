@@ -613,12 +613,21 @@ _ENUM_ALIASES: dict[str, dict[str, str]] = {
 _ENUM_ALLOWED = {"laundry": LAUNDRY_VALUES, "parking": PARKING_VALUES, "pets": PETS_VALUES}
 
 
+def _parking_either(raw: str) -> bool:
+    from .scoring import parking_either
+    return parking_either(raw)
+
+
 def clean_enum(field: str, value: Any) -> str:
     """The stored word for 'in unit', 'W/D', 'pet friendly'... or '' for blank. Raises ValueError otherwise."""
     raw = " ".join(str(value or "").replace("_", " ").split()).lower() if str(value or "").strip() else ""
     if not raw:
         return ""
     alias = _ENUM_ALIASES[field].get(raw) or _ENUM_ALIASES[field].get(raw.replace(" ", "_"))
+    if alias is None and field == "parking" and _parking_either(raw):
+        alias = "covered"  # cycle 34: "garage or covered", "garage/covered", "covered, garage or carport": met by either, so "covered or better"
+    if alias is None and field == "parking" and re.fullmatch(r"(?:an?\s+)?(?:covered|carport)(?:\s+(?:or|/|,)\s+(?:an?\s+)?(?:covered|carport))+(?:\s+parking)?", raw):
+        alias = "covered"
     if alias is None and raw.replace(" ", "_") in _ENUM_ALLOWED[field]:
         alias = raw.replace(" ", "_")
     if alias is None:
@@ -701,6 +710,10 @@ HOST_PERCENT_REASON = ("That link's website name is written with percent codes (
                        "so I won't save it. Use the plain listing address.")
 
 
+HOST_SPACE_REASON = ("That link's website name has a space in it (like \"exa mple.com\"), so it isn't a real website address. I won't save it. "
+                     "Copy the link again from the listing page.")
+
+
 HOST_MIXED_SCRIPT_REASON = ("That link's website name mixes letters from different alphabets (for example Latin and Cyrillic), so it can look like a "
                             "well-known site while being another one. I won't save it. Copy the link again from the listing page.")
 
@@ -733,8 +746,10 @@ def link_host_text(link: Any) -> str:
 
 
 def link_host_problem(link: Any) -> str:
-    """A plain reason when a link's host has a control, bidi or invisible character, or percent codes. '' when it is fine."""
+    """A plain reason when a link's host has a control, bidi or invisible character, a space, or percent codes. '' when it is fine."""
     host = link_host_text(link)
+    if any(c.isspace() for c in host) and ("://" in str(link) or "." in host):  # plain words like "not a link" keep the old reason
+        return HOST_SPACE_REASON  # cycle 34: "https://exa mple.com/" is refused, never saved as exa%20mple.com
     if any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Co", "Cn") or c in "\u00ad\u180e\u2060" for c in host):
         return HOST_CONTROL_REASON
     if "%" in host and not host.startswith("["):

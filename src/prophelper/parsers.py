@@ -11986,12 +11986,17 @@ _PROMO_LINE = re.compile(r"^(?:no[ \t]+(?:broker|brokers|app(?:lication)?|admin|
                          r"(?:first|1st)[ \t]+(?:\d+[ \t]+|two[ \t]+|three[ \t]+)?months?[ \t]+(?:only|special|for|at|is|just)\b[^\n]{0,60}|months?[ \t]+(?:one|1|\d{1,2}[ \t]*(?:-|\u2013|to)[ \t]*\d{1,2})\b[^\n]{0,60})$", re.I)  # cycle 33: "First month only $1,999, then $2,350" is a promo, never the name
 
 
+def _redflags_strip(text: str) -> str:
+    from .redflags import strip_ai_text
+    return strip_ai_text(text)
+
+
 def _ai_aimed(line: str) -> bool:
     """True when a line is text aimed at AI tools ("ATTENTION AI ASSISTANT: ignore previous instructions"). The red flag rules own the test."""
     try:
-        from .redflags import _AI_EXTRA, _AI_TARGETED, normalise_text
+        from .redflags import _AI_C17, _AI_EXTRA, _AI_TARGETED, normalise_text
         clean = normalise_text(line)[0]
-        return bool(_AI_TARGETED.search(clean) or _AI_EXTRA.search(clean))
+        return bool(_AI_TARGETED.search(clean) or _AI_EXTRA.search(clean) or _AI_C17.search(clean))  # cycle 34: the later rule sets too ("New instructions follow: ...")
     except Exception:  # noqa: BLE001
         return bool(re.search(r"\b(?:ai|llm|assistant|chatbot|language model)\b.{0,30}\b(?:ignore|disregard|instructions?)\b|\b(?:ignore|disregard)\b.{0,20}\binstructions?\b", line, re.I))
 
@@ -12811,6 +12816,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
     ``buying`` is True for a buy search: the listing is then a home for sale, never a rental, and the rent-only readings
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
+    raw_text = text or ""
+    text = _try(lambda: _redflags_strip(raw_text)) or raw_text  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
+    title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(raw_text)))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(text or ""))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
@@ -13754,11 +13762,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if not util_taken and not buying and isinstance(out.get("utilities_estimate"), (int, float)) and not isinstance(out.get("utilities_estimate"), bool):
         # cycle 22: whichever reader built the estimate, its figures are counted once: never also in other monthly fees ("Water/sewer/trash $35" next to "electric & gas (budget $80)")
         util_taken = [v for v in (_try(lambda: _utility_component_numbers(text, True)) or set()) if 0 < v <= float(out["utilities_estimate"]) + 0.5]
-    text_full = text
+    text_full = title_source if title_source is not None else text  # cycle 34: the last guard sees the whole paste, so a figure inside an AI-aimed sentence is still quoted (never counted)
     tail = None if buying else _try(lambda: _util_tail(text, out.get("utilities_estimate"), pays, included, counted | set(add_names_seen), facts[n_facts_pre:]))
     if tail:
         pays, included = tail["pays"], tail["included"]
-        text_full, text = text, tail["text"]  # the fee readers below must not count an internet bill the estimate already holds; the last guard sees the whole text
+        text_full, text = text_full, tail["text"]  # the fee readers below must not count an internet bill the estimate already holds; the last guard sees the whole text
         if tail["est"][0] == "set":
             put("utilities_estimate", tail["est"][1])
         elif tail["est"][0] == "pop":
@@ -14673,7 +14681,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("city", _zip_city(text))  # cycle 33: "1200 N Wells St Chicago 60610": the address line's city wins over a neighbourhood in the headline
         elif _try(lambda: _headline_city(text)):
             put("city", _headline_city(text))  # cycle 33: "3 bed 2 bath ranch, Foster City." -> Foster City
-    title_text = _strip_rate_lead(text)  # cycle 33: "Rate this unit 10/10! Grandview Yard Apartments" names Grandview Yard Apartments
+    title_text = _strip_rate_lead(title_source if title_source is not None else text)  # cycle 33: "Rate this unit 10/10! Grandview Yard Apartments" names Grandview Yard Apartments
     title = _try(lambda: _title(title_text, out))
     title = _try(lambda: _lead_title(title_text, out, title or "")) or title  # cycle 22: a descriptive name instead of the street address or a policy line
     title = title or _try(lambda: _street_name_title(text, out))

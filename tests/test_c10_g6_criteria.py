@@ -11,7 +11,7 @@ WARN = "This parking rule accepts any off-street parking. Say garage or covered 
 
 
 def test_parking_want_inferred_from_label():
-    assert scoring.settle_parking_target("Garage or covered", {}) == ({"want": "garage"}, "")
+    assert scoring.settle_parking_target("Garage or covered", {}) == ({"want": "covered"}, "")
     assert scoring.settle_parking_target("Covered parking", None) == ({"want": "covered"}, "")
     assert scoring.settle_parking_target("Parking", {})[1] == WARN
     assert scoring.settle_parking_target("Garage", {"want": "lot"}) == ({"want": "lot"}, "")
@@ -22,7 +22,7 @@ def test_create_search_infers_garage(store):
     r = call(srv, "create_search", name="S", criteria=[{"kind": "parking", "label": "Garage or covered", "dealbreaker": True}])
     sid = structured(r)["search_id"] if isinstance(structured(r), dict) and "search_id" in structured(r) else store.list_searches()[0]["id"]
     c = [x for x in store.list_criteria(sid) if x["kind"] == "parking"][0]
-    assert c["target"] == {"want": "garage"}
+    assert c["target"] == {"want": "covered"}
     assert WARN not in text(r)
 
 
