@@ -100,6 +100,34 @@ def missing_vs_fields(text: str) -> list[str]:
     return bad
 
 
+_EXPLAINED_NOTE = re.compile(r"optional|one-time|special|\bseller pays\b|paid by the seller|not in the monthly cost|another lease length|not a cost on top|older price|old price", re.I)
+
+
+def headline_vs_notes(text: str, buying: bool = False) -> list[str]:
+    """Cycle 27: no headline or "missing" item names a figure that a note explains as optional, a special, one-time, seller-paid, another lease
+    length or an old price. The total itself (the part before the first comma of the headline) is not a missing figure."""
+    from prophelper import money
+    r = P.parse_listing(text, "", buying=buying)
+    place = dict(r, reader_notes=r.get("found_in_listing"), listing_text=text)
+    cost = money.true_monthly_cost(place, "buy" if buying else "rent")
+    head = cost.get("headline") or ""
+    named = [head.split(", ", 1)[1] if ", " in head else ""] + [str(x) for x in cost.get("missing") or []]
+    notes = [n for n in str(r.get("found_in_listing") or "").splitlines() if n.strip()]
+    bad = []
+    for item in named:
+        for m in _MISSING_AMOUNT.finditer(item):
+            v = float(m.group(1).replace(",", ""))
+            for n in notes:
+                for sent in re.split(r"(?<=[a-z0-9)\"])\.\s+(?=[A-Z])", n):
+                    for fm in _MISSING_AMOUNT.finditer(sent):
+                        if abs(float(fm.group(1).replace(",", "")) - v) >= 0.01:
+                            continue
+                        monthly = re.match(r"[\s/]*(?:a month|per month|mo\b|monthly|each month)", sent[fm.end():], re.I)
+                        if _EXPLAINED_NOTE.search(sent) and not (monthly and not re.search(r"optional", sent, re.I)):
+                            bad.append(f"[headline names an explained figure] ${v:g} in {item!r} but a note says: {sent[:120]}")
+    return bad
+
+
 def run_all(guard: bool) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for f, text in listings(include_buyer=True):
@@ -108,6 +136,8 @@ def run_all(guard: bool) -> dict[str, list[str]]:
             bad += percent_and_double(text, guard)
             if guard and "buyer" not in f:
                 bad += missing_vs_fields(text)
+            if guard:
+                bad += headline_vs_notes(text, buying="buyer" in f)
         except Exception as e:  # noqa: BLE001
             bad = [f"ERROR {e!r}"]
         if bad:

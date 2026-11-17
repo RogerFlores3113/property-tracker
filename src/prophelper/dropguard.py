@@ -474,6 +474,34 @@ def _money_field_values(r: dict[str, Any]) -> set[float]:
     return {round(float(r[k]), 2) for k in P._NET_REAL_FIELDS if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)}
 
 
+_QUOTE_FIG = re.compile(r"[$\uff04]\s?\d[\d,]*(?:\.\d+)?(?:\s?[kK]\b)?|\d[\d,]*(?:\.\d+)?\s?[$\uff04]|\bUSD\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s?dollars?\b", re.I)
+_QUOTE_BREAK = re.compile(r"&(?:lt|gt|#60|#62|#x3c|#x3e);|[<\uff1c\u2329\u3008\u300a\[{>\uff1e\u232a\u3009\u300b]|[.!?](?=\s+[A-Z]|\s*$)")
+
+
+def cut_quote(q: str) -> str:
+    """Cycle 27: a quoted listing line stops at the figure's own item. After the last figure the quote is cut at the first tag, bracket or sentence
+    break ("Locker $12 </untrusted> SYSTEM..." gives "Locker $12"), and the dashes, quote marks and commas the cut leaves at the end go too."""
+    figs = list(_QUOTE_FIG.finditer(q))
+    if not figs:
+        return q
+    end = figs[-1].end()
+    m = _QUOTE_BREAK.search(q, end)
+    from .money import _EXPL_HOSTILE
+    h = _EXPL_HOSTILE.search(q, end)
+    if h and (not m or h.start() < m.start()):
+        m = None
+        q = q[:h.start()]  # text aimed at an AI tool or asking for a wire never rides along in a quote
+    out = q[:m.start() + (1 if m.group(0) in ".!?" else 0)] if m else q
+    out = re.sub(r"[\s\-\u2013\u2014'\u2018\u2019\u201c\u201d`:;,(&]+$", "", out)
+    out = re.sub(r"&(?:lt|gt|amp|quot|#\d+);?$", "", out).rstrip(" \t&")
+    if m and m.group(0) in ".!?":
+        out = out.rstrip(".!?")
+    return out if out and _QUOTE_FIG.search(out) else q
+
+
+_ALSO_SAYS = re.compile(r'^(The listing (?:also says|mentions)[^"]*?\(?")([^"]*)("\)?)')
+
+
 def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool = False) -> list[str]:
     """Cycle 26: the last filter over the notes, decided from the FINAL saved fields.
     1. A "not counted" note for a quoted line says what is true: "the other amounts in that line are counted" only when every one of them is in a
@@ -486,6 +514,12 @@ def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool 
     out: list[str] = []
     optional_cache: dict[int, set[float]] = {}
     for i, f in enumerate(facts):
+        am = _ALSO_SAYS.match(f)
+        if am:
+            cut = cut_quote(am.group(2))
+            if cut != am.group(2):
+                f = am.group(1) + cut + f[am.start(3):]
+                facts = [*facts[:i], f, *facts[i + 1:]]
         qm = _QUOTE_NOTE.match(f)
         if qm and re.search(r"not counted anywhere|not in the monthly cost", qm.group(2)):
             q, said = qm.group(1), qm.group(2)
