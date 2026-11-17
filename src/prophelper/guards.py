@@ -57,6 +57,19 @@ def decode_tag_chars(text: object) -> str:
     return " ".join(r.strip() for r in runs if r.strip())
 
 
+_RLO_RUN = re.compile("\u202e([^\u202c\n]*)(?:\u202c|(?=\n)|$)")
+
+
+def bidi_visual(text: object) -> str:
+    """Text with every right-to-left override run (U+202E ... U+202C or the end of the line) written in the order a reader sees it on screen,
+    so "hidden text" typed as RLO + "txet neddih" is quoted as "hidden text" and not backwards. The override characters themselves
+    are kept (the callers that remove invisible characters do that next, and the flags still see that they were there)."""
+    s = "" if text is None else str(text)
+    if "\u202e" not in s:
+        return s
+    return _RLO_RUN.sub(lambda m: "\u202e" + m.group(1)[::-1] + "\u202c", s)
+
+
 def strip_tag_chars(text: object) -> str:
     return TAG_CHARS.sub("", "" if text is None else str(text))
 

@@ -275,6 +275,9 @@ def rent_looks_low(place: dict[str, Any], cost: dict[str, Any] | None, limit: An
         why = f"far below the ${float(limit):,.0f} limit of this search"
     elif rent < 600 and others and rent < max(others):
         why = "less than one of the other monthly costs of this place"
+    elif limit and _num(limit) and rent <= 0.4 * float(_num(limit)) and len([1 for r, _ in (peers or ()) if _num(r) and float(r) > 0]) < 3:
+        # cycle 28: with no comparison set yet (fewer than three other places), a rent under 40 percent of the budget is checked at add time
+        why = f"far below the ${float(_num(limit)):,.0f} limit of this search"
     else:
         why = _under_half_of_peers(rent, beds, peers)
     if not why:
