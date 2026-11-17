@@ -2684,6 +2684,12 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
             pass
         elif unpriced and not extras and not any(re.search(r"\b(?:driveway|street|lot|surface|open|uncovered|assigned|spots?|spaces?)\b", f) for f in free):
             continue
+        own_garage = [u for u in unpriced if re.search(r"\bgarages?\b", u) and not re.search(r"\b(?:avail\w*|optional|options?|extra|additional|upgrade|offered|rent(?:al|ed)?|request|if[ \t]+(?:you|needed|wanted)|upon|ask)\b|\$", u)]
+        if own_garage and not extras and len(own_garage) == len(unpriced) and not any(re.search(r"\b(?:garages?|carports?|covered)\b", f) for f in free):
+            # cycle 28: "Parking: 1 car garage, driveway free": the garage is the unit's own and the listing gives it no price, so the parking is a garage with the cost unknown, and the free driveway is a note
+            gname = own_garage[0].strip(" .,;")
+            fname = free[0].strip(" .,;")
+            return "garage", None, [f'The listing says "{gname}" and also "{fname}", but gives no price for the garage. Parking is saved as a garage with the cost left empty, and the free parking in that line is not counted as the parking cost. Ask if the garage costs extra.']
         kind = _parking_kind_words(" ".join(free)) or "lot"
         if kind in ("garage", "covered") and not any(re.search(r"\b(?:garages?|carports?|covered)\b", f) for f in free):
             kind = "lot"
