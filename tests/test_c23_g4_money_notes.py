@@ -128,7 +128,7 @@ def test_priced_utility_stays_complete():
 def test_place_page_and_mcp_say_not_complete():
     import pathlib
     html = pathlib.Path(P.__file__).with_name("templates").joinpath("place.html").read_text()
-    assert "all_in != false" in html
+    assert "cost_incomplete(place)" in html  # c27: compare.cost_incomplete reads all_in
 
 
 # ---- 5. polish

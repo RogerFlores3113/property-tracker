@@ -45,7 +45,7 @@
   <ol class="items">
     {% for p in fits %}
     <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a> {{ score_pill(p.score_total, p.band) }}
-      <span class="item-sub">{{ p.stage }}{% if not p.address %} &middot; <span class="flag">no address yet</span>{% endif %}{% if p.cost_total %} &middot; about {{ p.cost_total|money }} a month{% if p.cost and (p.cost.uncounted or p.cost.all_in == false or (p.cost.cash_to_close and p.cost.cash_to_close.left_out)) %}, not complete{% endif %}{% endif %}{% if p.score.unknown %} &middot; {{ p.score.unknown|length }} thing{{ 's' if p.score.unknown|length != 1 }} still to check: {{ p.score.unknown|join('; ') }}{% endif %}</span>
+      <span class="item-sub">{{ p.stage }}{% if not p.address %} &middot; <span class="flag">no address yet</span>{% endif %}{% if p.cost_total %} &middot; about {{ p.cost_total|money }} a month{% if as_listed(p) %}, as listed, not checked{% elif p.cost and cost_incomplete(p) %}, not complete{% endif %}{% endif %}{% if p.score.unknown %} &middot; {{ p.score.unknown|length }} thing{{ 's' if p.score.unknown|length != 1 }} still to check: {{ p.score.unknown|join('; ') }}{% endif %}</span>
       {% if p.score.concerns %}<div class="fine">Check: {{ p.score.concerns|join('; ') }}</div>{% endif %}
       {% if p.score.notes %}<div class="fine">{{ p.score.notes|join('; ') }}</div>{% endif %}
       {% if p.caution %}<div class="fine flag">{{ p.caution }}</div>{% endif %}</div></li>
@@ -114,13 +114,15 @@
 
 {% if check_first %}
 <section class="card" aria-labelledby="check-first-h">
-  <h2 id="check-first-h">Check first <span class="count">{{ check_first|length|num }}</span></h2>
+  <h2 id="check-first-h">Check first <span class="count">{{ check_first_total|num }}</span></h2>
+  {% if check_first_shared %}<p class="fine">{{ check_first_shared }}</p>{% endif %}
   <ul class="items">
     {% for n in check_first %}
     <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ n.place.id }}">{{ n.place.title }}</a>
-      <span class="item-sub flag">{{ n.text }}</span></div></li>
+      <span class="item-sub flag">{{ n.own or "Open the place to see why." }}</span></div></li>
     {% endfor %}
   </ul>
+  {% if capped and capped.check_first %}<p class="fine">and {{ capped.check_first|num }} more on the <a href="/board">board</a>.</p>{% endif %}
   <p class="fine">These are not in Best fits or New places. They stay on the <a href="/board">board</a>.</p>
 </section>
 {% endif %}

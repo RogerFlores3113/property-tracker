@@ -245,4 +245,4 @@ def test_all_in_is_not_said_with_an_uncounted_amount():
 def test_place_page_says_so_far_not_all_in():
     from pathlib import Path
     html = (Path(__file__).resolve().parents[1] / "src/prophelper/templates/place.html").read_text()
-    assert "c.uncounted or c.all_in == false" in html
+    assert "cost_total_label(place)" in html  # c27: the shared label helper says "so far" (compare.cost_total_row_label)
