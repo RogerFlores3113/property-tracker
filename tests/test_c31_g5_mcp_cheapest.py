@@ -7,8 +7,8 @@ from test_c6_g4_compare_rules import _add, _commute_setup, _e, _full, _search
 
 
 @pytest.mark.parametrize("fields,expect", [
-    (dict(tenant_pays="electric"), "its utilities aren't counted"),
-    (dict(tenant_pays="electric, gas"), "its utilities aren't counted"),
+    (dict(tenant_pays="electric"), "its electric isn't counted"),
+    (dict(tenant_pays="electric, gas"), "its electric and gas aren't counted"),
     (dict(utilities_included="heat, water"), "aren't counted"),
 ])
 def test_mcp_cheapest_names_what_is_not_counted(store, fields, expect):
