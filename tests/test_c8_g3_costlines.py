@@ -20,7 +20,7 @@ def test_cost_line_names_the_same_unknowns_as_compare(store):
     e = _es(store, s, p)[0]
     assert "electric" in " ".join(compare.cost_unknowns(e))
     out = text(call(server(store), "get_place", place_id=p["id"]))
-    line = [l for l in out.split("\n") if l.startswith("True monthly cost")][0]
+    line = [l for l in out.split("\n") if l.startswith(("True monthly cost", "Monthly cost so far"))][0]
     assert "missing: " + ", ".join(compare.cost_unknowns(e)) in line
     assert "utilities estimate" not in line
 
@@ -30,7 +30,7 @@ def test_cost_line_tenant_pays_unpriced_utilities(store):
     p, _ = store.add_place(title="P", address="1 A St", price=1500, tenant_pays="electric, gas and internet", deposit=500)
     e = _es(store, s, p)[0]
     out = text(call(server(store), "get_place", place_id=p["id"]))
-    line = [l for l in out.split("\n") if l.startswith("True monthly cost")][0]
+    line = [l for l in out.split("\n") if l.startswith(("True monthly cost", "Monthly cost so far"))][0]
     assert "missing: " + ", ".join(compare.cost_unknowns(e)) in line and "utilities estimate" not in line
 
 
