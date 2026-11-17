@@ -2318,10 +2318,10 @@ def _move_in_line_is_items(text: str, m: re.Match[str]) -> bool:
     return bool(_MOVE_IN_ITEM.search(re.sub(r"\b(?:due|at|by|before|on|per|a|the|about|around|approx)\b", " ", outside[:45])))
 
 
-def _move_in_total_notes(text: str) -> list[str]:
+def _move_in_total_notes(text: str, patterns: tuple[re.Pattern[str], ...] | None = None) -> list[str]:
     """"Move-in cost 2200 total", "$2,100 total to move in": the all-in cash to get in. It is not the rent and it is not split into
     deposit and fees, so it only gets a note."""
-    for pat in _MOVE_IN_TOTAL:
+    for pat in (patterns if patterns is not None else _MOVE_IN_TOTAL[:2]):
         m = pat.search(text)
         if m and pat is _MOVE_IN_TOTAL[1] and re.search(r"\b(?:fees?|deposits?|dep|charges?|cost|admin\w*|application|lease\w*|processing|amenity|key|cleaning|security|sec|pet)\.?[ \t:\-=]*$", text[max(0, m.start() - 20):m.start()], re.I):
             continue  # "Cleaning fee $200 due at move-in": that is one fee, not the total to move in
@@ -13937,7 +13937,14 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 line += "."
             facts.append(line)
-        facts.extend(_try(lambda: _move_in_total_matched(text, out, _move_in_total_notes(text))) or [])
+        mit_notes = _try(lambda: _move_in_total_notes(text)) or []
+        if not mit_notes:
+            # cycle 34: "Total move-in about $2,600" and the other wordings of a total. When the total equals the rent and deposit that were read, the stated-total
+            # note further down says so, so this note is added only for a total that matches nothing.
+            mit_new = _try(lambda: _move_in_total_notes(text, _MOVE_IN_TOTAL[2:])) or []
+            if mit_new and _try(lambda: _move_in_total_matched(text, out, mit_new)) == mit_new:
+                mit_notes = mit_new
+        facts.extend(_try(lambda: _move_in_total_matched(text, out, mit_notes)) or [])
         facts.extend(_try(lambda: _holding_fee_notes(text)) or [])
         if not buying:
             facts.extend(_try(lambda: _holding_fee_amount_notes(text)) or [])
