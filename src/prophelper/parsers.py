@@ -120,7 +120,7 @@ def _utility_clause_amount(text: str, start: int, end: int) -> bool:
 
 
 _RENT_LABEL = re.compile(r"\b(?:rent|monthly|price|asking|lease|per month|list(?:ed|ing)?(?: price)?|offered|cost)\b", re.I)
-_SALE_WORDS = re.compile(r"\b(?:for sale|list price|listed (?:at|for)|asking price|offered at|mls|sold|est\.? ?payment|"
+_SALE_WORDS = re.compile(r"\b(?:for sale|list price|listed (?:at|for)|asking price|offered at|mls|sold(?![ \t]+as[ \t-]+is\b)|est\.? ?payment|"
                          r"mortgage|down payment|home value|zestimate|redfin estimate|price cut|days on (?:zillow|market|redfin)|"
                          r"open house|new construction|sale price|purchase price|buy)\b", re.I)
 _RENT_WORDS = re.compile(r"\b(?:rent|rental|lease|apartment|apt|month|monthly|studio|\d\s*br|\d\s*bed|landlord|tenant|tour)\b", re.I)
@@ -289,7 +289,7 @@ _BUY_PRICE_NOT = re.compile(r"closing|credit|concession|assess|down[ \t]*payment
 _BUY_OLD_BEFORE = re.compile(r"(?:\b(?:reduced|dropped|lowered|cut|marked[ \t]+down|down|price[ \t]+drop(?:ped)?)[ \t]+from|\b(?:was|were|previously|formerly|originally|before|old[ \t]+price|listed[ \t]+(?:at|for)[ \t]+\$[\d,]+[ \t]*,?[ \t]*(?:and[ \t]+)?(?:then[ \t]+)?(?:was|now)))[ \t:]*$", re.I)
 _BUY_OLD_AFTER = re.compile(r"^[ \t]*[)\]]?[ \t]*(?:before|previously|prior|earlier|originally|formerly|(?:is[ \t]+)?the[ \t]+old[ \t]+price)[ \t]*(?:[)\]]|[,;.]|$)", re.I)
 _BUY_REDUCED_TO = re.compile(r"\b(?:reduced|dropped|lowered|cut|slashed|marked[ \t]+down|price[ \t]+drop(?:ped)?)[ \t]+(?:the[ \t]+)?(?:(?:price|asking(?:[ \t]+price)?)[ \t]+)?to[ \t:]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d)", re.I)
-_BUY_HIST_TAIL = re.compile(r"^[ \t]*[(\[][ \t]*(?:reduced[ \t]+from|was|were|previously|formerly|originally|down[ \t]+from|before)\b", re.I)
+_BUY_HIST_TAIL = re.compile(r"^[ \t]*[(\[][ \t]*(?:(?:price[ \t]+)?(?:(?:was|has[ \t]+been|just)[ \t]+)?(?:reduced|dropped|lowered|cut|slashed|marked[ \t]+down)[ \t]+from|was|were|previously|formerly|originally|down[ \t]+from|before)\b", re.I)
 
 
 def _buy_price(text: str) -> float | None:
@@ -10086,6 +10086,13 @@ def _headline_clean(line: str) -> str:
         else:
             line = line[:m.start()] + " " + line[m.end():]
     line = " ".join(line.split()).strip(" ,;:-|/\\\u2013\u2014")
+    for _ in range(3):  # cycle 31: the price was cut off "Stadium View 1BR ($1,350 ..." or "... - previously $1,525": the bracket and the word that led into it go too
+        cut = re.sub(r"[ \t]*[(\[][ \t]*$", "", line)
+        cut = re.sub(r"[ \t]*(?:[-|:,\u2013\u2014][ \t]*)?\b(?:previously|formerly|originally|was|were|now|currently|today|reduced(?:[ \t]+(?:from|to))?|price[ \t]+(?:reduced|dropped|drop|cut)(?:[ \t]+(?:from|to))?|new[ \t]+price|down[ \t]+from|lowered(?:[ \t]+to)?|dropped(?:[ \t]+(?:from|to))?)[ \t]*[:,(\[]?[ \t]*$", "", cut, flags=re.I)
+        cut = cut.strip(" ,;:-|/\\\u2013\u2014")
+        if cut == line or len(re.findall(r"[A-Za-z]", cut)) < 3:
+            break
+        line = cut
     line = re.sub(r"\s+for\s+(?:rent|lease)$", "", line, flags=re.I)
     line = re.sub(r"[ \t]*(?:[-|:,\u2013\u2014][ \t]*)?\b(?:starting(?:[ \t]+at)?|starts?[ \t]+at|from|only|just|asking(?:[ \t]+price)?|(?:monthly[ \t]+)?rent(?:al)?(?:[ \t]+(?:is|of))?[ \t]*[:=]?|priced?(?:[ \t]+at)?|price[ \t]+is|for[ \t]+only)[ \t]*$", "", line, flags=re.I)
     if not _unit_letter_end(line):

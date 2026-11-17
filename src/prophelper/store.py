@@ -505,16 +505,21 @@ _TT_U = r"(?:[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly)
 _TT_NOW = re.compile(r"(?P<old>" + _TT_M + r")(?P<u0>" + _TT_U + r")[ \t]*[(\[][ \t]*(?:(?:now|currently|today|updated?|corrected|new(?:[ \t]+(?:rent|price))?)[ \t]*:?[ \t]*(?P<new1>" + _TT_M + r")(?P<u1>" + _TT_U + r")"
                      r"|(?P<new2>" + _TT_M + r")(?P<u2>" + _TT_U + r")[ \t]*(?:now|currently|today))[ \t]*[)\]]", re.I)
 # "$284,000 (reduced from $295,000)", "$1,495 (was $1,525)", "$3,195/mo ($3,295 before)": the bracket holds the old figure
-_TT_OLD = re.compile(r"(?P<cur>" + _TT_M + r")(?P<u>" + _TT_U + r")[ \t]*[(\[][ \t]*(?:(?:reduced[ \t]+from|down[ \t]+from|was|were|previously|formerly|originally|before)[ \t]*:?[ \t]*" + _TT_M + r"[^)\]\n]{0,30}"
+_TT_OLD = re.compile(r"(?P<cur>" + _TT_M + r")(?P<u>" + _TT_U + r")[ \t]*[(\[][ \t]*(?:(?:(?:price[ \t]+)?(?:reduced|dropped|lowered|cut|marked[ \t]+down)[ \t]+from|down[ \t]+from|was|were|previously|formerly|originally|before)[ \t]*:?[ \t]*" + _TT_M + r"[^)\]\n]{0,30}"
                      r"|" + _TT_M + _TT_U + r"[ \t]*(?:before|previously|prior|earlier|originally|formerly))[ \t]*[)\]]", re.I)
+
+
+# cycle 31: "previously $1,525, now $1,445" with no bracket: the old figure and its word go, the current figure stays
+_TT_PREV_NOW = re.compile(r"\b(?:previously|formerly|originally|was|before)[ \t]*:?[ \t]*" + _TT_M + _TT_U + r"[ \t]*[,;:\-\u2013\u2014]*[ \t]*(?:and[ \t]+)?(?:now|currently|today)[ \t]*:?[ \t]*(?P<new>" + _TT_M + r")(?P<u>" + _TT_U + r")", re.I)
 
 
 def trim_stale_price_title(title: str) -> str:
     """Cycle 30: a title that still carries the replaced price ("Elm Street Commons - 1 bed, $1,350 ($1,420 now)") keeps only the current figure
     ("... $1,420"), and a bracket that only names the old price ("$284,000 (reduced from $295,000)") is cut, so no board, Compare, Today or CSV line
     reads cheaper than the real rent. A title without such a bracket is returned as it was."""
-    if not title or ("(" not in title and "[" not in title):
+    if not title or ("(" not in title and "[" not in title and not _TT_PREV_NOW.search(title)):
         return title
+    title = _TT_PREV_NOW.sub(lambda m: m.group("new") + (m.group("u") or ""), title) if _TT_PREV_NOW.search(title) else title
 
     def now(m: re.Match[str]) -> str:
         if m.group("new1"):
@@ -523,6 +528,26 @@ def trim_stale_price_title(title: str) -> str:
     out = _TT_NOW.sub(now, title)
     out = _TT_OLD.sub(lambda m: m.group("cur") + (m.group("u") or ""), out)
     return " ".join(out.split()) if out != title else title
+
+
+def drop_other_price_text(title: str, price: float | None) -> str:
+    """Cycle 31: a title that was trimmed of a stale price still names one figure ("Stadium View 1BR ($1,420)"). When the place's own rent is known and is a
+    different figure (the listing was corrected again, "Reduced to $1,395"), that price text is cut too, so a title never shows a price the rent replaced.
+    A title whose figure is the saved rent is returned as it was."""
+    if not title or price is None:
+        return title
+    out = title
+    for m in list(re.finditer(r"(?P<open>[(\[][ \t]*)?(?P<amt>" + _TT_M + r")(?P<u>" + _TT_U + r")(?P<close>[ \t]*[)\]])?", title)):
+        try:
+            v = float(m.group("amt").replace("$", "").replace(",", "").strip())
+        except ValueError:
+            continue
+        if 300 <= v <= 30000 and abs(v - float(price)) >= 0.5:
+            out = out.replace(m.group(0), " ", 1)
+    out = re.sub(r"[ \t]*[(\[][ \t]*[)\]]", " ", out)
+    out = " ".join(out.split()).strip(" ,;:-|/\u2013\u2014")
+    out = re.sub(r"(?:[ \t]+(?:at|for|only|just|now|rent|price))+$", "", out, flags=re.I).strip(" ,;:-|/\u2013\u2014")
+    return out if len(re.findall(r"[A-Za-z]", out)) >= 3 else title
 
 
 def to_number(value: Any, what: str = "number") -> float | None:
@@ -1604,6 +1629,7 @@ class Store:
     # ------------------------------------------------------------------ places
     def _clean_place(self, fields: dict[str, Any], partial: bool) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        title_trimmed = False
         for key in PLACE_TEXT:
             if key not in fields:
                 continue
@@ -1636,7 +1662,9 @@ class Store:
                     raise ValueError("That link doesn't look like a web address (it should start with https://).")
                 out[key] = encode_link(text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text)
             elif key == "title":
-                out[key] = trim_stale_price_title(_text(raw, TEXT_LIMITS.get(key, 500)))  # cycle 30: no replaced price left in a saved title
+                raw_title = _text(raw, TEXT_LIMITS.get(key, 500))
+                out[key] = trim_stale_price_title(raw_title)  # cycle 30: no replaced price left in a saved title
+                title_trimmed = out[key] != raw_title
             else:
                 out[key] = _text(raw, TEXT_LIMITS.get(key, 500))
         for key in PLACE_REAL:
@@ -1667,6 +1695,8 @@ class Store:
                     if n < 0:
                         raise ValueError(f"The {key.replace('_', ' ')} can't be negative.")
                 out[key] = n
+        if title_trimmed and out.get("title") and isinstance(out.get("price"), (int, float)):
+            out["title"] = drop_other_price_text(out["title"], out["price"])  # cycle 31: the title never keeps a price the saved rent replaced
         if "photo_urls" in fields:
             out["photo_urls"] = json.dumps(photo_list(fields["photo_urls"]))
         if "dishwasher" in fields:
