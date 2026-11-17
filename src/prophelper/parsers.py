@@ -5278,6 +5278,32 @@ def _seller_gives_toward_closing(text: str) -> bool:
                 or re.search(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:pays?|paid|covers?|contribut\w*|concessions?|credits?)\b[^.\n]{0,40}\bclosing[ \t]+costs?\b", text, re.I))
 
 
+_SELLER_FEE_NAMES = r"(?:title|recording|lender|appraisal|escrow|settlement|attorney|survey|transfer|origination|loan|processing|underwriting|inspection)"
+_SELLER_PAYS_FEES = re.compile(r"\b(?:pay|pays|paying|paid|cover|covers|covering|absorbs?|absorbing)\b[ \t]+(?:for[ \t]+)?(?:all[ \t]+)?(?:of[ \t]+)?(?:the[ \t]+)?(?:buyer'?s?[ \t]+)?"
+                               r"(?P<names>" + _SELLER_FEE_NAMES + r"(?:(?:[ \t]*,[ \t]*|[ \t]+(?:and|&|or)[ \t]+|[ \t]*/[ \t]*)" + _SELLER_FEE_NAMES + r")*)"
+                               r"(?:[ \t]+(?:and|&)[ \t]+" + _SELLER_FEE_NAMES + r")*[ \t]+(?:fees?|costs?|charges)\b", re.I)
+
+
+def _seller_also_pays_fees_notes(text: str, credit: Any) -> list[str]:
+    """Cycle 31: "Seller will credit $2,000 plus pay the buyer's title fees". The seller credit is saved as written, and the title fees (or other named
+    closing fees) the seller also pays have no amount, so nothing is taken off for them. A note names them, once, and says what to ask. A fee with a
+    dollar figure next to it ("seller pays $800 title fees") is a stated amount and is left to the other readers."""
+    notes: list[str] = []
+    if not isinstance(credit, (int, float)) or credit <= 0:
+        return notes
+    for sent in re.split(r"[.\n;](?!\d)", text):
+        if not re.search(r"\b(?:seller|owner)(?:'s)?\b", sent, re.I) or _PAYER_BUYER.search(sent) and not re.search(r"\bbuyer'?s?[ \t]+(?:title|recording|lender|appraisal|escrow|settlement|attorney|closing)", sent, re.I):
+            continue
+        for m in _SELLER_PAYS_FEES.finditer(sent):
+            if re.match(r"[ \t]*(?:\(|:|of|-|=|about|approx\.?)?[ \t]*\$\s?\d", sent[m.end():m.end() + 25], re.I) or re.search(r"\$\s?[\d,]+(?:\.\d\d)?[ \t]*$", sent[:m.start("names")]):
+                continue
+            names = " and ".join(dict.fromkeys(w.lower() for w in re.findall(_SELLER_FEE_NAMES, m.group("names"), re.I)))
+            notes.append(f"The listing says the seller also pays the buyer's {names} fees but gives no amount for them. Only the ${float(credit):,.0f} seller credit is taken off "
+                         "the cash to close, nothing is taken off for these fees. Ask the seller's agent what they come to and whether they are part of the credit.")
+            return notes
+    return notes
+
+
 def _closing_help_offer(text: str) -> list[str]:
     """Cycle 22: "Buyer's agent: closing cost help up to $8,000 available" is an offer of help, not a cost and not a promised credit.
     The note quotes the amount, so it is named and never silently dropped, and it holds nothing that reads as a missing cost part.
@@ -12123,6 +12149,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             credit_notes = [n.replace("gives no amount, so the seller credit is blank", "gives no amount") for n in credit_notes]
         facts.extend(credit_notes)
         facts.extend(_try(lambda: _lender_credit_notes(text)) or [])
+        facts.extend(_try(lambda: _seller_also_pays_fees_notes(text, credit)) or [])
         if not credit_notes:
             facts.extend(_try(lambda: _closing_help_offer(text)) or [])
         insurance = _try(lambda: _insurance(text))
