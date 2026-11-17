@@ -102,9 +102,8 @@ def test_no_search_id_with_two_searches_is_friendly(store):
 
 def test_unknown_delete_tool_and_instructions(store):
     srv = server(store)
-    with pytest.raises(Exception) as e:
-        call(srv, "delete_place", place_id=1)
-    assert "Property Helper window" in str(e.value)
+    res = call(srv, "delete_place", place_id=1)  # cycle 33: an unknown tool is a plain error result, not an exception
+    assert res.isError is True and "Property Helper window" in text(res)
     assert "no delete_place" in srv.instructions
 
 
