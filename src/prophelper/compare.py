@@ -1189,6 +1189,14 @@ def unpriced_sentences(places: list[dict[str, Any]], name) -> list[str]:
     return out
 
 
+def _leaves_out_clause(p: dict[str, Any]) -> str:
+    """Cycle 30: a place called "cheapest" that leaves a cost part out says so in the same sentence (", and its electric and gas aren't counted")."""
+    parts = _short_parts(p)
+    if parts == "costs" and not _uncounted(p):
+        return ""
+    return f", and {_its(parts)}{parts} {'aren' if _aren_t(parts) == 'are' else 'isn'}'t counted"
+
+
 def lowest_cost_sentences(places: list[dict[str, Any]], name) -> list[str]:
     """The At a glance sentences for the lowest cost. ``name(place)`` is how a place is called (its title on the web)."""
     r = lowest_cost(places)
@@ -1214,10 +1222,10 @@ def lowest_cost_sentences(places: list[dict[str, Any]], name) -> list[str]:
     elif r["skipped_unknown"]:
         out.extend(skipped_unknown_sentences(r, name))
     for p, why in r["over_limit"]:
-        out.append(f"{name(p)} is cheapest, but {why}.")
+        out.append(f"{name(p)} is cheapest, but {why}{_leaves_out_clause(p)}.")
     lowest = min((p["cost_total"] for p in places if p["cost_total"] is not None), default=None)
     for p, why in r["blocked"]:
         word = "cheapest" if lowest is not None and abs(p["cost_total"] - lowest) < 0.005 else "cheaper"
-        out.append(f"{name(p)} is {word}, but {why}.")
+        out.append(f"{name(p)} is {word}, but {why}{_leaves_out_clause(p)}.")
     out.extend(unpriced_sentences(places, name))
     return out
