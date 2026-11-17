@@ -539,7 +539,7 @@ def _limit_can_be_waived(place: dict[str, Any]) -> bool:
                 continue  # cycle 31 (rule l): a question line is never read as a rule or as an exception to a rule
             if nxt.rstrip().endswith("?"):
                 nxt = ""
-            if nxt and re.search(r"\bexceptions?\b|\bwaiv|\bcase[- ]by[- ]case\b|\bapproval\b|\bnegotiable\b|\bpermission\b", nxt, re.I) and len(nxt) < 80:
+            if nxt and re.search(r"(?<!\bno )(?<!\bNo )\bexceptions?\b|\bwaiv|\bcase[- ]by[- ]case\b|\bapproval\b|\bnegotiable\b|\bpermission\b", nxt, re.I) and len(nxt) < 80:
                 sentence = sentence + " " + nxt
             if _WAIVABLE.search(sentence) and re.search(r"\d", sentence) and _LIMIT_WORDS.search(sentence) \
                     and re.search(r"\b(?:lbs?\.?|pounds?|weight|limit|max(?:imum)?|(?:one|two|three|\d)\s+(?:pets?|dogs?|cats?|animals?))\b", sentence, re.I):

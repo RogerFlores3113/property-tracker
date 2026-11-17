@@ -371,6 +371,56 @@ def _months_count_explained(text: str, end: int, amount: float, r: dict[str, Any
 _STALE_UTIL_ESTIMATE = re.compile(r"\b(?:est(?:imate[ds]?|\.)?|about|approx\w*|roughly|typical)\b[^$]{0,12}\$[ \t]?[\d,.]+[ \t]+(?:for[ \t]+)?(?:all[ \t]+of[ \t]+(?:it|them)|everything|in[ \t]+total|total|combined|together|all[ \t]+(?:the[ \t]+)?utilities)\b", re.I)
 
 
+_TOTAL_WORD = re.compile(r"\btotal\b|\bin all\b|\ball[- ]in\b|\bcomes? to\b|\badds? up to\b", re.I)
+
+
+def _total_lists_its_items(text: str, start: int, end: int, amount: float, r: dict[str, Any]) -> bool:
+    """Cycle 33: a figure the listing calls a total ("$2,300 total ($1,150 + $1,150)", "Total due at move-in: $4,800 = rent, deposit $2,325, $150 key fee")
+    whose own clause lists items that add up to it. The items (the other dollar figures of the clause, plus the saved rent when the clause says
+    rent or first month) are placed by their own fields, so the total is not a cost left out. Parentheses keep a clause whole."""
+    depth, lo, hi = 0, 0, len(text)
+    for i in range(start - 1, -1, -1):
+        ch = text[i]
+        if ch == ")":
+            depth += 1
+        elif ch == "(":
+            depth = max(0, depth - 1)
+        elif depth == 0 and (ch == "\n" or ch == "|" or ch == ";" or (ch in ".!?" and text[i + 1:i + 2] in (" ", "\n", "") and not text[i - 1:i].isdigit())):
+            lo = i + 1
+            break
+    depth = 0
+    for i in range(end, len(text)):
+        ch = text[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0 and (ch == "\n" or ch == "|" or ch == ";" or (ch in ".!?" and text[i + 1:i + 2] in (" ", "\n", "") and not text[i - 1:i].isdigit())):
+            hi = i
+            break
+    clause = text[lo:hi]
+    if not _TOTAL_WORD.search(clause) and "=" not in clause:
+        return False
+    figs: list[float] = []
+    for m in _P()._NET_DOLLARS.finditer(clause):
+        if lo + m.start() == start:
+            continue
+        raw = m.group(1) if m.group(1) is not None else m.group(4)
+        try:
+            figs.append(float(raw.replace(",", "") + (m.group(2) or "" if m.group(1) is not None else "")) * (1000 if m.group(3) else 1))
+        except ValueError:
+            continue
+    price = r.get("price")
+    if isinstance(price, (int, float)) and not isinstance(price, bool) and price and re.search(r"\brent\b|first month|1st month", clause, re.I):
+        figs.append(float(price))
+    figs = figs[:9]
+    n = len(figs)
+    for mask in range(1, 1 << n):
+        if abs(sum(figs[i] for i in range(n) if mask >> i & 1) - amount) < 0.51:
+            return True
+    return False
+
+
 def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, Any]]:
     """Every dollar figure of a rental listing that no field holds and no note explains: [{"amount", "start", "end", "item", "kind"}]."""
     text = _P().normalize_money(text)
@@ -400,6 +450,8 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue
         if is_non_cost(text, m.start(), m.end(), amount):
             continue
+        if _total_lists_its_items(text, m.start(), m.end(), amount, r):
+            continue  # cycle 33: "Move-in: $2,300 total ($1,150 + $1,150)": a total whose own items add up to it is no amount left out
         if _STALE_UTIL_ESTIMATE.search(item) and "corrects the utilities" in notes and isinstance(est, (int, float)) and not isinstance(est, bool) and abs(amount - float(est)) >= 0.5:
             continue  # cycle 29: "Estimate $100 for all of it" next to a correction that says the tenant now pays all utilities (est. $130): the old estimate is not used and is no missing amount
         if _CONCESSION_ITEM.search(item) and any(_CONCESSION_NOTE.search(u) for u in notes.split("\n")):

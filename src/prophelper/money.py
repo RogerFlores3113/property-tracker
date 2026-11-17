@@ -1152,6 +1152,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
+        if _PET_KIND_NOTE.match(note):
+            continue  # cycle 33: a pet amount the listing names for one kind of animal is not a gap in this cost; the pet fields and the pet rule say what is unknown
         if re.match(r"The listing corrects the (?:utilities|beds?|baths?|bedrooms?|bathrooms?|laundry|parking|pets?)\b", note) and not _FIG.search(note):
             continue  # cycle 29: a correction that names a fact and no figure ("the tenant now pays all of them. The earlier line is not used") leaves no amount open
         if place is not None and num(place.get("utilities_estimate")) is not None and _estimate_only_note(note):
@@ -1193,6 +1195,9 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
         if _NOTE_OPEN.search(note) and _NOTE_MONEY.search(probe):
             out.append(note)
     return out
+
+
+_PET_KIND_NOTE = re.compile(r"The listing has (?:a pet (?:fee|rent|deposit) of \$[\d,.]+(?: a month)? for a (?:cat|dog) and \$[\d,.]+(?: a month)? for a (?:cat|dog)\.|a \$[\d,.]+(?: a month)? (?:cat|dog) (?:fee|rent|deposit)\.)")
 
 
 def listing_notes_uncounted(reader_notes: Any, place: dict[str, Any] | None = None) -> bool:

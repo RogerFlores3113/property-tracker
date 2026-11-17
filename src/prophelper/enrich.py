@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from . import commute as commute_mod
-from . import helpers, money, redflags, scoring
+from . import helpers, money, parsers, redflags, scoring
 from .store import Store
 
 
@@ -44,6 +44,7 @@ def enrich_place(store: Store, place: dict[str, Any], search: dict[str, Any], *,
     tours = store.list_tours(place["id"]) if tours is None else tours
     settings = store.buy_settings(search["id"]) if settings is None else settings
     people = int(search.get("people") or 1)
+    place = parsers.place_without_other_kind_charges(place, search.get("pet_kind"))  # cycle 33: a charge the listing names for the other kind of pet is not this search's
     cost = money.true_monthly_cost(place, search["mode"], settings, people, pets=money.has_pets(search.get("pet_kind")),
                                    adults=search.get("adults"))
     cost["search_pet_kind"] = search.get("pet_kind") or ""
