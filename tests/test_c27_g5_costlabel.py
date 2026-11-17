@@ -81,3 +81,39 @@ def test_today_check_first_is_capped_and_says_advice_once(store, client):
 def test_cost_incomplete_reads_all_in_and_uncounted():
     assert compare.cost_incomplete({"cost": {"all_in": False}}) and compare.cost_incomplete({"cost": {"uncounted": ["x"]}})
     assert not compare.cost_incomplete({"cost": {"all_in": True}})
+
+
+def _rows_text(es, key):
+    for sec in compare.build_rows(es):
+        for r in sec["rows"]:
+            if r["key"] == key:
+                return [c["text"] for c in r["cells"]]
+    return []
+
+
+def test_compare_never_says_nothing_unknown_beside_a_deposit_not_known(store):
+    s = store.add_search("R", "rent", budget_max=3000)
+    a, _ = store.add_place(title="NoDeposit", address="1 A St", price=1300, utilities_estimate=50, tenant_pays="electric", parking="none", pet_rent=0, other_monthly_fees=0)
+    b, _ = store.add_place(title="HasDeposit", address="2 A St", price=1400, utilities_estimate=50, deposit=1400, tenant_pays="electric", parking="none", pet_rent=0, other_monthly_fees=0)
+    es = enrich.enrich_places(store, s, [a, b])
+    assert compare.cash_unknown_parts(es[0]) == ["deposit"] and compare.cash_unknown_parts(es[1]) == []
+    for key in ("missing", "unknown"):
+        t = _rows_text(es, key)
+        assert "deposit" in t[0].lower() and t[0] != "Nothing unknown", t
+        assert "deposit" not in t[1].lower(), t
+    assert compare.nothing_unknown_guard(es[0], "Nothing unknown") == "Unknown: deposit"
+    assert compare.nothing_unknown_guard(es[1], "Nothing unknown") == "Nothing unknown"
+
+
+def test_fit_line_names_the_unknown(store, client):
+    s = store.add_search("R", "rent", budget_max=1000)
+    store.add_criterion(s["id"], "price", weight=30, dealbreaker=True, target={"max": 1000})
+    store.add_criterion(s["id"], "parking", label="Garage", weight=10, target={"want": "garage"})
+    p, _ = store.add_place(title="Pricey", address="1 A St", price=2000, utilities_estimate=50)
+    e = enrich.enrich_places(store, s, [p])[0]
+    assert e["score"]["fit"] == "doesnt_fit" and e["score"]["unknown_count"] == 1
+    basis = compare.score_unknown_basis(e)
+    assert basis == "based on 1 unknown: Garage"
+    assert basis in client.get(f"/places/{p['id']}").text
+    assert basis in client.get("/board").text
+    assert "based on" in compare._score_cell(e)["text"] and ": " in compare.unknown_basis(e)

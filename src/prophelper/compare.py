@@ -390,6 +390,9 @@ def cash_left_out(p: dict[str, Any]) -> bool:
 def nothing_unknown_guard(p: dict[str, Any], text: str) -> str:
     """"Nothing unknown" is never said for a place that is marked check first or leaves an amount out of its cash: it says what is not settled."""
     if text != "Nothing unknown":
+        missing = [n for n in cash_unknown_parts(p) if n.split()[0] not in text.lower()]  # cycle 27: a cash part nobody filled in is named too
+        if missing:
+            text += "; Unknown: " + ", ".join(missing)
         return text
     if as_listed(p):
         return "Not checked: this place is marked check first"
@@ -733,6 +736,16 @@ def _score_cell(p: dict[str, Any]) -> dict[str, Any]:
     if cell["value"] is not None and basis:
         cell["text"] += f" ({basis})"
     return cell
+
+
+def score_unknown_basis(p: dict[str, Any]) -> str:
+    """The Board card and place page note: 'based on 1 unknown: Garage', naming the criteria the score rests on an unknown value for."""
+    score = p.get("score") or {}
+    names = [str(u) for u in score.get("unknown") or [] if u]
+    n = len(names) or (score.get("unknown_count") or 0)
+    if not n:
+        return ""
+    return f"based on {n} unknown{'s' if n != 1 else ''}" + (f": {', '.join(names)}" if names else "")
 
 
 def unknown_basis(p: dict[str, Any]) -> str:
