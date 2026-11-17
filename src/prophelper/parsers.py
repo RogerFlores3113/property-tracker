@@ -11975,9 +11975,23 @@ def _feature_line(line: str) -> bool:
     return bool(_FEATURE_WORD.search(line)) and not _PROPERTY_NOUN.search(line) and not _ADDRESS.match(line)
 
 
+_MARKETING_WORDS = frozenset(
+    "new lower low lowest price prices pricing reduced reduction again drop dropped drops slashed cut savings save big huge great hot deal deals special specials "
+    "limited time offer offers sale only now just listed listing today this week month weekend hurry wow update updated better best ever rent rents to from "
+    "at more less off lease leasing available a the is are and for sooner price-drop pricedrop reduce".split())
+
+
+def _marketing_line(line: str) -> bool:
+    """Cycle 34: a line made only of sales words ("NEW LOWER PRICE!! Prices reduced again to $1,425", "BIG SAVINGS this month!!") is a banner, never a name."""
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", re.sub(r"\$\s?[\d,.]+[kK]?(?:/[ \t]*mo(?:nth)?)?", " ", line))
+    if len(words) < 2 or len(words) > 12:
+        return False
+    return all(w.lower() in _MARKETING_WORDS for w in words) and bool(re.search(r"\b(?:new|lower|low|price|prices|reduced|drop|dropped|slashed|savings|deal|deals|special|sale|offer|offers|hurry|wow|limited)\b", line, re.I))
+
+
 def _not_a_name(line: str) -> bool:
     """A line that is a field ("Rent $2", "Deposit: 1.5x rent", "Pets: dogs ok"), a money amount or a pet rule, never a title."""
-    return bool(_RULE_LINE.match(line) or _PROMO_LINE.match(line) or _SITE_LINE.match(line) or _ai_aimed(line) or _LABEL_LINE.match(line) or _POLICY_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line)
+    return bool(_marketing_line(line) or _RULE_LINE.match(line) or _PROMO_LINE.match(line) or _SITE_LINE.match(line) or _ai_aimed(line) or _LABEL_LINE.match(line) or _POLICY_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line)
                 or _FACT_LABEL_LINE.search(line) or _STATUS_LINE.match(line) or _SENTENCE_LINE.search(line) or _feature_line(line))
 
 
@@ -12035,6 +12049,23 @@ def _headline_over_area(text: str, building: str) -> bool:
     return bool(re.search(r"[A-Za-z]{4,}", _BED_CUE.sub(" ", first)))
 
 
+_GREETING_CUT = re.compile(r"^(?:hi|hello|hey|hiya|howdy|greetings|good[ \t]+(?:morning|afternoon|evening))(?:[ \t]+(?:there|all|everyone|folks|friends|y'all|guys))?[ \t]*[!,.:;–—-]*[ \t]+(?=\S)", re.I)
+_GREETING_ADJ = re.compile(r"^(?:(?:gorgeous|beautiful|lovely|stunning|amazing|charming|cute|cozy|adorable|wonderful|fabulous|spacious|sunny|bright)[ \t,]+(?:and[ \t]+)?)+(?=\S)", re.I)
+
+
+def _greeting_cut(line: str) -> str:
+    """Cycle 34: a greeting and the praise words after it are not part of a name: "Hi!! Gorgeous 2 BR duplex Linden area!!!" -> "2 BR duplex Linden area!!!".
+    Only when what is left reads as a place (a plan or a kind of place), else the line is left as it was."""
+    m = _GREETING_CUT.match(line)
+    if not m:
+        return line
+    rest = line[m.end():]
+    rest2 = _GREETING_ADJ.sub("", rest) if (_PLAN_CUE.search(rest) or _PROPERTY_NOUN.search(rest)) else rest
+    if not (_PLAN_CUE.search(rest2) or _PROPERTY_NOUN.search(rest2)) or len(rest2) < 6:
+        return line
+    return rest2
+
+
 def _title_raw(text: str, found: dict[str, Any]) -> str:
     """A short title: the building name, else the first line of the paste that reads like a name or heading, else the street
     address. A site name (Zillow, Realtor.com) is never the title."""
@@ -12070,6 +12101,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         line = re.sub(r"^(?:actually|update|updated|correction|edit|edited|note|ps|p\.s\.)[ \t]*[:,][ \t]*(?=\S)", "", line, flags=re.I)  # "Actually: Campustown Flats 1x1"
         if _ai_aimed(raw_line) or _ai_aimed(line):
             continue
+        line = _greeting_cut(line)  # cycle 34: "Hi!! Gorgeous 2 BR duplex Linden area!!!" is a duplex in Linden, never named "Hi Gorgeous ..."
         line = _LABEL_PREFIX.sub("", line, count=1)  # cycle 31: "Zillow-ish listing - Stadium View | 1 Bed | Rent $1,350": the site label goes before the parts are split
         if " | " in line or len(re.findall(r"[ \t]~[ \t]", line)) >= 2:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
             parts = [x.strip() for x in (re.split(r"[ \t]\|[ \t]", line) if " | " in line else re.split(r"[ \t]~[ \t]", line))]
