@@ -2808,6 +2808,67 @@ def _baths_corrected(text: str) -> tuple[float, float] | None:
     return vals[0], vals[1]
 
 
+_ES_NUM = {"un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6}
+_ES_N = r"(\d{1,2}(?:[.,]5)?|un[oa]?|dos|tres|cuatro|cinco|seis)"
+_ES_BEDS = re.compile(r"(?<![\d.,$/#-])\b" + _ES_N + r"[ \t]*(?:habitaci(?:o|ó)n(?:es)?|dormitorios?|rec(?:a|á)maras?|alcobas?|habs?\b\.?)(?![\w])", re.I)
+_ES_BEDS_LABEL = re.compile(r"\b(?:habitaci(?:o|ó)n(?:es)?|dormitorios?|rec(?:a|á)maras?|alcobas?)[ \t]*[:=\-][ \t]*(\d{1,2})\b(?![ \t]*(?:[/x]|m2|pies|sq))", re.I)
+_ES_BATHS = re.compile(r"(?<![\d.,$/#-])\b" + _ES_N + r"[ \t]*(?:completos?[ \t]+)?ba(?:n|ñ)os?(?:[ \t]+completos?)?(?![\w])([ \t]+y[ \t]+medio\b)?", re.I)
+
+
+def _es_number(word: str) -> float | None:
+    w = word.lower().replace(",", ".")
+    if w in _ES_NUM:
+        return float(_ES_NUM[w])
+    try:
+        return float(w)
+    except ValueError:
+        return None
+
+
+def _beds_es(text: str) -> float | None:
+    """Cycle 34: Spanish bedroom counts ("1 habitacion", "2 habitaciones", "3 dormitorios", "2 recamaras"). A range ("1 a 2 habitaciones"), two different
+    counts (a plan list) or no count at all is left empty. "estudio" is a studio only when no count is given."""
+    import unicodedata
+    low = unicodedata.normalize("NFC", text)
+    vals: set[float] = set()
+    for m in _ES_BEDS.finditer(low):
+        before = low[max(0, m.start() - 8):m.start()]
+        if re.search(r"\d[ \t]*(?:a|o|-|–|to|y)[ \t]*$", before, re.I):
+            return None  # "1 a 2 habitaciones": a range, not a count
+        v = _es_number(m.group(1))
+        if v is not None and 0 < v <= 12:
+            vals.add(v)
+    for m in _ES_BEDS_LABEL.finditer(low):
+        vals.add(float(m.group(1)))
+    if len(vals) == 1:
+        return next(iter(vals))
+    if vals:
+        return None
+    if re.search(r"(?<!de[ \t])(?<!área[ \t]de[ \t])(?<!sala[ \t]de[ \t])\b(?:estudio|apartaestudio|monoambiente)\b(?![ \t]+(?:de|para)\b)", low, re.I):
+        return 0.0
+    return None
+
+
+def _baths_es(text: str) -> float | None:
+    """Cycle 34: Spanish bathroom counts ("1 bano", "2 baños", "1 baño y medio", "1,5 baños"). Two different counts leave it empty."""
+    import unicodedata
+    low = unicodedata.normalize("NFC", text)
+    vals: set[float] = set()
+    for m in _ES_BATHS.finditer(low):
+        before = low[max(0, m.start() - 8):m.start()]
+        if re.search(r"\d[ \t]*(?:a|o|-|–|to|y)[ \t]*$", before, re.I):
+            return None
+        v = _es_number(m.group(1))
+        if v is None or not 0 < v <= 10:
+            continue
+        vals.add(v + (0.5 if m.group(2) else 0))
+    for m in re.finditer(r"\bba(?:n|ñ)os?[ \t]*[:=\-][ \t]*(\d{1,2}(?:[.,]5)?)\b", low, re.I):
+        v = _es_number(m.group(1))
+        if v is not None and 0 < v <= 10:
+            vals.add(v)
+    return next(iter(vals)) if len(vals) == 1 else None
+
+
 def _baths(text: str) -> float | None:
     corrected = _baths_corrected(text)
     if corrected:
@@ -12644,6 +12705,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append("The listing gives two different bathroom counts and corrects itself. The later count is saved, so check the bathroom count.")
     facts += _try(lambda: _price_notes(text, price_read, buying)) or []
     put("baths", _try(lambda: _baths(text)))
+    if out.get("beds") is None:
+        put("beds", _try(lambda: _beds_es(text)))  # cycle 34: "1 habitacion, 1 bano" (Spanish) sets beds and baths when no English count is there
+    if out.get("baths") is None:
+        put("baths", _try(lambda: _baths_es(text)))
     fixed_facts = {} if buying else (_try(lambda: _corrected_facts(text)) or {})
     if "baths" in fixed_facts and not bath_fix:
         nb, ob = fixed_facts["baths"]
