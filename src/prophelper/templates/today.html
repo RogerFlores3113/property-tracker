@@ -51,6 +51,7 @@
       {% if p.caution %}<div class="fine flag">{{ p.caution }}</div>{% endif %}</div></li>
     {% endfor %}
   </ol>
+  {% if capped and capped.fits %}<p class="fine">and {{ capped.fits|num }} more. <a href="/board">See the whole board</a>.</p>{% endif %}
   <p class="fine">The highest scores among places that have every must have. <a href="/board">See the whole board</a>.</p>
 </section>
 {% elif unconfirmed %}
@@ -63,6 +64,7 @@
       <span class="item-sub">Fits, but check: {{ n.text }}</span></div></li>
     {% endfor %}
   </ul>
+  {% if capped and capped.unconfirmed %}<p class="fine">and {{ capped.unconfirmed|num }} more on the <a href="/board">board</a>.</p>{% endif %}
 </section>
 {% elif place_count and not no_criteria %}
 <section class="card" aria-labelledby="fits-h">
@@ -80,6 +82,7 @@
       <span class="item-sub">{{ n.text }}</span></div></li>
     {% endfor %}
   </ul>
+  {% if capped and capped.closest %}<p class="fine">and {{ capped.closest|num }} more on the <a href="/board">board</a>.</p>{% endif %}
   <p class="fine">None of these has every must have, so they are not best fits. These come closest. <a href="/board">See the whole board</a>.</p>
 </section>
 {% endif %}
@@ -131,6 +134,7 @@
       <span class="item-sub">{{ n.text }}</span></div></li>
     {% endfor %}
   </ul>
+  {% if capped and capped.near_miss %}<p class="fine">and {{ capped.near_miss|num }} more on the <a href="/board">board</a>.</p>{% endif %}
   <p class="fine">These miss your budget by under 3 percent and nothing else. They are not in Best fits.</p>
 </section>
 {% endif %}
@@ -144,6 +148,7 @@
       <span class="item-sub">{{ l.text }}</span></div></li>
     {% endfor %}
   </ul>
+  {% if capped and capped.late %}<p class="fine">and {{ capped.late|num }} more on the <a href="/board">board</a>.</p>{% endif %}
 </section>
 {% endif %}
 
