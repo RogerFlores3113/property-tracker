@@ -228,9 +228,9 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
             elif field in PLAIN_WORDS:
                 v = PLAIN_WORDS[field].get(str(v), v) if v else ""
             elif field == "fit_score":
-                v = p.get("score_total") if p.get("score_total") is not None else v
+                v = _marked_score(p, p.get("score_total") if p.get("score_total") is not None else v)
             elif field == "fit":
-                v = str((p.get("score") or {}).get("fit_label") or "").split(":")[0]  # "Check first: possible scam" -> "Check first"
+                v = "Check first" if _check_first(p) else str((p.get("score") or {}).get("fit_label") or "").split(":")[0]  # "Check first: possible scam" -> "Check first"
             elif field == "red_flags":
                 v = _no_tags(_red_flags_text(p))
             elif field == "reader_notes":
@@ -243,13 +243,27 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
         row.append(_plain(total))
         split = max(1, int(p.get("people") or people)) if p.get("cost") else people  # the adults, when the search names them
         row.append("" if total is None else round(float(total) / split, 2))
-        row.append(_plain(p.get("score_total")))
+        row.append(_plain(_marked_score(p, p.get("score_total"))))
         for a in anchors:
             c = _commute_for(p, a.get("id"))
             row.append(round(c["minutes"]) if c else "")
             row.append(_safe_cell(_way_text(c)) if c else "")
         writer.writerow(row)
     return out.getvalue()
+
+
+def _check_first(p: dict[str, Any]) -> bool:
+    label = str((p.get("score") or {}).get("fit_label") or "")
+    return (label.lower().startswith("check first") or bool(p.get("possible_scam"))
+            or any("aimed at AI tools" in str(f) for f in p.get("flags") or []))
+
+
+def _marked_score(p: dict[str, Any], value: Any) -> Any:
+    """A score of a place marked check first carries the mark in its own cell ("85 (check first)"), so a number alone never reads as a good fit.
+    The cell starts with the number, never with a formula character."""
+    if value in (None, "") or not _check_first(p):
+        return value
+    return f"{_plain(value)} (check first)"
 
 
 def _way_text(c: dict[str, Any]) -> str:
