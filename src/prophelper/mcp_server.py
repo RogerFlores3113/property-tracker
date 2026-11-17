@@ -987,6 +987,28 @@ def build_server(store: Store) -> FastMCP:
                 notes.append(f"Skipped a commute ({exc})")
         return notes
 
+    def _newer_rent_note(search: dict[str, Any], dup: dict[str, Any] | None, fields: dict[str, Any]) -> str:
+        """Cycle 33: add_place on a place that is already saved, and the paste gives another rent ("$3,295 now, not $3,640"). The saved rent is not changed by a repeat
+        add, so one line names both figures and says how to apply the new one."""
+        if not dup or search.get("mode") == "buy":
+            return ""
+        try:
+            new, old = float(fields.get("price")), float(dup.get("price"))
+        except (TypeError, ValueError):
+            return ""
+        if isinstance(fields.get("price"), bool) or abs(new - old) < 0.5:
+            return ""
+        return (f"This paste gives a rent of {_money(new)} a month, but the rent saved on this place is {_money(old)}. A repeat add never changes a filled value, so the saved rent stays "
+                f"{_money(old)}. If {_money(new)} is right, call update_place with price {new:g}.")
+
+    def _drop_stale_rent_lines(block: str, new_rent: Any) -> str:
+        """The reader notes on a repeat: a line that calls the new rent "not counted anywhere" is dropped, because the repeat note above now names it."""
+        try:
+            figure = _money(float(new_rent))
+        except (TypeError, ValueError):
+            return block
+        return "\n".join(ln for ln in block.split("\n") if not (figure in ln and "not counted anywhere" in ln))
+
     def add_one(fields: dict[str, Any]) -> tuple[dict[str, Any], bool, list[str], str]:
         """Add or update one place. Returns (place, created, notes, matched_on)."""
         fields = dict(fields)
@@ -1016,6 +1038,11 @@ def build_server(store: Store) -> FastMCP:
                          + " Only empty fields are filled; nothing the user wrote was changed, and its stage did not move.")
             kept = [k.replace("_", " ") for k, v in fields.items() if k in PLACE_KEYS and k not in ("ai_notes", "photo_urls", "listing_text")
                     and dup and not _is_blank(dup.get(k)) and not _same(dup.get(k), v)]
+            new_rent = _newer_rent_note(search, dup, fields)
+            if new_rent:  # cycle 33: a repeat paste that gives another rent names the new figure and how to apply it, in place of a bare "values for price"
+                kept = [k for k in kept if k != "price"]
+                notes.append(new_rent)
+                reader_block = _drop_stale_rent_lines(reader_block, fields.get("price"))
             ignored = (["stage (it stays " + dup["stage"] + "; use move_place to change it)"] if stage and dup else [])
             if kept:
                 ignored.append("values for " + ", ".join(sorted(kept)) + " (already filled; use update_place to change them)")
