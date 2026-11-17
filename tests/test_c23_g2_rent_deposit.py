@@ -134,7 +134,7 @@ def test_saved_roommates_l51():
 def test_saved_roommates_l30():
     o = _saved("r22-roommates-l30.txt")
     assert o["deposit"] == 1260 and o["move_in_fees"] == 525
-    assert "$1,260" in _notes(o) and "$75" in _notes(o)
+    assert "$75" in _notes(o)  # cycle 28: the key deposit is a move-in fee, so no note sums it into the deposit
 
 
 @pytest.mark.parametrize("text,dep,fees", [

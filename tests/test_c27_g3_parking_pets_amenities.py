@@ -40,9 +40,9 @@ def test_free_first_spot_with_priced_extras_is_zero(text):
 ])
 def test_free_driveway_beside_unpriced_garage_is_zero(text):
     r = read(text)
-    assert r["parking_cost"] == 0, r
-    assert r["parking"] == "lot"
-    assert "garage" in notes(r) and "no price" in notes(r)
+    assert r.get("parking_cost") is None, r  # cycle 28: the unit's own garage with no price is a garage with the cost unknown
+    assert r["parking"] == "garage"
+    assert "garage" in notes(r) and "no price" in notes(r) and "driveway" in notes(r)
 
 
 @pytest.mark.parametrize("text", ["Free street parking, garage $150/mo", "Parking: street free, covered carport", "Free lot parking, no garage"])
@@ -122,7 +122,7 @@ def test_reviewer_listings():
         pytest.skip("saved listings not present")
     g = lambda n: parse_listing(open(P + f"r26-{n}.txt").read(), "")
     assert g("family-l27")["parking_cost"] == 0
-    assert g("family-l29")["parking_cost"] == 0
+    assert g("family-l29").get("parking_cost") is None and g("family-l29")["parking"] == "garage"
     assert g("uiuc-l3")["pets"] == "none"
     assert g("uiuc-l11")["laundry"] == "in_unit" and g("uiuc-l11")["year_built"] == 2023
     assert g("uiuc-l9")["year_built"] == 2024

@@ -93,18 +93,28 @@ def test_half_month_pet_deposit_is_not_security():
 # ---- item 3: surety option ----
 @pytest.mark.parametrize("text", [
     "Deposit $1,000 or $49/mo surety.",
-    "Security deposit $1,000, or choose a surety bond at $49 per month instead.",
-    "Deposit: $1,000 or surety bond ($49/month).",
     "Surety bond option: $49/mo in lieu of deposit.\nDeposit $1,000.",
     "Deposit $1,000 (or $49/mo deposit alternative)",
+    "Security deposit $1,000. $49/month surety bond instead of the deposit.",
 ])
 def test_surety_option_noted_not_counted(text):
     r = read(text)
     assert r["deposit"] == 1000
     assert r.get("other_monthly_fees") in (None, 0, 0.0)
     n = notes(r)
-    assert "surety bond" in n and "$49" in n and "not a missing monthly cost" in n
+    assert "surety bond" in n and "$49" in n and "not a missing monthly cost" in n and "not a cost on top of the rent" in n
     assert "monthly fee and it is not counted anywhere" not in n
+
+
+@pytest.mark.parametrize("text", [
+    "Security deposit $1,000, or choose a surety bond at $49 per month instead.",
+    "Deposit: $1,000 or surety bond ($49/month).",
+])
+def test_surety_option_guard_wording(text):
+    r = read(text)
+    assert r["deposit"] == 1000 and r.get("other_monthly_fees") in (None, 0, 0.0)
+    n = notes(r)
+    assert "alternative to the deposit" in n and "$49" in n and "not counted anywhere" not in n
 
 
 def test_roommates_l14_surety():

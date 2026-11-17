@@ -2685,7 +2685,7 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
         elif unpriced and not extras and not any(re.search(r"\b(?:driveway|street|lot|surface|open|uncovered|assigned|spots?|spaces?)\b", f) for f in free):
             continue
         own_garage = [u for u in unpriced if re.search(r"\bgarages?\b", u) and not re.search(r"\b(?:avail\w*|optional|options?|extra|additional|upgrade|offered|rent(?:al|ed)?|request|if[ \t]+(?:you|needed|wanted)|upon|ask)\b|\$", u)]
-        if own_garage and re.search(r"\b(?:garages?|carports?)\b[ \t]*(?:and|&|\+|plus|,[ \t]*and)[ \t]+[\w \t-]{0,25}?\bfree\b|\bboth[ \t]+free\b|\ball[ \t]+free\b", line, re.I):
+        if own_garage and re.search(r"\b(?:garages?|carports?)\b[ \t]*(?:and|&|\+|plus|,[ \t]*and)[ \t]+(?!free\b)[\w-]+(?:[ \t]+[\w-]+){0,2}?[ \t]+(?:(?:both|are|is)[ \t]+)*free\b|\bboth[ \t]+free\b|\ball[ \t]+free\b", line, re.I):
             own_garage = []  # "Garage and driveway both free": the free word covers the garage too
         if own_garage and not extras and len(own_garage) == len(unpriced) and not any(re.search(r"\b(?:garages?|carports?|covered)\b", f) for f in free):
             # cycle 28: "Parking: 1 car garage, driveway free": the garage is the unit's own and the listing gives it no price, so the parking is a garage with the cost unknown, and the free driveway is a note
@@ -4190,6 +4190,8 @@ def _surety_option(text: str) -> tuple[float, str, bool] | None:
         m = re.search(pat, text, re.I)
         if m:
             amount = _num(m.group(1) if pat.startswith(r"\$") else m.group(m.lastindex))
+            if re.search(r"\bor\b[^$\n;.]{0,60}\b(?:surety|bond|waiver|guarantor|alternative)\b[^$\n;.]{0,12}$", text[max(0, m.start() - 70):m.start(m.lastindex)].rstrip("$ \t"), re.I) and not pat.startswith(r"\$"):
+                continue  # "Deposit $300 or Surety Bond ($35/mo)": the missing-amount guard already explains this form
             if 0 < amount <= 5000:
                 phrase = " ".join(m.group(0).split())
                 return amount, phrase + (")" if phrase.count("(") > phrase.count(")") else ""), bool(re.search(r"/|per[ \t]+month|a[ \t]+month|monthly", m.group(0), re.I))
@@ -10344,7 +10346,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         sur = None if buying else _try(lambda: _surety_option(text))
         if sur:
             facts.append(f'The listing offers a surety bond ("{sur[1]}") that you can pick instead of paying the deposit' + (f", at {_usd(sur[0])} a month" if sur[2] else f", for {_usd(sur[0])}")
-                         + ". It is an option, not a missing monthly cost, so it is not counted." + (" The deposit saved is the one the listing gives." if out.get("deposit") else " The listing gives no deposit amount to save.") + " Ask which one you would pick and what each costs.")
+                         + ". It is an option, not a cost on top of the rent and not a missing monthly cost, so it is not counted." + (" The deposit saved is the one the listing gives." if out.get("deposit") else " The listing gives no deposit amount to save.") + " Ask which one you would pick and what each costs.")
         dcn = _try(lambda: _deposit_credit_note(text, out.get("deposit")))
         if dcn:
             facts.append(dcn)
