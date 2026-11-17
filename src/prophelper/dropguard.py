@@ -475,7 +475,7 @@ def _money_field_values(r: dict[str, Any]) -> set[float]:
 
 
 _QUOTE_FIG = re.compile(r"[$\uff04]\s?\d[\d,]*(?:\.\d+)?(?:\s?[kK]\b)?|\d[\d,]*(?:\.\d+)?\s?[$\uff04]|\bUSD\s?\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s?dollars?\b", re.I)
-_QUOTE_BREAK = re.compile(r"[<\uff1c\u2329\u3008\u300a\[{>\uff1e\u232a\u3009\u300b]|[.!?](?=\s+[A-Z]|\s*$)")
+_QUOTE_BREAK = re.compile(r"&(?:lt|gt|#60|#62|#x3c|#x3e);|[<\uff1c\u2329\u3008\u300a\[{>\uff1e\u232a\u3009\u300b]|[.!?](?=\s+[A-Z]|\s*$)")
 
 
 def cut_quote(q: str) -> str:

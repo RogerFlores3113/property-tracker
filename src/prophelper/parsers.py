@@ -10979,6 +10979,8 @@ def _quotes_title(phrase: str, title: Any) -> bool:
     """True when a quoted phrase is just the listing's title (or a piece of it)."""
     if not title or not isinstance(title, str):
         return False
+    if re.search(r"[$\uff04]\s?\d", phrase) and not re.search(r"[$\uff04]\s?\d", title):
+        return False  # cycle 27: the title has no dollar figure, so a phrase that holds one is more than the title ("Storage unit $30" is not the title "Storage unit")
     a = " ".join(phrase.replace("...", " ").split()).lower().strip(" ()")
     b = " ".join(title.replace("...", " ").split()).lower().strip(" ()")
     if len(a) >= 8 and len(b) >= 8 and (a.startswith(b) or b.startswith(a) or a in b):
