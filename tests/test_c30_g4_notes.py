@@ -115,3 +115,35 @@ class TestOnceOnly:
         low = " ".join(names).lower()
         assert low.count("parking") <= 1, names
         assert len(set(names)) == len(names)
+
+
+# ---------------------------------------------------------------- 4. Compare: "is cheapest" names what the cheapest leaves out
+
+class TestCheapestSaysUnknowns:
+    def _place(self, store, **kw):
+        from test_c10_g6_fit_today_compare import _enriched, _search
+        s = _search(store, budget_max=2000)
+        return _enriched(store, s, **kw)
+
+    @pytest.mark.parametrize("fields,expect", [
+        (dict(title="Gap", address="1 A St", price=1000, tenant_pays="electric"), "its utilities aren't counted"),
+        (dict(title="Gap2", address="1 A St", price=1000, tenant_pays="electric, gas"), "its utilities aren't counted"),
+        (dict(title="Gap3", address="1 A St", price=1000, utilities_included="heat, water"), "aren't counted"),
+    ])
+    def test_blocked_and_over_limit_sentences(self, store, monkeypatch, fields, expect):
+        p = self._place(store, **fields)
+        assert compare._uncounted(p)
+        canned = {"winners": [], "amount": None, "same": False, "all_unknown": False, "of_fit": False, "no_fit": False,
+                  "skipped_unknown": [], "over_limit": [(p, "24 min bike vs your 20 min limit")], "blocked": []}
+        monkeypatch.setattr(compare, "lowest_cost", lambda places: canned)
+        sent = " ".join(compare.lowest_cost_sentences([p], lambda x: x["title"]))
+        assert f"{fields['title']} is cheapest, but 24 min bike vs your 20 min limit, and " in sent
+        assert expect in sent
+        canned2 = dict(canned, over_limit=[], blocked=[(p, "it is a near miss")])
+        monkeypatch.setattr(compare, "lowest_cost", lambda places: canned2)
+        sent2 = " ".join(compare.lowest_cost_sentences([p], lambda x: x["title"]))
+        assert "it is a near miss, and " in sent2 and expect in sent2
+
+    def test_complete_place_gets_no_clause(self, store, monkeypatch):
+        p = self._place(store, title="Full", address="1 A St", price=1000, utilities_estimate=0)
+        assert compare._leaves_out_clause(p) == ""
