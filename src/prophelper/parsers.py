@@ -6799,7 +6799,8 @@ def _assessment_payer(text: str, sentence: str) -> str:
     """"seller" / "buyer" / "" for the special assessment sentence. The sentence itself decides ("Buyer to pay special assessment of $3,000 at
     closing", "due from buyer at close"); with no payer word in it, the very next line or sentence may say it on its own ("- Due from buyer at close")."""
     is_seller, is_buyer = bool(_PAYER_SELLER.search(sentence)), bool(_PAYER_BUYER.search(sentence))
-    if re.search(r"\b(?:seller|buyer|purchaser)[ \t]*(?:or|and|/|&)[ \t]*(?:the[ \t]+)?(?:buyer|seller|purchaser)\b|\beither\b|\bsplit\b(?![ \t]+(?:evenly[ \t]+|equally[ \t]+)?(?:between|among|across|by)[ \t]+(?:all[ \t]+|the[ \t]+)?(?:unit[ \t]+)?owners)|\bshared?\b(?![ \t]+(?:by|among|between)[ \t]+(?:all[ \t]+|the[ \t]+)?(?:unit[ \t]+)?owners)|\bnegotiabl\w*|\bto[ \t]+be[ \t]+(?:determined|negotiated)\b|\bTBD\b", sentence, re.I):
+    unsplit = _OWNERS_SPLIT.sub(" ", sentence)  # cycle 34 (aa): "split evenly between owners" / "shared equally among all unit owners" shares a cost among owners, it does not make the payer unknown
+    if re.search(r"\b(?:seller|buyer|purchaser)[ \t]*(?:or|and|/|&)[ \t]*(?:the[ \t]+)?(?:buyer|seller|purchaser)\b|\beither\b|\bsplit\b|\bshared?\b|\bnegotiabl\w*|\bto[ \t]+be[ \t]+(?:determined|negotiated)\b|\bTBD\b", unsplit, re.I):
         return ""  # cycle 26: "seller or buyer", "split", "negotiable": the payer is not settled
     if is_seller and is_buyer:
         return ""  # cycle 26: both sides named in one sentence: unknown beats a wrong payer
@@ -6808,6 +6809,13 @@ def _assessment_payer(text: str, sentence: str) -> str:
     if is_buyer:
         return "buyer"
     at = text.find(sentence) if sentence else -1
+    if at >= 0 and _OWNERS_SPLIT.search(sentence):
+        # cycle 34 (aa): "split evenly between owners" says nothing about the payer; a buyer-only payer word in the piece just before or after does
+        before = next((x for x in reversed(re.split(r"[.\n;](?!\d)", text[:at])) if x.strip()), "")
+        after = re.split(r"[.\n;](?!\d)", text[at + len(sentence):].lstrip(" \t.;\n"))[0]
+        near = [x for x in (before, after) if x.strip()]
+        if any(_PAYER_BUYER.search(x) for x in near) and not any(_PAYER_SELLER.search(x) for x in near):
+            return "buyer"
     if at >= 0:
         rest = text[at + len(sentence):]
         nxt = re.match(r"[ \t]*[.;]?[ \t]*\n?([^.\n;]*)", rest)
@@ -6935,6 +6943,9 @@ _SPLIT_WORDS = re.compile(r"\bsplit\b[^.\n]{0,30}?(?:50[ \t]*/[ \t]*50|evenly|eq
                           r"\b(?:each|both)[ \t]+(?:side|party|of[ \t]+(?:them|you))[ \t]+pays?[ \t]+half\b", re.I)
 
 
+_OWNERS_SPLIT = re.compile(r"\b(?:split|shared?|divided|spread|allocated|apportioned|distributed)\b[^.\n]{0,40}?\b(?:between|among|amongst|across|by|with)[ \t]+(?:all[ \t]+|the[ \t]+|every[ \t]+|each[ \t]+)*(?:(?:unit|condo|home|building)[ \t]+)?(?:owners?|homeowners?|members|residents|units|unit[ \t]+holders)\b", re.I)
+
+
 def _assessment_split(text: str) -> tuple[float, int, float, str] | None:
     """Cycle 33: "Assessment: $3,600 over 24 months, split 50/50 between buyer and seller" is paid in monthly pieces and the buyer pays half. Returns
     (the buyer's monthly share, the number of months, the whole amount, the sentence) when ONE dollar figure sits in an assessment sentence with a month
@@ -6950,8 +6961,10 @@ def _assessment_split(text: str) -> tuple[float, int, float, str] | None:
             whole = sent + ". " + pieces[i + 1]  # "Assessment $3,600 over 24 months. Split 50/50 between buyer and seller."
         if not _SPLIT_WORDS.search(whole) or not re.search(r"\b(?:buyer|purchaser)\b", whole, re.I):
             continue
-        if not re.search(r"\bseller|\bowner|50[ \t]*/[ \t]*50|\bhalf\b", whole, re.I):
+        if not re.search(r"\bseller|50[ \t]*/[ \t]*50|\bhalf\b", whole, re.I):
             continue
+        if _OWNERS_SPLIT.search(whole) and not re.search(r"\b(?:seller|vendor)\b", whole, re.I):
+            continue  # cycle 34 (aa): "split evenly between owners" shares a cost among all the unit owners, never a buyer/seller split
         amts = re.findall(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)(?!,\d)", whole)
         if len(amts) != 1 or re.search(r"/[ \t]*mo\b|/[ \t]*month|per[ \t]+month|a[ \t]+month|each[ \t]+month", whole, re.I):
             continue
@@ -14057,7 +14070,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 elif sp_now and abs(sp_now[0] - amt_m) < 0.01 and months_m == sp_now[1]:
                     facts.append(f"The listing has a special assessment of {sp_now[2]} that the buyer pays over {months_m} months. It is counted as {_money_c(amt_m)} a month for {months_m} months "
                                  f"({sp_now[2]} in all) in the monthly cost as other monthly fees, and not as cash at closing. "
-                                 "It ends after the last payment, so the monthly cost drops by that amount then. Ask whether the payments carry interest and who pays it if you sell before then.")
+                                 "It ends after the last payment, so the monthly cost drops by that amount then. Ask whether the payments carry interest and who pays it if you sell before then."
+                                 + (" The listing says the cost is split between the owners, but not what share is yours, so the full amount is counted. Ask what share you pay and use that figure instead."
+                                    if any(_OWNERS_SPLIT.search(x) and re.search(r"\bassessments?\b", x, re.I) for x in re.split(r"[.\n;](?!\d)", text)) else ""))
                 else:
                     facts.append(f"The listing has a special assessment of ${amt_m:,.0f} a month{length}. {how}. It is not a one-time cost.{ends} Ask who pays it and when it ends.")
         if not buying and _try(lambda: listing_hoa_in_rent(text)):
