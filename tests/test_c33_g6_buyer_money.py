@@ -413,3 +413,44 @@ def test_tool_with_closing_costs_sent(store):
                    listing_text="Condo. Buyer pays recording $175. Taxes $3,600 per year. HOA $250/month. Insurance $900/yr."))
     assert "uses a guess" not in r and "saved on this place ($6,000)" in r
     assert "guess" not in store.list_places(search_id=s["id"])[0]["reader_notes"]
+
+
+@pytest.mark.parametrize("line", [
+    "Special assessment (windows) $450 per month for 18 months, seller to pay.",
+    "Special assessment (windows) $450/month for 18 months, paid by the seller.",
+    "Seller pays the special assessment of $450 a month for 18 months (windows).",
+])
+def test_monthly_assessment_the_seller_pays_does_not_say_ask_who_pays(line):
+    out = read(BASE + "HOA $190/month. " + line)
+    assert "ask who pays" not in notes(out) and "seller pays" in notes(out)
+    assert out.get("other_monthly_fees") in (None, "")
+
+
+# ---- binder regressions found by the corpus check ----
+def _cc(text):
+    from prophelper import parsers
+    o = parsers.parse_listing(text, buying=True)
+    return o
+
+
+def test_priced_under_appraisal_is_not_a_closing_part():
+    t = ("Buyer to pay title and escrow of about $2,100 plus lender fees about $3,200. Priced $5k under appraisal.")
+    o = _cc(t)
+    assert "appraisal $5,000" not in (o.get("found_in_listing") or "")
+    from prophelper import money
+    c = money.cash_to_close({**o, "listing_text": t})
+    labels = [p["label"] for p in (c or {}).get("parts", [])]
+    assert not any("priced" in l.lower() for l in labels)
+
+
+def test_closing_costs_prefix_not_in_label():
+    t = "Closing costs: title $1,400, lender fee $1,900. Buyer pays."
+    from prophelper import money
+    c = money.cash_to_close({**_cc(t), "listing_text": t})
+    for p in (c or {}).get("parts", []):
+        assert "closing costs:" not in p["label"].lower()
+
+
+def test_odd_label_words_fall_back_to_older_readers():
+    from prophelper import parsers
+    assert parsers._closing_bound_items("Escrow set-up of paid by buyer $900, $400 recording") in (None, [("recording", 400.0)])

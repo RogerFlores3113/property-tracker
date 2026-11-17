@@ -5301,11 +5301,15 @@ _SELLER_PAREN = re.compile(r"\([^()\n]*\b(?:seller|owner)(?:'s)?\b[^()\n]*\)", r
 _CL_AMT = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
 _CL_SEP = re.compile(r"[ \t]*(?:,(?!\d)|\band\b|\bplus\b|\+|&|\|)[ \t]*", re.I)
 _CL_KNOWN = re.compile(r"\b(?:title|escrow|recording|attorney|settlement|survey|appraisal|lender|loan|origination|prepaids?)\b", re.I)
-_CL_LEAD = re.compile(r"^(?:(?:the[ \t]+)?buyer(?:'?s)?[ \t]+(?:(?:will|to|should)[ \t]+)*(?:pays?|covers?)[ \t]*:?[ \t]*|(?:the[ \t]+)?buyers?'?s?[ \t]+(?=[a-z])|(?:buyer|buyers)[ \t]*:[ \t]*|(?:also|about|around|approx\.?|approximately|roughly|est\.?|estimated|of|for|a|an|the|at|is|are|to|pay|pays|\(|~|:|-)[ \t]+)+", re.I)
+_CL_LEAD = re.compile(r"^(?:closing[ \t]+(?:costs?|fees?|items?|charges?)[ \t]*[:\-]?[ \t]*|(?:the[ \t]+)?buyer(?:'?s)?[ \t]+(?:(?:will|to|should)[ \t]+)*(?:pays?|covers?)[ \t]*:?[ \t]*|(?:the[ \t]+)?buyers?'?s?[ \t]+(?=[a-z])|(?:buyer|buyers)[ \t]*:[ \t]*|(?:also|about|around|approx\.?|approximately|roughly|est\.?|estimated|of|for|a|an|the|at|is|are|to|pay|pays|\(|~|:|-)[ \t]+)+", re.I)
 _CL_TAIL = re.compile(r"(?:[ \t]+(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|of|for|a|an|the|at|is|are|to|~|\)|:|-))+$", re.I)
 
 
-def _closing_bound_items(sent: str) -> list[tuple[str, float]] | None:
+_CL_WORDS = {"title", "escrow", "recording", "attorney", "settlement", "survey", "appraisal", "lender", "loan", "origination", "prepaid", "prepaids", "fee", "fees", "cost", "costs", "charge", "charges",
+             "policy", "search", "set-up", "setup", "set", "up", "report", "and", "&", "owner's", "owners", "lender's", "lenders", "buyer's", "attorney's", "processing", "underwriting"}
+
+
+def _closing_bound_items(sent: str, insurance: bool = False) -> list[tuple[str, float]] | None:
     """Cycle 33: closing parts in a sentence with two or more dollar figures, each figure bound to the label in its own piece, in either order:
     "Buyer to pay $1,250 lender origination, $625 appraisal, and $1,400 for owner's title policy" -> lender origination 1,250; appraisal 625; owner's title policy 1,400.
     Pieces are cut at commas, "and", "plus", "+", "&" and pipes; a piece that is only item words ("title" in "title and escrow about $2,100") joins the next piece.
@@ -5343,6 +5347,9 @@ def _closing_bound_items(sent: str) -> list[tuple[str, float]] | None:
         label = " ".join(label.lower().split())
         if re.search(r"\b(?:hoa|association|condo|warrant\w*)\b|\bprepaids?[ \t]+(?!(?:fees?|costs?|charges?)\b)", label):
             continue  # a one-time HOA or warranty item and prepaid taxes, insurance or dues have their own reader (buyer_one_time_fees)
+        words = re.findall(r"[a-z]+(?:'s)?(?:-[a-z]+)?|&", label)
+        if not all(w in _CL_WORDS or (insurance and w == "insurance") for w in words):
+            continue  # "priced under appraisal", "escrow set-up of paid by buyer": not a plain closing item name, the older readers decide
         if label and _CL_KNOWN.search(label) and amount >= 50 and label not in [n for n, _a in items]:
             items.append((label, amount))
     return items or None
@@ -5361,13 +5368,12 @@ def _closing_items_parts(text: str) -> list[tuple[str, float]]:
     for sent in _closing_sentences(text):
         if re.search(r"\bseller|\bcredit|\bconcession|\bcash[ \t]+(?:needed|to[ \t]+close)", sent, re.I):
             continue
-        bound = _closing_bound_items(sent)
-        if bound:  # cycle 33: two or more figures in the sentence: each keeps the label in its own piece
-            parts.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in parts])
-            continue
+        bound = _closing_bound_items(sent) or []  # cycle 33: each figure keeps the label in its own piece, in either order
+        bound_amounts = {a for _n, a in bound}
+        parts.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in parts])
         for m in _CLOSING_ITEM.finditer(sent):
             name, amount = " ".join(m.group(1).lower().split()), _num(m.group(2))
-            if amount >= 50 and name not in [n for n, _a in parts]:
+            if amount >= 50 and name not in [n for n, _a in parts] and amount not in bound_amounts:
                 parts.append((name, amount))
     return parts if len(parts) >= 2 and not _closing_parts_are_total(text) else []
 
@@ -5379,13 +5385,12 @@ def _closing_items(text: str) -> tuple[float, str] | None:
     for sent in _closing_sentences(text):
         if re.search(r"\bseller|\bcredit|\bconcession|\bcash[ \t]+(?:needed|to[ \t]+close)", sent, re.I):
             continue
-        bound = _closing_bound_items(sent)
-        if bound:  # cycle 33: two or more figures in the sentence: each keeps the label in its own piece
-            parts.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in parts])
-            continue
+        bound = _closing_bound_items(sent) or []  # cycle 33: each figure keeps the label in its own piece, in either order
+        bound_amounts = {a for _n, a in bound}
+        parts.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in parts])
         for m in _CLOSING_ITEM.finditer(sent):
             name, amount = " ".join(m.group(1).lower().split()), _num(m.group(2))
-            if amount >= 50 and name not in [n for n, _a in parts]:
+            if amount >= 50 and name not in [n for n, _a in parts] and amount not in bound_amounts:
                 parts.append((name, amount))
     if len(parts) >= 2:
         total = round(sum(a for _n, a in parts), 2)
@@ -6228,13 +6233,12 @@ def buyer_closing_items_stated(text: str) -> list[tuple[str, float]]:
             continue
         if _ADDL_WORDS.search(sent):
             continue  # cycle 29: an item stated as additional is on top of the closing costs (buyer_closing_items_additional), never inside the guess
-        bound = _closing_bound_items(sent)
-        if bound:  # cycle 33: "$1,250 lender origination, $625 appraisal": each figure keeps the label in its own piece
-            found.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in found])
-            continue
+        bound = _closing_bound_items(sent, insurance=True) or []  # cycle 33: "$1,250 lender origination, $625 appraisal": each figure keeps the label in its own piece
+        bound_amounts = {a for _n, a in bound}
+        found.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in found])
         for m in _STATED_ITEM.finditer(sent):
             name, amount = " ".join(m.group(1).lower().split()), _num(m.group(2))
-            if amount >= 50 and name not in [n for n, _a in found]:
+            if amount >= 50 and name not in [n for n, _a in found] and amount not in bound_amounts:
                 found.append((name, amount))
     return found
 
@@ -6736,6 +6740,11 @@ def _assessment_monthly_note(text: str) -> str:
         return ""
     amount, months = got
     length = f" for {months} months (${amount * months:,.0f} in all)" if months else ""
+    for sent in re.split(r"[.\n;](?!\d)", text):  # cycle 33: "...$450 per month for 18 months, seller to pay": the payer is named, so the note never says "ask who pays"
+        if re.search(r"\bassessments?\b", sent, re.I) and re.search(r"\$\s?" + re.escape(f"{amount:,.0f}") + r"(?!\d)", sent):
+            if _assessment_payer(text, sent) == "seller":
+                return (f"The listing says the seller pays an assessment of ${amount:,.0f} a month{length}. It is not a cost to you, so it is not counted in the monthly cost or the cash to close.")
+            break
     return (f"The listing mentions an assessment of ${amount:,.0f} a month{length}. It is not saved as the "
             f"one-time special assessment. Add it to other monthly fees if you will pay it, and ask who pays.")
 
