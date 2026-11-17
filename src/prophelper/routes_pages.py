@@ -764,11 +764,37 @@ async def add_save(request: Request):
                 values["title"] = read.get("title") or ""  # a paste with no name and no address still saves
         except Exception:  # noqa: BLE001 - a reader failure must not stop the save
             pass
+    search_id = int(sid) if str(sid or "").isdigit() else None
     try:
-        place, created = store.add_place(by="you", search_id=int(sid) if str(sid or "").isdigit() else None, **values)
+        dup = store.find_duplicate(search_id, url=values.get("url") or None, address=values.get("address") or None, unit=values.get("unit") or None)
+    except Exception:  # noqa: BLE001 - the repeat check must never stop a save
+        dup = None
+    try:
+        place, created = store.add_place(by="you", search_id=search_id, **values)
     except ValueError as exc:
         return _add_page(request, values=values, parsed=True, text=values.get("listing_text", ""), url=values.get("url", ""),
                          status=400, error=str(exc), search_id=int(sid) if str(sid or "").isdigit() else None)
     if created:
         return redirect(f"/places/{place['id']}?fresh=1", notice=f"Saved {place['title']}.")
-    return redirect(f"/places/{place['id']}", notice=f"You already had {place['title']}, so I filled in anything that was empty and changed nothing else.")
+    notice = f"You already had {place['title']}, so I filled in anything that was empty and changed nothing else."
+    notice += _repeat_rent_note(store, place, dup, values)
+    return redirect(f"/places/{place['id']}", notice=notice)
+
+
+def _repeat_rent_note(store: Store, place: dict[str, Any], dup: dict[str, Any] | None, values: dict[str, str]) -> str:
+    """Cycle 34: a repeat paste that carries another rent ("$3,150 per month, new price" onto a place saved at $3,295) names both figures and says how to apply the new
+    one, like add_place does for Claude. The saved rent is not changed by a repeat add."""
+    try:
+        if not dup or store.place_mode(place["id"]) == "buy":
+            return ""
+        raw = str(values.get("price") or "").replace("$", "").replace(",", "").strip()
+        new, old = float(raw), float(dup.get("price"))
+    except (TypeError, ValueError, KeyError, Exception):  # noqa: BLE001 - a missing rent on either side means there is nothing to compare
+        return ""
+    if abs(new - old) < 0.5:
+        return ""
+
+    def money(x: float) -> str:
+        return f"${x:,.2f}" if abs(x - round(x)) > 0.004 else f"${x:,.0f}"
+    return (f" This paste gives a rent of {money(new)} a month, but the rent saved on this place is {money(old)}, so it stays {money(old)}. "
+            f"If {money(new)} is right, change the rent on this page.")
