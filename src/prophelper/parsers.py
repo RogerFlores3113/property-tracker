@@ -6944,6 +6944,9 @@ def _trash_fee_covers_trash(text: str, out: dict[str, Any]) -> None:
     fees = out.get("other_monthly_fees")
     if "trash" not in pays or not isinstance(fees, (int, float)) or isinstance(fees, bool):
         return
+    covered = set(_try(lambda: listing_billed_names(text)) or []) | set(_try(lambda: listing_estimate_names(text)) or [])
+    if "trash" in covered or re.search(r"\b(?:rubs|billed[ \t]+back|passed[ \t]+through)\b", text, re.I):
+        return  # a utility bill for the trash exists too: the fee is a service, the bill stays in the estimate
     for m in _TRASH_FEE_RE.finditer(text):
         amt = float(m.group(1))
         if 0 < amt <= float(fees) + 0.01 and not re.search(r"\b(?:optional|available|if you|on request)\b", text[max(0, m.start() - 20):m.end() + 25], re.I):
