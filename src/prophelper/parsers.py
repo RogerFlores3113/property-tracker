@@ -729,6 +729,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
         return found, unplaced
     sents = [(m.start(), m.group(0)) for m in re.finditer(r"(?:[^|\n.!?;]|(?<=\d)\.(?=\d))+", text) if m.group(0).strip()]
     prev_fields: list[set[str]] = []  # the named fields of each earlier sentence that had an amount
+    inherit_old: set[str] = set()
     bare_last: dict[str, tuple[float, str, int, int]] = {}  # cycle 30: the last plain figure of each fact, for a later "Previously $X" line
     for _off, s in sents:
         amts = list(_GC_MONEY.finditer(s))
@@ -794,6 +795,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
             if field is None and role == "old" and chain is None and not kws and prev_fields and len(prev_fields[-1]) == 1 \
                     and re.match(r"^[ \t\-*#:(]*(?:previously|formerly|originally|earlier|before|prior|was|were|used[ \t]+to[ \t]+be|old(?:[ \t]+(?:value|figure|amount))?)[ \t:,\-]*(?:it[ \t]+)?(?:(?:was|were)[ \t]+)?$", window, re.I):
                 field = next(iter(prev_fields[-1]))  # cycle 30: "Closing costs: $6,000" then a line "Previously $6,500": the old figure of the fact before it
+                inherit_old.add(field)
             if field is not None:
                 chain = field
                 if field == "named":
@@ -843,7 +845,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
             prev_fields.append(sent_fields)
     for fld, (bv, bafter, b0, b1) in bare_last.items():  # "Closing costs $6,000" then "Previously $6,500": the plain figure is the new one
         ent = found.get(fld)
-        if ent is not None and ent["new"] is None and ent["olds"] and not any(_same_num(bv, o) for o in ent["olds"]) and not any(a0 <= b0 < e0 for a0, e0 in ent["spans"]):
+        if ent is not None and fld in inherit_old and ent["new"] is None and ent["olds"] and not any(_same_num(bv, o) for o in ent["olds"]) and not any(a0 <= b0 < e0 for a0, e0 in ent["spans"]):
             ent["new"] = _gc_unit_value(fld, bv, bafter)
             ent["spans"].append((b0, b1))
             ent["sentence"] = "plain figure with an earlier figure named"
