@@ -70,7 +70,7 @@ def test_leet_quote_starts_at_the_instruction():
 @pytest.mark.parametrize("text", ["Wired funds to our lawyer overseas are accepted.", "Wired deposits to our attorney abroad only.", "We accept wired money to my solicitor in Lagos."])
 def test_wire_to_lawyer_is_a_payment_flag(mode, text):
     flags = local_flags({"listing_text": text, "address": "1 Main St"}, mode=mode)
-    pay = [f for f in flags if f.startswith("It asks for payment in a way that is hard to undo")]
+    pay = [f for f in flags if f.startswith(("It asks for payment in a way that is hard to undo", "It asks you to wire money to a lawyer"))]  # c27: a wire to a lawyer has its own line
     assert len(pay) == 1 and OVERSEAS_WIRE_NOTE in pay[0]
 
 

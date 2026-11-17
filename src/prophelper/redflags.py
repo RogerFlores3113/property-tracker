@@ -31,7 +31,7 @@ _WIRE_LAWYER = re.compile(r"\bwir(?:e|es|ed|ing)\b[^.\n]{0,70}?\b(?:to|through|v
                           r"\b(?:lawyer|attorney|solicitor)['\u2019]?s?\b[^.\n]{0,40}\bwir(?:e|es|ed|ing)\b", re.I)
 WIRE_LAWYER_NOTE = ("It asks you to wire money to a lawyer it names. A lawyer who works for the seller or the owner is on their side, not yours. "
                     "Pay only through someone you chose and checked yourself (for a purchase, an escrow or title company), and check any wire details by phoning a number you found yourself. "
-                    "A wire is very hard to get back.")
+                    "A wire is very hard to undo.")
 _ABROAD = re.compile(r"\b(out of (?:the )?(?:country|town|state|us|u\.s\.)|owner (?:is )?(?:abroad|overseas|traveling|travelling)|"
                      r"(?:living|working|stationed|serving|based) (?:abroad|overseas|in (?:africa|europe|asia|london|canada|spain|italy|dubai))|"
                      r"(?:abroad|overseas|missionary|mission trip|deployed)|can'?t (?:show|meet|tour)|unable to (?:show|meet|tour)|"
@@ -825,7 +825,9 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
         for pattern, message in _BUY_RULES:
             if (buy_payment_hit(text) if pattern is _BUY_PAYMENT else pattern.search(text)):
                 if pattern is _BUY_PAYMENT and _WIRE_LAWYER.search(text):
-                    flags.append(WIRE_LAWYER_NOTE)  # cycle 27: a wire to a lawyer gets its own plain line, beside the general payment line
+                    flags.append(WIRE_LAWYER_NOTE)  # cycle 27: a wire to a lawyer gets its own plain line
+                    if all(_WIRE_LAWYER.search(x) for x in re.split(r"(?<=[.!?])\s+(?=[A-Z$0-9])", text) if buy_payment_hit(x)):
+                        continue  # every payment sentence is the lawyer wire: one line per sentence, so this one says it
                 flags.append(message)
     if not buy and _BUY_NO_INSPECTION.search(text):
         flags.append("It says you can't or needn't inspect the place. A real landlord lets you look closely before you pay or sign. "
@@ -841,13 +843,17 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
     for pattern, message in _rules():
         if pattern is _PAYMENT and not buy and _WIRE_LAWYER.search(text):
             flags.append(WIRE_LAWYER_NOTE)
+            if covered(_PAYMENT, _WIRE_LAWYER):
+                continue  # only the lawyer wire asks for money: its own line says it, so the general line would repeat it
         if pattern is _ZELLE_ONLY and not buy and covered(_ZELLE_ONLY, _PAYMENT):
             continue  # "wire or Zelle only" in one sentence: the hard-to-undo payment line already says it
         if pattern is _PRESSURE and same_day:
             continue  # the stronger "send money or sign today" sign already says it; one pressure hint is enough
+        if buy and pattern is _PAYMENT and _WIRE_LAWYER.search(text) and WIRE_LAWYER_NOTE not in flags:
+            flags.append(WIRE_LAWYER_NOTE)  # a wire to a lawyer a purchase listing names, when no earnest money line was raised for it
         if buy and pattern in (_PAYMENT, _NO_CHECKS):
             # landlord wording does not fit a purchase; the payment rule gets seller wording, the screening rule is dropped
-            if pattern is _PAYMENT and pattern.search(text) and not (already and covered(_PAYMENT, buy_payment_hit)):
+            if pattern is _PAYMENT and pattern.search(text) and not (already and covered(_PAYMENT, buy_payment_hit)) and not (_WIRE_LAWYER.search(text) and covered(_PAYMENT, _WIRE_LAWYER)):
                 flags.append("It asks for payment in a way that is hard to undo (wire, gift card, crypto or a payment app). "
                              "Pay only through an escrow or title company you have checked yourself.")
             continue
