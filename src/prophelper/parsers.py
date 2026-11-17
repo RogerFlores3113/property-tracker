@@ -8789,7 +8789,7 @@ _BILLED_GROUP_BREAK = re.compile(
 _BILLED_GROUP_LEAD = re.compile(r"(?P<m>\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly))?)[ \t]*,[ \t]*(?=" + _LLT_NAMES + r"[ \t]+(?:(?:is|are)[ \t]+)?" + _BGB_VIA + r")", re.I)
 
 
-_BILLED_HEADER = re.compile(r"\b(?:(?:all[ \t]+)?utilit(?:y|ies)|bills?)[ \t]*(?:are[ \t]+)?(?:billed[ \t-]*back|passed[ \t-]*through|re-?billed)[ \t]*(?:[:\-][ \t]*|\([ \t]*)(?P<names>" + _LLT_NAMES + r")[ \t]*(?P<end>\))?", re.I)
+_BILLED_HEADER = re.compile(r"\b(?:(?:all[ \t]+)?utilit(?:y|ies)|bills?)[ \t]*(?:are[ \t]+)?(?:billed[ \t-]*back|passed[ \t-]*through|re-?billed)[ \t]*(?:[:\-][ \t]*|\([ \t]*)(?P<names>" + _LLT_NAMES + r")[ \t]*(?P<end>\))?(?![^.\n;]{0,25}[$\uff04])", re.I)
 
 
 def _billed_group_break(text: str) -> str:

@@ -298,3 +298,9 @@ def test_negative_total_utilities_figure_covers_all():
 def test_negative_billed_amount_plus_typical_figure_stay_added():
     r = P("Rent $2,880. Gas, water, sewer billed back at $90/mo. Resident pays electric. Typical total bills $140.")
     assert r["utilities_estimate"] == 230
+
+
+def test_negative_billed_back_header_with_a_flat_figure_is_left_to_the_flat_reader():
+    r = P(HEAD + "Utilities billed back: water/sewer/trash $75 flat; electric & gas direct with utility providers.")
+    assert "gives no amount" not in notes(r)
+    assert r.get("other_monthly_fees") == 75 or r.get("utilities_estimate") == 75
