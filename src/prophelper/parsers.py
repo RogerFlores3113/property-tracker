@@ -571,7 +571,7 @@ _GC_KW = re.compile(
     r"|(?P<rent>\b(?:monthly[ \t]+)?rent\b|\bprice\b|\basking\b)", re.I)
 _GC_FIELD = {"dep": "deposit", "hoa": "hoa", "tax": "property_tax", "app": "application_fee", "park": "parking_cost", "rent": "price"}
 _GC_LABEL = {"deposit": "deposit", "hoa": "HOA", "property_tax": "property tax", "application_fee": "application fee", "parking_cost": "parking cost", "price": "rent"}
-_GC_MONEY = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?![\d,])")
+_GC_MONEY = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
 _GC_LEAD = re.compile(r"^[ \t\"'(\[*#-]*(?:(?:corrected?|corrections?|actually)\b|(?:update[ds]?|revised|edit(?:ed)?)[ \t]*[:,\-\u2013\u2014])", re.I)
 _GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)"
 _GC_CUE = re.compile(r"\b(?P<w>now|" + _GC_HARD + r"|new)\b", re.I)
@@ -649,6 +649,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 if role is None and _GC_NEW_AFTER.match(after):
                     role = "soft"
             field: str | None = None
+            inherited = False
             kws = list(_GC_KW.finditer(window))
             if kws:
                 k = kws[-1]
@@ -664,6 +665,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 for pf in reversed(prev_fields):  # "Corrected: now $1,325 per month": the fact is the one the sentence before it was about
                     if len(pf) == 1:
                         field = next(iter(pf))
+                        inherited = True
                     break
             if field is not None:
                 chain = field
@@ -684,8 +686,15 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 continue
             if buying and field in ("price", "deposit"):
                 continue
+            if inherited and field in ("deposit", "application_fee", "property_tax") and re.match(r"[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly)", after, re.I):
+                if hard and role != "old":  # "Corrected: now $1,450 per month" after a deposit line: a monthly figure is not a deposit, so it cannot be placed
+                    q = " ".join(s.split())
+                    if q not in unplaced:
+                        unplaced.append(q)
+                continue
             value = _gc_unit_value(field, value, after)
-            ent = found.setdefault(field, {"new": None, "olds": [], "sentence": ""})
+            ent = found.setdefault(field, {"new": None, "olds": [], "sentence": "", "spans": []})
+            ent["spans"].append((_off + a.start(), _off + a.end()))
             if role == "old":
                 if value not in ent["olds"]:
                     ent["olds"].append(value)
@@ -8967,6 +8976,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         out[key] = _tidy_number(value) if isinstance(value, float) else value
 
     price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
+    gc_found, gc_unplaced = _try(lambda: _general_corrections(text, buying)) or ({}, [])  # cycle 27: one general correction step, rent here and the rest after the fee readers
+    text_all = text
+    other_vals = {v for f, e in gc_found.items() if f != "price" for v in (e["new"], *e["olds"])}
+    if other_vals:
+        # "Security deposit was $1,500, now $1,400" or "HOA was $340/mo, now $385/mo": a figure in another fact's correction is never the rent or the price,
+        # so the rent readers below see the text without those figures (the other readers get the whole text back after the rent is saved)
+        for f, e in gc_found.items():
+            if f != "price":
+                for a0, b0 in e["spans"]:
+                    text = text[:a0] + " " * (b0 - a0) + text[b0:]
+        price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
     facts: list[str] = list(pair_notes)
     price_range = _try(lambda: _rent_range(text, price_read)) if price_read and not buying else None
     saved_price = (current or {}).get("price")
@@ -9131,12 +9151,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 facts.append(f"The listing gives {_usd(price_read)} and also {_usd(big[0]['value'])}, and I could not tell which one is the monthly rent, so the rent is left empty. Ask what the rent is.")
                 price_read = None
-    gc_found, gc_unplaced = _try(lambda: _general_corrections(text, buying)) or ({}, [])  # cycle 27: one general correction step, rent here and the rest after the fee readers
     if "price" in gc_found and not buying and not price_range:
         gc_tmp = {"price": price_read}
         _gc_apply(text, gc_tmp, facts, gc_found, [], buying, only={"price"})
         price_read = gc_tmp["price"]
     put("price", price_read)
+    text = text_all
     if plan_fix and plan_fix[0] is None:
         put("beds", _try(lambda: _beds(_text_without_plans(text, None))))  # cycle 23: a bedroom count that only appears in the plan list is not the listing's own
     elif unit_pick and unit_pick[0] is None and _unit_price_beds(text) is None:
