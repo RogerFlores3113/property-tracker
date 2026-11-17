@@ -5663,7 +5663,7 @@ def _closing_costs(text: str) -> float | None:
     return None
 
 
-_CLOSING_ITEM = re.compile(r"\b((?:title(?:[ \t]+(?:and|&)[ \t]+escrow)?|escrow|lender|loan|origination|appraisal|recording|attorney|settlement|survey|courier|notary|prepaids?)(?:[ \t]+(?:fees?|costs?|charges?))?)"
+_CLOSING_ITEM = re.compile(r"\b((?:title(?:[ \t]+(?:and|&)[ \t]+escrow)?|escrow(?![ \t]+(?:set[- ]?up|deposit|account|reserves?|prepaids?|funding)\b)|lender|loan|origination|appraisal|recording|attorney|settlement|survey|courier|notary|prepaids?)(?:[ \t]+(?:fees?|costs?|charges?))?)"
                            r"[ \t:\-=(]{0,4}(?:(?:of|about|around|approx\.?|approximately|roughly|est\.?|estimated|at)[ \t]+|~[ \t]*)*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
 
@@ -5718,6 +5718,8 @@ def _closing_bound_items(sent: str, insurance: bool = False) -> list[tuple[str, 
         label = (piece[:a.start()] + " " + piece[a.end():]).strip()
         label = _CL_TAIL.sub("", _CL_LEAD.sub("", " ".join(label.split()))).strip(" ,:;-")
         label = " ".join(label.lower().split())
+        if re.search(r"\bescrow[ \t]+(?:set[- ]?up|deposit|account|reserves?|prepaids?|funding)\b|\bcapitali[sz]ation\b", label):
+            continue  # cycle 34: an escrow set-up or deposit and a capitalization fee are one-time items with their own reader (buyer_one_time_fees)
         if re.search(r"\b(?:hoa|association|condo|warrant\w*)\b|\bprepaids?[ \t]+(?!(?:fees?|costs?|charges?)\b)", label):
             continue  # a one-time HOA or warranty item and prepaid taxes, insurance or dues have their own reader (buyer_one_time_fees)
         words = re.findall(r"[a-z]+(?:'s)?(?:-[a-z]+)?|&", label)
@@ -6471,7 +6473,7 @@ def buyer_one_time_fees(text: str, sa_amount: Any = None, sa_payer: str = "") ->
             soft = label in ("home warranty", "prepaid HOA dues", "HOA dues paid up front") and re.search(r"\bincluded\b|\bprovid\w*|\boffer\w*|\bcomplimentary\b|\bfree\b|\bcredit\b|\bseller\b|\boptional\b|\bavailable\b|\bif[ \t]+(?:you|desired|wanted)\b", sent, re.I)
             if soft and not _PAYER_BUYER.search(sent):
                 unclear.append((label, amount))  # cycle 33: a warranty or prepaid dues "provided" or "offered" may not be the buyer's cost
-            elif _PAYER_BUYER.search(sent) or re.search(r"\bat[ \t]+closing\b|\bat[ \t]+settlement\b|\bdue[ \t]+at[ \t]+(?:closing|signing)\b", sent, re.I) \
+            elif _PAYER_BUYER.search(sent) or re.search(r"\bat[ \t]+closing\b|\bat[ \t]+settlement\b|\bdue[ \t]+at[ \t]+(?:closing|signing)\b|\([ \t]*(?:paid[ \t]+by[ \t]+)?(?:the[ \t]+)?(?:buyer|purchaser)(?:'?s)?(?:[ \t]+(?:pays|cost))?[ \t]*\)", sent, re.I) \
                     or label in ("prepaid HOA dues", "HOA dues paid up front", "first year of HOA dues", "first month of HOA dues"):
                 counted.append((label, amount))
             else:
@@ -6595,7 +6597,7 @@ def buyer_closing_additional_unnamed(text: str) -> list[tuple[str, float]]:
 
 
 _STATED_ITEM_NAME = r"(?:title|escrow|recording|attorney|settlement|survey|appraisal|lender|origination|courier|notary)"
-_STATED_ITEM = re.compile(r"\b(" + _STATED_ITEM_NAME + r"(?:[ \t]*(?:,|and|&)[ \t]*" + _STATED_ITEM_NAME + r")*(?:[ \t]+(?:fees?|costs?|charges?|insurance))?)[^$.\n;]{0,25}?"
+_STATED_ITEM = re.compile(r"\b(" + _STATED_ITEM_NAME + r"(?![ \t]+(?:set[- ]?up|deposit|account|reserves?|prepaids?|funding)\b)(?:[ \t]*(?:,|and|&)[ \t]*" + _STATED_ITEM_NAME + r")*(?:[ \t]+(?:fees?|costs?|charges?|insurance))?)[^$.\n;]{0,25}?"
                           r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
 
@@ -15609,7 +15611,7 @@ def listing_origination_percent(text: str) -> list[tuple[float, str]]:
     for sent in re.split(r"[.\n;](?!\d)", text or ""):
         if re.search(r"\bseller|\bcredit\b|\bnot[ \t]+(?:included|charged)|\bno[ \t]+(?:origination|points?)|\bwaived|\bfree\b", sent, re.I):
             continue
-        for m in re.finditer(r"\b(?:origination|loan[ \t]+origination|lender|loan|discount)[ \t]+(?:fees?|points?)[^\n.;%$]{0,15}?(\d{1,2}(?:\.\d+)?)[ \t]*%(?:[ \t]*(?:of[ \t]+(?:the[ \t]+)?(?:loan|mortgage|loan[ \t]+amount)))?"
+        for m in re.finditer(r"\b(?:origination(?:[ \t]+(?:fees?|points?))?|loan[ \t]+origination|lender[ \t]+(?:fees?|points?)|loan[ \t]+(?:fees?|points?)|discount[ \t]+(?:fees?|points?))[^\n.;%$]{0,15}?(\d{1,2}(?:\.\d+)?)[ \t]*%(?:[ \t]*(?:of[ \t]+(?:the[ \t]+)?(?:loan|mortgage|loan[ \t]+amount)))?"
                              r"|\b(\d{1,2}(?:\.\d+)?)[ \t]*%[ \t]+(?:origination|loan[ \t]+origination)(?:[ \t]+fees?)?", sent, re.I):
             pct = float(m.group(1) or m.group(2))
             if 0 < pct <= 6:

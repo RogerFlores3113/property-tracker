@@ -157,3 +157,150 @@ def test_pmi_zero_with_a_note(line):
 def test_pmi_not_zero_negatives(line):
     out, place, cost = cost_of(BASE + HOA_TAX + line)
     assert cost["pmi"] != 0 and "set to $0" not in notes(out)
+
+
+# ---- item 3 (bb): seller-paid and one-time buyer items never mark the monthly cost incomplete
+def assert_monthly_complete(cost):
+    assert cost["all_in"] is True and not cost["missing"] and not money.uncounted_display(cost) and not cost.get("one_time_left")
+
+
+def test_l21_escrow_set_up_goes_to_cash_to_close():
+    out, place, cost = cost_of(fixture("r33-buyer-l21.txt"))
+    assert 1500 in [p["amount"] for p in cost["cash_to_close"]["parts"] if "escrow set-up" in p["label"]]
+    assert out["seller_credit"] == 5000 and out["hoa"] == 420 and out["insurance"] == 900
+    assert "$1,500 escrow set-up" in notes(out) and "counted in the cash to close" in notes(out)
+    assert_monthly_complete(cost)
+
+
+@pytest.mark.parametrize("line", [
+    "Also due at closing: $1,500 escrow set-up for taxes.",
+    "$1,500 escrow set-up due at closing.",
+    "Escrow set-up $1,500 at closing",
+    "Buyer pays $1,500 for escrow setup at closing.",
+    "Due at closing | escrow set-up: $1,500",
+    "Closing: escrow set-up fee of $1,500 (buyer).",
+])
+def test_escrow_set_up_wordings(line):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert any(abs(p["amount"] - 1500) < 0.01 and "escrow" in p["label"] for p in cost["cash_to_close"]["parts"]), cost["cash_to_close"]["parts"]
+    assert out.get("insurance") == 900 and out.get("closing_costs") in (None, "")
+    assert_monthly_complete(cost)
+
+
+def test_l22_seller_paid_assessment_and_concession():
+    out, place, cost = cost_of(fixture("r33-buyer-l22.txt"))
+    assert out["seller_credit"] == 6870 and out["hoa"] == 190 and out["insurance"] == 540
+    assert "not a cost to you" in notes(out)
+    assert out.get("special_assessment") in (None, "") and out.get("other_monthly_fees") in (None, "")
+    assert_monthly_complete(cost)
+
+
+@pytest.mark.parametrize("line", [
+    "Special assessment (windows) $450 per month for 18 months, seller to pay.",
+    "Seller pays the special assessment of $450/month for 18 months (windows).",
+    "Special assessment $450 a month for 18 months, paid by the seller.",
+    "Special assessment: $8,100 for windows, seller pays.",
+    "Windows special assessment $450/mo x 18 months - seller to pay",
+    "Special assessment $8,100 over 18 months, seller pays it.",
+])
+def test_seller_paid_assessment_wordings_never_mark_the_cost_incomplete(line):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert out.get("other_monthly_fees") in (None, "") and out.get("special_assessment_payer") in (None, "", "seller")
+    assert "seller" in notes(out) or any("paid by the seller" in n for n in cost["notes"])
+    assert_monthly_complete(cost)
+    assert not cost["cash_to_close"]["left_out"]
+
+
+def test_l24_origination_percent_is_left_out_of_cash_not_monthly():
+    out, place, cost = cost_of(fixture("r33-buyer-l24.txt"))
+    assert out["seller_credit"] == 4000 and out["hoa"] == 210 and out["insurance"] == 720
+    assert_monthly_complete(cost)
+    left = cost["cash_to_close"]["left_out"]
+    assert len(left) == 1 and "1% of the loan" in left[0] and "$2,252" in left[0]
+    assert "not counted anywhere" not in notes(out).split("Origination")[-1]
+    assert "one-time lender fee" in notes(out)
+
+
+@pytest.mark.parametrize("line,pct", [
+    ("Origination fee 1% of loan.", 1),
+    ("Lender origination fee: 1% of the loan amount.", 1),
+    ("1% origination fee.", 1),
+    ("Loan origination fee 0.5% of the mortgage | HOA $200/mo", 0.5),
+    ("Origination fee 1% of loan\nClose in 30 days", 1),
+    ("Buyer pays origination of 1.5% of the loan at closing.", 1.5),
+])
+def test_origination_percent_wordings(line, pct):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert_monthly_complete(cost)
+    left = cost["cash_to_close"]["left_out"]
+    assert len(left) == 1 and f"{pct:g}% of the loan" in left[0]
+
+
+def test_origination_in_dollars_is_still_a_closing_item():
+    out, place, cost = cost_of(BASE + HOA_TAX + "Buyer pays origination fee $1,800 and appraisal $500.")
+    assert not cost["cash_to_close"]["left_out"]
+    assert "left_out" not in out
+
+
+def test_l33_capitalization_fee_and_closing_items():
+    out, place, cost = cost_of(fixture("r33-buyer-l33.txt"))
+    assert 1000 in [p["amount"] for p in cost["cash_to_close"]["parts"] if "capitalization fee" in p["label"]]
+    assert out["seller_credit"] == 6760 and out["hoa"] == 365 and out["insurance"] == 864 and out["property_tax"] == 5900
+    n = notes(out)
+    assert "title search $350 plus settlement fee $600 plus attorney review $500 plus courier $45, $1,495 in all" in n
+    label = [p["label"] for p in cost["cash_to_close"]["parts"] if p["label"].startswith("Closing costs")][0]
+    assert "$500 for attorney review" in label and "$45 for courier" in label
+    assert "Lender credit 0.5% not included" in n and "no lender credit is counted" in n and "not counted anywhere" not in n
+    assert_monthly_complete(cost)
+
+
+@pytest.mark.parametrize("line", [
+    "One-time capitalization fee of $1,000 payable by purchaser.",
+    "Capitalization fee $1,000 paid by buyer at closing.",
+    "Buyer pays a $1,000 capitalization fee.",
+    "Purchaser to pay $1,000 capitalisation fee at closing",
+    "Due at closing: $1,000 capitalization fee",
+    "Condo fee | capitalization fee: $1,000 (buyer)",
+])
+def test_capitalization_fee_wordings(line):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert [p["amount"] for p in cost["cash_to_close"]["parts"] if "capitali" in p["label"]] == [1000]
+    assert_monthly_complete(cost)
+
+
+def test_capitalization_fee_seller_pays_is_not_counted():
+    out, place, cost = cost_of(BASE + HOA_TAX + "Seller pays the $1,000 capitalization fee.")
+    assert not [p for p in cost["cash_to_close"]["parts"] if "capitali" in p["label"]]
+
+
+# ---- item 3: "Seller pays $5,000 in concessions" is the seller credit (l36)
+@pytest.mark.parametrize("line", [
+    "Seller pays $5,000 in concessions.",
+    "Seller pays $5,000 in concessions\nHome warranty $600 at closing.",
+    "Seller will give $5,000 as a closing credit. Close in 30 days.",
+    "Seller to contribute $5,000 in credits; buyer pays own attorney.",
+    "Offer: seller pays $5,000 in concessions, buyer pays survey.",
+    "Seller concessions: $5,000 | HOA $200/mo",
+    "Seller pays $5,000 in closing concessions.",
+])
+def test_seller_concessions_wordings_are_the_credit(line):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert out["seller_credit"] == 5000
+    assert [p["amount"] for p in cost["cash_to_close"]["parts"] if p["label"].startswith("Seller credit")] == [-5000]
+    assert_monthly_complete(cost)
+    assert not cost["cash_to_close"]["left_out"]
+
+
+def test_l36_whole_listing():
+    out, place, cost = cost_of(fixture("r33-buyer-l36.txt"))
+    assert out["seller_credit"] == 5000 and out["hoa"] == 310 and out["insurance"] == 768 and out["property_tax"] == 4700
+    parts_ = parts(cost["cash_to_close"])
+    assert parts_["Seller credit toward closing (comes off)"] == -5000 and parts_["One-time fee at closing (home warranty)"] == 600
+    assert "Seller pays $5,000 in concessions" not in notes(out)
+    assert_monthly_complete(cost)
+    assert out["closing_date"] if "closing_date" in out else True
+
+
+def test_seller_pays_in_assessments_is_not_a_credit():
+    out = read(BASE + HOA_TAX + "Seller pays $5,000 in HOA assessments.")
+    assert out.get("seller_credit") in (None, "")
