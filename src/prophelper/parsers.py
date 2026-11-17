@@ -9655,6 +9655,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         # cycle 27: "Heat & gas: tenant" is one bill for the same thing, not two unknowns
         pays = _ordered_utilities([w.strip() for w in pays.split(",") if w.strip() and w.strip() != "heat"])
     facts[:] = _try(lambda: _heat_is_gas_words(facts, text)) or facts
+    if except_priced and included and included != "all":
+        included = _ordered_utilities([w.strip() for w in included.split(",") if w.strip() and w.strip() not in except_priced])  # "all except trash" never made a priced trash free
     put("utilities_included", included)
     if pays:
         # Nothing is included for these, so the monthly cost keeps its own estimate line (a guess), and the listing's words are kept.
