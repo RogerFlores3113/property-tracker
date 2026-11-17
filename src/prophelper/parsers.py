@@ -953,6 +953,10 @@ def _top_commas(sg: str) -> list[tuple[int, int]]:
 _STALE_EST_SEG = re.compile(r"^[ \t]*(?:(?:typical(?:ly)?|usually|budget(?:ed)?|est(?:imated?|imate)?\.?|approx(?:imate(?:ly)?)?\.?|about|around|roughly|~|avg\.?|average)[ \t:]*)+(?:total[ \t]+)?\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?(?:[ \t]+(?:for[ \t]+(?:all|the)[ \t]+(?:of[ \t]+)?(?:it|them|utilities|bills)|total|combined))?[ \t]*$", re.I)
 
 
+_STALE_EST_WORD = re.compile(r"^[ \t]*(?:est|approx|avg)[ \t]*$", re.I)
+_STALE_EST_AMT = re.compile(r"^[ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?(?:[ \t]+for[ \t]+(?:all|the)[ \t]+(?:of[ \t]+)?(?:it|them|utilities|bills))?[ \t]*$", re.I)
+
+
 def _utility_text_correction(text: str) -> tuple[str, list[str]]:
     """Cycle 28: "All utilities included in rent.\\nUpdate: ... All utilities now paid by tenant (about $110)." The later line about all utilities replaces the
     earlier lines about utilities, so the earlier ones are blanked (the readers never see two answers) and the correction line loses its "now" so the
@@ -989,7 +993,7 @@ def _utility_text_correction(text: str) -> tuple[str, list[str]]:
     for i, (st, en, sg) in enumerate(segs[:ci + 1]):
         if i != ci and scope[i] and _GC_LEAD.match(sg) is None and re.search(r"\b(?:now|corrected?|updated?)\b", sg, re.I):
             continue
-        if i != ci and i > 0 and (i - 1) in blanked_idx and _STALE_EST_SEG.match(sg) and "\n" not in text[segs[i - 1][1]:st]:
+        if i != ci and i > 0 and (i - 1) in blanked_idx and (_STALE_EST_SEG.match(sg) or _STALE_EST_WORD.match(sg) or (_STALE_EST_AMT.match(sg) and re.search(r"\b(?:est|approx|avg)\s*$", segs[i - 1][2], re.I))) and "\n" not in text[segs[i - 1][1]:st]:
             # cycle 29: "Tenant pays all utilities except sewer. Estimate $100 for all of it." then "Update: ... now paid by tenant entirely (est. $130)": the estimate
             # right after the replaced utilities line belongs to it and goes with it
             blanked.append(sg.strip())
