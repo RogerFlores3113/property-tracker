@@ -135,7 +135,7 @@ def test_rent_search_has_no_closing_line(store):
 def test_new_search_form_has_people_and_adults(store):
     html = local_client(store).get("/search").text
     assert 'name="adults"' in html and 'name="people"' in html
-    assert "Adults who will sign the lease" in html
+    assert "Adults who will sign for it" in html
 
 
 def test_new_search_saves_adults_and_people(store):
