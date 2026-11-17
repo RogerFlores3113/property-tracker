@@ -84,7 +84,7 @@ _CITY_STATE = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),\s+([A
 
 _AMOUNT = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(\s?[kK]\b)?")
 # a $ amount that is not the rent: the words around it say what it is
-_FEE = (r"deposits?|fees?|pet|pets|parking|garage|carport|admin(?:istrative|istration)?|application|app\b|utilit\w*|hoa|"
+_FEE = (r"deposits?|dep\b\.?|dep[o\u00f3]sito|kaution|fees?|pet|pets|parking|garage|carport|admin(?:istrative|istration)?|application|app\b|utilit\w*|hoa|"
         r"assoc\w*|dues|tax(?:es)?|insurance|mortgage|down payment|closing|cleaning|storage|late|move[- ]?in|amenity|trash|"
         r"water|sewer|internet|cable|reservation|holding|bike|laundry|washer|dryer|estimated?|est\.?|payment|per pet|"
         r"charge|waiver|concession|savings?|credit|income|salary|earn|reward|bonus|gift|off\b|rebate|special|"
@@ -93,7 +93,7 @@ _FEE = (r"deposits?|fees?|pet|pets|parking|garage|carport|admin(?:istrative|istr
         r"assessment\w*|contribut\w*|seller")
 _FEE_BEFORE = re.compile(r"\b(?:" + _FEE + r")", re.I)
 _MONTHLY = r"(?:/\s*|per\s+|a\s+|each\s+|every\s+)?(?:mo\b|mos\b|month\b|months\b|monthly\b|mth\b)"
-_RENT_MARK = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r"|/\s*(?:unit|apt)\b|(?:al|por|cada|/)\s*mes\b|/\s*mensual\b|mensual(?:es)?\b|pro\s+monat\b|monatlich\b|par\s+mois\b|/\s*mois\b)", re.I)  # cycle 33: "$1,400 al mes"
+_RENT_MARK = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r"|/\s*monat\b|/\s*(?:unit|apt)\b|(?:al|por|cada|/)\s*mes\b|/\s*mensual\b|mensual(?:es)?\b|pro\s+monat\b|monatlich\b|par\s+mois\b|/\s*mois\b)", re.I)  # cycle 33: "$1,400 al mes"
 _BR_MARK = re.compile(r"^\s*/\s*(?:\d\s*(?:br|bd|bed)|studio)", re.I)  # Craigslist: "$1100 / 1br - 700ft2"
 _PER_BED = re.compile(r"^\s*\+?\s*(?:/|per)\s*(?:bed|bedroom|person|resident|tenant|student)", re.I)
 _FEE_AFTER_STRICT = re.compile(r"^\s*\+?\s*(?:one[- ]time\s+|non[- ]refundable\s+|refundable\s+|monthly\s+|price\s+)?(?:" + _FEE + r")", re.I)
@@ -177,6 +177,86 @@ _MONEY_K_WORD = re.compile(r"concession|credit|closing|seller|toward|reserve|ass
 _K_NOT_MONEY = re.compile(r"^\s*(?:sq|sf|ft|run|tv|video|mi\b|miles?|steps|lbs|pounds|resolution|display|monitor)", re.I)
 
 
+_GROUP_NUM = r"(?:\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d{2})?"
+_GROUP_TAIL = re.compile(r"[ \t]*(?:$|[.,;:)|\]•\-]|/|\(|\+|per\b|a[ \t]+(?:month|mo)\b|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mo\b|mes\b|mois\b|monat|total\b|"
+                         r"and\b|to\b|with\b|plus\b|obo\b|for\b|due\b|at\b|each\b|flat\b|if\b|then\b|incl|y\b|con\b|no\b|firm\b|negotiable|only\b|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I | re.M)
+_GROUP_UNIT = re.compile(r"[ \t]*(?:/|per\b|a[ \t]+(?:month|mo)\b|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mes\b|mois\b|monat|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I)
+_GROUP_LABEL = (r"(?:rent|renta|alquiler|loyer|miete|kaltmiete|warmmiete|asking|price|precio|prix|preis|costs?|deposit|dep[oó]sito|d[eé]p[oô]t|kaution|dep|fees?|hoa|dues|"
+                r"parking|estacionamiento|garage|carport|tax|taxes|insurance|total|monthly|mensual|payment|charge|cuota|tarifa)")
+_GROUP_PAT = re.compile(r"(?<![\w$.,/#\-])(?:" + _GROUP_LABEL + r"(?:[ \t]+(?:is|are|of|at|equals?|was|now)\b)?[ \t]*[:=\-]?[ \t]*(?:(?:about|approx\.?|around|only|just)[ \t]+)?|(?=\d))"
+                        r"(?P<n>" + _GROUP_NUM + r")(?![\d])", re.I)
+_GROUP_WORD = re.compile(r"[ \t]*(?:USD|US[ \t]+dollars?|dollars?|bucks)\b", re.I)
+
+
+def _grouped_thousands(text: str) -> str:
+    """Cycle 35 rule (ee): a number written with a space or a dot as the thousands mark ("1 550 per month", "Rent 2 300 dollars a month", "rent is 1.550 a month",
+    "Deposit: 1.950.", "2 100 al mes") is money read whole, never its last three digits. It becomes "$1,550" when a money word sits before it (rent, deposit,
+    fee...) and a plain ending follows, or when a money unit follows it (per month, /mo, dollars, USD, al mes). Anything else is left alone."""
+    text = re.sub(r"(?<=\d)[\u00a0\u2009\u202f](?=\d{3}(?!\d))", " ", text)
+    if not re.search(r"\d[ .]\d{3}", text):
+        return text
+    text = re.sub(r"(?<![\w$.,/#\-])(" + _GROUP_NUM + r")([ \t]*(?:-|to)[ \t]*)(" + _GROUP_NUM + r")(?=" + _GROUP_UNIT.pattern + r")",
+                  lambda m: "$" + re.sub(r"[ .]", ",", m.group(1).partition(",")[0]) + m.group(2) + "$" + re.sub(r"[ .]", ",", m.group(3).partition(",")[0]), text, flags=re.I)
+    out: list[str] = []
+    last = 0
+    for m in _GROUP_PAT.finditer(text):
+        labelled = m.start("n") > m.start()
+        num = m.group("n")
+        if " " in num and "." in num:
+            continue
+        end = m.end("n")
+        unit = _GROUP_UNIT.match(text, end)
+        if labelled:
+            if not (unit or _GROUP_TAIL.match(text, end)):
+                continue
+        elif not unit:
+            continue
+        w = _GROUP_WORD.match(text, end)
+        whole, _, cents = num.partition(",") if "," in num else (num, "", "")
+        digits = re.sub(r"[ .]", ",", whole)
+        out.append(text[last:m.start("n")])
+        out.append("$" + digits + ("." + cents if cents and cents != "00" else ""))
+        last = w.end() if w else end
+    if out:
+        out.append(text[last:])
+        text = "".join(out)
+        # "Rent 1 550 - 1 700": the high end of a range whose low end was just read whole
+        text = re.sub(r"(\$\d{1,3}(?:,\d{3})+[ \t]*(?:-|to)[ \t]*)(\d{1,3}(?: \d{3})+)(?=" + _GROUP_TAIL.pattern + r")",
+                      lambda m: m.group(1) + "$" + m.group(2).replace(" ", ","), text, flags=re.I | re.M)
+    return text
+
+
+_PET_NEAR = r"(?:pets?|cats?|dogs?|animals?|puppy|puppies|kittens?)"
+
+
+def _pet_amounts_plain(text: str) -> str:
+    """Cycle 35 rule (ee): the pet readers take up to four digits after the dollar sign, so "Pet deposit $1,200" was read as $1. A pet charge of $1,000 to $9,999 (a pet
+    deposit, fee or rent named next to the amount) is written without its comma ("$1200") so every pet reader sees it whole. Other amounts keep their comma."""
+    if "," not in text or "$" not in text:
+        return text
+    kind = r"(?:non[- ]?refundable[ \t]+|refundable[ \t]+|one[- ]time[ \t]+)?" + _PET_NEAR + r"(?:[ \t]+(?:deposit|fee|rent|charge|screening|application))+"
+    text = re.sub(r"(\b" + kind + r"[ \t]*(?:[(\[][^)\]\n]{0,20}[)\]])?[ \t]*(?:[:=\-]|of|is)?[ \t]*\$\s?)(\d),(\d{3})(?![\d,])", lambda m: m.group(1) + m.group(2) + m.group(3), text, flags=re.I)
+    return re.sub(r"(\$\s?)(\d),(\d{3})(?![\d,])(?=[ \t]*(?:(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]+)?" + kind + r")", lambda m: m.group(1) + m.group(2) + m.group(3), text, flags=re.I)
+
+
+def unsure_grouped_notes(text: str) -> list[str]:
+    """Cycle 35 rule (ee): "Rent 1 550 2 bed" or "Deposit 1.200 Main": a spaced or dotted number after a money word that could not be read whole is never read as its last
+    three digits. It stays unread and a note quotes it."""
+    notes: list[str] = []
+    seen: set[str] = set()
+    for m in _GROUP_PAT.finditer(text):
+        if m.start("n") <= m.start() or ("." in m.group("n") and " " in m.group("n")):
+            continue
+        num = m.group("n")
+        if num in seen:
+            continue
+        seen.add(num)
+        quote = re.sub(r"\s+", " ", text[m.start():m.end("n")]).strip()
+        whole = re.sub(r"[ .]", ",", num.partition(",")[0])
+        notes.append(f'The listing says "{quote}". {num} looks like ${whole}, but I could not tell what it is for, so no amount is saved from it. Check it.')
+    return notes
+
+
 def normalize_money(text: str) -> str:
     """Cycle 23: one spelling of money for every reader and the guard. A fullwidth dollar or digits, "USD 30", "US$30", "30 USD", "30 dollars" or
     "30 bucks" become "$30", and "$6k", "$1.5k" or a "6k" beside a money word ("$6k in concessions", "6k credit") become "$6,000" and
@@ -187,6 +267,7 @@ def normalize_money(text: str) -> str:
         text = text.translate(_FULLWIDTH)
         text = re.sub(r"(?<=\d)\uFF0C(?=\d)", ",", text)
         text = re.sub(r"(?<=\d)\uFF0E(?=\d)", ".", text)
+    text = _grouped_thousands(text)  # cycle 35 rule (ee): "1 550 per month", "Rent 2 300 dollars a month", "Deposit: 1.950." are read whole
     if "$" in text:
         # cycle 34: a space as the thousands mark ("2 300 $ par mois", "2 300,00 $", "$2 300 par mois") is read whole, never as the small part ("300")
         def _spaced(m: re.Match[str]) -> str:
@@ -208,7 +289,7 @@ def normalize_money(text: str) -> str:
         # cycle 24: a European thousands dot ("$1.700", "$1.700,50", "$12.500") is $1,700 / $1,700.50 / $12,500, never $1.70 (a dot with exactly three digits after it
         # and no more is a thousands mark: nobody writes a thousandth of a dollar)
         text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+),(\d{2})(?!\d)", lambda m: "$" + m.group(1).replace(".", ",") + "." + m.group(2), text)
-        text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+)(?![\d.]|,\d)", lambda m: "$" + m.group(1).replace(".", ","), text)
+        text = re.sub(r"\$\s?(\d{1,3}(?:\.\d{3})+)(?!\d|\.\d|,\d)", lambda m: "$" + m.group(1).replace(".", ","), text)
 
         def _k(m: re.Match[str]) -> str:
             n = float(m.group(1).replace(",", "")) * 1000
@@ -223,7 +304,7 @@ def normalize_money(text: str) -> str:
                 return m.group(0)
             return _k(m)
         text = re.sub(r"(?<![\w$.,])(\d+(?:\.\d+)?)[kK]\b(?![-\w])", lambda m: _bare_k(m), text)
-    return text
+    return _pet_amounts_plain(text)
 
 
 def _num(s: str) -> float:
@@ -246,6 +327,39 @@ _LEASE_CONDITION = re.compile(r"\s*(?:/\s*mo\w*\s*)?(?:with|for|on|if you sign|w
 
 _NOT_RENT_EXTRA = re.compile(r"\b(?:second|2nd|third|3rd|extra|additional|add'?l\.?|another|optional|guest)[ \t]+(?:[a-z-]+[ \t]+)?(?:space|spot|car|vehicle|storage|locker|parking|garage|carport|bike|person|occupant|adult|pet|resident|tenant|key|fob|unit|room)s?\b[^$\n]{0,15}$"
                             r"|\b(?:storage|locker|parking|garage|carport|bike[ \t]+room)[ \t]+(?:space|spot|unit|rental|rent|cost|fee)[ \t]*[:=-]?[ \t]*(?:is|are|at|for)?[ \t]*$", re.I)
+
+
+_PROMO_TOTAL_AFTER = re.compile(r"[ \t]*(?:/[ \t]*mo\w*[ \t]*)?[-,:(]?[ \t]*total(?:[ \t]+rent)?[ \t]+(?:for|during|over)[ \t]+(?:the[ \t]+)?(?:first|1st|initial)\b", re.I)
+_PROMO_TOTAL_NOTE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo\w*[ \t]*)?[-,:(]?[ \t]*total(?:[ \t]+rent)?[ \t]+(?:for|during|over)[ \t]+(?:the[ \t]+)?(?:first|1st|initial)\b([^.\n;|]{0,30})", re.I)
+_SPLIT_RENT = re.compile(r"\b(?:split(?:ting)?|shared?|divided?)[ \t]+(?:it[ \t]+)?(?:evenly|equally|between|among|w/|with|by|in[ \t]+(?:half|two))[^.\n;]{0,40}?\b(?:roommates?|room[- ]?mates?|tenants?|housemates?|occupants?|people|persons?|two|2|friends?|partner|each[ \t]+other)\b", re.I)
+_SPLIT_WORD = re.compile(r"\b(?:split|shared?|divided?)\b", re.I)
+_SPLIT_OTHER = re.compile(r"\b(?:utilit\w*|bills?|electric\w*|gas|water|sewer|trash|internet|wi-?fi|cable|owners?|buyers?|sellers?|closing|assessment|hoa|tax(?:es)?|insurance|fees?|parking|deposit)\b", re.I)
+
+
+def _rent_promo_split_notes(text: str, price: float | None) -> list[str]:
+    """Cycle 35 (ee, ff): "Rent 1.550 total for first two months promo" gets a promo note and "Rent $2,300 split evenly among 2 roommates" a split note; the rent stays the
+    whole figure the listing gives, never a lower one."""
+    notes: list[str] = []
+    for m in _PROMO_TOTAL_NOTE.finditer(text):
+        v = _num(m.group(1))
+        mm = re.match(r"[ \t]*((?:\w+[ \t]+)?months?)\b", m.group(2), re.I)
+        when = ("the first " + " ".join(mm.group(1).split())) if mm and not re.match(r"(?i)(?:the|a)\b", mm.group(1)) else "the first months"
+        notes.append(f"The listing gives {_usd(v)} in total for {when}. That is a promo, so it is not the monthly rent and it is not in the monthly cost. Ask what you pay each month after it.")
+        break
+    if price is not None and not _SALE_WORDS.search(text):
+        sents = re.split(r"(?<=[.!?])[ \t]+|\n|;", text)
+        for i, sent in enumerate(sents):
+            if not _SPLIT_RENT.search(sent):
+                continue
+            core = _SPLIT_RENT.sub(" ", sent)
+            if re.search(r"\b(?:not|no|never|without|cannot)\b|n't\b|\?", sent, re.I):
+                continue  # "Rent split evenly between roommates not required" says no split, and a question sets nothing
+            ctx = (sents[i - 1] if i else "") + " " + sent
+            if _SPLIT_OTHER.search(re.sub(r"\brent\w*\b", " ", core)) or not (re.search(r"\brent\b|\bprice\b", sent, re.I) or re.search(r"\$\s?" + re.escape(f"{price:,.0f}") + r"(?!\d)", ctx)):
+                continue
+            notes.append(f"The listing says the rent can be split between roommates. {_usd(price)} is saved as the rent for the whole place, so each person would pay less. Ask how the split works.")
+            break
+    return notes
 
 
 def _amounts(text: str) -> list[dict[str, Any]]:
@@ -276,7 +390,7 @@ def _amounts(text: str) -> list[dict[str, Any]]:
             marker = "per bed"
         elif _RENT_MARK.match(tail) or _BR_MARK.match(tail):
             marker = "monthly"
-        fee = bool(_FEE_BEFORE.search(clause))
+        fee = bool(_FEE_BEFORE.search(clause)) or bool(re.search(r"\bdep\.[ \t]*$", before, re.I))  # cycle 35: "Dep. $900" (the full stop ended the clause)
         if fee and re.search(r"\b(?:no\s+pets?|pets?\s+(?:are\s+)?(?:not\s+)?(?:allowed|permitted|ok)|service\s+animals?|except)\b", clause, re.I) \
                 and not re.search(r"\b(?:deposit|fees?|rent|monthly)\b", clause, re.I) and not _FEE_AFTER_STRICT.match(after):
             fee = False  # "NO PETS ALLOWED EXCEPT SERVICE ANIMALS - $2,100": a pet rule, and the amount is the rent
@@ -301,6 +415,8 @@ def _amounts(text: str) -> list[dict[str, Any]]:
             fee = False
         conditional = bool(re.search(r"(?:reduced|dropped|lowered|cut|drops?|now|as low as|marked down)\s+(?:price\s+)?(?:down\s+)?to\s*$", clause, re.I)
                            and _LEASE_CONDITION.match(after))
+        if not conditional and _PROMO_TOTAL_AFTER.match(after):
+            conditional = True  # cycle 35: "Rent 1.550 total for first two months promo" is what the first months cost together, never the monthly rent
         out.append({"value": value, "start": m.start(), "end": m.end(), "marker": marker, "range": is_range, "fee": fee,
                     "labelled": (new_price or bool(_RENT_LABEL.search(clause[-24:]))) and not conditional, "clause": clause.lower(),
                     "conditional": conditional})
@@ -399,7 +515,7 @@ def _dash_title_price(text: str) -> tuple[float, bool] | None:
 
 _CORRECTION_CUE = (r"(?:\?+[ \t]*no\b[ \t,:;.!-]*(?:(?:sorry|wait|actually|it'?s)\b[ \t,:;.!-]*)?|\bno[ \t,]+(?:sorry|wait|actually)\b[ \t,:;.!-]*|"
                    r"\b(?:sorry|actually|oops|correction|my[ \t]+bad)\b[ \t,:;.!-]*(?:(?:no|sorry|actually)\b[ \t,:;.!-]*)?)")
-_CORRECTED_RENT = re.compile(r"(?P<first>(?<![\w.,$#/-])(?:\$[ \t]?)?(?:\d{1,2},\d{3}|\d{3,5}|\d(?:\.\d{1,2})?[ \t]?k)\b[ \t]*(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?|monthly)?[ \t]*[?!]*)[ \t,;:.-]*"
+_CORRECTED_RENT = re.compile(r"(?P<first>(?<![\w.,$#/-])(?:\$[ \t]?)?(?:\d{1,2},\d{3}|\d{3,5}|\d(?:\.\d{1,2})?[ \t]?k)\b[ \t]*(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?|monthly|obo|o\.b\.o\.?|or[ \t]+best[ \t]+offer)?[ \t]*[?!]*)[ \t,;:.-]*"
                              + _CORRECTION_CUE + r"(?:rent[ \t]+(?:is[ \t]+)?|it'?s[ \t]+|its[ \t]+)?\$?[ \t]?(?P<n>\d{1,2},\d{3}|\d{3,5})(?![\d,]*\d)(?!\.\d)(?![ \t]*(?:sq|sf|ft|bed|br|bd|bath|ba\b|%|deposit|fee|pet|/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person)))", re.I)
 
 
@@ -496,7 +612,7 @@ def _corrected_rent(text: str) -> tuple[float, str] | None:
         if not 300 <= new <= 30000:
             continue
         first = m.group("first").strip(" ?!")
-        if not re.search(r"\$|k\b|month|/\s*mo|monthly", first, re.I) and not re.search(r"\brent\b[^.\n]{0,15}$", text[max(0, m.start("first") - 20):m.start("first")], re.I):
+        if not re.search(r"\$|k\b|month|/\s*mo|monthly|\bobo\b|o\.b\.o|best\s+offer", first, re.I) and not re.search(r"\brent\b[^.\n]{0,15}$", text[max(0, m.start("first") - 20):m.start("first")], re.I):
             continue
         return new, first
     return None
@@ -13077,6 +13193,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                     text = text[:a0] + " " * (b0 - a0) + text[b0:]
         price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
     facts: list[str] = list(pair_notes) + corr_notes
+    facts.extend(_try(lambda: unsure_grouped_notes(text)) or [])  # cycle 35 rule (ee): a spaced or dotted number after a money word that was not read is quoted, never read as its last three digits
     price_range = _try(lambda: _rent_range(text, price_read)) if price_read and not buying else None
     saved_price = (current or {}).get("price")
     if price_range and isinstance(saved_price, (int, float)) and not isinstance(saved_price, bool) and saved_price > 0 and float(saved_price) != price_range[1]:
@@ -13210,6 +13327,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             vals_ = [_usd(v) for v in sorted([hi, *lo])]
             facts.append(f"The listing gives {'two' if len(vals_) == 2 else 'three' if len(vals_) == 3 else len(vals_)} different rents: {', '.join(vals_[:-1])} and {vals_[-1]}. The higher {_usd(hi)} is saved as the rent so the cost is not understated. "
                          "Ask which rent is right.")
+    if not buying:
+        for n_ in _try(lambda: _rent_promo_split_notes(text, price_read)) or []:  # cycle 35: a promo total and a roommate split get one plain note, the rent is not changed
+            if n_ not in facts:
+                facts.append(n_)
     if buying and isinstance(price_read, (int, float)) and price_read < 20000:
         # A monthly figure ("monthly cost about $1,988") is not the asking price of a home for sale.
         was_figure = bool(re.search(r"\b(?:was|were|previously|formerly|earlier|old|not)[ \t:]*\$[ \t]?" + re.escape(f"{price_read:,.0f}") + r"(?![\d,])", text, re.I)) \

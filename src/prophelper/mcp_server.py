@@ -1007,6 +1007,20 @@ def build_server(store: Store) -> FastMCP:
         return [f"Rent check: the listing text saved on this place gives a rent of {_money(read)} a month, but the rent saved on this place is {_money(saved)}, and the cost uses "
                 f"{_money(saved)}. Check which one is right with the landlord."]
 
+    def rent_change_check(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+        """Cycle 35: update_place changes a saved rent by more than about 30 percent. One plain line says so, whatever the listing text holds (a figure like "1550 obo" in the text
+        must not hide it). It never quotes a figure from the listing text, only the two saved rents."""
+        try:
+            if store.place_mode(after["id"]) == "buy":
+                return []
+            old, new = float(before.get("price")), float(after.get("price"))
+        except (TypeError, ValueError, KeyError):
+            return []
+        if old <= 0 or new <= 0 or abs(new - old) / old <= 0.30:
+            return []
+        return [f"Rent check: the rent changed from {_money(old)} to {_money(new)} a month, a change of more than 30 percent, and the cost now uses {_money(new)}. "
+                f"The old rent is on the timeline. Check which one is right with the landlord."]
+
     def _newer_rent_note(search: dict[str, Any], dup: dict[str, Any] | None, fields: dict[str, Any]) -> str:
         """Cycle 33: add_place on a place that is already saved, and the paste gives another rent ("$3,295 now, not $3,640"). The saved rent is not changed by a repeat
         add, so one line names both figures and says how to apply the new one."""
@@ -1422,7 +1436,10 @@ def build_server(store: Store) -> FastMCP:
             lines += insurance_warning(after)
         if "price" in fields:
             lines += rent_warning(after)
-            lines += listing_rent_check(after)
+            rc_lines = listing_rent_check(after)
+            lines += rc_lines
+            if not rc_lines:
+                lines += rent_change_check(before, after)
         lines += covers_lines
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
