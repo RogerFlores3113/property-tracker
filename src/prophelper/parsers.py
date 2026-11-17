@@ -8796,6 +8796,55 @@ def _billed_group_break(text: str) -> str:
     return _BILLED_GROUP_LEAD.sub(lambda m: m.group("m") + ". ", text)  # "Trash/pest $15/mo, water/sewer/trash via RUBS about $70": the fee ends before the billed-back group
 
 
+_PERIODIC_BILL_WORD = r"(?:quarterly|monthly|bi-?monthly|semi-?annual|annual|yearly|every[ \t]+(?:2|two|3|three|6|six)[ \t]+months)"
+_PERIODIC_BILL_A = re.compile(r"\b(?:" + _PERIODIC_BILL_WORD + r")[ \t]+(?P<names>" + _LLT_NAMES + r")[ \t]+(?:bills?|charges?|invoices?)\b", re.I)
+_PERIODIC_BILL_B = re.compile(r"\b(?:tenants?|residents?|roommates?|renters?)[ \t]+(?:each[ \t]+)?(?:split|share|divide)[ \t]+the[ \t]+(?:" + _PERIODIC_BILL_WORD + r"[ \t]+)?(?P<names>" + _LLT_NAMES + r")[ \t]+(?:bills?|charges?)\b", re.I)
+
+
+_PERIODIC_BILL_C = re.compile(r"\b(?P<names>" + _LLT_NAMES + r")[ \t]*[:\-][ \t]*(?:" + _PERIODIC_BILL_WORD + r")[ \t]+(?:bills?|charges?)\b", re.I)
+
+
+def _periodic_bill_payer(text: str) -> str:
+    """Cycle 35 (roommates l7): "Quarterly water/sewer bill split evenly among tenants." is a bill the tenants pay, so it is "Tenant pays water/sewer." The amount is read
+    by the usual readers when the sentence gives one, so a sentence with a dollar figure, "included" or a landlord payer is left as it is. A bill with no
+    figure puts the utilities on the pay list, which keeps the monthly cost incomplete until someone asks what the bill is."""
+    def one(m: re.Match[str]) -> str:
+        seg_start = max(m.string.rfind(c, 0, m.start()) for c in ".\n;!?") + 1
+        ends = [e for e in (m.string.find(c, m.end()) for c in ".\n;!?") if e >= 0]
+        seg = m.string[seg_start:min(ends) if ends else len(m.string)]
+        if re.search(r"[$\u00ff\uff04]|\b(?:USD|dollars?)\b|\bincluded?\b|\b(?:landlord|owner|management|we|us)\b|\b(?:not|no)[ \t]+(?:split|bill)", seg, re.I) or re.search(r"\bTenants?[ \t]+pays?\b", seg, re.I):
+            return m.group(0)
+        names = re.sub(r"\belec\b", "electric", m.group("names"), flags=re.I)
+        return "Tenant pays " + names + ". Bill"
+    text = _PERIODIC_BILL_A.sub(one, text)
+    text = _PERIODIC_BILL_B.sub(one, text)
+    return _PERIODIC_BILL_C.sub(one, text)
+
+
+def _periodic_bill_notes(text: str, pays: str) -> list[str]:
+    """Cycle 35 (rule hh): a bill the tenants split, quarterly or monthly, with no figure, is named in a note, so it is never a silent loss."""
+    out: list[str] = []
+    if _UTIL_BILLS_CLAUSE.search(text) or re.search(r"\btotal[ \t]+(?:bills?|utilit)", text, re.I):
+        return out  # a typical total figure covers the utilities the tenant pays, so no amount is missing
+    for rx in (_PERIODIC_BILL_A, _PERIODIC_BILL_B, _PERIODIC_BILL_C):
+        for m in rx.finditer(text):
+            seg_start = max(text.rfind(c, 0, m.start()) for c in ".\n;!?") + 1
+            ends = [e for e in (text.find(c, m.end()) for c in ".\n;!?") if e >= 0]
+            seg = text[seg_start:min(ends) if ends else len(text)]
+            if re.search(r"[$\uff04]|\b(?:USD|dollars?)\b|\bincluded?\b|\b(?:landlord|owner|management|we|us)\b", seg, re.I):
+                continue
+            names = [w for w in re.findall(r"hot water|water|sewer|trash|garbage|gas|electric\w*|heat|internet|wi-?fi|cable", m.group("names").lower())]
+            names = [("electric" if w.startswith("electric") else "trash" if w == "garbage" else w) for w in names]
+            names = [w for w in dict.fromkeys(names) if w in (pays or "")]
+            if not names:
+                continue
+            per = re.search(r"quarterly|monthly|bi-?monthly|semi-?annual|annual|yearly|every[ \t]+\w+[ \t]+months", m.group(0) + " " + seg, re.I)
+            word = (per.group(0).lower() if per else "periodic")
+            out.append(f"The listing says {_join_names(names)} {'is' if len(names) == 1 else 'are'} a {word} bill that the tenants share, but gives no amount for it. "
+                       "Ask what one bill is; a quarterly bill is a third of that each month.")
+    return list(dict.fromkeys(out))
+
+
 def _landlord_party_tail(text: str) -> str:
     """Cycle 35 (uiuc l27): "Tenant pays electric and gas, water sewer trash are covered by landlord" -- the landlord's clause after a pay list (after a
     comma, semicolon, dash or in brackets) is its own sentence, "water sewer trash included.", so the tenant's list stops before it. Without "is" or "are",
@@ -12948,8 +12997,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
     raw_text = text or ""
     text = _try(lambda: _redflags_strip(raw_text)) or raw_text  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
-    title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(raw_text)))))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
-    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(text or ""))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    _periodic_src = text
+    title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(raw_text))))))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
+    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
@@ -13520,6 +13570,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         included = _ordered_utilities(named if roles["landlord"] else [w for w in _ALL_UTILITIES if w not in gone])
         pays = _ordered_utilities([w.strip() for w in (pays + ", " + kept_out).split(",") if w.strip()])
     included, pays = _try(lambda: _apply_util_sections(utext, included, pays, facts)) or (included, pays)
+    facts.extend(_try(lambda: _periodic_bill_notes(_periodic_src, pays)) or [])
     through = (_try(lambda: _through_provider(text)) or []) + (_try(lambda: _internet_by_provider(utext)) or [])
     if through:
         # "Electric and gas through PG&E": set up and paid by the renter, and a billed-back or flat-fee line must not erase it.

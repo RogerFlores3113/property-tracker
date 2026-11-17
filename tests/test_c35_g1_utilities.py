@@ -193,3 +193,49 @@ def test_negative_flat_fee_for_three_utilities_is_unchanged():
     r = P("Rent $1,299. Tenant pays electric. Water/sewer/trash flat $55/mo.")
     assert r["utilities_estimate"] == 55
     assert "electric" in _set(r["tenant_pays"])
+
+
+# ---- 4. a quarterly bill the tenants split
+QUARTERLY = [
+    "Quarterly water/sewer bill split evenly among tenants. Electric via ComEd. Gas included.",
+    "Tenants split the quarterly water/sewer bill. Electric via ComEd. Gas included.",
+    "Electric via ComEd. Gas included.\nWater/sewer: quarterly bill, split evenly",
+    "Gas included. Electric via ComEd; quarterly water/sewer bill shared by the roommates.",
+    "Quarterly water & sewer bill, split evenly. Electric via ComEd. Gas included.",
+    "Electric via ComEd. Gas included. Tenants share the quarterly water and sewer bill.",
+]
+
+
+@pytest.mark.parametrize("body", QUARTERLY)
+def test_quarterly_split_bill_is_a_billed_utility(body):
+    r = P("Rent $3,600. " + body)
+    assert _set(r["tenant_pays"]) == {"electric", "water", "sewer"}, (r.get("tenant_pays"), notes(r))
+    assert _set(r["utilities_included"]) == {"gas"}
+    assert not r.get("utilities_estimate")
+    assert "quarterly bill that the tenants share, but gives no amount" in notes(r)
+    assert "not counted" not in notes(r).split("quarterly bill")[1].split("\n")[0]
+
+
+def test_quarterly_bill_with_a_figure_is_a_third_per_month():
+    r = P("Rent $3,600. Quarterly water/sewer bill $240, split evenly among tenants. Electric via ComEd. Gas included.")
+    assert r["utilities_estimate"] == 80
+    assert _set(r["tenant_pays"]) == {"electric", "water", "sewer"}
+    assert "gives no amount" not in notes(r)
+
+
+def test_reviewer_listing_roommates_l7():
+    r = P(saved("r34-roommates-l7"))
+    assert _set(r["tenant_pays"]) == {"electric", "water", "sewer"}
+    assert _set(r["utilities_included"]) == {"gas"}
+    assert "water and sewer are a quarterly bill" in notes(r)
+
+
+def test_negative_quarterly_bill_that_is_included_is_not_a_pay_item():
+    r = P("Rent $3,600. Water/sewer included. Quarterly pest control bill. Gas included. Electric tenant.")
+    assert _set(r["tenant_pays"]) == {"electric"}
+    assert _set(r["utilities_included"]) == {"gas", "water", "sewer"}
+
+
+def test_negative_landlord_pays_the_quarterly_water_bill():
+    r = P("Rent $3,600. Landlord pays the quarterly water bill. Tenant pays electric.")
+    assert _set(r["tenant_pays"]) == {"electric"}
