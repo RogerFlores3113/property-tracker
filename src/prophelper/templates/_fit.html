@@ -7,5 +7,5 @@
 {%- endmacro %}
 
 {% macro score_note(p) -%}
-{% if p.score_total is not none and p.score.unknown_count %}<span class="fine score-note" title="{{ p.score.unknown|join(', ') }}">based on {{ p.score.unknown_count }} unknown{{ 's' if p.score.unknown_count != 1 }}</span>{% endif %}
+{% if p.score_total is not none and p.score.unknown_count %}<span class="fine score-note" >{{ unknown_basis(p) }}</span>{% endif %}
 {%- endmacro %}

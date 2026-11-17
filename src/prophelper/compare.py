@@ -326,6 +326,70 @@ def as_listed(p: dict[str, Any]) -> bool:
     return bool(p.get("check_first") or p.get("possible_scam") or s.get("scam") or s.get("rent_check") or s.get("fit") == "check_first")
 
 
+_LOWEST_UNIT = re.compile(r"lowest unit price|lowest price of any size", re.I)
+
+
+def lowest_unit(p: dict[str, Any]) -> bool:
+    """True when the saved rent is a "from" or "starting at" price, which is the lowest unit and may not be the rent of the unit wanted."""
+    return bool(_LOWEST_UNIT.search(str(p.get("reader_notes") or "")))
+
+
+def cost_incomplete(p: dict[str, Any]) -> bool:
+    c = p.get("cost") or {}
+    return bool(c.get("uncounted") or c.get("all_in") is False or (c.get("cash_to_close") or {}).get("left_out"))
+
+
+AS_LISTED_WORDS = "as listed, not checked"
+HEADING_REAL = "What it really costs"
+HEADING_LISTED = "What the listing says it costs"
+
+
+def cost_heading(p: dict[str, Any]) -> str:
+    """Cycle 27: one cost label for every surface. A check-first place never gets "really costs" or "true cost"."""
+    return HEADING_LISTED if as_listed(p) else HEADING_REAL
+
+
+def cost_word(p: dict[str, Any]) -> str:
+    """The word after "/mo": 'as listed, not checked' beats 'not complete' for a flagged place; '' is not used, a complete one says 'true cost'."""
+    if as_listed(p):
+        return "/mo " + AS_LISTED_WORDS
+    if cost_incomplete(p):
+        return "/mo, not complete"
+    return "/mo true cost"
+
+
+def cost_headline(p: dict[str, Any], each: bool = True) -> str:
+    """The line next to the total on the place page: the money headline, with a flagged place saying 'as listed, not checked'."""
+    c = p.get("cost") or {}
+    if c.get("total") is None:
+        return "Cost unknown"
+    people = int(c.get("people") or 1) if each else 1
+    if not as_listed(p):
+        return money_mod.headline(c, people, c.get("split_noun") or "people")
+    text = f"{money_mod._dollars(c['total'])}/mo {AS_LISTED_WORDS}"
+    unc = [money_mod._plain_amounts_label(u) for u in money_mod.uncounted_display(c)]
+    if unc:
+        text += f" ({money_mod._join_words(money_mod._short_unc(unc))} not counted yet)"
+    if people > 1:
+        text += f" ({money_mod._dollars(c['total'] / people)} each for {people} {c.get('split_noun') or 'people'})"
+    return text
+
+
+def cost_total_row_label(p: dict[str, Any]) -> str:
+    if as_listed(p):
+        return "Per month, as listed, not checked"
+    return "Per month, so far" if cost_incomplete(p) else "Per month, all in"
+
+
+def cost_text_short(p: dict[str, Any]) -> str:
+    """Board and Today: '$2,195/mo as listed, not checked' / '$1,900/mo, not complete' / '$1,900/mo'."""
+    t = p.get("cost_total")
+    if t is None:
+        return "no cost yet"
+    w = "/mo " + AS_LISTED_WORDS if as_listed(p) else "/mo, not complete" if cost_incomplete(p) else "/mo"
+    return helpers.money(t) + w
+
+
 def cash_left_out(p: dict[str, Any]) -> bool:
     c = p.get("cost") or {}
     return bool((c.get("cash_to_close") or {}).get("left_out") or (c.get("cash_at_move_in") or {}).get("left_out"))
@@ -334,12 +398,28 @@ def cash_left_out(p: dict[str, Any]) -> bool:
 def nothing_unknown_guard(p: dict[str, Any], text: str) -> str:
     """"Nothing unknown" is never said for a place that is marked check first or leaves an amount out of its cash: it says what is not settled."""
     if text != "Nothing unknown":
+        missing = [n for n in cash_unknown_parts(p) if n.split()[0] not in text.lower()]  # cycle 27: a cash part nobody filled in is named too
+        if missing:
+            text += "; Unknown: " + ", ".join(missing)
         return text
     if as_listed(p):
         return "Not checked: this place is marked check first"
+    cash = cash_unknown_parts(p)
+    if cash:  # cycle 27: a deposit or pet charge nobody filled in is an unknown, so "Nothing unknown" never sits beside "deposit not known"
+        return "Unknown: " + ", ".join(cash)
     if cash_left_out(p):
         return "Unknown: an amount left out of the cash needed up front"
     return text
+
+
+def cash_unknown_parts(p: dict[str, Any]) -> list[str]:
+    """The unknown parts of the cash due up front (a renter's deposit not filled in, pet charges, parking), named for the unknown rows."""
+    c = (p.get("cost") or {})
+    cash = c.get("cash_at_move_in")
+    if not cash or c.get("mode") == "buy":
+        return []
+    out = ["deposit"] if _deposit_unknown(p, cash) else []
+    return out + cash_unknown_names(p)
 
 
 def _cost_cell(p: dict[str, Any]) -> dict[str, Any]:
@@ -405,6 +485,9 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     unknown = (["deposit"] if _deposit_unknown(p, c) else []) + cash_unknown_names(p)
     if unknown:
         cell["text"] = f"at least {helpers.money_exact(c['total'])} ({_join_and(unknown)} not known)"
+        cell["incomplete"] = True
+    if as_listed(p):  # cycle 27: the cash of a check-first place is as listed, not checked, like its monthly cost
+        cell["text"] += " " + AS_LISTED_WORDS
         cell["incomplete"] = True
     return cell
 
@@ -660,12 +743,31 @@ def _score_cell(p: dict[str, Any]) -> dict[str, Any]:
             else ({"near_miss": "near miss", "doesnt_fit": "doesn't fit", "check_first": "check first"}.get(fit) or "")
         if label:
             cell["text"] += f", {label[0].lower() + label[1:]}"
-    names = unknown_names(p)
-    n = p["score"].get("unknown_count") or 0
-    if cell["value"] is not None and (n or names):
-        n = len(names) or n
-        cell["text"] += f" (based on {n} unknown{'s' if n != 1 else ''}" + (f": {', '.join(names)}" if names else "") + ")"
+    basis = unknown_basis(p)
+    if cell["value"] is not None and basis:
+        cell["text"] += f" ({basis})"
     return cell
+
+
+def score_unknown_basis(p: dict[str, Any]) -> str:
+    """The Board card and place page note: 'based on 1 unknown: Garage', naming the criteria the score rests on an unknown value for."""
+    score = p.get("score") or {}
+    names = [str(u) for u in score.get("unknown") or [] if u]
+    n = len(names) or (score.get("unknown_count") or 0)
+    if not n:
+        return ""
+    return f"based on {n} unknown{'s' if n != 1 else ''}" + (f": {', '.join(names)}" if names else "")
+
+
+def unknown_basis(p: dict[str, Any]) -> str:
+    """Cycle 27: 'based on 1 unknown: parking' (always names the unknown), '' when the score rests on nothing unknown. One text for the
+    Compare cell, the Board card and the place page."""
+    score = p.get("score") or {}
+    names = unknown_names(p) or [str(u) for u in score.get("unknown") or [] if u]
+    n = len(names) or (score.get("unknown_count") or 0)
+    if not n:
+        return ""
+    return f"based on {n} unknown{'s' if n != 1 else ''}" + (f": {', '.join(names)}" if names else "")
 
 
 def _opinion_cell(p: dict[str, Any]) -> dict[str, Any]:

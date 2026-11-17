@@ -419,6 +419,7 @@ def _cash_lines(e: dict[str, Any]) -> list[str]:
         head = f"at least {helpers.money_exact(cash['total'])}; {', '.join(unknown)} not known yet" if unknown else helpers.money_exact(cash["total"])
         out.append(f"{label}: {head} (" + ", ".join(f"{pt['label']} {helpers.money_exact(pt['amount'])}" for pt in cash["parts"]) + ")"
                    + (" (security deposit not filled in, so this is at least that much)" if cost.get("mode") != "buy" and compare_mod._deposit_unknown(e, cash) else "")
+                   + (" (as listed, not checked)" if compare_mod.as_listed(e) else "")
                    + ". Not part of the monthly cost."
                    + "".join(f" Left out: {w}." for w in cash.get("left_out") or []))
     if cost.get("listing_estimate_note"):
@@ -544,12 +545,7 @@ def _commute_text(e: dict[str, Any]) -> str:
 
 def _cost_word(e: dict[str, Any]) -> str:
     """'/mo, not complete', '/mo as listed, not checked' (a place marked check first or with a rent that looks wrong), or '/mo true cost'."""
-    cost = e.get("cost") or {}
-    if cost.get("uncounted") or cost.get("all_in") is False or (cost.get("cash_to_close") or {}).get("left_out"):
-        return "/mo, not complete"
-    if e.get("check_first") or e.get("possible_scam") or (e.get("score") or {}).get("scam") or (e.get("score") or {}).get("rent_check"):
-        return "/mo as listed, not checked"
-    return "/mo true cost"
+    return compare_mod.cost_word(e)
 
 
 def _line(e: dict[str, Any], search: dict[str, Any] | None = None) -> str:
@@ -1708,6 +1704,7 @@ def build_server(store: Store) -> FastMCP:
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
             lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}{_cost_word(p)}{each}"
+                         + (" (lowest unit rent, ask what the unit you want costs)" if compare_mod.lowest_unit(p) else "")
                          + (", no address yet" if not str(p.get("address") or "").strip() else "")
                          + (f". {p['caution']}" if p.get("caution") else ""))
         more = data.get("more") or {}
@@ -1724,7 +1721,12 @@ def build_server(store: Store) -> FastMCP:
         for p in data["needs_price"]:
             lines.append(f"Needs a price: #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, no price yet, so it is not ranked.")
         for c in data["check_first"]:
-            lines.append(f"Check first: #{c['place']['id']} {_title(c['place'])}: {c['text'][0].lower() + c['text'][1:]}")
+            own = c.get("own") or "open the place to see why"
+            lines.append(f"Check first: #{c['place']['id']} {_title(c['place'])}: {own[0].lower() + own[1:]}")
+        if more.get("check_first"):
+            lines.append(f"... and {more['check_first']} more to check first. Use list_places for the rest.")
+        if data.get("check_first_shared"):
+            lines.append("For every check first place: " + data["check_first_shared"][0].lower() + data["check_first_shared"][1:])
         shown_closest = {c["place"]["id"] for c in data["closest"]}
         if data["closest"]:
             lines.append("Closest so far (nothing fits yet):")

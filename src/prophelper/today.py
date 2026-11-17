@@ -17,6 +17,7 @@ from .store import PLACE_DATE_LABELS, Store
 
 COMING_UP_DAYS = 14
 TOP_FITS = 3
+CHECK_FIRST_SHOWN = 5  # the Check first section is capped like the others; the shared advice is said once
 LATE_AVAILABLE_DAYS = 7  # available_from more than this many days after the move-in date is a warning
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -238,19 +239,30 @@ def check_first(rows: list[dict[str, Any]], mode: str = "rent") -> list[dict[str
         if not _open(p):
             continue
         if possible_scam(p):
-            out.append({"place": p, "text": _own_reason(p, scam_text), "scam": True})
+            out.append({"place": p, "text": _own_reason(p, scam_text), "own": own_reason_only(p), "scam": True})
         elif ai_text_only(p):
             first = next((str(f) for f in p.get("flags") or [] if f), "")
             generic = "Read it yourself before you rely on this score." if "aimed at AI tools" in first else AI_TEXT_CHECK_TEXT
-            out.append({"place": p, "text": _own_reason(p, generic), "scam": False})
+            out.append({"place": p, "text": _own_reason(p, generic), "own": own_reason_only(p), "scam": False})
         elif not fails_dealbreakers(p) and scam_hint_or_low_rent(p):
             # cycle 26: a place left out of every other list for a scam hint or a rent that looks too low must still show somewhere
             low = low_rent(p)
             text = (("Check the rent first: " + low[0].upper() + low[1:] + ".") if low
                     else _own_reason(p, "Read it yourself and ask for the exact address before you pay anything."))
-            out.append({"place": p, "text": text, "scam": False})
+            out.append({"place": p, "text": text, "own": text, "scam": False})
     out.sort(key=lambda r: (not r["scam"], r["place"]["title"].lower()))  # possible scams first, then by name
     return out
+
+
+def own_reason_only(place: dict[str, Any]) -> str:
+    """Cycle 27: just this place's own reason (its one or two flag sentences), with no shared advice sentence, so a list of many
+    check-first places does not repeat the same advice on every row. '' when the place has no flag sentence of its own."""
+    reasons: list[str] = []
+    for f in [str(f) for f in redflags.scam_sign_flags(place.get("flags") or []) if f]:
+        r = redflags.short_reason(f)
+        if r not in reasons:
+            reasons.append(r)
+    return " ".join(reasons[:2])
 
 
 def _own_reason(place: dict[str, Any], generic: str, first: str = "") -> str:
@@ -638,9 +650,11 @@ def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> d
     shown_closest = {c["place"]["id"] for c in near_closest}
     near, more_near = _cap([n for n in near_misses(rows, 10 ** 6) if n["place"]["id"] not in shown_closest], TOP_FITS)
     late, more_late = _cap(late_availability(rows, search, 10 ** 6), 5)
-    checks = check_first(rows, search.get("mode", "rent"))
-    return {"fits": top, "unconfirmed": unconf, "needs_price": needs, "cost_check": cost_check(rows, shown_closest), "closest": near_closest, "check_first": checks,
+    all_checks = check_first(rows, search.get("mode", "rent"))
+    checks, more_checks = _cap(all_checks, CHECK_FIRST_SHOWN)
+    shared = (CHECK_FIRST_BUY_TEXT if search.get("mode") == "buy" else CHECK_FIRST_TEXT) if any(c["scam"] for c in all_checks) else ""
+    return {"fits": top, "unconfirmed": unconf, "needs_price": needs, "cost_check": cost_check(rows, shown_closest), "closest": near_closest, "check_first": checks, "check_first_total": len(all_checks), "check_first_shared": shared,
             "near_miss": near, "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
             "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late,
             "tours": store.upcoming_tours(days, search_id=search["id"]),
-            "more": {"fits": more_fits, "closest": more_closest, "unconfirmed": more_unconf, "near_miss": more_near, "late": more_late}}
+            "more": {"fits": more_fits, "closest": more_closest, "unconfirmed": more_unconf, "near_miss": more_near, "late": more_late, "check_first": more_checks}}

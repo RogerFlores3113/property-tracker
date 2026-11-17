@@ -199,7 +199,7 @@ def test_still_unknown_lists_what_is_unknown(store):
     s = store.add_search("Rent", "rent")
     store.add_criterion(s["id"], "sqft", target={"min": 500})
     a, _ = store.add_place(title="Alpha", address="1 C St", price=1500, utilities_estimate=80)
-    b, _ = store.add_place(title="Beta", address="2 C St", price=1400, utilities_estimate=80, sqft=800)
+    b, _ = store.add_place(title="Beta", address="2 C St", price=1400, utilities_estimate=80, sqft=800, deposit=1400)
     places = [_row(store, s, p) for p in (a, b)]
     rows = {r["key"]: r for sec in compare.build_rows(places) for r in sec["rows"]}
     assert "500" in rows["unknown"]["cells"][0]["text"] or "Size" in rows["unknown"]["cells"][0]["text"]

@@ -4,7 +4,7 @@
   <a class="kcard-title" href="/places/{{ p.id }}">{{ p.title }}</a>{% if p.is_sample %} {{ sample_badge(true) }}{% endif %}
   <div class="kcard-meta">
     {% if p.score.fit != 'doesnt_fit' %}{{ score_pill(p.score_total, p.band, p.check_first) }}{% endif %}
-    <strong>{% if p.cost_total is not none %}{{ p.cost_total|money }}/mo{% else %}<span class="missing">no cost yet</span>{% endif %}</strong>
+    <strong>{% if p.cost_total is not none %}{{ cost_short(p) }}{% else %}<span class="missing">no cost yet</span>{% endif %}</strong>
     <span class="fine">{% if p.beds is not none %}{{ p.beds|beds }}{% endif %}</span>
   </div>
   {% if p.cost.mode == 'buy' and p.price %}<div class="fine">Price {{ p.price|money }}</div>{% endif %}

@@ -35,7 +35,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from . import __version__, helpers, money, redflags, stages
+from . import __version__, compare, helpers, money, redflags, stages
 from .parsers import street_with_unit
 from .paths import resource_dir
 from .scoring import KIND_LABELS
@@ -68,6 +68,8 @@ def make_templates(store: Store) -> Jinja2Templates:
         "COMMUTE_MODES": COMMUTE_MODES, "CRITERION_KINDS": CRITERION_KINDS, "KIND_LABELS": KIND_LABELS,
         "version": __version__, "today": lambda: helpers.today().isoformat(), "has_sample": store.has_sample_data,
         "setting": lambda key, default="": store.get_setting(key, default),
+        "cost_heading": compare.cost_heading, "cost_headline": compare.cost_headline, "lowest_unit": compare.lowest_unit, "unknown_basis": compare.score_unknown_basis, "cost_short": compare.cost_text_short,
+        "cost_total_label": compare.cost_total_row_label, "cost_incomplete": compare.cost_incomplete, "as_listed": compare.as_listed,
         "scam_sign_flags": redflags.scam_sign_flags, "plain_hints": lambda flags: [f for f in flags if redflags.is_plain_hint(f)],
         "current_search": store.current_search, "searches": store.list_searches,
     })
