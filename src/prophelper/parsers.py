@@ -4142,6 +4142,24 @@ def _bare_security_amount(text: str) -> float | None:
     return v if 100 <= v <= 50000 else None
 
 
+_SURETY_WORD = r"(?:surety(?:[ \t]+bonds?)?|deposit[ \t-]+(?:alternative|waiver|insurance|replacement)|(?:zero|no)[- ]deposit[ \t]+(?:option|program|bond))"
+_SURETY_AMT = r"\$[ \t]?(\d{1,3}(?:,\d{3})*(?:\.\d\d)?|\d+(?:\.\d\d)?)(?![\d,])(?:[ \t]*(?:/[ \t]*(?:mo(?:nth)?|month)\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month))?"
+
+
+def _surety_option(text: str) -> tuple[float, str, bool] | None:
+    """Cycle 28: a surety bond (or deposit alternative) offered next to the deposit: "Deposit $1,000 or $49/mo surety", "or choose a surety bond at $39 per month instead".
+    It is an option the renter can pick instead of the deposit, never a missing monthly cost. Returns (amount, the phrase, monthly) or None."""
+    for pat in (_SURETY_AMT + r"[ \t]*(?:\)|,)?[ \t]*(?:" + _SURETY_WORD + r")",
+                r"(?:" + _SURETY_WORD + r")[^.\n;$]{0,40}?" + _SURETY_AMT):
+        m = re.search(pat, text, re.I)
+        if m:
+            amount = _num(m.group(1) if pat.startswith(r"\$") else m.group(m.lastindex))
+            if 0 < amount <= 5000:
+                phrase = " ".join(m.group(0).split())
+                return amount, phrase + (")" if phrase.count("(") > phrase.count(")") else ""), bool(re.search(r"/|per[ \t]+month|a[ \t]+month|monthly", m.group(0), re.I))
+    return None
+
+
 def _deposit_in_months(text: str) -> float:
     """The security deposit written as a number of months of rent ("security deposit one month", "deposit equal to one month's
     rent"), as that number of months. 0 when the text gives none."""
@@ -4167,6 +4185,7 @@ _DEP_DUE = r"(?:[ \t]*(?:is[ \t]+|are[ \t]+)?(?:due|payable|required|collected)[
 _DEP_EQ = r"(?:(?:is|are|will[ \t]+be|of|equal[ \t]+to|equals|equivalent[ \t]+to|same[ \t]+as|about|approx\.?|=)[ \t]+)*(?:(?:the|a|an|your)[ \t]+)?"
 _DEP_NUM = r"(one[- ]and[- ]a[- ]half|one[- ]half|half(?:[ \t]+a)?|1/2|0?\.5|one|two|1\.25|1\.5|2\.5|\u00bd|1|2|a)"
 _DEP_MONTH = r"[- ]?(?:month|mo)s?(?:'s?)?(?:[ \t]+(?:of[ \t]+)?(?:the[ \t]+)?(?:monthly[ \t]+)?rent)?(?![a-z])"
+_DEP_HALF_OF = r"(?P<half>half|one[- ]half|1/2|50[ \t]*%|fifty[ \t]+percent)[ \t]+of[ \t]+(?:(?:a|one|1|the|first|your|one[ \t]+full)[ \t]+)*(?:(?:full|monthly)[ \t]+)?(?:month(?:'s?|ly)?[ \t]+)?rent(?![a-z])"
 _DEP_WORDS = {"one": 1.0, "a": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5, "half a": 0.5, "1/2": 0.5, ".5": 0.5, "0.5": 0.5, "\u00bd": 0.5, "one-half": 0.5, "one half": 0.5,
               "1.5": 1.5, "2.5": 2.5, "1.25": 1.25, "one and a half": 1.5, "one-and-a-half": 1.5}
 
@@ -4176,10 +4195,13 @@ def _deposit_months_general(text: str) -> tuple[float, str] | None:
     "Half month security deposit", "Sec dep 1.5 months", "Security deposit due at signing: one month", "Deposit due at signing equal to one month". Returns
     (months, the phrase) or None. Only a deposit with no kind word before it (pet, parking, key and so on) is the security deposit."""
     for pat in (_DEP_PRE + _DEP_DUE + r"[ \t:\-=,]{0,4}" + _DEP_EQ + _DEP_NUM + _DEP_MONTH,
+                _DEP_PRE + _DEP_DUE + r"[ \t:\-=,]{0,4}" + _DEP_EQ + _DEP_HALF_OF,  # cycle 28: "half of one month's rent", "50% of the monthly rent"
                 r"(?<![\d.$])" + _DEP_NUM + _DEP_MONTH + r"[ \t]+(?:(?:security|damage)[ \t]+)?deposit\b"):
         for m in re.finditer(pat, text, re.I):
             if _NOT_THIS_DEPOSIT.search(text[max(0, m.start() - 16):m.start()]):
                 continue
+            if m.groupdict().get("half"):
+                return 0.5, " ".join(m.group(0).split())
             g = re.sub(r"[ \t]+", " ", m.group(1).lower())
             if re.match(r"\s*(?:/|per\b)", text[m.end():]) or re.match(r"[ \t]*(?:old|lease|term|minimum|min\b)", text[m.end():], re.I):
                 continue  # "deposit one month lease", "1 month minimum": a lease length, not months of rent
@@ -10279,6 +10301,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if fx_dep[1] is not None or (old_dep is not None and not _same_num(old_dep, fx_dep[0])):
                 facts.append(_corrected_fact_note("deposit", _usd(fx_dep[0]), _usd(float(old_dep)) if old_dep is not None else None))
             put("deposit", fx_dep[0])
+        sur = None if buying else _try(lambda: _surety_option(text))
+        if sur:
+            facts.append(f'The listing offers a surety bond ("{sur[1]}") that you can pick instead of paying the deposit' + (f", at {_usd(sur[0])} a month" if sur[2] else f", for {_usd(sur[0])}")
+                         + ". It is an option, not a missing monthly cost, so it is not counted." + (" The deposit saved is the one the listing gives." if out.get("deposit") else " The listing gives no deposit amount to save.") + " Ask which one you would pick and what each costs.")
         dcn = _try(lambda: _deposit_credit_note(text, out.get("deposit")))
         if dcn:
             facts.append(dcn)
