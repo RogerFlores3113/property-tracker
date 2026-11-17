@@ -1,5 +1,6 @@
 """Cycle 27 group 3: a free first spot beside priced extras is $0, a free driveway/street/lot spot is $0, one pet deposit gets one honest
 note, "pet-free" means no pets, "WD in unit" is in-unit laundry, and "Delivered 2024" / "Opened fall 2023" are the year built."""
+import os
 import pytest
 
 from prophelper.parsers import parse_listing
@@ -116,8 +117,7 @@ def test_year_of_other_things_is_not_year_built():
 
 
 def test_reviewer_listings():
-    P = "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel/"
-    import os
+    P = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "/"
     if not os.path.exists(P + "r26-family-l27.txt"):
         pytest.skip("saved listings not present")
     g = lambda n: parse_listing(open(P + f"r26-{n}.txt").read(), "")

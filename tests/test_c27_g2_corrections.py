@@ -1,9 +1,10 @@
 """Cycle 27 G2: one general correction step (rent, deposit, HOA, property tax, fees), deposits in months, deposit notes that agree with the field."""
+import os
 import pytest
 
 from prophelper.parsers import parse_listing
 
-P = "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel/"
+P = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "/"
 R = "2 bed 2 bath apartment. 100 Main St Urbana IL 61801. "
 C = "Condo $250,000. 2 bed 2 bath. 100 Main St Columbus OH 43201. "
 

@@ -1,5 +1,6 @@
 """Cycle 27 group G1: "all utilities" payer words in any order, "all except X" with an estimate, flat utility packages,
 unbracketed "only $X flat" lines, heat and gas as one unknown, trash fees cover trash."""
+import os
 import pytest
 
 from prophelper import compare, money
@@ -35,7 +36,7 @@ def unknown(text):
 
 def listing(name):
     import os
-    base = "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel/"
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel") + "/"
     path = base + name
     if not os.path.exists(path):
         pytest.skip("saved reviewer listing not available")
