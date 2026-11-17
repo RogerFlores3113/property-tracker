@@ -58,7 +58,10 @@ _KEYS_MAIL = re.compile(r"\b(keys? (?:will be |are |can be )?(?:mailed|shipped|s
 _PRIVATE_INFO = re.compile(r"\b(?:send|email|text|provide) (?:me |us )?(?:your |a )?(?:ssn|social security|photo of your (?:id|license)|copy of your (?:id|license|passport)|"
                            r"bank (?:login|details|account)|passport)\b[^.\n]{0,40}\b(?:before|first|to (?:see|view|hold|apply))", re.I)
 _OFF_PLATFORM = re.compile(r"\b(?:contact|reach|text|message) (?:me|us)?\s*(?:only )?(?:on|via|through|by) (?:whatsapp|telegram|hangouts|google chat|signal)\b|"
-                           r"\b(?:email|text|message) (?:only|me only)\b|\bno (?:phone )?calls?\b|\b(?:whatsapp|telegram)\b", re.I)
+                           r"\b(?:e-?mail|e mail|text|message|sms)(?:s)? (?:only|me only|us only)\b|"
+                           r"\b(?:contact|reach|respond|reply|write)(?: to)? (?:me |us )?(?:by|via|through|using) (?:e-?mail|e mail|text|sms)(?: messages?)? only\b|"
+                           r"\bonly (?:by|via|through|using) (?:e-?mail|e mail|text|sms)\b|"
+                           r"\bno (?:phone )?calls?\b|\b(?:whatsapp|telegram)\b", re.I)
 _ADDRESS_HIDDEN = re.compile(r"\b(?:address|location) (?:upon|on|by) (?:request|inquiry|approval|contact)|\b(?:message|contact|email|inquire) (?:me |us )?(?:for|to get) (?:the )?(?:exact )?address\b|"
                              r"\baddress (?:will be|is) (?:given|provided|shared|sent) (?:after|upon|once|when)\b", re.I)
 _NO_CHECKS = re.compile(r"\bno (?:credit|background|reference|income|application)s? (?:check|verification|needed|required)", re.I)
