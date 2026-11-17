@@ -8350,7 +8350,7 @@ def _hedged_figure(text: str, amount: Any) -> bool:
     except (TypeError, ValueError):
         return False
     num = f"{int(amt):,}" if amt == int(amt) else f"{amt:,.2f}"
-    return bool(re.search(r"(?:\b(?:about|around|approx\w*\.?|roughly|est\w*\.?|avg\.?|average|typically|~)[ \t]*)\$[ \t]?" + re.escape(num).replace(",", ",?") + r"(?!\d)|~\$[ \t]?" + re.escape(num).replace(",", ",?"), text, re.I))
+    return bool(re.search(r"(?:\b(?:about|around|approx\w*\.?|roughly|est\w*\.?|~)[ \t]*)\$[ \t]?" + re.escape(num).replace(",", ",?") + r"(?!\d)|~\$[ \t]?" + re.escape(num).replace(",", ",?"), text, re.I))
 
 
 def _estimate_sentence_is_billed(text: str, amount: Any) -> bool:
