@@ -18,7 +18,7 @@ def _buy(store):
 
 
 # ---------------------------------------------------------------- 1 one cost-check rule
-@pytest.mark.parametrize("fields", [{"property_tax": 3000, "insurance": 900}, {"hoa": 200, "insurance": 900}, {"property_tax": 3000, "hoa": 100}])
+@pytest.mark.parametrize("fields", [{"property_tax": 3000, "insurance": 900}, {"hoa": 200, "insurance": 900}])  # cycle 28: a place missing only insurance may be a best fit (test_c28_g6_buyer_money)
 def test_buy_one_unknown_part_is_cost_check_and_never_best_fit(store, fields):
     s = _buy(store)
     store.add_place(title="Condo", address="1 A St", price=250000, beds=2, **fields)
@@ -34,11 +34,11 @@ def test_page_and_list_agree(store, client):
     s = _buy(store)
     a, _ = store.add_place(title="Arena", address="1 A St", price=250000, beds=2, property_tax=3000, hoa=100)
     out = text(call(server(store), "todays_list"))
-    assert f"Needs a cost check: #{a['id']}" in out
-    best = out.split("Best fits right now:")[1].split("Needs a cost check")[0]
-    assert "Arena" not in best
+    assert f"Needs a cost check: #{a['id']}" not in out  # cycle 28: only insurance is missing, so it is a best fit marked "insurance not filled in yet"
+    best = out.split("Best fits right now:")[1]
+    assert "Arena" in best and "insurance not filled in yet" in best
     page = client.get("/").text
-    assert "Needs a cost check" in page
+    assert "Needs a cost check" not in page and "insurance not filled in yet" in page
 
 
 def test_near_miss_with_unknown_cost_is_in_cost_check_too(store):
