@@ -3077,7 +3077,7 @@ def _parking_second_only(text: str) -> tuple[str, str] | None:
     return None
 
 
-_Q_TOPIC = re.compile(r"\b(?:park(?:ing)?|garage|carport|driveway|pets?|dogs?|cats?|animals?|yard)\b", re.I)
+_Q_TOPIC = re.compile(r"\b(?:park(?:ing)?|garage|carport|driveway|pets?|dogs?|cats?|animals?|yard|lbs?|pounds?|weigh\w*)\b", re.I)  # cycle 32 (rule q): a weight in a question is a pet question too
 _Q_SENTENCE = re.compile(r"[^.!?\n|;]*\?(?=[ \t]*(?:$|\n|\||(?-i:[A-Z])|[\"'\u201c\u2018\-*\u2022]|(?:please|pls|ask|call|contact|inquire|enquire|email|e-mail|text|reach|check|varies|depends|tbd|see)\b))|[^.!?\n|;]*\b(?:please\s+ask|ask\s+us\s+(?:about|if|whether))\b[^.!?\n|;]*[.!]?", re.I)
 
 
@@ -3511,12 +3511,40 @@ _CAT_CHARGE = _charge_for("cat")
 _DOG_CHARGE = _charge_for("dog")
 
 
+_NO_QUAL = r"(?!\s+(?:\w+\s+){0,3}?(?:breeds?|restrictions?|restricted|restrictive|weights?|sizes?|limits?|fees?|deposits?|rent|pit[ \t-]?bulls?|pitbulls?|rottweilers?|dobermans?|german shepherds?|huskies|huskys?|akitas?|mastiffs?|chows?|exotic|dangerous|vicious|aggressive|monkeys?|snakes?|reptiles?|farm))"  # cycle 32: "Pets: no breed restrictions", "Pet policy: no aggressive breeds" are not "no pets"
+_OPEN_PET_PIECE = re.compile(r"\b(?:cats?|dogs?)\b", re.I)
+_OPEN_PET_YES = re.compile(r"\b(?:ok|okay|yes|fine|allowed|welcome\w*|accepted|permitted|friendly)\b|\$|\b(?:up to|under|less than|max(?:imum)?)\b[^.\n;]{0,6}\d|\b\d{1,3}[ \t]*(?:lbs?|pounds?)\b", re.I)
+
+
+def _blank_open_pet_pieces(low: str) -> str:
+    """Cycle 32 (rule q): a piece of the listing that names a kind of pet and only says "negotiable", "considered", "case by case", "ask", "maybe", "depends"
+    (no yes word, no price beside it) is blanked, so no later step reads that kind as allowed ("Pets: cats ok, dogs negotiable", "Cats welcome, small dogs
+    negotiable", "Pets: dogs negotiable. Cat fee $150"). Pieces are cut at . ; , ( ) | ! ? and new lines, and at "and", "but", "while" inside one piece."""
+    if not re.search(_SOFT_APPROVAL, low):
+        return low
+    out: list[str] = []
+    pos = 0
+    for m in re.finditer(r"[.;,()|!?\n]+|\b(?:and|but|while|though)\b", low):
+        out.append(_open_piece(low[pos:m.start()], low[m.end():m.end() + 25] if re.match(r"[,(]|and|but|while|though", m.group(0)) else ""))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_open_piece(low[pos:], ""))
+    return "".join(out)
+
+
+def _open_piece(piece: str, tail: str) -> str:
+    if _OPEN_PET_PIECE.search(piece) and re.search(_SOFT_APPROVAL, piece) and not _OPEN_PET_YES.search(piece) \
+            and not re.match(r"[^.;\n]{0,25}?\$\s?\d", tail):  # "Dogs negotiable, $50/mo extra": a price beside it means the kind is taken
+        return " " * len(piece)
+    return piece
+
+
 def _pets(text: str, weight_rules: bool = True) -> str:
     low = text.lower()
     low = _PET_LABEL_NO_OVER.sub(" ", low)  # "Pets: no pets over 25 lbs" and "Dogs: no pets over 70 lbs" are weight rules, not a no
-    if re.search(r"\bno pets\b(?!\s+(?:restrictions?|limits?|problem|fee|(?:over|above|exceeding|larger|bigger|heavier|greater|more than|weighing|under)\b))|\bpets?\s*[:\-]?\s*(?:are\s+)?(?:not|never)\s+(?:allowed|permitted|accepted|welcome|ok|okay)\b|\bpets? (?:are )?(?:prohibited|banned|forbidden)\b|\bnot pet[- ]friendly\b|\bpets\s*[:\-]\s*(?:no\b(?!\s+(?:cats?|dogs?)\b)|none|not allowed)|\bpet policy\s*[:\-]\s*(?:no\b(?!\s+(?:cats?|dogs?)\b)|none|not allowed|not permitted)|\bno animals\b|\bpets?\s+no\s*(?:[.;,!\n|]|$)|(?<![\w-])(?<!not )(?<!not a )(?<!not an )(?<!isn.t )(?<!isn.t a )pet[- ]free\b(?![ \t]*(?:cats?|dogs?|rooms?|floors?|units?|wings?|zones?|areas?|section|buildings?[ \t]+(?:available|options?)))", low):
+    if re.search(r"\bno pets\b(?!\s+(?:restrictions?|limits?|problem|fee|(?:over|above|exceeding|larger|bigger|heavier|greater|more than|weighing|under)\b))|\bpets?\s*[:\-]?\s*(?:are\s+)?(?:not|never)\s+(?:allowed|permitted|accepted|welcome|ok|okay)\b|\bpets? (?:are )?(?:prohibited|banned|forbidden)\b|\bnot pet[- ]friendly\b|\bpets\s*[:\-]\s*(?:no\b(?!\s+(?:cats?|dogs?)\b)" + _NO_QUAL + r"|none|not allowed)|\bpet policy\s*[:\-]\s*(?:no\b(?!\s+(?:cats?|dogs?)\b)" + _NO_QUAL + r"|none|not allowed|not permitted)|\bno animals\b|\bpets?\s+no\s*(?:[.;,!\n|]|$)|(?<![\w-])(?<!not )(?<!not a )(?<!not an )(?<!isn.t )(?<!isn.t a )pet[- ]free\b(?![ \t]*(?:cats?|dogs?|rooms?|floors?|units?|wings?|zones?|areas?|section|buildings?[ \t]+(?:available|options?)))", low):
         return "none"
-    work = low
+    work = _blank_open_pet_pieces(low)  # cycle 32 (rule q): "dogs negotiable" is not a yes for dogs, whatever else the listing allows
     cats = dogs = False
     no_cats = re.search(r"\bno cats?\b(?!\s+(?:over|above|under|larger|bigger|heavier|exceeding|more))|\bcats? (?:are )?not (?:allowed|permitted|accepted)|\bno cats? allowed|\bcats?\s*[:\-]?\s*no\b(?![-\w])(?!\s*(?:over|above|under|larger|bigger|heavier|exceeding|more|breeds?|fee|deposit|rent|\w+\s+fee))|\bcats? (?:are )?(?:prohibited|banned|forbidden|not welcome)\b|\bcat[- ]free\b", work)
     no_dogs = re.search(r"\bno dogs?\b(?!\s+(?:over|above|under|larger|bigger|heavier|exceeding|more))|\bdogs? (?:are )?not (?:allowed|permitted|accepted)|\bno dogs? allowed|\bdogs?\s*[:\-]?\s*no\b(?![-\w])(?!\s*(?:over|above|under|larger|bigger|heavier|exceeding|more|breeds?|fee|deposit|rent|\w+\s+fee))|\bdogs? (?:are )?(?:prohibited|banned|forbidden|not welcome)\b|\bdog[- ]free\b", work)
@@ -3603,7 +3631,7 @@ def _pets(text: str, weight_rules: bool = True) -> str:
 
 
 _NO_PETS_CLAUSE = re.compile(r"\bno pets\b(?!\s+(?:restrictions?|limits?|problem|fee|(?:over|above|exceeding|larger|bigger|heavier|greater|more than|weighing|under)\b))[^.\n;]*|\bpets (?:are )?not (?:allowed|permitted|accepted)[^.\n;]*|"
-                             r"\bnot pet[- ]friendly\b|\bpets\s*[:\-]\s*(?:no\b(?!\s+(?:cats?|dogs?)\b)|none|not allowed)[^.\n;]*|\bpet policy\s*[:\-]\s*no\b[^.\n;]*|\bno animals\b[^.\n;]*|\bpets?\s+no\s*(?=[.;,!\n|]|$)", re.I)
+                             r"\bnot pet[- ]friendly\b|\bpets\s*[:\-]\s*(?:no\b(?!\s+(?:cats?|dogs?)\b)" + _NO_QUAL + r"|none|not allowed)[^.\n;]*|\bpet policy\s*[:\-]\s*no\b" + _NO_QUAL + r"[^.\n;]*|\bno animals\b[^.\n;]*|\bpets?\s+no\s*(?=[.;,!\n|]|$)", re.I)
 _NO_SPECIES = re.compile(r"\bno\s+(cats?|dogs?)\b(?!\s+(?:over|above|under|larger|bigger|heavier|exceeding|more|breeds?))|\b(cats?|dogs?)\s+(?:are\s+)?not\s+(?:allowed|permitted|accepted)", re.I)
 _HARD_APPROVAL = (r"(?:(?:with|by|on|upon|subject to|needs?|requires?|required)\s+(?:prior\s+)?(?:written\s+)?(?:landlord\s+|owner\s+|management\s+)?(?:approval|permission)"
                   r"|(?:approval|permission)\s+(?:is\s+)?(?:required|needed))")
@@ -3644,7 +3672,7 @@ def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
     stances: dict[str, set[str]] = {"cats": set(), "dogs": set()}
     quoted: list[str] = []
     for sentence in re.split(r"[.;\n?!|]+", text):
-        for piece in re.split(r",", sentence):
+        for piece in re.split(r"[,()]", sentence):
             piece = " ".join(piece.split())
             if not piece or not re.search(r"\b(?:pets?|cats?|dogs?|animals?)\b", piece, re.I):
                 continue
@@ -3669,7 +3697,11 @@ def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
             for m in _MAYBE_PETS.finditer(piece):
                 word = m.group(1).lower().rstrip("s")
                 hard = bool(re.search(_HARD_APPROVAL, m.group(0), re.I))
-                for sp in (_SPECIES if word in ("pet", "animal") else (word + "s",)):
+                words = [word]
+                cut = re.search(r"\b(?:and|but|while|though)\b(?=[^.;\n]*\b(?:cats?|dogs?)\b)", m.group(0))
+                if cut and _OPEN_PET_YES.search(m.group(0)[:cut.start()]):  # cycle 32: "Cats ok and dogs negotiable": the open word belongs to dogs only
+                    words = [w.lower().rstrip("s") for w in re.findall(r"\b(cats?|dogs?)\b", m.group(0)[cut.end():], re.I)] or words
+                for sp in (_SPECIES if words[0] in ("pet", "animal") else tuple(w + "s" for w in dict.fromkeys(words))):
                     if says.get(sp) != "no":
                         says[sp] = "appr" if hard else ("maybe" if says.get(sp) != "appr" else "appr")
             if says:
@@ -4323,7 +4355,7 @@ def _loose_weight(text: str) -> int | None:
 
 
 _WEIGHT_WAIVER = re.compile(r"\bwithout[ \t]+(?:prior[ \t]+|written[ \t]+|special[ \t]+)?(?:approv\w+|permission|consent)\b|\b(?:with|upon|subject to|pending|requires?|needs?|need|once)[ \t]+(?:prior[ \t]+|written[ \t]+|special[ \t]+|management[ \t]+|landlord[ \t]+)?(?:approv\w+|permission|consent)\b|"
-                           r"\bunless[ \t]+(?:approved|permitted|cleared|waived|authorized|authorised)\b|\bexceptions?\b|\bcase[- ]by[- ]case\b|\bwaive[sd]?\b|\bwaivable\b|\bnegotiable\b|\bmay[ \t]+(?:be[ \t]+)?(?:made|approved|granted|considered|allowed)\b|"
+                           r"\bunless[ \t]+(?:approved|permitted|cleared|waived|authorized|authorised)\b|\bexceptions?\b|\bcase[- ]by[- ]case\b|\bwaive[sd]?\b|\bwaivable\b|\bnegotiable\b|\bmay[ \t]+(?:be[ \t]+)?(?:made|approved|granted|considered|allowed)\b|\b(?:larger|bigger|heavier|big|large)[ \t]+(?:dogs?|pets?|animals?)\b[^.\n;]{0,30}\b(?:considered|reviewed|approved|ask)\b|"
                            r"\b(?:approved|permitted|allowed)[ \t]+(?:by|on)[ \t]+(?:the[ \t]+)?(?:management|landlord|owner|office)\b|\bat[ \t]+(?:the[ \t]+)?(?:management|landlord|owner)(?:'s)?[ \t]+(?:discretion|option|approval)\b", re.I)
 
 
