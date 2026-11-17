@@ -44,3 +44,20 @@ def test_reviewer_listing():
     with open(os.path.join(FIX, "r31-family-l5.txt"), encoding="utf-8") as fh:
         r = read(fh.read())
     assert r.get("unit") != "10"
+
+
+@pytest.mark.parametrize("text", [
+    "Corner unit 800 Maple Dr Testville. Rent $1,500 a month. 1 bed 1 bath.",
+    "Top floor unit 800 Maple Dr, Testville TX. Rent $1,500 a month. 1 bed 1 bath.",
+    "Rent $1,500 a month. Corner unit at 800 Maple Dr, Testville. 1 bed 1 bath.",
+    "End unit 1200 Oak St, Champaign IL 61820. 2 bed 1 bath $1,500.",
+])
+def test_street_number_after_the_word_unit_is_not_the_unit(text):
+    r = read(text)
+    assert not r.get("unit")
+    assert r["address"][0].isdigit()
+
+
+def test_real_unit_before_street_still_read():
+    r = read("Unit 4B, 500 Main St, Austin TX 78701. 2 bed 1 bath $1,500.")
+    assert r["unit"] == "4B" and r["address"] == "500 Main St"

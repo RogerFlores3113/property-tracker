@@ -10079,6 +10079,9 @@ _RATING = re.compile(r"(?<![\w$.,/#-])\d{1,2}(?:\.\d)?[ \t]*(?:/[ \t]*10|out[ \t
 def _address(text: str) -> dict[str, str]:
     text = _RATING.sub(lambda m: " " * len(m.group(0)), text)  # cycle 32: "rate this unit 10/10", "Apt 10/10 rating" is a score, never unit #10
     out = _address_raw(text)
+    if out.get("unit") and out.get("address") and re.search(r"\b(?:unit|apt\.?|apartment|suite|ste\.?)[ \t]*#?[ \t]*" + re.escape(out["address"]) + r"\b", text, re.I) \
+            and not re.search(r"\b(?:unit|apt\.?|apartment|suite|ste\.?)[ \t]*#?[ \t]*" + re.escape(str(out["unit"])) + r"[ \t]*(?:,|\n|$)", text, re.I | re.M):
+        out.pop("unit")  # cycle 32: "Corner unit 800 Maple Dr": the 800 is the street number, not unit 800
     for key in ("address", "city"):
         if out.get(key):
             out[key] = _normal_case(out[key])
@@ -12749,6 +12752,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         from . import dropguard as _dg
         facts = _try(lambda: _dg.clean_quote_notes(out, facts, text)) or facts  # cycle 29: no link, spaced or huge figure and no credit called a cost in a buyer's notes either
     facts = _try(lambda: _plain_named_item_notes(out, facts)) or facts  # cycle 32: a clearly named monthly item gets a plain note
+    if not buying:
+        facts = _try(lambda: _formula_figure_notes(text_full, facts)) or facts  # cycle 32: a figure beside formula-like text is named, never silent
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
@@ -12759,6 +12764,36 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
 _NAMED_MONTHLY_ITEM = re.compile(r"\b(?:carport|covered[ \t]+parking|garage|parking[ \t]+(?:space|spot|pass|permit)|reserved[ \t]+(?:spot|space|parking)|storage(?:[ \t]+unit)?|locker|bike[ \t]+(?:room|storage)|pest[ \t]+control|package[ \t]+(?:locker|service))\b", re.I)
 _NAMED_PARKING_ITEM = re.compile(r"\b(?:carport|covered[ \t]+parking|garage|parking|reserved[ \t]+(?:spot|space))\b", re.I)
 _PLAIN_NAMED_QUOTE = re.compile(r'^The listing also says "([^"]*)"\. (?:It is a monthly fee and it is not counted anywhere|It is not counted anywhere)\. Check what it is for\.$')
+
+
+_FORMULA_BIT = re.compile(r"[=\uff1d@][ \t]?[\"']?[A-Za-z]{2,12}[|(]|\+[ \t]?[A-Za-z]{2,12}\|")
+
+
+def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
+    """Cycle 32: 'Valet trash $35 ="cmd|' /C calc'!A0" per month.' The odd text is ignored, but the figure in front of it is never left out of the notes
+    in silence: when no note names it, a short note says what it sat next to and to check it. A figure a note already quotes or names is left alone."""
+    add: list[str] = []
+    have = " ".join(facts)
+    for line in text.splitlines():
+        fm = _FORMULA_BIT.search(line)
+        if not fm:
+            continue
+        figs = [m for m in _NET_DOLLARS.finditer(line[:fm.start()]) if line[:fm.start()].rstrip().endswith(m.group(0)) or fm.start() - m.end() <= 12]
+        if not figs:
+            continue
+        m = figs[-1]
+        vals = sorted(_dollar_values(m.group(0)))
+        if not vals:
+            continue
+        shown = _money_words(vals[0])
+        if re.search(re.escape(shown) + r"(?![\d,])", have):
+            continue
+        words = re.findall(r"[A-Za-z][A-Za-z'&-]*", line[:m.start()])[-3:]
+        label = " ".join(w for w in words if w.lower() not in ("and", "the", "a", "also", "plus", "is", "are", "of", "for"))
+        what = f"{shown} for {label.lower()}" if label else shown
+        add.append(f"The listing has {what} next to text that looks like a spreadsheet formula. The odd text was ignored. Ask the landlord what the {shown} is for, and whether it is a monthly cost.")
+        have += " " + add[-1]
+    return facts + add
 
 
 def _plain_named_item_notes(out: dict[str, Any], facts: list[str]) -> list[str]:
