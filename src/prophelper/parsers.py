@@ -2393,11 +2393,39 @@ def _beds(text: str) -> float | None:
     if sl:
         hits.append((sl[0], sl[1]))
     hits = [h for h in hits if h[1] <= 20]
+    hits = _drop_also(text, hits, _layout_starts(text, xb, sl))
     rstarts = _beds_range_starts(text)
     if rstarts:  # cycle 30: "1 - 2 Beds ... 2 Bed 2 Bath $1,495": the unit line is the count, never the low end of the range
         rest = [h for h in hits if h[0] not in rstarts]
         hits = rest or hits  # a range with no unit line anywhere keeps the old reading
     return min(hits)[1] if hits else None
+
+
+_ALSO_LAY = (r"(?:\d{1,2}(?:\.\d)?[ \t]*(?:/|[xX\u00d7])[ \t]*\d(?:\.\d)?|\d{1,2}(?:\.\d)?[ \t]*-?[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)"
+             r"(?:[ \t,/|&-]*(?:and[ \t]+)?\d(?:\.\d)?[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)?"
+             r"|\d(?:\.\d)?[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)")
+_ALSO_AFTER = re.compile(_ALSO_LAY + r"[ \t]*(?:units?|floor[ \t]?plans?|plans?|layouts?|apartments?|apts?|townhomes?|homes?)?[ \t]*[,(\-]*[ \t]*(?:are[ \t]+|is[ \t]+)?"
+                         r"(?:also[ \t]+(?:available|offered|avail)|(?:available|offered)[ \t]+too|as[ \t]+well)\b", re.I)
+_ALSO_BEFORE = re.compile(r"\balso[ \t]+(?:available|offered)[ \t]*[:,\-]?[ \t]*(?:in[ \t]+)?$", re.I)
+
+
+def _also_layout(text: str, start: int) -> bool:
+    """Cycle 32: "2/2 also available", "(2x2 also available)", "Also available: 2/2 units" name ANOTHER plan, never this unit's bedrooms or baths."""
+    return bool(_ALSO_AFTER.match(text, start)) or bool(_ALSO_BEFORE.search(text[max(0, start - 30):start]))
+
+
+def _layout_starts(text: str, xb: Any, sl: Any) -> set[int]:
+    fx = _first_x_match(text) if xb else None
+    return ({fx.start()} if fx else set()) | ({sl[0]} if sl else set())
+
+
+def _drop_also(text: str, hits: list[tuple[int, float]], layout_at: set[int]) -> list[tuple[int, float]]:
+    """Take out the readings that name another plan. When nothing else is left, a slash or 'x' layout (positions in layout_at) still goes
+    (unknown beats wrong), but a plain count stays."""
+    keep = [h for h in hits if not _also_layout(text, h[0])]
+    if keep:
+        return keep
+    return [h for h in hits if h[0] not in layout_at]
 
 
 _BATH_NUM = r"(\d{1,2}(?:\.\d)?|one|two|three|four|five)"
@@ -2458,6 +2486,7 @@ def _baths(text: str) -> float | None:
     if sl:
         hits.append((sl[0], sl[2]))
     hits = [h for h in hits if h[1] <= 15]
+    hits = _drop_also(text, hits, _layout_starts(text, xb, sl))
     return min(hits)[1] if hits else None
 
 
