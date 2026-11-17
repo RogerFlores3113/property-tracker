@@ -126,3 +126,19 @@ def test_reviewer_listings():
     assert g("uiuc-l3")["pets"] == "none"
     assert g("uiuc-l11")["laundry"] == "in_unit" and g("uiuc-l11")["year_built"] == 2023
     assert g("uiuc-l9")["year_built"] == 2024
+
+
+def test_included_covered_space_in_brackets_keeps_its_kind():
+    r = read("Parking: 1 included space (covered), 2nd space $100.")
+    assert r["parking_cost"] == 0 and r["parking"] == "covered"
+
+
+def test_second_pet_amount_is_not_a_second_parking_space():
+    r = read("Parking: 1 assigned spot $0, 2nd space $50. Pets: cats welcome, first pet no pet rent, second $15.")
+    assert r["parking_cost"] == 0
+    assert "$50" in notes(r)
+
+
+def test_required_parking_price_beside_free_spot_is_not_zero():
+    r = read("Parking: PARKING FEE $90 REQUIRED.\nFree surface lot spot; reserved covered spot $60.")
+    assert r.get("parking_cost") != 0

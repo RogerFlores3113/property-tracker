@@ -2430,6 +2430,8 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
     ("Parking: 1 free assigned spot, second spot $75, covered $100", "Attached 2-car garage included, uncovered guest spot $50/mo",
     "garage, driveway free"). The free spot is the parking at $0. Each priced extra is optional and named in one note; an extra with
     no price is named too. Nothing is counted for the extras. Returns None when any parking price in the line is not clearly an extra."""
+    if re.search(r"\bparking\b[^\n.]{0,40}\$\s?[1-9]\d*[^\n.]{0,25}\b(?:required|mandatory)\b|\b(?:required|mandatory)\b[^\n.]{0,25}\bparking\b[^\n.]{0,30}\$\s?[1-9]", text, re.I):
+        return None  # a required parking price beside a free spot: the listing disagrees with itself, so the other readers decide
     blocks: list[str] = []
     for ln in text.split("\n"):
         if blocks and re.match(r"\s*[-*\u2022]\s", ln):
@@ -2439,15 +2441,22 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
     for line in blocks:
         if not _PFF_NOUN.search(line):
             continue
+        line = re.sub(r"\(([^()$\n]{1,30})\)", lambda m: " " + m.group(1) + " " if not _PFF_SECOND.search(m.group(1)) else m.group(0), line)  # "1 included space (covered)" is one item
         items = [x.strip(" \t-*\u2022:") for x in re.split(r"\||;|\.(?=\s|$)|,(?!\d{3})|\s+-\s+|[()]|\s+(?:and|but|plus)\s+(?=\$|(?:a[ \t]+)?(?:second|2nd|covered|garage|reserved|additional|extra|free|driveway|street|lot|surface|carport)\b)", line) if x.strip(" \t-*\u2022:")]
         free: list[str] = []
         extras: list[tuple[str, float]] = []
         unpriced: list[str] = []
         ok = True
+        off = False  # after a pet, storage or fee item, a bare "second $15" belongs to that topic, not to parking
         for it in items:
             il = it.lower()
             il = re.sub(r"^(?:parking(?:[ \t]+(?:options?|types?))?[ \t]*[:\-][ \t]*)", "", il)
             if _PFF_TOPIC.search(il) and not _PFF_NOUN.search(il):
+                off = True
+                continue
+            if _PFF_NOUN.search(il):
+                off = False
+            elif off:
                 continue
             pm = _PFF_AMT.search(il)
             if pm:
