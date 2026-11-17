@@ -6763,7 +6763,7 @@ def _assessment_amount(sentence: str, *, skip_monthly: bool = False) -> float | 
         return None  # "Monthly special assessment of $150" is not a one-time amount
     if skip_monthly and _assessment_spread(sentence, True):
         return None  # cycle 32: "$9,000 ... buyer pays over 36 months" is paid in monthly pieces, not at closing
-    tail = r"(?!\s*(?:/\s*mo|per month|monthly|a month|/\s*y(?:ea)?r|per year|a year|yearly|annual|each year|for\s+\d+\s+(?:years?|yrs?)))" if skip_monthly else ""
+    tail = r"(?!\s*(?:/\s*mo|per month|monthly|a month|/\s*y(?:ea)?r|per year|a year|yearly|annual|each year|/\s*(?:qtr|quarter)|per quarter|a quarter|each quarter|every quarter|quarterly|for\s+\d+\s+(?:years?|yrs?)))" if skip_monthly else ""
     m = re.search(r"\bassessments?(?:\s*\([^)\n$]{0,20}\))?[ \t]*(?:of|is|was|are|totaling|totals?|estimated at|approx\.?|about|around|for|at|[:=\-])?[ \t]*\(?[ \t]*(?:of |approx\.? |about |around )?" + num + tail, sentence, re.I) \
         or re.search(num + r"(?:[ \t]*(?:one[- ]time|new|pending|upcoming|current))?[ \t]*(?:(?:condo|hoa|association|building)[ \t]+)?(?:special[ \t]+)?assessments?\b", sentence, re.I)
     return _num(m.group(1)) if m else None
@@ -7055,6 +7055,25 @@ def assessment_spread_payer_unknown(text: str) -> tuple[float, int, float] | Non
     return None
 
 
+_QUARTER_WORD = r"(?:/[ \t]*(?:qtr|quarter)\b|per[ \t]+quarter|a[ \t]+quarter|each[ \t]+quarter|every[ \t]+quarter|quarterly)"
+_QUARTER_N = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12}
+
+
+def _assessment_quarterly(text: str) -> tuple[float, int | None] | None:
+    """Cycle 34: "Special assessment of $2,000 per quarter for 6 quarters, paid by buyer" -> (2000, 6). Quarters is None when the listing gives no length.
+    A figure per quarter is never a one-time amount: it is worked out per month (a third) by the monthly reader."""
+    for seg in re.split(r"[.\n;](?!\d)", text or ""):
+        if not re.search(r"\bassessments?\b", seg, re.I) or re.search(r"\?\s*$", seg):
+            continue
+        m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)[ \t]*" + _QUARTER_WORD + r"(?:[^.\n]{0,15}?\b(?:for|x|over)[ \t]+(\d{1,2}|" + "|".join(_QUARTER_N) + r")[ \t]*quarters?\b)?", seg, re.I)
+        if not m:
+            m = re.search(r"\bquarterly[ \t]+(?:special[ \t]+)?assessments?\b[^.\n$]{0,25}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)(?:[^.\n]{0,15}?\b(?:for|x|over)[ \t]+(\d{1,2}|" + "|".join(_QUARTER_N) + r")[ \t]*quarters?\b)?", seg, re.I)
+        if m:
+            n = m.group(2)
+            return _num(m.group(1)), (int(n) if n and n.isdigit() else _QUARTER_N.get((n or "").lower()))
+    return None
+
+
 def _assessment_monthly(text: str) -> tuple[float, int | None] | None:
     """("Assessment for windows: $150/month for 24 months") -> (150, 24). Months is None when the listing gives no length."""
     m = re.search(r"\bassessments?\b[^.\n$]{0,40}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)"
@@ -7066,6 +7085,8 @@ def _assessment_monthly(text: str) -> tuple[float, int | None] | None:
                       r"(?:[^.\n]{0,15}?\b(?:for|x|over)[ \t]+(\d{1,3})[ \t]*(?:months?|mos?\b))?", text, re.I)
         if m:
             return _num(m.group(1) or m.group(3)), (int(m.group(2) or m.group(4)) if (m.group(2) or m.group(4)) else None)
+    if not m and (q34 := _assessment_quarterly(text)):
+        return round(q34[0] / 3, 2), (q34[1] * 3 if q34[1] else None)  # cycle 34: "$2,000 per quarter for 6 quarters" is $667 a month for 18 months
     if not m and (sp33 := _assessment_split(text)):
         return sp33[0], sp33[1]  # cycle 33: "$3,600 over 24 months, split 50/50": the buyer's half, a month at a time
     if not m:

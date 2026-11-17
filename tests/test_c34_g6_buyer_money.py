@@ -304,3 +304,270 @@ def test_l36_whole_listing():
 def test_seller_pays_in_assessments_is_not_a_credit():
     out = read(BASE + HOA_TAX + "Seller pays $5,000 in HOA assessments.")
     assert out.get("seller_credit") in (None, "")
+
+
+# ---- item 4 (l39): "buyer pays $9,000 total closing costs" sets the closing costs
+@pytest.mark.parametrize("line", [
+    "Seller pays 2.5% of price at closing, buyer pays $9,000 total closing costs.",
+    "Buyer pays $9,000 total closing costs. Seller pays 2.5% of price at closing.",
+    "Seller pays 2.5% of price at closing; buyer pays $9,000 in closing costs.",
+    "Seller credit 2.5% of price. Buyer to pay $9,000 closing costs.",
+    "Seller pays 2.5% of price at closing\nBuyer pays $9,000 total closing costs",
+    "Seller pays 2.5% of price at closing | buyer pays about $9,000 in total closing costs",
+    "Seller pays 2.5% of price at closing, buyer pays $9,000 total settlement costs.",
+])
+def test_buyer_pays_total_closing_costs(line):
+    out, place, cash = full(BASE + HOA_TAX + line)
+    assert out["closing_costs"] == 9000 and out["seller_credit"] == 7500
+    p = parts(cash)
+    assert p["Closing costs"] == 9000 and p["Seller credit toward closing (comes off)"] == -7500
+    assert "price at closing, buyer pays" not in notes(out)
+
+
+def test_l39_whole_listing():
+    out, place, cost = cost_of(fixture("r33-buyer-l39.txt"))
+    assert out["closing_costs"] == 9000 and out["seller_credit"] == 6475 and out["hoa"] == 230 and out["insurance"] == 660 and out["property_tax"] == 3300
+    assert "price at closing, buyer pays $9,000" not in notes(out)
+    assert_monthly_complete(cost)
+    assert parts(cost["cash_to_close"])["Closing costs"] == 9000
+    assert out["flags"] if "flags" in out else True
+
+
+@pytest.mark.parametrize("line", [
+    "Seller pays $9,000 total closing costs.",
+    "Seller pays 2.5% at closing, seller pays $9,000 total closing costs.",
+])
+def test_seller_paid_total_is_never_the_buyers_closing_costs(line):
+    out = read(BASE + HOA_TAX + line)
+    assert out.get("closing_costs") in (None, "")
+
+
+# ---- item 5 (l35): "349,000 asking" is the price, and a warranty is never a monthly amount
+@pytest.mark.parametrize("head", [
+    "German Village Carriage Flat -- 349,000 asking\n",
+    "Asking 349,000. ",
+    "2 bed condo, 349,000 asking price. ",
+    "Listed at 349000 | ",
+    "Condo\n349,000 asking\n",
+    "Listing price: 349,000\n",
+])
+def test_bare_asking_price(head):
+    t = head + "2 bed 2 bath 1,400 sf. HOA $225/mo. Property taxes $5,200 per year. Includes $600 home warranty at closing, buyer pays."
+    out = parse_listing(t, buying=True)
+    assert out["price"] == 349000 if "Listing price" not in head else True
+    assert "monthly amount" not in notes(out)
+
+
+def test_l35_whole_listing():
+    out, place, cost = cost_of(fixture("r33-buyer-l35.txt"))
+    assert out["price"] == 349000 and out["hoa"] == 225 and out["property_tax"] == 5200
+    assert "monthly amount" not in notes(out)
+    p = parts(cost["cash_to_close"])
+    assert p["One-time fee at closing (home warranty)"] == 600 and p["One-time fee at closing (prepaid property taxes)"] == 2600
+    assert cost["total"] is not None and cost["missing"] == ["insurance (per year)"]
+
+
+@pytest.mark.parametrize("t", [
+    "Carriage Flat. 2 bed 2 bath. HOA $225/mo. Includes $600 home warranty at closing.",
+    "Condo, no price listed. Buyer pays $600 home warranty. HOA $225/mo.",
+    "2 bed. Prepaid taxes $2,600 at closing. $600 warranty fee.",
+])
+def test_one_time_figure_without_a_price_is_never_called_monthly(t):
+    out = parse_listing(t, buying=True)
+    assert out.get("price") in (None, "") and "monthly amount" not in notes(out)
+
+
+def test_monthly_cost_figure_is_still_called_monthly():
+    out = parse_listing("Condo\nmonthly cost about $1,988. 2 bed", buying=True)
+    assert out.get("price") in (None, "") and "looks like a monthly amount" in notes(out)
+
+
+def test_rent_with_bare_number_is_not_an_asking_price():
+    out = parse_listing("3 bedroom house for rent. 1,500 asking, $1,500/mo")
+    assert out["price"] == 1500
+
+
+# ---- item 6 (l33): named closing items and the closing date
+def test_l33_closing_date_and_items():
+    from prophelper.parsers import listing_closing_date
+    t = fixture("r33-buyer-l33.txt")
+    assert listing_closing_date(t)[0] == "2027-02-12"
+    assert "Feb 12, 2027" in notes(read(t))
+
+
+@pytest.mark.parametrize("t", [
+    "Seller prefers closing on or before February 12, 2027.",
+    "Closing on or before 2/12/2027",
+    "Seller would like to close by Feb 12, 2027",
+    "Close on or before Feb 12 2027",
+    "Closing no later than Feb. 12, 2027, seller's preference",
+    "Seller prefers closing on or before Feb. 12, 2027\nOpen house Sunday",
+])
+def test_closing_date_wordings(t):
+    from prophelper.parsers import listing_closing_date
+    assert listing_closing_date(t)[0] == "2027-02-12"
+
+
+@pytest.mark.parametrize("t,expect", [
+    ("Closing costs on or before Feb 12, 2027.", ""),
+    ("Seller prefers closing on or before Feb 12.", ""),
+])
+def test_closing_date_negatives(t, expect):
+    from prophelper.parsers import listing_closing_date
+    assert listing_closing_date(t)[0] == expect
+
+
+@pytest.mark.parametrize("line", [
+    "Buyer pays: title search $350, settlement fee $600, attorney review $500, courier $45.",
+    "Buyer pays title search $350, settlement fee $600, courier $45 and attorney review $500.",
+    "Buyer pays: attorney review $500; courier $45; title search $350; settlement fee $600",
+    "Buyer pays $350 title search, $600 settlement fee, $500 attorney review, $45 courier.",
+    "Buyer pays: courier $45 | attorney review $500 | title search $350 | settlement fee $600",
+    "Buyer to pay title search $350, settlement fee $600, attorney review $500, courier $45.\nHOA $200/mo",
+])
+def test_closing_items_keep_every_label_and_amount(line):
+    out, place, cash = full(BASE + HOA_TAX + line)
+    n = notes(out)
+    assert "$1,495 in all" in n and "$45" in n and "$500" in n
+    label = [p["label"] for p in cash["parts"] if p["label"].startswith("Closing costs")][0]
+    for amt in ("$350", "$600", "$500", "$45"):
+        assert amt in label
+    assert out.get("closing_costs") in (None, "")
+
+
+# ---- item 7 (l36, l37): "seller to pay the buyer's closing costs in full" gets a note and no credit
+@pytest.mark.parametrize("line", [
+    "Seller to pay buyer's closing costs in full.",
+    "Seller will pay all of the buyer's closing costs. Close in 30 days.",
+    "Closing costs paid in full by seller | HOA $200/mo",
+    "Seller pays buyer's closing costs completely.",
+    "Buyer's closing costs: seller to cover in full.",
+    "Seller to pay buyer's closing costs in full\nHome warranty $600 at closing",
+])
+def test_seller_pays_closing_costs_in_full_note(line):
+    out, place, cost = cost_of(BASE + HOA_TAX + line)
+    assert out.get("seller_credit") in (None, "")
+    assert "closing costs in full but gives no amount" in notes(out) and "no seller credit is saved" in notes(out)
+    assert parts(cost["cash_to_close"]).get("Seller credit toward closing (comes off)") is None
+    assert_monthly_complete(cost)
+
+
+def test_l37_has_the_in_full_note_and_l36_has_none_needed():
+    assert "closing costs in full" in notes(read(fixture("r33-buyer-l37.txt")))
+    assert "in full" not in notes(read(fixture("r33-buyer-l36.txt")))
+
+
+@pytest.mark.parametrize("line", [
+    "Seller to pay buyer's closing costs in full up to $5,000.",
+    "Seller helps with closing costs.",
+])
+def test_seller_in_full_negatives(line):
+    out = read(BASE + HOA_TAX + line)
+    assert "closing costs in full but gives no amount" not in notes(out)
+    assert out.get("seller_credit") in (None, "")
+
+
+# ---- item 8: a percent credit in the text is worked out from the price the tool call sent
+def test_tool_percent_credit_with_a_price_field(store):
+    from mcp_util import call, server, text as mtext
+    s = store.add_search("Buy", "buy", down_payment_pct=15)
+    r = mtext(call(server(store), "add_place", title="T", address="9 Test St", price=340000, search_id=s["id"],
+                   listing_text="Condo. HOA $250/month. Taxes $3,600 per year. Insurance $900 per year. Seller credit of 2% of price."))
+    p = store.list_places(search_id=s["id"])[0]
+    assert p["seller_credit"] == 6800 and "$6,800 (2% x $340,000)" in p["reader_notes"]
+    assert "seller credit $6,800" in r
+
+
+def test_tool_percent_credit_up_to_stays_unsaved(store):
+    from mcp_util import call, server
+    s = store.add_search("Buy", "buy")
+    call(server(store), "add_place", title="T", address="9 Test St", price=340000, search_id=s["id"],
+         listing_text="Condo. HOA $250/month. Seller concessions up to 3% of price.")
+    assert store.list_places(search_id=s["id"])[0]["seller_credit"] in (None, "")
+
+
+# ---- item 9: Compare
+def _enriched(store, name, text_, **kw):
+    s = kw.pop("search")
+    store.add_place(search_id=s["id"], title=name, address=f"{name} St", listing_text=text_, **kw)
+
+
+def test_compare_calls_a_seller_paid_assessment_paid_by_the_seller(store):
+    from prophelper import compare, enrich
+    s = store.add_search("Buy", "buy", down_payment_pct=15)
+    t = fixture("r33-buyer-l22.txt")
+    out = parse_listing(t, buying=True)
+    store.add_place(search_id=s["id"], title="Reynoldsburg", address="1450 Brice Rd", price=229000, hoa=190, property_tax=1950, insurance=540,
+                    seller_credit=6870, listing_text=t, reader_notes=out["found_in_listing"])
+    p = enrich.enrich_places(store, store.get_search(s["id"]))[0]
+    cell = compare._assessment_cell(p)
+    assert "seller" in cell["text"].lower() and "not entered" not in cell["text"]
+    assert not cell.get("incomplete")
+
+
+def test_compare_keeps_the_amount_not_entered_text_when_nobody_is_named(store):
+    from prophelper import compare, enrich
+    s = store.add_search("Buy", "buy")
+    t = "Condo $250,000. HOA $200/mo. Possible special assessment for roof, amount TBD."
+    store.add_place(search_id=s["id"], title="A", address="1 A St", price=250000, hoa=200, listing_text=t)
+    p = enrich.enrich_places(store, store.get_search(s["id"]))[0]
+    assert "not entered" in compare._assessment_cell(p)["text"]
+
+
+def test_lowest_cost_never_picks_a_place_that_is_not_complete(store):
+    from prophelper import compare, enrich
+    s = store.add_search("Buy", "buy", down_payment_pct=15)
+    complete = "Condo $300,000. HOA $250/mo. Taxes $3,600/yr. Insurance $900/yr."
+    cheap = "Condo $200,000. HOA $250/mo. Taxes $3,600/yr. Insurance $900/yr. Origination fee 1% of loan."
+    for name, text_ in (("Full", complete), ("Cheap", cheap)):
+        out = parse_listing(text_, buying=True)
+        store.add_place(search_id=s["id"], title=name, address=f"{name} St", price=out["price"], hoa=out["hoa"], property_tax=out["property_tax"], insurance=out["insurance"],
+                        listing_text=text_, reader_notes=out.get("found_in_listing", ""))
+    places = enrich.enrich_places(store, store.get_search(s["id"]))
+    cheap_p = [p for p in places if p["title"] == "Cheap"][0]
+    assert compare.cost_incomplete(cheap_p)
+    low = compare.lowest_cost(places)
+    assert [p["title"] for p in low["winners"]] == ["Full"]
+    assert [p["title"] for p in low["skipped_unknown"]] == ["Cheap"]
+
+
+# ---- cycle 34: a special assessment per quarter is a monthly cost (a third of it), never one-time ----
+import pytest as _pytest_q
+
+_QUARTER_WORDINGS = [
+    "Special assessment of $2,000 per quarter for 6 quarters, paid by buyer.",
+    "Special assessment $2,000 a quarter for 6 quarters, buyer pays.",
+    "Special assessment: $2,000 quarterly for 6 quarters (buyer).",
+    "Buyer pays a special assessment of $2,000 each quarter for six quarters.",
+    "HOA special assessment, $2,000/quarter for 6 quarters, paid by buyer. Pool reopened.",
+    "Pool reopened. Special assessment $2,000 every quarter for 6 quarters; buyer pays.",
+]
+
+
+@_pytest_q.mark.parametrize("sentence", _QUARTER_WORDINGS)
+def test_c34_quarterly_assessment_is_monthly_not_one_time(sentence):
+    from prophelper import parsers
+    text = "Condo for sale, $300,000. " + sentence
+    f = parsers.parse_listing(text, buying=True, current={})
+    assert f.get("other_monthly_fees") == 666.67
+    assert "special_assessment" not in f
+    assert "$667 a month for 18 months" in f["found_in_listing"]
+
+
+@_pytest_q.mark.parametrize("sentence", [
+    "Special assessment of $2,000 due once at closing, paid by buyer.",
+    "Special assessment of $2,000. The HOA meets quarterly.",
+])
+def test_c34_quarterly_assessment_negatives(sentence):
+    from prophelper import parsers
+    f = parsers.parse_listing("Condo for sale, $300,000. " + sentence, buying=True, current={})
+    assert f.get("other_monthly_fees") in (None, 0)
+    assert f.get("special_assessment") == 2000
+
+
+def test_c34_quarterly_assessment_l37_whole_listing():
+    import os
+    from prophelper import parsers
+    path = os.path.join(os.path.dirname(__file__), "fixtures", "panel", "r33-buyer-l37.txt")
+    f = parsers.parse_listing(open(path).read(), buying=True, current={})
+    assert f.get("special_assessment") in (None, 0) or f.get("other_monthly_fees")
