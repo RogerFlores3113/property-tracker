@@ -112,7 +112,7 @@ _SUMMED = ("other_monthly_fees", "move_in_fees")
 _CATS = (
     ("app", re.compile(r"application|\bapp\.? fee|applicants?\b|screening|credit check|background", re.I), ("application_fee",)),
     ("pet", re.compile(r"\bpets?\b|\bcats?\b|\bdogs?\b|\bpet\b", re.I), ("pet_rent", "pet_fee", "pet_deposit")),
-    ("deposit", re.compile(r"deposit|\bsecurity\b(?!\s+(?:cameras?|system|guard|gate|patrol|alarm|door|doors|entry|cams?|lights?|lighting|monitoring|service|staff|features?))", re.I), ("deposit",)),
+    ("deposit", re.compile(r"deposit|\bsec\.?\s*dep\b|\bsecurity\b(?!\s+(?:cameras?|system|guard|gate|patrol|alarm|door|doors|entry|cams?|lights?|lighting|monitoring|service|staff|features?))", re.I), ("deposit",)),
     ("hoa", re.compile(r"\bhoa\b|dues|association|condo fee", re.I), ("hoa",)),
     ("insurance", re.compile(r"insurance|\bHO6\b", re.I), ("insurance",)),
     ("tax", re.compile(r"\btaxes\b|\btax\b", re.I), ("property_tax",)),
