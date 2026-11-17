@@ -392,3 +392,20 @@ def test_negative_a_rent_next_to_a_pet_word_keeps_its_comma_in_the_notes(t):
     r = read(t)
     assert r["price"] == 2200
     assert "$2200" not in notes(r)
+
+
+@pytest.mark.parametrize("t", [
+    "Rent 1 550 - 1 700. 2 bed",
+    "Rent 1 550 to 1 700 per month. 2 bed",
+    "2 bed, 1 550 - 1 700 per month",
+    "Rent: 1.550 - 1.700 a month, 2 bed",
+])
+def test_a_range_in_spaced_thousands_saves_the_higher_figure(t):
+    r = read(t)
+    assert r["price"] == 1700
+    assert "$1,550" in notes(r) and "$1,700" in notes(r)
+
+
+@pytest.mark.parametrize("t", ["Rent 1 550.00 per month", "Rent: 1.550,00 al mes", "Rent 1 550,00 $ par mois"])
+def test_cents_after_a_grouped_number(t):
+    assert read(t)["price"] == 1550

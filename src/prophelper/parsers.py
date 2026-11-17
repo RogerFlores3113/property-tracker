@@ -179,7 +179,7 @@ _K_NOT_MONEY = re.compile(r"^\s*(?:sq|sf|ft|run|tv|video|mi\b|miles?|steps|lbs|p
 
 _GROUP_NUM = r"(?:\d{1,3}(?: \d{3})+|\d{1,3}(?:\.\d{3})+)(?:,\d{2})?"
 _GROUP_TAIL = re.compile(r"[ \t]*(?:$|[.,;:)|\]•\-]|/|\(|\+|per\b|a[ \t]+(?:month|mo)\b|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mo\b|mes\b|mois\b|monat|total\b|"
-                         r"and\b|with\b|plus\b|obo\b|for\b|due\b|at\b|each\b|flat\b|if\b|then\b|incl|y\b|con\b|no\b|firm\b|negotiable|only\b|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I | re.M)
+                         r"and\b|to\b|with\b|plus\b|obo\b|for\b|due\b|at\b|each\b|flat\b|if\b|then\b|incl|y\b|con\b|no\b|firm\b|negotiable|only\b|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I | re.M)
 _GROUP_UNIT = re.compile(r"[ \t]*(?:/|per\b|a[ \t]+(?:month|mo)\b|al\b|por\b|par\b|pro\b|monthly|mensual|month\b|mes\b|mois\b|monat|dollars?\b|usd\b|us[ \t]+dollars?|bucks\b)", re.I)
 _GROUP_LABEL = (r"(?:rent|renta|alquiler|loyer|miete|kaltmiete|warmmiete|asking|price|precio|prix|preis|costs?|deposit|dep[oó]sito|d[eé]p[oô]t|kaution|dep|fees?|hoa|dues|"
                 r"parking|estacionamiento|garage|carport|tax|taxes|insurance|total|monthly|mensual|payment|charge|cuota|tarifa)")
@@ -195,6 +195,8 @@ def _grouped_thousands(text: str) -> str:
     text = re.sub(r"(?<=\d)[\u00a0\u2009\u202f](?=\d{3}(?!\d))", " ", text)
     if not re.search(r"\d[ .]\d{3}", text):
         return text
+    text = re.sub(r"(?<![\w$.,/#\-])(" + _GROUP_NUM + r")([ \t]*(?:-|to)[ \t]*)(" + _GROUP_NUM + r")(?=" + _GROUP_UNIT.pattern + r")",
+                  lambda m: "$" + re.sub(r"[ .]", ",", m.group(1).partition(",")[0]) + m.group(2) + "$" + re.sub(r"[ .]", ",", m.group(3).partition(",")[0]), text, flags=re.I)
     out: list[str] = []
     last = 0
     for m in _GROUP_PAT.finditer(text):
@@ -215,10 +217,13 @@ def _grouped_thousands(text: str) -> str:
         out.append(text[last:m.start("n")])
         out.append("$" + digits + ("." + cents if cents and cents != "00" else ""))
         last = w.end() if w else end
-    if not out:
-        return text
-    out.append(text[last:])
-    return "".join(out)
+    if out:
+        out.append(text[last:])
+        text = "".join(out)
+        # "Rent 1 550 - 1 700": the high end of a range whose low end was just read whole
+        text = re.sub(r"(\$\d{1,3}(?:,\d{3})+[ \t]*(?:-|to)[ \t]*)(\d{1,3}(?: \d{3})+)(?=" + _GROUP_TAIL.pattern + r")",
+                      lambda m: m.group(1) + "$" + m.group(2).replace(" ", ","), text, flags=re.I | re.M)
+    return text
 
 
 _PET_NEAR = r"(?:pets?|cats?|dogs?|animals?|puppy|puppies|kittens?)"
