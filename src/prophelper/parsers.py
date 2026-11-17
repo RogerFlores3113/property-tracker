@@ -5910,7 +5910,7 @@ def _down_payment_assistance_notes(text: str, facts: list[str]) -> list[str]:
     return []
 
 
-def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
+def _buyer_only_fees(text: str, out: dict[str, Any], saved_closing: float | None = None) -> list[str]:
     """For a buy search. Parking cost and move-in fees are rent-side money: the buy cost and the cash to close do not count
     them, so they are not filled in (the reader never says "filled in" for money that is not counted). Each becomes a plain
     note instead. Also a broker percent and a transfer fee, which have no field. Takes the two fields out of ``out``."""
@@ -5946,7 +5946,10 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
     stated = _try(lambda: buyer_closing_items_stated(text)) or []
     if len(stated) == 1:  # cycle 28: one stated item is never added on top of the closing costs (a guess or a figure already read)
         name, amount = stated[0]
-        if out.get("closing_costs") in (None, ""):
+        if out.get("closing_costs") in (None, "") and saved_closing:  # cycle 33: the caller already sent the closing costs: the cash to close uses them, never "a guess"
+            notes.append(f"The listing says the buyer pays {name} about ${amount:,.0f}. The closing costs saved on this place ({_money_c(saved_closing)}) are what the cash to close uses, "
+                         "so this item is not added on top. Ask whether that figure already includes it.")
+        elif out.get("closing_costs") in (None, ""):
             notes.append(f"The listing says the buyer pays {name} about ${amount:,.0f}. The cash to close uses a guess for the whole closing costs. This item is only part of them, "
                          "so it is not added on top. The rest of the closing costs is not known. Ask for the full closing cost estimate.")
     addl_paid, addl_unclear = _try(lambda: buyer_closing_items_additional(text)) or ([], [])
@@ -6003,7 +6006,10 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
             buyer_pays = buyer_pays or next_payer == "buyer"
             if buyer_pays:  # cycle 17: a transfer fee the buyer pays is a closing cost, with or without the word "closing"
                 prior = out.get("closing_costs")
-                if prior in (None, "") and _seller_gives_toward_closing(text):
+                if prior in (None, "") and saved_closing:
+                    notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. The closing costs saved on this place ({_money_c(saved_closing)}) are what the cash to close uses, "
+                                 "so it is not added again. Ask whether that figure already includes it.")
+                elif prior in (None, "") and _seller_gives_toward_closing(text):
                     notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. It is not saved as the closing costs, because the seller is also paying toward closing "
                                  "and the fee alone would make the cash to close look too low. The cash to close uses an estimate of the closing costs. Ask for the full closing cost estimate.")
                 elif prior in (None, ""):
@@ -13361,7 +13367,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         elif (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)) and (items := _try(lambda: _closing_items(text))):
             price_now = out.get("price")
             guess_now = price_now * 0.03 if isinstance(price_now, (int, float)) and price_now else None
-            if not _try(lambda: _closing_parts_are_total(text)) and (guess_now is None or items[0] < guess_now):
+            _saved_cc2 = (current or {}).get("closing_costs")
+            if isinstance(_saved_cc2, (int, float)) and not isinstance(_saved_cc2, bool) and _saved_cc2 > 0:
+                facts.append(f"The listing names some closing costs ({items[1]}, ${items[0]:,.0f} in all). The closing costs saved on this place ({_money_c(_saved_cc2)}) are what the cash to close uses, "
+                             "so these are not added on top. Ask whether that figure already includes them.")
+            elif not _try(lambda: _closing_parts_are_total(text)) and (guess_now is None or items[0] < guess_now):
                 # cycle 30: a few named parts are not the whole bill. They never replace a larger guess (and with no price there is nothing to compare), so no closing cost is saved.
                 facts.append(f"The listing names some closing costs ({items[1]}, ${items[0]:,.0f} in all). That is only part of the closing costs, so it is not saved as the closing costs "
                              "and the cash to close keeps its own estimate. Ask the lender for the full closing cost estimate.")
@@ -13518,7 +13528,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 put("property_tax", tax)
         if buying:
-            facts.extend(_try(lambda: _buyer_only_fees(text, out)) or [])
+            _saved_cc = (current or {}).get("closing_costs")
+            facts.extend(_try(lambda: _buyer_only_fees(text, out, _saved_cc if isinstance(_saved_cc, (int, float)) and not isinstance(_saved_cc, bool) and _saved_cc > 0 else None)) or [])
 
     _try(fees)
     _try(lambda: _gc_apply(text, out, facts, gc_found, gc_unplaced, buying, only=set(gc_found) - {"price"}))

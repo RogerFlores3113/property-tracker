@@ -382,3 +382,34 @@ def test_tool_added_place_with_an_unpaid_assessment_is_not_complete(store):
     p = enrich.enrich_places(store, store.get_search(s["id"]))[0]
     assert compare.cost_incomplete(p) and "not complete" in compare.cost_headline(p)
     assert any("$9,000 assessment" in x for x in p["cost"]["cash_to_close"]["left_out"])
+
+
+# ---- 8. closing_costs passed by the caller is never described as a guess
+@pytest.mark.parametrize("line", [
+    "Buyer pays recording $175.",
+    "Buyer pays $175 recording.",
+    "Buyer pays title $900 and recording $175.",
+    "Buyer pays lender fees $1,500; appraisal $525; title $900.",
+    "Buyer pays a $350 transfer fee at closing.",
+    "Buyer to pay $1,250 lender origination, $625 appraisal, and $1,400 for owner's title policy.",
+])
+def test_closing_costs_sent_by_the_caller_is_not_a_guess(line):
+    text_ = BASE + "HOA $200/month. Taxes $3,000/yr. Insurance $900/yr. " + line
+    out = parse_listing(text_, buying=True, current={"closing_costs": 6000})
+    n = out.get("found_in_listing", "")
+    assert "guess" not in n and "estimate" not in n.replace("the closing cost estimate", "")
+    assert "$6,000" in n and "not added" in n
+
+
+def test_without_caller_closing_costs_the_note_still_says_the_cash_to_close_uses_a_guess():
+    out = parse_listing(BASE + "HOA $200/month. Buyer pays recording $175.", buying=True)
+    assert "uses a guess" in out["found_in_listing"]
+
+
+def test_tool_with_closing_costs_sent(store):
+    from mcp_util import call, server, text as mtext
+    s = store.add_search("Buy", "buy")
+    r = mtext(call(server(store), "add_place", title="T", address="9 Test St", price=340000, closing_costs=6000, search_id=s["id"],
+                   listing_text="Condo. Buyer pays recording $175. Taxes $3,600 per year. HOA $250/month. Insurance $900/yr."))
+    assert "uses a guess" not in r and "saved on this place ($6,000)" in r
+    assert "guess" not in store.list_places(search_id=s["id"])[0]["reader_notes"]
