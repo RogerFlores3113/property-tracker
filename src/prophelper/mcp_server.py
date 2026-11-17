@@ -491,9 +491,11 @@ def _fit_text(e: dict[str, Any]) -> str:
 def _with_commute_over(e: dict[str, Any], cell: str) -> str:
     """Cycle 35: a commute over a commute rule's limit is named in the deal-breaker cell, never only in the fit note ("ok" would hide it)."""
     over = compare_mod.commute_over_texts(e)
-    if not over:
+    cost = compare_mod.cost_over_texts(e)  # cycle 36: a cost failure is named as a cost failure, with its amount said once
+    named = "; ".join(([ "over the cost limit: " + "; ".join(_t(o, "cost limit", 160) for o in cost)] if cost else [])
+                      + (["over the commute limit: " + "; ".join(_t(o, "commute limit", 160) for o in over)] if over else []))
+    if not named:
         return cell
-    named = "over the commute limit: " + "; ".join(_t(o, "commute limit", 160) for o in over)
     return f"ok, but {named}" if cell == "ok" else f"{cell}; {named}"
 
 

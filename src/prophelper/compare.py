@@ -1034,9 +1034,21 @@ def commute_over_texts(p: dict[str, Any]) -> list[str]:
     A rule that fails or is a near miss gives its own gap line. Empty when no commute is over a limit."""
     out: list[str] = []
     for item in (p.get("score") or {}).get("items") or []:
-        if item.get("over_amount") is None:
+        if item.get("over_amount") is None or item.get("kind") != "commute":  # cycle 36: a cost or size miss is never named as a commute
             continue
         t = str(item.get("concern") or item.get("gap") or "").strip()
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def cost_over_texts(p: dict[str, Any]) -> list[str]:
+    """Cycle 36 (rule ll): what a place's cost rule says when the monthly cost is over its limit, said once, in cost words."""
+    out: list[str] = []
+    for item in (p.get("score") or {}).get("items") or []:
+        if item.get("kind") != "price" or item.get("passes") is not False or not (item.get("over_amount") or 0) > 0:
+            continue
+        t = str(item.get("gap") or item.get("detail") or "").strip()
         if t and t not in out:
             out.append(t)
     return out
