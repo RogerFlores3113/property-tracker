@@ -12553,6 +12553,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                              "Check the rent with the landlord.")
     if not buying and not price_range and price_read is not None and not (unit_pick or two_prices or su_units or first_months or cond_now or "price" in gc_found):
         others = _try(lambda: _other_rent_figures(text, price_read)) or []
+        if len(others) != 1 or len(text) > 4000 or re.search(r"^[ \t]*[=_*#-]{4,}[ \t]*$", text, re.M):
+            others = []  # several listings pasted together, or more than one other figure: the older readers and notes keep the call
         if others:  # cycle 34: two different rents with nothing saying one replaces the other: the higher is saved, both are named, never "a monthly fee not counted anywhere"
             hi = max([price_read, *others])
             lo = [v for v in [price_read, *others] if v != hi]

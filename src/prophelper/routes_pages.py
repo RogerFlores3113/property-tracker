@@ -766,7 +766,8 @@ async def add_save(request: Request):
             pass
     search_id = int(sid) if str(sid or "").isdigit() else None
     try:
-        dup = store.find_duplicate(search_id, url=values.get("url") or None, address=values.get("address") or None, unit=values.get("unit") or None)
+        cur_search = store.current_search()
+        dup = store.find_duplicate(search_id if search_id is not None else (cur_search["id"] if cur_search else None), url=values.get("url") or None, address=values.get("address") or None, unit=values.get("unit") or None)
     except Exception:  # noqa: BLE001 - the repeat check must never stop a save
         dup = None
     try:
@@ -778,6 +779,11 @@ async def add_save(request: Request):
         return redirect(f"/places/{place['id']}?fresh=1", notice=f"Saved {place['title']}.")
     notice = f"You already had {place['title']}, so I filled in anything that was empty and changed nothing else."
     notice += _repeat_rent_note(store, place, dup, values)
+    old_pay = [w for w in str((dup or {}).get("tenant_pays") or "").split(", ") if w]
+    added = [w for w in str(place.get("tenant_pays") or "").split(", ") if w and w not in old_pay]
+    if old_pay and added:  # cycle 34: a correction that names more utilities the tenant pays adds them to the pay list
+        notice += (f" The paste names {' and '.join(added) if len(added) < 3 else ', '.join(added[:-1]) + ' and ' + added[-1]} as {'a utility' if len(added) == 1 else 'utilities'} the tenant pays, "
+                   f"so {'it was' if len(added) == 1 else 'they were'} added to the pay list. Nothing was taken off the list. Ask the landlord what {'it costs' if len(added) == 1 else 'they cost'}.")
     return redirect(f"/places/{place['id']}", notice=notice)
 
 

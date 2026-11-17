@@ -36,10 +36,9 @@ def test_two_different_rents_name_both_and_save_the_higher(t, hi, lo):
     assert "monthly fee" not in n and "not counted anywhere" not in n
 
 
-def test_three_rents_are_named():
-    r = read("Rent $2,300/mo.\nRent $2,450/mo.\nMonthly rent $2,500.")
-    assert r["price"] == 2500
-    assert "three different rents: $2,300, $2,450 and $2,500" in notes(r)
+def test_several_pasted_listings_keep_the_older_reading():
+    r = read("Rent $2,200 3bd 2ba. Dogs ok.\n====\nRent $2,300 3bd/2ba. Tenant pays electric.\n====\nRent $2,100 3 BR.")
+    assert "different rents" not in notes(r)
 
 
 @pytest.mark.parametrize("t,price", [
