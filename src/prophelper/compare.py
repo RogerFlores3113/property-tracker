@@ -180,7 +180,14 @@ def cost_unknowns(p: dict[str, Any]) -> list[str]:
     """Every unknown cost part the cost math knows about, in plain words: unfilled costs, utilities the tenant pays or the
     listing does not include, and pet charges (a search with a pet, a place that allows pets, no fee or deposit). The one
     source for "Not counted yet", "Still unknown" and Claude's unknowns."""
-    return list(dict.fromkeys([*_missing_names(p), *pet_charges_unknown_text(p)]))
+    return list(dict.fromkeys([*_missing_names(p), *pet_charges_unknown_text(p), *_left_out_of_notes(p)]))
+
+
+def _left_out_of_notes(p: dict[str, Any]) -> list[str]:
+    """Cycle 29: a buyer's one-time amount the listing gave and the cost does not count is the one reason a cost can be "not all in" with no
+    named part. It is named here, so every surface (Today, the place page, Claude's tools, Compare) that asks "is anything unknown?" agrees."""
+    c = p.get("cost") or {}
+    return ["an amount from the listing notes"] if c.get("all_in") is False and not c.get("uncounted") and not c.get("missing") else []
 
 
 def _join_and(items: list[str]) -> str:
@@ -344,8 +351,12 @@ def lowest_unit(p: dict[str, Any]) -> bool:
 
 
 def cost_incomplete(p: dict[str, Any]) -> bool:
+    """THE completeness check (cycle 29): Today, the Board, the place page, Claude's tools and Compare all ask this one question, so a place
+    is never "not complete" on one page and "true cost" or "nothing unknown" on another. It is incomplete when the cost math left a part out,
+    a part is unknown by the Compare page's own list (``cost_unknowns``), or the cash up front leaves an amount out."""
     c = p.get("cost") or {}
-    return bool(c.get("uncounted") or c.get("all_in") is False or (c.get("cash_to_close") or {}).get("left_out"))
+    return bool(c.get("uncounted") or c.get("all_in") is False or (c.get("cash_to_close") or {}).get("left_out")
+                or (c.get("cash_at_move_in") or {}).get("left_out") or cost_unknowns(p) or partial_utilities(p))
 
 
 AS_LISTED_WORDS = "as listed, not checked"
@@ -374,6 +385,12 @@ def cost_headline(p: dict[str, Any], each: bool = True) -> str:
         return "Cost unknown"
     people = int(c.get("people") or 1) if each else 1
     if not as_listed(p):
+        base = money_mod.headline(c, 1)
+        if cost_incomplete(p) and "not counted" not in base:  # cycle 29: a cost the page calls incomplete elsewhere says so here too
+            text = base + ", not complete"
+            if people > 1:
+                text += f" ({money_mod._dollars(c['total'] / people)} each for {people} {c.get('split_noun') or 'people'})"
+            return text
         return money_mod.headline(c, people, c.get("split_noun") or "people")
     text = f"{money_mod._dollars(c['total'])}/mo {AS_LISTED_WORDS}"
     unc = [money_mod._plain_amounts_label(u) for u in money_mod.uncounted_display(c)]

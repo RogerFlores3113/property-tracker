@@ -438,7 +438,7 @@ def _cost_text(e: dict[str, Any]) -> str:
         parts.append(f"fees spread {helpers.money(one['amount'])}")
     asl = compare_mod.as_listed(e)
     unknown_costs = compare_mod.cost_unknowns(e)
-    text = ("Monthly cost as listed, not checked " if asl else "Monthly cost so far, not complete " if unknown_costs else "True monthly cost ") + f"{helpers.money(cost['total'])}" + (" (" + " + ".join(parts) + ")" if len(parts) > 1 else "")
+    text = ("Monthly cost as listed, not checked " if asl else "Monthly cost so far, not complete " if unknown_costs or compare_mod.cost_incomplete(e) else "True monthly cost ") + f"{helpers.money(cost['total'])}" + (" (" + " + ".join(parts) + ")" if len(parts) > 1 else "")
     if _per_person_text(e):
         text += "; " + _per_person_text(e)
     if unknown_costs:  # the same names the Compare page and "Still unknown" use
