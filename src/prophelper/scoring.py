@@ -474,11 +474,24 @@ PARKING_ANY_WARNING = ("This parking rule accepts any off-street parking. Say ga
 def infer_parking_want(label: Any) -> str:
     """'garage' or 'covered' when a parking rule's label names it, else ''."""
     text = str(label or "").lower()
+    if "garage" in text and re.search(r"covered|carport", text) and parking_either(text):
+        return "covered"  # cycle 34: "garage or covered" is met by either, so the rule is "covered or better" (a covered place is not a miss)
     if "garage" in text:
         return "garage"
     if "covered" in text or "carport" in text:
         return "covered"
     return ""
+
+
+def parking_either(text: Any) -> bool:
+    """True when a parking phrase names a garage and a covered spot or carport as alternatives ("garage or covered", "garage/covered", "covered, garage or carport",
+    "either a garage or a carport"), and not one thing described by two words ("covered garage", "garage is covered")."""
+    t = str(text or "").lower()
+    if "garage" not in t or not re.search(r"covered|carport", t):
+        return False
+    if re.search(r"covered\s+garage|garage\s+(?:is\s+|that\s+is\s+)?covered|garage\s+(?:with|and)\s+(?:a\s+)?(?:roof|cover)", t):
+        return False
+    return bool(re.search(r"\bor\b|/|,|&|\beither\b|\band/or\b|\band\b|\bplus\b|\+|\bboth\b|\bany\b", t))
 
 
 def settle_parking_target(label: Any, target: Any) -> tuple[Any, str]:

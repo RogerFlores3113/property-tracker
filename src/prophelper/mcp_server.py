@@ -2024,6 +2024,47 @@ def build_server(store: Store) -> FastMCP:
             body = "; ".join(f"{n}) {p}" for n, p in enumerate(problems, 1)) if len(problems) > 1 else problems[0]
             raise ValueError(f"Nothing was {what}. Fix {'these' if len(problems) > 1 else 'this'} and send it again: {body}. Notes: {WEIGHT_NOTE}")
 
+    ONE_RULE_KINDS = ("price", "beds", "baths", "sqft", "laundry", "parking", "dishwasher", "fenced_yard", "newer", "pets")
+
+    def _target_key(kind: str, target: Any) -> str:
+        try:
+            t = _clean_target(kind, dict(target) if isinstance(target, dict) else target)
+        except ValueError:
+            return json.dumps(target, sort_keys=True, default=str)
+        return json.dumps({k: v for k, v in t.items() if k != "auto"}, sort_keys=True, default=str)
+
+    def _drop_duplicate_criteria(items: list[dict[str, Any]], existing: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+        """Cycle 34: a criterion the search already has (same kind and same target) is not added a second time, and the note names the one that is there.
+        A second rule of a kind that normally has one (a second price limit) is still added, with a note saying both count and how to change the first."""
+        seen: dict[tuple[str, str], dict[str, Any]] = {(c["kind"], _target_key(c["kind"], c.get("target"))): c for c in existing}
+        by_kind: dict[str, list[dict[str, Any]]] = {}
+        for c in existing:
+            by_kind.setdefault(c["kind"], []).append(c)
+        keep: list[dict[str, Any]] = []
+        notes: list[str] = []
+        for c in items:
+            key = (c["kind"], _target_key(c["kind"], c.get("target")))
+            if "anchor" in (c.get("target") or {}) if isinstance(c.get("target"), dict) else False:
+                keep.append(c)
+                continue
+            if key in seen:
+                have = seen[key]
+                if "id" in have:
+                    notes.append(f"The search already has [{have['id']}] {_lab(have['label'], have['kind'])} with the same limit, so I did not add it again. To change it, use reweight with id {have['id']}; "
+                                 f"remove_criteria takes one out of the score.")
+                else:
+                    notes.append(f"The same {c['kind']} rule was in the list twice, so I added it once.")
+                continue
+            seen[key] = c
+            same = by_kind.get(c["kind"], [])
+            if same and c["kind"] in ONE_RULE_KINDS:
+                ids = ", ".join(f"[{x['id']}]" for x in same if "id" in x)
+                if ids:
+                    notes.append(f"The search already had a {c['kind']} rule {ids}. I added this one too, so both count. If you meant to change the first one, use reweight with its id, "
+                                 f"and remove_criteria takes one out of the score.")
+            keep.append(c)
+        return keep, notes
+
     def add_criteria(search_id: int, items: list[dict[str, Any]] | None) -> list[str]:
         """Save criteria that check_criteria already accepted."""
         out = []
@@ -2124,8 +2165,9 @@ def build_server(store: Store) -> FastMCP:
                       down_payment_pct: Annotated[float | None, Field(description="buy: this search's down payment as a percent of the price (0 to 100). Empty: the one in the app's Settings")] = None,
                       add_criteria_list: Annotated[list[dict[str, Any]] | None, Field(description="New criteria to add, each {kind, label, weight, dealbreaker, target}, where target is an object such as {\"max\": 1600}. " + CRIT_DOC)] = None,
                       reweight: Annotated[list[dict[str, Any]] | None, Field(description="Change existing criteria: [{id, weight?, dealbreaker?, target?, label?}]. A new limit is a nested object, for example {\"id\": 4, \"target\": {\"max\": 1500}} or {\"id\": 5, \"target\": {\"anchor\": \"Campus\", \"mode\": \"bike\", \"minutes\": 10}}. Criteria can't be removed")] = None,
+                      remove_criteria: Annotated[list[int] | None, Field(description="Criterion ids to take out of the score, for example [7]. Nothing is deleted: the criterion gets weight 0 and stops being a deal-breaker, so it no longer counts, and it stays listed so the user can switch it back on (reweight) or delete it in the app. get_overview lists the ids")] = None,
                       add_anchors_list: Annotated[list[dict[str, Any]] | None, Field(description="Anchors to add or fill in: [{name, address, lat, lng}]")] = None) -> CallToolResult:
-        """Change a search: its name, area, dates, budget, people sharing the cost, adults on the lease, the user's pets (pet_kind, pet_weight, pet_count), criteria (add or reweight, never remove) and anchors (add_anchors_list). A criterion can't be removed; the user does that in the app. All or nothing: if anything is wrong, nothing is changed and the reply says what to fix.
+        """Change a search: its name, area, dates, budget, people sharing the cost, adults on the lease, the user's pets (pet_kind, pet_weight, pet_count), criteria (add, reweight, or take one out of the score with remove_criteria) and anchors (add_anchors_list). Nothing is ever deleted from here: remove_criteria sets weight 0 and drops the deal-breaker, so the criterion stops counting; the user deletes it in the app. Adding a criterion the search already has is skipped with a note. All or nothing: if anything is wrong, nothing is changed and the reply says what to fix.
         To add criteria pass add_criteria_list as a list of objects: {"kind": "price", "label": "Rent at most $1600", "weight": 80, "dealbreaker": true, "target": {"max": 1600}}.
         A commute rule: {"kind": "commute", "label": "Campus within 15 minutes by bike", "dealbreaker": true, "target": {"anchor": "Campus", "mode": "bike", "minutes": 15}}. The limits always sit inside "target", never beside "kind".
         target is an object with the kind's keys (price {max}; beds, baths, sqft {min}; commute {anchor, mode, minutes}; laundry {want}; newer {year}; fenced_yard takes no target). "name" works as an alias for "label".
@@ -2134,8 +2176,8 @@ def build_server(store: Store) -> FastMCP:
         people, people_names = _people_args(people, people_names)
         fields = {k: v for k, v in (("name", name), ("area", area), ("move_in", move_in), ("target_close", target_close), ("budget_max", budget_max),
                                     ("people", people), ("people_names", people_names), ("adults", adults), ("pet_kind", pet_kind), ("pet_weight", pet_weight), ("pet_count", pet_count), ("down_payment_pct", down_payment_pct)) if v is not None}
-        if not (fields or add_anchors_list or add_criteria_list or reweight):
-            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, people_names, adults, pet_kind, pet_weight, pet_count, down_payment_pct, add_criteria_list, reweight or add_anchors_list.")
+        if not (fields or add_anchors_list or add_criteria_list or reweight or remove_criteria):
+            raise ValueError("Nothing to change. Pass name, area, move_in, target_close, budget_max, people, people_names, adults, pet_kind, pet_weight, pet_count, down_payment_pct, add_criteria_list, reweight, remove_criteria or add_anchors_list.")
         problems: list[str] = []
         try:
             store._search_values(fields, partial=True)  # noqa: SLF001
@@ -2155,7 +2197,7 @@ def build_server(store: Store) -> FastMCP:
             _deal_alias(r)
             extra = [k for k in r if k not in ("id", "weight", "dealbreaker", "target", "label")]
             if extra:
-                problems.append(f"{at} doesn't take {', '.join(_say(k) for k in extra)}. Allowed: id, weight, dealbreaker, target, label (criteria can't be removed)")
+                problems.append(f"{at} doesn't take {', '.join(_say(k) for k in extra)}. Allowed: id, weight, dealbreaker, target, label (remove_criteria takes a criterion out of the score; nothing is deleted from here)")
                 continue
             try:
                 cid = int(r["id"])
@@ -2180,6 +2222,20 @@ def build_server(store: Store) -> FastMCP:
                 problems.append(f"{at}: {exc}")
                 continue
             r_clean.append({"id": cid, **ch})
+        off_ids: list[int] = []
+        for rid in remove_criteria or []:
+            try:
+                cid = int(rid)
+            except (TypeError, ValueError):
+                cid = -1
+            if cid not in valid:
+                problems.append(f"remove_criteria: criterion {_say(rid)} is not in search {s['id']}. get_overview lists the criteria ids")
+            elif cid in {r["id"] for r in r_clean}:
+                problems.append(f"remove_criteria: criterion {cid} is also in reweight. Do one or the other")
+            elif cid not in off_ids:
+                off_ids.append(cid)
+        dup_notes: list[str] = []
+        c_clean, dup_notes = _drop_duplicate_criteria(c_clean, [c for c in valid.values() if c["id"] not in off_ids])
         stop_with(problems, "changed")
         notes: list[str] = []
         if fields:
@@ -2200,11 +2256,19 @@ def build_server(store: Store) -> FastMCP:
             ch = {k: v for k, v in r.items() if k != "id"}
             row = store.update_criterion(r["id"], **ch)
             notes.append(f"Changed [{row['id']}] {_lab(row['label'], row['kind'])}: weight {row['weight']:g}{', deal-breaker' if row['dealbreaker'] else ''}.")
+        for cid in off_ids:
+            was = valid[cid]
+            if not float(was.get("weight") or 0) and not was.get("dealbreaker"):
+                notes.append(f"[{cid}] {_lab(was['label'], was['kind'])} was already out of the score (weight 0, not a deal-breaker).")
+                continue
+            row = store.update_criterion(cid, weight=0, dealbreaker=False)
+            notes.append(f"Took [{row['id']}] {_lab(row['label'], row['kind'])} out of the score (weight 0, no longer a deal-breaker). It stays listed, nothing was deleted: "
+                         f"the user can switch it back on or delete it in the app.")
         c_lines = add_criteria(s["id"], c_clean)
         if c_lines:
             notes.append("Added criteria: " + "; ".join(c_lines))
-        notes += a_notes + c_notes
-        if a_lines or c_lines or reweight:
+        notes += dup_notes + a_notes + c_notes
+        if a_lines or c_lines or reweight or off_ids:
             hidden = sum(1 for e in enrich_places(store, s) if e["hidden_by_dealbreaker"])
             if hidden:
                 notes.append(f"{hidden} place{'s are' if hidden != 1 else ' is'} now hidden by deal-breakers in this search (the user can show them on the board).")

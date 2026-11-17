@@ -31,9 +31,12 @@ def srv(store):
 
 
 def err(srv, tool, **args):
-    with pytest.raises(ToolError) as e:
-        call(srv, tool, **args)
-    return str(e.value)
+    try:
+        r = call(srv, tool, **args)
+    except ToolError as e:
+        return str(e)
+    assert getattr(r, "isError", False), "expected a refusal"  # cycle 34: a notes/rating refusal is an isError result, not a traceback
+    return text(r)
 
 
 def add(srv, **kw):
@@ -310,9 +313,9 @@ def test_create_and_update_search_criteria_and_anchors(store, srv):
     assert len(store.list_criteria(s["id"])) == 5
     assert [a["name"] for a in store.list_anchors()] == ["Campus", "Work"]  # same name reuses the anchor
     assert store.get_search(s["id"])["budget_max"] == 1700 and "already saved" in text(r)
-    # a criterion can't be removed, and nothing the AI sends can do it
-    assert "doesn't take" in err(srv, "update_search", remove_criteria=[crit[0]["id"]])
-    assert "can't be removed" in err(srv, "update_search", reweight=[{"id": crit[0]["id"], "delete": True}])
+    # a criterion is never deleted from here; remove_criteria only sets weight 0 (cycle 34)
+    assert "Took" in text(call(srv, "update_search", remove_criteria=[crit[0]["id"]]))
+    assert "doesn't take delete" in err(srv, "update_search", reweight=[{"id": crit[0]["id"], "delete": True}])
     assert "is not in search" in err(srv, "update_search", reweight=[{"id": 999, "weight": 5}])
     assert "Nothing to change" in err(srv, "update_search")
     assert len(store.list_criteria(s["id"])) == 5

@@ -33,7 +33,7 @@ Look: `get_overview`, `list_places` (best score first; filters: stage, text, max
 Save and change: `add_place`, `add_places` (several at once), `update_place`, `move_place`, `add_note`.
 Tours and people: `add_tour`, `update_tour`, `add_contact`, `log_contact`.
 Where and how far: `set_location` (lat and lng), `set_commute` (minutes to an anchor).
-Searches: `create_search`, `update_search` (add or reweight criteria, add anchors; criteria can't be removed).
+Searches: `create_search`, `update_search` (add or reweight criteria, add anchors; remove_criteria takes a criterion out of the score without deleting it).
 
 Use `list_places` before guessing an id. Ids appear in every result. Results give the true monthly cost, the score
 with its top reasons, deal-breaker status and what is still unknown, so read them before you answer.
