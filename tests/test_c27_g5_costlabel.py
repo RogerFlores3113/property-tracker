@@ -120,8 +120,8 @@ def test_fit_line_names_the_unknown(store, client):
 
 
 def test_best_fit_marks_a_lowest_unit_rent(store, client):
-    s = store.add_search("R", "rent", budget_max=3000)
-    store.add_criterion(s["id"], "price", weight=30, dealbreaker=True, target={"max": 3000})
+    s = store.add_search("R", "rent", budget_max=2500)
+    store.add_criterion(s["id"], "price", weight=30, dealbreaker=True, target={"max": 2500})
     p, _ = store.add_place(title="Flats", address="1 A St", price=1085, utilities_estimate=50, deposit=1085, tenant_pays="electric", parking="none", pet_rent=0, other_monthly_fees=0,
                            reader_notes='The listing says "starting at" $1,085, so that is the lowest unit price. Ask what the rent is for the unit you want.')
     q, _ = store.add_place(title="Plain", address="2 A St", price=1100, utilities_estimate=50, deposit=1100, tenant_pays="electric", parking="none", pet_rent=0, other_monthly_fees=0)

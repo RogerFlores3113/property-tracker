@@ -58,7 +58,7 @@ def test_stoughton_listing_has_the_ai_flag_only(store):
     assert not _scam_flags(flags), flags
 
 
-@pytest.mark.parametrize("price,budget,flagged", [(640, 1700, True), (500, 1500, True), (590, 1500, True), (700, 1700, False), (1200, 1700, False)])
+@pytest.mark.parametrize("price,budget,flagged", [(640, 1600, True), (500, 1500, True), (600, 1500, True), (640, 1500, False), (700, 1700, False), (1200, 1700, False)])
 def test_rent_far_under_budget_is_checked_at_add_time(store, price, budget, flagged):
     s = store.add_search("S", "rent", budget_max=budget)
     p, _ = store.add_place(title="Cheap", address="3 W Park Ave", price=price, beds=1)
@@ -69,7 +69,7 @@ def test_rent_far_under_budget_is_checked_at_add_time(store, price, budget, flag
 
 def test_uiuc_640_listing_is_checked_at_add_time(store):
     t = _read("r27-uiuc-l8.txt")
-    s = store.add_search("S", "rent", budget_max=1700)
+    s = store.add_search("S", "rent", budget_max=1600)
     p, _ = store.add_place(**{"title": "Cozy", "listing_text": t, **parsers.parse_listing(t)})
     e = enrich.enrich_places(store, store.get_search(s["id"]), [store.get_place(p["id"])])[0]
     assert "$640" in e["score"]["rent_check"] and "check" in e["score"]["fit_label"].lower()

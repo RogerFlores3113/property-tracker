@@ -72,7 +72,7 @@ def test_utilities_row_never_plain_zero_when_some_unknown(store):
 
 def test_no_address_place_is_not_top_best_fit_when_another_has_one(store):
     s = _search(store)
-    store.add_place(title="Aaa NoAddr", price=1000, utilities_estimate=50, deposit=500, url="https://example.com/n")
+    store.add_place(title="Aaa NoAddr", price=1300, utilities_estimate=50, deposit=500, url="https://example.com/n")
     store.add_place(title="HasAddr", address="1 A St", price=1500, utilities_estimate=50, deposit=500)
     rows = enrich.enrich_places(store, s)
     top = today.best_fits(rows)
