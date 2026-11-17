@@ -561,3 +561,22 @@ def test_no_target_and_no_place_in_closing_shows_no_line(store):
     p, _ = store.add_place(title="Grandview", address="5 Oak St", price=300000, beds=2, search_id=s["id"])
     store.add_place_date(p["id"], "closing", _iso(87))
     assert _today_line(store) is None
+
+
+# ---- reviewer listings pasted through add_place: every note agrees with the saved fields (rule y)
+@pytest.mark.parametrize("name", ["l37", "l40", "l42", "l43"])
+def test_reviewer_listings_through_add_place_notes_agree_with_fields(store, name):
+    from mcp_util import call, server, text as mtext
+    s = store.add_search("Buy", "buy")
+    r = mtext(call(server(store), "add_place", title="T", address="9 Test St", search_id=s["id"], listing_text=fixture(f"r34-buyer-{name}.txt")))
+    place = store.list_places(search_id=s["id"])[0]
+    saved = place["reader_notes"]
+    assert "Ask who pays it" not in saved and "ask who pays" not in saved.lower()
+    assert "not counted anywhere" not in saved.lower().replace("it is a percent, so no dollar amount is saved and it is not counted anywhere", "")
+    if name == "l43":
+        assert place["other_monthly_fees"] == 400 and "remaining 18 months" in saved
+        assert "first year of HOA reserve" in saved
+    if name == "l42":
+        assert "(PMI) is set to $0 a month" in saved and place["seller_credit"] == 8250
+    if name in ("l37", "l40"):
+        assert "The listing says the buyer pays it." in saved
