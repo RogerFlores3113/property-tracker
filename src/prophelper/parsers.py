@@ -3325,6 +3325,29 @@ _MAYBE_PETS = re.compile(r"\b(cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?
 _HARD_ONLY = re.compile(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b" + _HARD_APPROVAL, re.I)
 _APPROVAL_ONLY = re.compile(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;,?!]{0,25}?\b(?:case[- ]by[- ]case|" + _HARD_APPROVAL + ")", re.I)
 _SPECIES = ("cats", "dogs")
+_APPROVAL_FOR = re.compile(r"\b(?:(?:prior[ \t]+|written[ \t]+|landlord[ \t]+|owner[ \t]+|management[ \t]+)*(?:approval|permission|pre-?approval)[ \t]+(?:is[ \t]+|are[ \t]+)?(?:required|needed|necessary)"
+                           r"|(?:must|need(?:s)?[ \t]+to)[ \t]+be[ \t]+approved)[ \t]+(?:for|on|before[ \t]+(?:having|bringing|getting))[ \t]+(?:all[ \t]+|any[ \t]+|the[ \t]+)?(cats?|dogs?|pets?|animals?)\b", re.I)
+_APPROVAL_FOR_NOT = re.compile(r"\bwaiv\w*|\bexception|\bexempt|\boverrid\w*|\bexceed|\b(?:larger|bigger|heavier)\b|\bover[ \t]+\d|\blimits?\b|\bbreed|\bweight|\bsize|\blbs?\b|\bpounds?\b"
+                               r"|\b(?:credit|application|lease|loan|board|hoa|rental|income|background)[ \t]+(?:approval|check)|\b(?:no|without|not)[ \t]+(?:\w+[ \t]+)?(?:approval|permission)", re.I)
+
+
+def _approval_for_species(text: str) -> dict[str, str]:
+    """Cycle 29: "Pets ok ... approval required for dogs": an approval that names a kind of pet that no other part of the listing talks about. Returns {species: the sentence}.
+    When the listing also names cats or dogs anywhere else ("Cats allowed", "Dogs: 40 lb limit") it is left to the approval note, which keeps the pets that were read."""
+    found: dict[str, str] = {}
+    for sentence in re.split(r"(?<![\d])[.;\n?!|]+", text):
+        for piece in re.split(r",", sentence):
+            for m in _APPROVAL_FOR.finditer(piece):
+                if _APPROVAL_FOR_NOT.search(sentence):
+                    continue
+                word = m.group(1).lower().rstrip("s")
+                kinds = ("cat", "dog") if word in ("pet", "animal") else (word,)
+                rest = text.replace(sentence, " ")
+                if re.search(r"\b(?:cats?|dogs?)\b", rest, re.I):
+                    continue  # a kind that the listing names itself ("Cats allowed") keeps the older reading and the approval note
+                for k in kinds:
+                    found[k + "s"] = " ".join(piece.split())
+    return found
 
 
 def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
@@ -3351,6 +3374,10 @@ def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
                 says[m.group(1).lower().rstrip("s") + "s"] = "no"
             for m in _LABELLED_OK.finditer(piece):  # "Dogs: up to 40 lbs", "Dogs: no pets over 70 lbs"
                 says[m.group(1).lower().rstrip("s") + "s"] = "yes"
+            if _APPROVAL_FOR.search(piece):  # cycle 29: "Pets ok ... approval required for dogs" is the same as "Pets ok. Dogs need approval."
+                for sp_a, said_a in _approval_for_species(text).items():
+                    if said_a == " ".join(piece.split()) and says.get(sp_a) != "no":
+                        says[sp_a] = "appr"
             for m in _MAYBE_PETS.finditer(piece):
                 word = m.group(1).lower().rstrip("s")
                 hard = bool(re.search(_HARD_APPROVAL, m.group(0), re.I))
@@ -4523,7 +4550,7 @@ def _surety_plain_note(text: str) -> str:
     (the priced reading explains that one)."""
     for m in re.finditer(_SURETY_PLAIN_WORD, text, re.I):
         after = re.split(r"[.;\n|]", text[m.end():m.end() + 60])[0]
-        before = text[max(0, m.start() - 14):m.start()]
+        before = text[max(0, m.start() - 14):m.start()].split("\n")[-1]
         if re.search(r"[$\uff04]\s?\d|\d\s?(?:dollars|usd)\b", after, re.I) or re.search(r"(?:[$\uff04]\s?\d[\d,]*(?:\.\d\d)?|\d\s?(?:dollars|usd))[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|monthly|a[ \t]+month)?[ \t]*(?:a[ \t]+|for[ \t]+(?:a[ \t]+)?)?$", before, re.I):
             continue
         if re.search(r"\b(?:no|not|without)[ \t]+(?:a[ \t]+)?(?:surety|deposit[ \t-]+(?:alternative|waiver))", text[max(0, m.start() - 12):m.end()], re.I):
@@ -8220,6 +8247,8 @@ def _really_included(text: str, amount: float, names: str) -> list[str]:
     rest = [c for c in re.split(r"\n|;|\.(?=\s|$)", text) if not re.search(r"\$\s?" + re.escape(f"{amount:g}") + r"(?![\d,])", c)]
     inc = _utilities("\n".join(rest))
     have = set(_ALL_UTILITIES) if inc == "all" else {w.strip() for w in inc.split(",") if w.strip()}
+    for em in re.finditer(r"\b(?:everything|all(?:[ \t]+utilities)?|all[ \t]+the[ \t]+utilities)[ \t]+(?:but|except(?:[ \t]+for)?)[ \t]+([a-z/, \t]{3,40}?)(?=[ \t]+(?:is|are|paid|included|covered)\b|[.,;\n]|$)", "\n".join(rest), re.I):
+        have -= {w for w in _ALL_UTILITIES if re.search(r"\b" + w + r"\b", em.group(1), re.I)}  # cycle 29: "Everything but gas is paid by the landlord" never says gas is included
     return [w for w in sorted(gone) if w in have]
 
 
@@ -10129,7 +10158,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     kind_cost = _try(lambda: _parking_detail(ptext)) or ("", None, [])
     put("parking", kind_cost[0])
     put("parking_cost", kind_cost[1])
-    facts += [n for n in kind_cost[2] if not (buying and re.search(r"is counted\.|are counted\.|counted in the monthly cost\.? Check|, so .{1,40} is counted", n) and "not counted" not in n) and not (buying and "Parking is saved as a garage with the cost left empty" in n)]  # cycle 29: a garage of a home for sale needs no price note
+    facts += [n for n in kind_cost[2] if not (buying and re.search(r"is counted\.|are counted\.|counted in the monthly cost\.? Check|, so .{1,40} is counted", n) and "not counted" not in n) and not ((buying or _is_sale_text(text)) and "Parking is saved as a garage with the cost left empty" in n)]  # cycle 29: a garage of a home for sale needs no price note
     if kind_cost[1] and not kind_cost[2] and re.search(r"\bparking\b[^.\n;$]{0,40}\$\s?" + f"{kind_cost[1]:.0f}" + r"(?!\d)(?:\.\d\d)?[^.\n;$]{0,25}\b(?:per|each|a|/)\s*(?:vehicle|car|space|spot)\b"
                                                     r"|\bparking\b[^.\n;$]{0,40}\b(?:per|each)\s+(?:vehicle|car)\b[^.\n;$]{0,15}\$\s?" + f"{kind_cost[1]:.0f}" + r"(?!\d)", ptext, re.I) \
             and not re.search(r"\b(?:optional|available)\b", ptext[max(0, ptext.lower().find("parking") - 20):ptext.lower().find("parking") + 80], re.I):
