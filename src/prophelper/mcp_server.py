@@ -1703,6 +1703,7 @@ def build_server(store: Store) -> FastMCP:
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
             lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}{_cost_word(p)}{each}"
+                         + (" (lowest unit rent, ask what the unit you want costs)" if compare_mod.lowest_unit(p) else "")
                          + (", no address yet" if not str(p.get("address") or "").strip() else "")
                          + (f". {p['caution']}" if p.get("caution") else ""))
         more = data.get("more") or {}

@@ -117,3 +117,20 @@ def test_fit_line_names_the_unknown(store, client):
     assert basis in client.get(f"/places/{p['id']}").text
     assert basis in client.get("/board").text
     assert "based on" in compare._score_cell(e)["text"] and ": " in compare.unknown_basis(e)
+
+
+def test_best_fit_marks_a_lowest_unit_rent(store, client):
+    s = store.add_search("R", "rent", budget_max=3000)
+    store.add_criterion(s["id"], "price", weight=30, dealbreaker=True, target={"max": 3000})
+    p, _ = store.add_place(title="Flats", address="1 A St", price=1085, utilities_estimate=50, deposit=1085, tenant_pays="electric", parking="none", pet_rent=0, other_monthly_fees=0,
+                           reader_notes='The listing says "starting at" $1,085, so that is the lowest unit price. Ask what the rent is for the unit you want.')
+    q, _ = store.add_place(title="Plain", address="2 A St", price=1100, utilities_estimate=50, deposit=1100, tenant_pays="electric", parking="none", pet_rent=0, other_monthly_fees=0)
+    d = today.build(store, s)
+    got = {x["title"]: x for x in d["fits"]}
+    if "Flats" in got:
+        assert compare.lowest_unit(got["Flats"]) and not compare.lowest_unit(got["Plain"])
+        html = client.get("/today").text
+        assert "(lowest unit)" in html and html.count("(lowest unit)") == 1
+        assert "lowest unit rent" in text(call(server(store), "todays_list"))
+    else:
+        raise AssertionError("expected Flats among the best fits: " + str([x["title"] for x in d["fits"]]))

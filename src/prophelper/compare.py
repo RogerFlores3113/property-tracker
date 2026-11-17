@@ -326,6 +326,14 @@ def as_listed(p: dict[str, Any]) -> bool:
     return bool(p.get("check_first") or p.get("possible_scam") or s.get("scam") or s.get("rent_check") or s.get("fit") == "check_first")
 
 
+_LOWEST_UNIT = re.compile(r"lowest unit price|lowest price of any size", re.I)
+
+
+def lowest_unit(p: dict[str, Any]) -> bool:
+    """True when the saved rent is a "from" or "starting at" price, which is the lowest unit and may not be the rent of the unit wanted."""
+    return bool(_LOWEST_UNIT.search(str(p.get("reader_notes") or "")))
+
+
 def cost_incomplete(p: dict[str, Any]) -> bool:
     c = p.get("cost") or {}
     return bool(c.get("uncounted") or c.get("all_in") is False or (c.get("cash_to_close") or {}).get("left_out"))
