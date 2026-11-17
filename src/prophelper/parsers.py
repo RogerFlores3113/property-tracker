@@ -14357,6 +14357,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                     facts.append(f"The broker fee is {broker_months:g} month{'s' if broker_months != 1 else ''} of rent (${broker_months * float(rent_b):,.0f}), worked out from the rent.")
                 else:
                     facts.append(f"The listing says the broker fee is {broker_months:g} month{'s' if broker_months != 1 else ''} of rent, but the rent was not read, so the broker fee is left empty. Fill it in once you know the rent.")
+            elif not _is_sale_text(text):  # cycle 35 (rule hh): a broker fee the reader could not read ("Broker fee: two weeks") is named, never silently dropped
+                for bm in re.finditer(r"\b(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[^.\n;|]{0,50}", text, re.I):
+                    seg = text[max(0, text.rfind("\n", 0, bm.start()) + 1):bm.end()]
+                    if re.search(r"\b(?:no|zero|none|waived|free|nothing)\b|\$\s?0\b|(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?(?:owner|landlord|seller)|(?:landlord|owner)[ \t]+pays?|\?", seg, re.I):
+                        continue
+                    facts.append(f"The listing mentions a broker fee (\"{' '.join(bm.group(0).split()).rstrip(' ,:-')}\"), but I could not read an amount from it, so no broker fee is saved. Ask what it comes to.")
+                    break
         for fl_name, fl_amt in _try(lambda: _fee_list_utilities(text)) or []:
             # cycle 26: "Fees: admin $175 | Trash $12 | lease processing $125": a utility inside a fee list is a utility, counted once in the utilities estimate
             said = any(re.search(rf"\b{fl_name}\b", f, re.I) and re.search(r"counted|flat fee|billed back", f, re.I) for f in facts)
@@ -16513,7 +16520,7 @@ def _broker_fee_percent(text: str) -> tuple[float, str, float] | None:
     m = re.search(head + r"(\d{1,3}(?:\.\d)?)[ \t]*%[ \t]*of[ \t]+(?:(?:a|one|1|the)[ \t]+)?(?:full[ \t]+)?(?:year(?:'?s)?|12[ \t]+months'?)[ \t]+(?:of[ \t]+)?rent", text, re.I)
     if m and 0 < float(m.group(1)) <= 100 and not re.match(r"[ \t]*\?", text[m.end():]):  # cycle 21: "Broker fee is 8% of a year of rent"; "5% of one year's rent? No, ask" stays unread
         return float(m.group(1)), "a year of rent", 12.0
-    m = re.search(head + r"(half)[ \t]+(?:of[ \t]+)?(?:(?:a|one|1)[ \t]+)?month(?:'?s)?(?:[ \t]+(?:of[ \t]+)?rent)?", text, re.I)
+    m = re.search(head + r"(?:(?:one|a)[ \t-]+half|half|1[ \t]*/[ \t]*2|0?\.5)[ \t-]+(?:of[ \t]+)?(?:(?:a|one|1)[ \t]+)?months?(?:'?s)?(?:[ \t]+(?:of[ \t]+)?rent)?", text, re.I)
     if m:
         return 50.0, "one month's rent", 1.0
     m = re.search(r"\b(\d{1,3}(?:\.\d)?)[ \t]*%[ \t]+(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[ \t]*(?:of|on)[ \t]+(?:the[ \t]+)?(?:(annual|yearly)[ \t]+rent|" + month + r")", text, re.I)
@@ -16527,11 +16534,12 @@ def _broker_fee_percent(text: str) -> tuple[float, str, float] | None:
 def _broker_fee_months(text: str) -> float | None:
     """Months of rent a broker fee is worth: "Broker fee one month", "broker fee: one month's rent", "one month broker fee"."""
     nums = {"one": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5, "1/2": 0.5}
-    m = re.search(r"\b(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[ \t:\-=(]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(?:(one|two|1|2)|(half)(?: a)?)[ \t-]*month", text, re.I) \
-        or re.search(r"\b(?:(one|two|1|2)|(half)(?: a)?)[ \t-]*month(?:'?s)?(?: of rent| rent)?[ \t]+(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b", text, re.I)
+    m = re.search(r"\b(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[ \t:\-=(]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(?:(one|two|1|2)|((?:(?:one|a)[ \t-]+)?half(?: a)?|1[ \t]*/[ \t]*2|0?\.5))[ \t-]*(?:of[ \t]+(?:a[ \t]+|one[ \t]+)?)?month", text, re.I) \
+        or re.search(r"\b(?:(one|two|1|2)|((?:(?:one|a)[ \t-]+)?half(?: a)?|1[ \t]*/[ \t]*2|0?\.5))[ \t-]*month(?:'?s)?(?: of rent| rent)?[ \t]+(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b", text, re.I)
     if not m:
         return None
-    return nums[(m.group(1) or m.group(2)).lower()]
+    word = (m.group(1) or m.group(2)).lower()
+    return nums.get(word, 0.5 if "half" in word or word in ("0.5", ".5") else nums.get("1/2") if "/" in word else None)
 
 
 _SVC_STRONG = (r"pest(?:[ \t]+control)?|package(?:[ \t]+(?:locker|lockers|service|room))?|parcel(?:[ \t]+locker)?|valet(?:[ \t]+(?:trash|waste))?|trash[ \t]+valet|"
