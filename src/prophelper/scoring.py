@@ -565,8 +565,9 @@ def _limit_can_be_waived(place: dict[str, Any]) -> bool:
         text = str(place.get(key) or "")
     if _pets_need_approval(place):
         return True
+    from .parsers import blank_hard_limits  # cycle 36 (rule kk): "NO exceptions", "non-negotiable" say no
     for key in ("listing_text", "pet_breed_note", "reader_notes", "notes"):
-        text = str(place.get(key) or "")
+        text = blank_hard_limits(str(place.get(key) or ""))
         sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
         for i, sentence in enumerate(sentences):
             # "No pets over 40 lbs. Exceptions may be granted.": the waiver is the next sentence, so the two are read together

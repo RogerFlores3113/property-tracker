@@ -5400,6 +5400,26 @@ def _loose_weight(text: str) -> int | None:
     return None
 
 
+# cycle 36 (rule kk): a limit word that says no is a hard limit and never matches as its opposite ("non-negotiable" is not "negotiable", "no exceptions" is not "exceptions",
+# "will not be waived" is not "waived"). The phrase is replaced by the neutral word "HARDLIMIT", so no waiver pattern can read it.
+_HARD_LIMIT_PHRASE = re.compile(
+    r"\b(?:non|not|never|un)[ \t-]*(?:negotiable|negotiated|waivable|waived|bendable|flexible)\b|"
+    r"\b(?:no|zero|without|absolutely[ \t]+no|not[ \t]+any|never[ \t]+any)[ \t]+(?:(?:\w+[ \t]+)?exceptions?|waivers?|negotiations?|flexibility|wiggle[ \t]+room)\b|"
+    r"\b(?:will|can|could|would|does|do|is|are|may|shall)[ \t]*(?:not|n['\u2019]?t|never)[ \t]+(?:be[ \t]+)?(?:waived|waive|negotiated|negotiable|made|granted|considered|approved|allowed|bent)\b|"
+    r"\b(?:cannot|can['\u2019]?t|won['\u2019]?t|wont|never)[ \t]+(?:be[ \t]+)?(?:waived|waive|negotiated|made|granted|considered|approved|allowed|bent)\b|"
+    r"\bexceptions?[ \t]+(?:are[ \t]+|will[ \t]+be[ \t]+)?(?:not|never)[ \t]+(?:considered|made|granted|allowed|possible|accepted|given)\b|"
+    r"\bnot[ \t]+open[ \t]+to[ \t]+(?:negotiation|exceptions?|waivers?)\b", re.I)
+
+
+def blank_hard_limits(text: str) -> str:
+    """The text with every hard-limit phrase ("NO exceptions", "non-negotiable", "will not be waived") replaced by HARDLIMIT."""
+    return _HARD_LIMIT_PHRASE.sub("HARDLIMIT", text)
+
+
+def says_hard_limit(text: str) -> bool:
+    return bool(_HARD_LIMIT_PHRASE.search(text))
+
+
 _WEIGHT_WAIVER = re.compile(r"\bwithout[ \t]+(?:prior[ \t]+|written[ \t]+|special[ \t]+)?(?:approv\w+|permission|consent)\b|\b(?:with|upon|subject to|pending|requires?|needs?|need|once)[ \t]+(?:prior[ \t]+|written[ \t]+|special[ \t]+|management[ \t]+|landlord[ \t]+)?(?:approv\w+|permission|consent)\b|"
                            r"\bunless[ \t]+(?:approved|permitted|cleared|waived|authorized|authorised)\b|(?<!\bno[ \t])(?<!\bNo[ \t])(?<!\bNO[ \t])\bexceptions?\b|\bcase[- ]by[- ]case\b|\bwaive[sd]?\b|\bwaivable\b|\bnegotiable\b|\bmay[ \t]+(?:be[ \t]+)?(?:made|approved|granted|considered|allowed)\b|\b(?:larger|bigger|heavier|big|large)[ \t]+(?:dogs?|pets?|animals?)\b[^.\n;]{0,30}\b(?:considered|reviewed|approved|ask)\b|"
                            r"\b(?:approved|permitted|allowed)[ \t]+(?:by|on)[ \t]+(?:the[ \t]+)?(?:management|landlord|owner|office)\b|\bat[ \t]+(?:the[ \t]+)?(?:management|landlord|owner)(?:'s)?[ \t]+(?:discretion|option|approval)\b", re.I)
@@ -5414,6 +5434,7 @@ def _pet_weight_waiver_note(text: str, out: dict[str, Any]) -> str:
     w = out.get("pet_weight_limit")
     if w is None:
         return ""
+    text = blank_hard_limits(text)  # cycle 36 (rule kk): "NO exceptions" and "non-negotiable" are hard limits, never waivers
     sentences = [x for x in re.split(r"(?<=[.!?])\s+|\n+|\s\|\s", text) if x.strip()]
     number = f"{float(w):g}"
     for sentence in sentences:
@@ -14782,7 +14803,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     kept_limits = [f"{line.rstrip('.')}." for line in (_try(lambda: _pet_limits(ptext)) or [])
                    if not _pet_limit_is_in_fields(line, out)]
     facts += kept_limits
-    if not any(_WEIGHT_WAIVER.search(k) for k in kept_limits):  # cycle 25: the weight limit can be waived on approval, said once (a kept line that says it already is enough)
+    if not any(_WEIGHT_WAIVER.search(blank_hard_limits(k)) for k in kept_limits):  # cycle 25: the weight limit can be waived on approval, said once (a kept line that says it already is enough)
         waiver_note = _try(lambda: _pet_weight_waiver_note(ptext, out)) or ""
         if waiver_note:
             facts.append(waiver_note)
