@@ -1953,6 +1953,10 @@ def _rent_two_prices(text: str) -> tuple[float, float, str] | None:
             if 300 <= new < old <= 30000:
                 return new, old, kind
     m = _NET_EFFECTIVE.search(text) or _NET_EFFECTIVE_AFTER.search(text)
+    kind = "net"
+    if not m:
+        m = _CONCESSION_PRICE.search(text)  # cycle 35: "$3,600 a month, $3,300 with concession"
+        kind = "concession"
     if m:
         net = _num(m.group(1))
         rest = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
@@ -1960,14 +1964,21 @@ def _rent_two_prices(text: str) -> tuple[float, float, str] | None:
         if base is None:
             base = _bare_starting_rent(rest)
         if base is not None and base > net and 300 <= base <= 30000:
-            return base, net, "net"
+            return base, net, kind
     return None
+
+
+_CONCESSION_PRICE = re.compile(r"(?:\bor[ \t]+|\([ \t]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*"
+                               r"(?:with|after|w/|if[ \t]+you[ \t]+take)[ \t]+(?:the[ \t]+|a[ \t]+|our[ \t]+|any[ \t]+)?(?:rent[ \t]+)?(?:concessions?|specials?|promo(?:tion)?s?|discounts?)(?:[ \t]+applied)?\)?", re.I)
 
 
 def _rent_two_prices_note(price: float, other: float, kind: str) -> str:
     if kind == "net":
         return (f"The listing gives ${price:,.0f} a month as the rent and a net effective rent of ${other:,.0f}. The net effective figure only spreads a free-rent deal over the lease, "
                 f"so ${price:,.0f} is saved as the rent. Ask what you pay each month.")
+    if kind == "concession":
+        return (f"The listing gives ${price:,.0f} a month as the rent and ${other:,.0f} with a concession. The concession is a one-time deal, so ${price:,.0f} is saved as the rent "
+                "and the lower figure is not used. Ask what you have to do to get it.")
     return f"The listing says the rent dropped from ${other:,.0f} to ${price:,.0f}. The current ${price:,.0f} is saved as the rent and the old ${other:,.0f} is not used."
 
 
@@ -2635,7 +2646,26 @@ def _periodic_fee_notes(text: str) -> list[str]:
         seen.add(n)
         notes.append(f"The listing has a {m.group(1).lower() if m.group(1).lower() == 'quarterly' else 'yearly'} {label + ' ' if label else ''}fee of ${n:,.0f} (about ${n / divisor:,.0f} a month). "
                      f"It is not counted in the monthly cost. Ask if you have to pay it.")
+    # cycle 35: the same quarterly or yearly fee written with the amount first or the period after it: "Assessment $90 per quarter", "$90 quarterly fee", "Quarterly dues $90"
+    for rx, kinds in (() if _SALE_WORDS.search(text) else _PERIODIC_FEE_FORMS):  # a home for sale has its own assessment readers
+        for m in rx.finditer(text):
+            n = _num(m.group("amt"))
+            word = (m.groupdict().get("per") or m.groupdict().get("q") or "").lower()
+            yearly = bool(re.match(r"y|an|year", word))
+            if n in seen or not 1 <= n <= 5000 or re.search(r"hoa|association|condo|co-?op|tax|insurance|\brent\b", text[max(0, m.start() - 20):m.end() + 5], re.I):
+                continue
+            seen.add(n)
+            div = 12 if yearly else 3
+            notes.append(f"The listing has a {'yearly' if yearly else 'quarterly'} fee of ${n:,.0f} (about ${n / div:,.0f} a month). It is not counted in the monthly cost. Ask if you have to pay it.")
     return notes
+
+
+_PERIOD_WORDS = r"(?P<per>quarterly|quarter|annual(?:ly)?|yearly|year)"
+_PERIODIC_FEE_FORMS = (
+    (re.compile(r"\b(?:fees?|charges?|assessments?|dues)\b[ \t:\-=]*(?:of[ \t]+)?\$\s?(?P<amt>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])[ \t]*(?:(?:/|per|a|each|every)[ \t]*" + _PERIOD_WORDS + r"|(?P<q>quarterly|annually|yearly)\b)", re.I), ()),
+    (re.compile(r"\$\s?(?P<amt>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])[ \t]*(?P<per>quarterly|annual|yearly)[ \t]+(?:[A-Za-z-]+[ \t]+){0,2}?(?:fees?|charges?|assessments?|dues)\b", re.I), ()),
+    (re.compile(r"\b(?P<per>quarterly)[ \t]+(?:[A-Za-z-]+[ \t]+){0,2}?dues\b[ \t:\-=]*\$\s?(?P<amt>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])", re.I), ()),
+)
 
 
 def _holding_fee_amount_notes(text: str) -> list[str]:
@@ -3979,6 +4009,56 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
     return None
 
 
+_PARK_SPOT_INCLUDED = re.compile(r"\b(?:(?:1|one|a|single|2|two)[ \t]+(?:(?:assigned|reserved|private|parking)[ \t]+){0,2}(?:spaces?|spots?|stalls?)[ \t]+(?:is[ \t]+|are[ \t]+|comes?[ \t]+)?(?:included|free)\b"
+                                 r"|includes?[ \t]+(?:1|one|a|2|two)[ \t]+(?:parking[ \t]+)?(?:spaces?|spots?|stalls?)\b)", re.I)
+_PARKING_EXTRA_WORDS = re.compile(r"\b(?:2nd|second|additional|extra|another)\b", re.I)
+_PARK_LOT_EVIDENCE = re.compile(r"\b(?:lot|assigned|reserved|surface|driveway|off[- ]?street|outdoors?|uncovered|gravel|paved|open[- ]air)\b", re.I)
+
+
+def _parking_spot_kind_unknown(text: str, kind: str, cost: float | None, notes: list[str]) -> tuple[str, list[str]]:
+    """Cycle 35 (roommates l12): "Parking: 1 spot included in rent" says the spot costs nothing and never says what kind it is, so the kind is left empty (never a guessed
+    lot). A kind word anywhere in the listing's parking words ("surface lot", "off-street", "driveway") keeps the lot."""
+    if kind != "lot" or cost != 0 or not _PARK_SPOT_INCLUDED.search(text) or _PARK_LOT_EVIDENCE.search(text) or re.search(r"\bstreet\b", text, re.I):
+        return kind, notes
+    if any(re.search(r"parking (?:space|spot) is included|extra (?:space|spot|parking)|second space", n) for n in notes) or _PARKING_EXTRA_WORDS.search(text):
+        return kind, notes  # one included space beside a priced extra keeps the reading older cycles pinned (lot); only a lone included spot is left without a kind
+    return "", notes + ["The listing says a parking spot is included in the rent, so the parking costs $0. It does not say what kind of parking it is (lot, covered or garage), "
+                        "so the kind is left empty. Ask which kind it is."]
+
+
+_PARK_EITHER_KIND = r"(?:(?:attached|detached|private|heated|reserved|underground)[ \t]+)?(?:garages?|covered|carports?)(?:[ \t]+parking)?"
+_PARK_EITHER_PRICE = r"\$[ \t]?(\d{1,4}(?:\.\d\d)?)(?![\d,])[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?"
+_PARK_EITHER_LIST = rf"{_PARK_EITHER_KIND}(?:[ \t]*(?:,|/|\bor\b|\band/or\b)[ \t]*{_PARK_EITHER_KIND})+"
+_PARK_EITHER = (
+    re.compile(rf"^(?:parking[ \t]*(?:options?|types?)?[ \t]*[:\-][ \t]*)?{_PARK_EITHER_LIST}[ \t]*(?:[,:\-\u2013\u2014(][ \t]*|[ \t]+)?(?:for[ \t]+)?{_PARK_EITHER_PRICE}[ \t]*\)?[ \t]*$"),
+    re.compile(rf"^(?:parking[ \t]*[:\-][ \t]*)?{_PARK_EITHER_PRICE}[ \t]*(?:for[ \t]+|[,:\-\u2013\u2014(][ \t]*)?{_PARK_EITHER_LIST}[ \t]*\)?[ \t]*$"),
+)
+
+
+def _parking_either_priced(low: str) -> tuple[str, float | None, list[str]] | None:
+    """Cycle 35 (nontech l6): "Parking: garage or covered, $60/mo" is one list of kinds with the one price after it. It is covered parking at $60 a month (a garage is covered
+    too), with a note that the listing named both. A price after a list of two priced kinds ("garage $120, covered $60") is not this."""
+    for sent in re.split(r"\.(?:\s|$)(?![^(]*\))|\n|;|\s\|\s", low):
+        sent = sent.strip()
+        if not sent or re.search(r"\b(?:optional|available|extra|additional|upgrade|each|per[ \t]+(?:car|vehicle|space|spot)|waitlist|wait[- ]list|on[ \t]+request)\b", sent):
+            continue
+        for rx in _PARK_EITHER:
+            m = rx.match(sent)
+            if m:
+                price = float(m.group(1))
+                return "covered", price, [f"The listing says the parking is a garage or covered at ${price:,.0f} a month. It is saved as covered parking at ${price:,.0f}. Ask which one you would get."]
+    return None
+
+
+_PARK_ADDITIONAL_GARAGE = re.compile(r"(\b(?:garages?|carports?)\b[^.\n;|$]{0,40}?\bavailable\b[^.\n;|$]{0,25}?)\b(?:an[ \t]+)?(?:additional|extra)[ \t]+(?=(?:charge[ \t]+of[ \t]+|cost[ \t]+of[ \t]+|fee[ \t]+of[ \t]+)?\$)", re.I)
+
+
+def _parking_additional_garage(text: str) -> str:
+    """Cycle 35: "Garage parking is available for an additional $85/month" offers a garage for a price: the word "additional" is dropped so the optional-garage reader
+    reads it, the same as "Garage available $85/mo"."""
+    return _PARK_ADDITIONAL_GARAGE.sub(lambda m: m.group(1), text)
+
+
 def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
     text = _PARKING_NO_DOLLAR.sub(lambda m: m.group(1) + "$" + m.group(2), text)  # cycle 26: "Parking 85/mo" has no dollar sign but is a price a month
     text = _PARKING_PROMO.sub(" ", text)  # cycle 22: a short free offer ("free for first 6 months") never makes the parking free
@@ -3992,7 +4072,9 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
     if second_only:
         text = second_only[0]
         zero_notes.append(second_only[1])
+    text = _parking_additional_garage(text)  # cycle 35: "Garage available for an additional $85" is an optional garage, not an extra space beside an included one
     kind, cost, notes = _parking_detail_inner(text)
+    kind, notes = _parking_spot_kind_unknown(text, kind, cost, notes)
     if kind == "lot" and re.search(r"\bdeeded\b", text, re.I) and not _parking_kind_words(re.sub(r"\bdeeded\b", " ", text.lower())) \
             and not re.search(r"\b(?:driveway|off[- ]?street|lot|surface|street)\b", text, re.I):
         kind = ""  # cycle 24: "1 deeded parking space" is its own thing: the schema has no deeded kind, so the kind is left empty and named in a note
@@ -4070,6 +4152,9 @@ def _parking_detail_inner(text: str) -> tuple[str, float | None, list[str]]:
 
 
 def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[str]]:
+    either = _parking_either_priced(low)
+    if either:
+        return either
     opts = _parking_options(low)
     if opts:
         return opts
@@ -12654,8 +12739,37 @@ def strip_title_decoration(title: str) -> str:
     return " ".join(t.split()).strip(" ,;:-|\u2013\u2014")
 
 
+_TITLE_PRICE_TAIL = re.compile(
+    r"[ \t,;:|\-\u2013\u2014!]*\b(?:(?:only|just|asking|for|at|now)[ \t]+)?(?:\$[ \t]?\d[\d,.]*[kK]?(?:[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly))?|\d[\d,.]*)[ \t]*"
+    r"(?:obo|o\.b\.o\.?|or[ \t]+best[ \t]+offer|or[ \t]+nearest[ \t]+offer|firm|negotiable|nego)\b[^\n]*$"
+    r"|[ \t,;:|\-\u2013\u2014!]*\b(?:only|just|asking(?:[ \t]+price)?)[ \t]+(?:\$[ \t]?)?\d[\d,.]*[kK]?(?:[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly))?[ \t]*$", re.I)
+_PROMO_TITLE_PHRASE = re.compile(
+    r"\b(?:half[ \t-]+off|\d{1,2}%[ \t]*off|(?:first|1st|last|\d+|one|two|three)[ \t]+months?[ \t]+(?:free|off)|free[ \t]+(?:rent|months?)|move[- ]in[ \t]+specials?|rent[ \t]+specials?|"
+    r"(?:limited[ \t-]+time|special)[ \t]+(?:offer|deal|price)|look[ \t]*(?:&|and)[ \t]*lease|waived|concessions?)\b", re.I)
+_BARE_KIND_TITLE = re.compile(
+    r"^(?:(?:a|the|nice|beautiful|new|lovely|great|cozy|charming|spacious|large|modern|updated|renovated)[ \t]+)*(?:apartments?|apts?|house|home|condo|condominium|townhomes?|townhouses?|duplex|triplex|unit|flat|loft|room|place|rental|property|cottage|bungalow)"
+    r"(?:[ \t]+(?:for[ \t]+(?:rent|lease)|(?:for[ \t]+)?rental|available|to[ \t]+rent))?(?:[ \t]+in[ \t]+(?P<city>[A-Za-z .'-]{2,30}))?$", re.I)
+
+
+def _promo_title(title: str) -> bool:
+    """Cycle 35: "Half off first month!" is an offer, never the name of a place (a name has a plan or a kind of place in it)."""
+    return bool(_PROMO_TITLE_PHRASE.search(title)) and not _PLAN_CUE.search(title) and not _PROPERTY_NOUN.search(title) and len(title.split()) <= 9
+
+
+def _bare_kind_title(title: str, found: dict[str, Any]) -> bool:
+    """Cycle 35: "Townhome" or "Apartment for rent" alone names no place; the street address does. "Condo in San Carlos" is the same when San Carlos is the city."""
+    m = _BARE_KIND_TITLE.match(title.strip(" .!"))
+    if not m:
+        return False
+    city = (m.group("city") or "").strip().lower()
+    return not city or city == str(found.get("city") or "").strip().lower()
+
+
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
+    tail = _TITLE_PRICE_TAIL.sub("", title).strip(" ,;:-|!\u2013\u2014")
+    if tail != title and len(re.findall(r"[A-Za-z]", tail)) >= 4:
+        title = tail  # cycle 35: "BEAUTIFUL 2 BEDROOM DUPLEX!!! Only 1450 obo": the asking price is a fact, not part of the name
     lead = _HYPE_LEAD.sub("", title)
     if lead != title and len(lead) >= 8:
         title = lead[:1].upper() + lead[1:]  # "Wow Newly renovated 2 bedroom": the shout is not part of the name
@@ -12672,6 +12786,12 @@ def _title(text: str, found: dict[str, Any]) -> str:
         title = re.sub(r"^The\b", "The", title)
     title = re.sub(r"[ \t]*[-\u2013\u2014][ \t]*(?:was|now|reduced|asking|from|starting)$", "", title, flags=re.I)  # "Pilsen 3/2 - was $3,600": the price words are not part of the name
     title = _finish_title(title, text)
+    if title and (_promo_title(title) or _bare_kind_title(title, found)) and not _ADDRESS.match(title):
+        addr = str(found.get("address") or "")
+        if _promo_title(title):
+            return addr.split(",")[0] if addr else ""  # cycle 35: an offer is never the name: the street address, else no title
+        if addr:
+            return addr.split(",")[0]  # cycle 35: "Townhome for rent - 88 Birch Lane" names no place: the street address does
     if title and _policy_title_line(title) and not _ADDRESS.match(title):
         addr = str(found.get("address") or "")
         return addr.split(",")[0] if addr else ""  # a policy, amenity or parking phrase is never the name
@@ -13116,10 +13236,68 @@ def _per_animal_notes(kind: str, prices: dict[str, float], pet_kind: str, out: d
     return [f"The listing has a {label} of {both}. The {label} is left empty because it depends on the pet. Fill in the one that applies to you."]
 
 
-_ES_QUICK = re.compile(r"dep[o\u00f3]sito|estacionamiento|parqueo|aparcamiento|\bcochera|\bgaraje\b|/\s*mes\b|\bse permiten?\b|\bpermitid[oa]s\b|\bmascotas?\b|\bperr(?:o|a)s?\b|\bgat(?:o|a)s?\b", re.I)
+_ES_QUICK = re.compile(r"dep[oó]sito|estacionamiento|parqueo|aparcamiento|\bcochera|\bgaraje\b|/\s*mes\b|\bse permiten?\b|\bpermitid[oa]s\b|\bmascotas?\b|\blavadora|\bsecadora|\blavander[ií]a|\bpatio\b|\bjard[ií]n\b|\bcercad[oa]|\bvallad[oa]|dep[o\u00f3]sito|\bperr(?:o|a)s?\b|\bgat(?:o|a)s?\b", re.I)
+_ES_MONEY_TAIL = (r"(?P<tail>[ \t]*[:=\-]?[ \t]*(?:por[ \t]+)?\$[ \t]?\d[\d,.]*(?:[ \t]*(?:/[ \t]*mes\b|al[ \t]+mes\b|mensuales?\b|por[ \t]+mes\b|cada[ \t]+mes\b|mensual\b|/[ \t]*a[\u00f1n]o\b|al[ \t]+a[\u00f1n]o\b|anual(?:es)?\b|por[ \t]+a[\u00f1n]o\b|cada[ \t]+a[\u00f1n]o\b))?)?")
+
+
+def _es_parking_repl(m: "re.Match[str]") -> str:
+    """Cycle 35: "Estacionamiento cubierto $60 al mes", "Garaje $85", "Estacionamiento incluido", "Sin estacionamiento" in the English words the parking reader knows."""
+    noun = (m.group("noun") or "").lower()
+    cov = m.group("cov")
+    mod = (m.group("mod") or "").lower()
+    tail = m.group("tail") or ""
+    if m.group("none"):
+        return "No parking"
+    if m.group("street"):
+        return "Street parking"
+    what = "Garage" if noun in ("cochera", "garaje") else ("Covered parking" if cov else "Parking")
+    word = {"incluido": " included", "incluida": " included", "incluidos": " included", "incluidas": " included", "gratis": " free", "gratuito": " free", "gratuita": " free",
+            "requerido": " required", "requerida": " required", "opcional": " optional"}.get(mod, "")
+    amount = re.search(r"\$[ \t]?\d[\d,.]*", tail)
+    price = ""
+    if amount:
+        price = " " + re.sub(r"[ \t]", "", amount.group(0)) + ("/mo" if re.search(r"mes\b|mensual", tail.lower()) else "/year" if re.search(r"a[\u00f1n]o\b|anual", tail.lower()) else "")  # no period given: the same words as an English listing ("Covered parking $60")
+    return what + word + price
+
+
+def _es_laundry_repl(m: "re.Match[str]") -> str:
+    """Cycle 35: "Lavadora y secadora dentro de la unidad" is a washer and dryer in the unit; "Lavandería en el edificio" is shared laundry in the building."""
+    low = m.group(0).lower()
+    if m.group("sin"):
+        return "No laundry"
+    if m.group("hook"):
+        return "Washer and dryer hookups"
+    if m.group("bldg") or m.group("bldg2"):
+        return "Shared laundry in the building"
+    if m.group("inunit"):
+        return "Washer and dryer in unit"
+    if m.group("inc"):
+        return "Washer and dryer included"
+    return "Washer and dryer"
+
+
+def _es_yard_repl(m: "re.Match[str]") -> str:
+    """Cycle 35: "Patio cercado", "Patio trasero cercado", "Jardín cercado", "Patio con cerca" are a fenced yard (a plain "Patio" is not)."""
+    low = m.group(0).lower()
+    if re.search(r"compartid|comunit|com[uú]n\b", low):
+        return "Shared fenced yard"
+    if re.search(r"trasero", low):
+        return "Fenced backyard"
+    return "Fenced yard"
+
+
 _ES_RULES = (
-    (re.compile(r"\bdep[o\u00f3]sito[ \t]+(?:por|de|para)[ \t]+(?:la[ \t]+)?(?:mascotas?|animal(?:es)?|perros?|gatos?)(?:[ \t]+de)?\b", re.I), "Pet deposit"),
-    (re.compile(r"\bdep[o\u00f3]sito(?:[ \t]+de[ \t]+(?:seguridad|garant[i\u00ed]a))?(?:[ \t]+(?:de|es|ser[a\u00e1]))?(?=[ \t]*[:=]?[ \t]*\$)", re.I), "Security deposit"),
+    (re.compile(r"\bdep[oó]sito[ \t]+(?:por|de|para)[ \t]+(?:la[ \t]+)?(?:mascotas?|animal(?:es)?|perros?|gatos?)(?:[ \t]+de)?\b", re.I), "Pet deposit"),
+    (re.compile(r"\bdep[oó]sito(?:[ \t]+de[ \t]+(?:seguridad|garant[ií]a))?(?:[ \t]+(?:de|es|ser[aá]))?(?=[ \t]*[:=]?[ \t]*\$)", re.I), "Security deposit"),
+    (re.compile(r"\b(?:(?P<none>(?:sin|no[ \t]+hay|no[ \t]+tiene)[ \t]+(?:estacionamiento|parqueo|aparcamiento))|"
+                r"(?P<street>estacionamiento[ \t]+(?:en[ \t]+(?:la[ \t]+)?calle|sobre[ \t]+la[ \t]+calle))|"
+                r"(?P<noun>estacionamientos?|parqueo|aparcamiento|cochera|garaje)(?:[ \t]+(?P<cov>cubiert[oa]s?|techad[oa]s?))?"
+                r"(?:[ \t]*[:,\-]?[ \t]+(?P<mod>incluid[oa]s?|gratis|gratuit[oa]|requerid[oa]|opcional))?" + _ES_MONEY_TAIL + r")(?![A-Za-záéíóúñ])", re.I), _es_parking_repl),
+    (re.compile(r"\b(?:(?P<sin>(?:sin|no[ \t]+hay|no[ \t]+tiene)[ \t]+(?:lavadora|lavander[ií]a|secadora))|"
+                r"(?P<hook>(?:conexi[oó]n(?:es)?|instalaci[oó]n(?:es)?|tomas?)[ \t]+(?:de|para)[ \t]+(?:la[ \t]+)?(?:lavadora|secadora)(?:[ \t]*(?:y|/)[ \t]*(?:la[ \t]+)?secadora)?)|"
+                r"(?P<bldg>lavander[ií]a[ \t]+(?:compartida|comunitaria|com[uú]n|del[ \t]+edificio|en[ \t]+(?:el[ \t]+)?(?:edificio|s[oó]tano|sitio|complejo))|lavadoras?[ \t]+(?:compartidas?|comunitarias?|en[ \t]+(?:el[ \t]+)?edificio))|"
+                r"(?P<w>lavadora(?:[ \t]*(?:y|/|&)[ \t]*(?:la[ \t]+)?secadora)?)(?:[ \t]+(?:(?P<inunit>(?:dentro[ \t]+de|en|adentro[ \t]+de|dentro[ \t]+del)[ \t]+(?:la[ \t]+|el[ \t]+|cada[ \t]+)?(?:unidad|apartamento|departamento|casa|vivienda|piso)|adentro|dentro)|(?P<bldg2>(?:en|del)[ \t]+(?:el[ \t]+)?(?:edificio|s[o\u00f3]tano|sitio|complejo))|(?P<inc>incluid[oa]s?)))?)", re.I), _es_laundry_repl),
+    (re.compile(r"\b(?:patio|jard[ií]n)(?:[ \t]+(?:trasero|delantero))?(?:[ \t]+(?:compartido|comunitario))?[ \t]+(?:totalmente[ \t]+|completamente[ \t]+)?(?:cercad[oa]|vallad[oa]|con[ \t]+(?:cerca|valla|reja))(?:[ \t]+(?:compartido|comunitario))?(?![A-Za-záéíóúñ])", re.I), _es_yard_repl),
     (re.compile(r"\b(?:estacionamiento|parqueo|aparcamiento|cochera|garaje)\b(?:[ \t]+(?:de|es))?(?=[ \t]*[:=]?[ \t]*\$|[ \t]+(?:incluid[oa]|gratis|requerid[oa]|opcional))", re.I), "Parking"),
     (re.compile(r"(?<=[\d\s])/\s*mes\b", re.I), "/mo"),
     (re.compile(r"\brequerid[oa]\b", re.I), "required"),
@@ -13187,8 +13365,9 @@ def _spanish_pet_sentence(sent: str) -> str:
     return out
 
 
-def _spanish_pet_words(text: str) -> str:
+def _spanish_pet_words(text: str, pairs: list[tuple[str, str]] | None = None) -> str:
     parts = _ES_PET_SENT.split(text)
+    before = list(parts)
     prev_pet = False
     for i in range(0, len(parts), 2):
         if _ES_PET_WORD.search(parts[i]):
@@ -13203,18 +13382,72 @@ def _spanish_pet_words(text: str) -> str:
                 if m and prev_pet:  # "Perros hasta 70 lb" / "Con dep\u00f3sito de $300"
                     parts[i] = m.group(1) + "pet deposit " + m.group(2) + m.group(3)
             prev_pet = False
+    if pairs is not None:
+        for a, b in zip(parts, before):
+            if a != b and a.strip() and b.strip():
+                pairs.append((a.strip(), b.strip()))  # cycle 35 join: a quoted pet sentence can be shown in the listing's own words again
     return "".join(parts)
 
 
-def _spanish_money_words(text: str) -> str:
-    """Cycle 34: Spanish labels for the deposit, parking and pets ("Dep\u00f3sito $1,650", "Estacionamiento $200/mes requerido", "Se permiten gatos") are read as the English
-    words they stand for, so the same readers apply. Text with none of those words is returned as it is."""
+def _spanish_translate(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """Cycle 34/35: Spanish labels for the deposit, parking, laundry, yard and pets in the English words the readers know, and the (English, Spanish) pairs that were
+    swapped, so a note that quotes the listing can show the listing's own words again (see ``_es_restore_notes``)."""
+    pairs: list[tuple[str, str]] = []
     if not _ES_QUICK.search(text):
-        return text
-    text = _try(lambda: _spanish_pet_words(text)) or text  # cycle 35: "Perros hasta 70 lb con dep\u00f3sito de $300", "Se permiten gatos y perros", "No mascotas"
+        return text, pairs
+    text = _try(lambda: _spanish_pet_words(text, pairs)) or text  # cycle 35: "Perros hasta 70 lb con dep\u00f3sito de $300", "Se permiten gatos y perros", "No mascotas"
     for pat, repl in _ES_RULES:
-        text = pat.sub(repl, text)
-    return text
+        def fn(m: "re.Match[str]", repl: Any = repl) -> str:
+            out = repl(m) if callable(repl) else repl
+            if out != m.group(0):
+                pairs.append((out, m.group(0)))
+            return out
+        text = pat.sub(fn, text)
+    return text, pairs
+
+
+def _spanish_money_words(text: str) -> str:
+    """Cycle 34: Spanish labels for the deposit, parking and pets ("Depósito $1,650", "Estacionamiento $200/mes requerido", "Se permiten gatos") are read as the English
+    words they stand for, so the same readers apply. Text with none of those words is returned as it is."""
+    return _spanish_translate(text)[0]
+
+
+def _es_restore_notes(facts: list[str], pairs: list[tuple[str, str]], original: str) -> list[str]:
+    """Cycle 35 (family l3, privacy): a note that quotes the listing shows the listing's own words, never the English label the reader put in ("con depósito de $300",
+    not "con Security deposit $300"). A quoted piece, or a note that is only a piece of the listing, is put back to the Spanish words only when the result is
+    found word for word in the pasted listing."""
+    if not pairs:
+        return facts
+    norm = lambda t: " ".join(t.lower().split())  # noqa: E731
+    orig_n = norm(original)
+
+    def search(cand: str, start: int, depth: int) -> str | None:
+        hits = [(cand.find(eng, start), eng) for eng in {e for e, _s in pairs} if cand.find(eng, start) >= 0]
+        if not hits:
+            tail = cand.strip().rstrip(".!?").strip()
+            return cand if tail and norm(tail) in orig_n else None
+        if depth > 8:
+            return None
+        pos, eng = min(hits, key=lambda h: (h[0], -len(h[1])))
+        for e2, esp in pairs:
+            if e2 == eng:
+                got = search(cand[:pos] + esp + cand[pos + len(eng):], pos + len(esp), depth + 1)
+                if got is not None:
+                    return got
+        return None
+
+    def restore(chunk: str) -> str | None:
+        got = search(chunk, 0, 0)
+        return got if got is not None and got != chunk else None
+
+    out: list[str] = []
+    for f in facts:
+        if '"' in f:
+            f2 = re.sub(r'"([^"]+)"', lambda m: '"' + (restore(m.group(1)) or m.group(1)) + '"', f)
+        else:
+            f2 = restore(f) or f
+        out.append(f2)
+    return out
 
 
 _DEP_ABBREV = (
@@ -13258,7 +13491,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text = _pet_adverbs(text)  # cycle 35: "Dogs now allowed under 30 lbs"
     text = _deposit_abbreviation(text)  # cycle 35: "Dep $1,350" and "$1500 dep" are the deposit
-    text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
+    text, es_pairs = _spanish_translate(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets; cycle 35: and laundry and yard
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
     if not buying and text and not _SALE_WORDS.search(text):
@@ -13352,7 +13585,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     two_prices = None if buying or price_range or unit_pick else _try(lambda: _rent_two_prices(text))
     if two_prices:  # cycle 18: two rents in one listing: the quoted or current one is saved, the other is named in a note
         price_read = two_prices[0]
-        if two_prices[2] == "net" or not (_REDUCED_FROM.search(text) or _WAS_PRICE.search(text)):  # those two already get a "price was cut" note
+        if two_prices[2] in ("net", "concession") or not (_REDUCED_FROM.search(text) or _WAS_PRICE.search(text)):  # those two already get a "price was cut" note
             facts.append(_rent_two_prices_note(*two_prices))
     promo = None if buying or price_range or unit_pick else _try(lambda: _promo_then_rent(text, price_read))
     if su_units:  # cycle 32: step-ups for more than one size: one note, and an unclear size leaves the rent empty
@@ -14905,6 +15138,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             monthly_assessment = ""  # cycle 23: a regular monthly assessment is the HOA and has its own note below
         if monthly_assessment and _try(lambda: _hoa(text)) is None and _try(lambda: _hoa_plain_monthly(text)) == (_try(lambda: _assessment_monthly(text)) or (0,))[0]:
             monthly_assessment = ""  # these monthly dues were saved as the HOA, so no note says they are left out
+        if monthly_assessment and not buying and any(f.startswith("The listing has a quarterly fee of ") for f in facts):
+            monthly_assessment = ""  # cycle 35: a quarterly assessment already has its one note (the quarterly figure and its monthly share); a second note about the same $30 is noise
         if monthly_assessment:
             facts.append(monthly_assessment)
         yearly_assessment = _try(lambda: _assessment_yearly_note(text))
@@ -15192,6 +15427,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _try(lambda: _plain_named_item_notes(out, facts)) or facts  # cycle 32: a clearly named monthly item gets a plain note
     if not buying:
         facts = _try(lambda: _formula_figure_notes(text_full, facts)) or facts  # cycle 32: a figure beside formula-like text is named, never silent
+    facts = _try(lambda: _es_restore_notes(facts, es_pairs, raw_text)) or facts  # cycle 35: a quote shows the listing's own Spanish words, never the English label the reader put in
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)

@@ -481,6 +481,9 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
                 continue
         if amount >= 500 and re.search(r"\$\s?[\d,]+\s*(?:-|\u2013|to)\s*$|^\s*(?:-|\u2013|to)\s*\$", text[max(0, m.start() - 12):m.start()] + "|" + text[m.end():m.end() + 8]):
             continue  # a rent range
+        if amount >= 1000 and not _COST_ITEM.search(item) and _PLAN_WORDS.search(line) and (re.search(r"\$\s?\d[\d,]*(?:\.\d\d)?[ \t]*(?:-|\u2013|\u2014|to)[ \t]*$", text[max(0, m.start() - 14):m.start()])
+                                                                or re.match(r"[ \t]*(?:-|\u2013|\u2014|to)[ \t]*\$[ \t]?\d", text[m.end():m.end() + 12])):
+            continue  # cycle 35: "Two Bedroom - $1,299 - $1,589": either end of a rent range that the range note explains is no figure left out
         if amount >= 1000 and "deposit" in item.lower() and re.search(rf"(?:rent|/\s*mo|per month|\bmonth)\W{{0,4}}[^.\n]{{0,25}}\${amount:,.0f}|\${amount:,.0f}\s*(?:/\s*mo|per month|a month|monthly)", text, re.I):
             continue  # one place of several: its deposit is the rent of the same place
         if amount >= 1000 and re.search(r"\brent\b|\b\d(?:\.\d)?\s*(?:br|bd|bed(?:room)?s?|ba)\b|\bper month\b|/\s*mo\b", item + " " + line[:60], re.I) and not re.search(r"deposit|fee|dues|tax|insurance", item, re.I):

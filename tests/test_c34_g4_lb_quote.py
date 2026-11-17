@@ -44,8 +44,8 @@ def test_family_spanish_whole_listing():
 
 
 @pytest.mark.parametrize("line,quote", [
-    # cycle 34 join: G3 reads "dep\u00f3sito $" as the English label, so the quote shows that label (known leftover: quotes should keep the listing's own words)
-    ("Rent $1,500. Se aceptan perros hasta 70 lb., depósito $2,300.", "Se aceptan perros hasta 70 lb., Security deposit $2,300"),
+    # cycle 35: the quote keeps the listing's own words (it showed the English label "Security deposit" in cycle 34)
+    ("Rent $1,500. Se aceptan perros hasta 70 lb., depósito $2,300.", "Se aceptan perros hasta 70 lb., depósito $2,300"),
 ])
 def test_a_comma_after_the_full_stop_keeps_its_clause(line, quote):
     r = read(line)
