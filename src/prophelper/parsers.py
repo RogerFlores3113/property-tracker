@@ -614,13 +614,13 @@ _GC_LABEL = {"deposit": "deposit", "hoa": "HOA", "property_tax": "property tax",
              "seller_credit": "seller credit", "closing_costs": "closing costs"}
 _GC_MONEY = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
 _GC_LEAD = re.compile(r"^[ \t\"'(\[*#-]*(?:(?:corrected?|corrections?|actually)\b|(?:update[ds]?|revised|edit(?:ed)?)[ \t]*[:,\-\u2013\u2014])", re.I)
-_GC_MOVED = r"(?:reduced|lowered|dropped|cut|slashed|decreased|increased|raised|marked[ \t]+down|discounted)[ \t]+(?:(?:again|further|once[ \t]+more|once[ \t]+again|even[ \t]+more)[ \t]+)?(?:(?:the|its)[ \t]+)?(?:(?:rent|price)[ \t]+)?(?:(?:again|further)[ \t]+)?to"  # cycle 30: "reduced to $2,250", "rent increased to $1,510"
+_GC_MOVED = r"(?:reduced|lowered|dropped|cut|slashed|decreased|increased|raised|marked[ \t]+down|discounted|rose|risen|climbed|jumped|fell|(?:went|moved)[ \t]+(?:up|down))[ \t]+(?:(?:again|further|once[ \t]+more|once[ \t]+again|even[ \t]+more)[ \t]+)?(?:(?:the|its)[ \t]+)?(?:(?:rent|price)[ \t]+)?(?:(?:again|further)[ \t]+)?to"  # cycle 30: "reduced to $2,250", "rent increased to $1,510"
 _GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)|" + _GC_MOVED
 _GC_MOVED_END = re.compile(r"\b" + _GC_MOVED + r"[ \t:]*(?:only[ \t]+)?$", re.I)
 _GC_CUE = re.compile(r"\b(?P<w>now|" + _GC_HARD + r"|new)\b", re.I)
 _GC_OLD = re.compile(r"\b(?:was|were|from|earlier|previously|before|originally|not|instead[ \t]+of|used[ \t]+to[ \t]+be|old|formerly|prior|said|listed[ \t]+as|posted[ \t]+as|ignore|disregard|than)\b", re.I)
 _GC_FILL = (r"(?:rent|price|asking|deposit|dep|security|sec|hoa|dues|fees?|tax(?:es)?|property|monthly|(?:condo|association)[ \t]+(?:fees?|dues)|application|app|parking|garage|carport|is|are|of|at|only|just|now|the|a|an|total|to|be|should|will|"
-            r"it'?s|its|this|unit|payment|charge|cost|costs|per|month|ad|listing|post|figure|number|version|as|had|showed|read|stated|gave|it|refundable|amount|for)")
+            r"it'?s|its|this|unit|payment|charge|cost|costs|per|month|ad|listing|post|figure|number|version|as|had|showed|read|stated|gave|it|refundable|amount|for|estimates?|estimated|est\.?|about|around|approx\.?|approximately|roughly)")
 _GC_TAIL = re.compile(r"^[ \t:=\-–—(]*(?:" + _GC_FILL + r"\b[ \t:=\-–—(]*)*$", re.I)
 _GC_OLD_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly|annual\w*)?[ \t]*\)?[ \t]*[,;]?[ \t]*\(?[ \t]*(?:but[ \t]+)?(?:now|updated?|corrected|changed|->|=>|→|is[ \t]+now)\b", re.I)
 _GC_NEW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*(?:is|are)?[ \t]*(?:the[ \t]+)?(?:new|correct|current|updated)[ \t]+(?:rent|price|deposit|hoa|tax)", re.I)
@@ -635,6 +635,10 @@ _GC_WAS_PAREN = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|y
 _GC_NOW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b[ \t]*(?:[)\]]|$|[,;|])", re.I)
 
 
+# cycle 32: "HOA $340/mo -> $385/mo", "HOA went from $340 to $385 a month", "Seller credit increased from $5,000 to $8,000": the figure after the arrow or "to" is the new one
+_GC_ARROW = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*(?:-+>|=+>|\u2192|\u279c|\u2794|>>|to)[ \t]*(?:now[ \t:]*|only[ \t]+)?$", re.I)
+_GC_MOVE_VERB = re.compile(r"\b(?:increas\w*|decreas\w*|rais\w*|reduc\w*|lower\w*|drop\w*|chang\w*|went|goes|going|rose|rising|jump\w*|climb\w*|up|down|cut|updat\w*|correct\w*|revis\w*)\b", re.I)
+_GC_ARROW_FIELDS = ("hoa", "property_tax", "seller_credit", "closing_costs", "deposit", "application_fee", "parking_cost")
 _GC_FEE_UNIT = re.compile(r"^[ \t]*(?:/[ \t]*(?:mo|month|yr|year|unit)\w*|per[ \t]+(?:month|year|unit)|a[ \t]+(?:month|year)|monthly|yearly|annual\w*|one[- ]time|once)?", re.I)
 
 
@@ -737,6 +741,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
     bare_last: dict[str, tuple[float, str, int, int]] = {}  # cycle 30: the last plain figure of each fact, for a later "Previously $X" line
     prev_bare_cue = False
     for _off, s in sents:
+        last_amt: tuple[float, tuple[int, int], str | None, str | None] | None = None  # the figure just before this one in the sentence
         amts = list(_GC_MONEY.finditer(s))
         lead = bool(_GC_LEAD.match(s)) or prev_bare_cue  # cycle 31: a line that only says "CORRECTION" leads the line after it
         prev_bare_cue = bool(re.fullmatch(r"[ \t\"'(\[*#-]*(?:corrections?|corrected|updates?|updated|edit(?:ed)?|revised)[ \t:)\]*\-\u2013\u2014]*", s, re.I))
@@ -759,6 +764,12 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     role = "hard"
                 if role is None and _GC_NEW_AFTER.match(after):
                     role = "soft"
+            arrow_prev = None
+            if role in (None, "soft") and last_amt is not None and last_amt[2] in _GC_ARROW_FIELDS and last_amt[3] in (None, "old", "soft") and _GC_ARROW.match(window) \
+                    and not (_COND_AFTER.match(after) or _GC_LEASE_AFTER.match(after)) \
+                    and (not re.search(r"\bto[ \t]*(?:now[ \t:]*|only[ \t]+)?$", window, re.I) or last_amt[3] == "old" or _GC_MOVE_VERB.search(s[:a.start()])):  # "$300 to $350" alone is a range
+                role = "soft"  # the figure after the arrow or "to" is the new one; the figure before it is the old one
+                arrow_prev = last_amt
             was_paren = role is None and bool(_GC_WAS_PAREN.match(after))  # cycle 29: "HOA $350/mo (was $325)": the figure in front is the new one
             if was_paren:
                 role = "soft"
@@ -812,6 +823,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     chain_k = k_named
             if role is None and field not in (None, "named", "price"):
                 bare_last[field] = (value, after, _off + a.start(), _off + a.end())
+            last_amt = (_gc_unit_value(field, value, after) if field in _GC_ARROW_FIELDS else value, (_off + a.start(), _off + a.end()), field, role)
             prev_end = a.end()
             if field and field != "named":
                 sent_fields.add(field)
@@ -842,6 +854,11 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 continue
             value = _gc_unit_value(field, value, after)
             ent = found.setdefault(field, {"new": None, "olds": [], "sentence": "", "spans": []})
+            if arrow_prev is not None and arrow_prev[2] == field:
+                if arrow_prev[3] is None:  # a plain figure in front of the arrow: it is the old one, and the figure after it is the new one
+                    ent["spans"].append(arrow_prev[1])
+                if not any(_same_num(arrow_prev[0], o) for o in ent["olds"]) and not _same_num(arrow_prev[0], value):
+                    ent["olds"].append(arrow_prev[0])
             ent["spans"].append((_off + a.start(), _off + a.end()))
             if role == "old":
                 if value not in ent["olds"]:
