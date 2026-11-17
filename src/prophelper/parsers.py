@@ -7412,7 +7412,8 @@ def _prune_skipped(whole: str) -> str:
     return ",".join(keep) if keep and any("$" in k for k in keep) else ""
 
 
-_PLAIN_ONLY = re.compile(r"^\W*(?:(?:tenants?|residents?|renters?|you)[ \t]+pays?[ \t]*[:\-]?[ \t]*|utilities[ \t]*[:\-][ \t]*|extra[ \t]*[:\-]?[ \t]*)?(?P<names>(?:" + _ROLE_ITEM + r"[ \t]*(?:,|/|&|and|\+)?[ \t]*(?:and[ \t]+)?){1,4})[ \t]*(?:(?:is|are|runs?|costs?)[ \t]+)?[:\-]?[ \t]*(?:total[ \t]*)?\$[ \t]*(?P<amt>\d{2,4})(?:\.\d\d)?(?![\d,])" + _EST_PER + r"[ \t]*\W*$", re.I)
+_PLAIN_ONLY = re.compile(r"^\W*(?:(?:tenants?|residents?|renters?|you)[ \t]+pays?[ \t]*[:\-]?[ \t]*|utilities[ \t]*[:\-][ \t]*|extra[ \t]*[:\-]?[ \t]*)?(?P<names>(?:" + _ROLE_ITEM + r"[ \t]*(?:,|/|&|and|\+)?[ \t]*(?:and[ \t]+)?){1,4})[ \t]*[:\-]?[ \t]*(?:total[ \t]*)?\$[ \t]*(?P<amt>\d{2,4})(?:\.\d\d)?(?![\d,])" + _EST_PER + r"[ \t]*\W*$", re.I)
+_PLAIN_ONLY_IS = re.compile(r"^\W*(?:(?:tenants?|residents?|renters?|you)[ \t]+pays?[ \t]*[:\-]?[ \t]*|utilities[ \t]*[:\-][ \t]*|extra[ \t]*[:\-]?[ \t]*)?(?P<names>(?:" + _ROLE_ITEM + r"[ \t]*(?:,|/|&|and|\+)?[ \t]*(?:and[ \t]+)?){1,4})[ \t]*(?:(?:is|are|runs?|costs?)[ \t]+)?[:\-]?[ \t]*(?:total[ \t]*)?\$[ \t]*(?P<amt>\d{2,4})(?:\.\d\d)?(?![\d,])" + _EST_PER + r"[ \t]*\W*$", re.I)  # cycle 32: "Electric is $55/mo." (used only when the listing gives that utility two plain figures)
 
 
 def _estimate_items(text: str) -> list[dict[str, Any]]:
@@ -7499,6 +7500,8 @@ def _estimate_items(text: str) -> list[dict[str, Any]]:
             if got:
                 continue
             pm1 = _PLAIN_ONLY.match(clause.strip())
+            if not pm1 and _PLAIN_ONLY_IS.match(clause.strip()) and _two_figures_one_utility(text):
+                pm1 = _PLAIN_ONLY_IS.match(clause.strip())  # cycle 32: "Electric is $55/mo. Electric: $60/month." both figures are read, so the higher one is counted and the other is named
             if pm1:
                 # a line that is only a utility and a figure ("electric $60", "Tenant pays electric $55"): the listing's own monthly figure
                 plain1 = [w for w in _est_names(pm1.group("names"), clause) if w in ("electric", "gas", "water", "sewer", "heat")]
@@ -8706,7 +8709,7 @@ def _except_orders(text: str) -> str:
 
 _UTIL_PAID_BY_PLAIN = re.compile(
     r"\b(?:(?:all[ \t]+)?(?:the[ \t]+)?(?:other|remaining)[ \t]+|(?:the[ \t]+)?rest[ \t]+of[ \t]+the[ \t]+)?utilit(?:y|ies)(?![ \t]*[:(\-\u2013])[ \t]+(?:(?:are|is|to[ \t]+be|will[ \t]+be)[ \t]+)?"
-    r"(?:(?:paid|covered|billed|handled)(?:[ \t]+(?:separately|directly|individually))?[ \t]+(?:by|of|to)|(?:the[ \t]+)?(?:responsibility|expense|cost)[ \t]+of|on)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
+    r"(?:(?:paid|covered|handled)(?:[ \t]+(?:separately|directly|individually))?[ \t]+(?:by|of)|(?:the[ \t]+)?(?:responsibility|expense|cost)[ \t]+of|on)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
     r"(?![ \t]*(?:[:(\-\u2013]|,)[ \t]*(?:electric|gas|water|sewer|trash|heat|internet|cable))"
     r"|\b(?:(?:the[ \t]+)?(?:rest|remainder)|(?:everything|all)[ \t]+else|(?:all[ \t]+)?(?:the[ \t]+)?(?:other|remaining)[ \t]+utilit(?:y|ies))[ \t]+(?:(?:is|are)[ \t]+)?(?:paid[ \t]+by|(?:the[ \t]+)?(?:responsibility|expense)[ \t]+of|on)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
     r"|\b(?:(?:the[ \t]+)?(?:rest|remainder)|(?:everything|all)[ \t]+else|(?:all[ \t]+)?(?:the[ \t]+)?(?:other|remaining)[ \t]+utilit(?:y|ies))[ \t]+(?:is|are)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"(?:'s|s')?[ \t]+(?:responsibility|expense|cost|bill)\b"
@@ -11780,6 +11783,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         priced_names = {w for it in gen["items"] for w in it["names"]}
         keep_notes = [f for f in facts[n_facts_pre:] if f.startswith("Cable is")
                       or (re.search(r"(?:billed back to you|passed through to you), but the listing gives no amount", f) and not any(re.search(r"\b" + w + r"\b", f.lower()) for w in priced_names))]  # "Water is billed back to you, but the listing gives no amount" still stands
+        conflict_notes = [f for f in facts[n_facts_pre:] if f.startswith("The listing says utilities are included, but it also says you pay")]  # cycle 32: "ALL UTILITIES INCLUDED" beside "Tenant pays electric and internet" stays a conflict note
         del facts[n_facts_pre:]
         facts.extend(keep_notes)
         out.pop("utilities_estimate", None)
@@ -11796,6 +11800,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             included = _ordered_utilities([w for w in have + gen["landlord"] if w not in tenant and w not in pays.split(", ")]) if (have or gen["landlord"]) else ""
             put("utilities_estimate", gen["amount"])
             facts.append(_util_general_note(gen))
+            if conflict_notes:
+                facts.extend(conflict_notes)
+                included = ""
 
             if flat_trash_note:
                 facts.append(flat_trash_note)
@@ -11937,12 +11944,6 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts[:] = [f for f in facts if not (tn in f.lower() and any(_money_cents(x) in f for x in tv) and "two different figures" not in f)]  # no note may still say one of the two is counted
             facts.append(f"The listing gives two different figures for {tn}, {' and '.join(_money_cents(x) for x in tv)}, and does not say which one is right. "
                          f"Neither is counted, and {tn} is left as something you pay with no amount. Ask the landlord what {tn} costs.")
-    if not buying and included_pre == "all" and every is None and pays and not any(re.search(r"disagree|don't agree|unclear about|it also says you pay|billed back to you|passed through to you|\(RUBS\)", f) for f in facts[n_facts_pre:]):
-        # cycle 32: "ALL UTILITIES INCLUDED" next to "Tenant pays electric and internet": nothing is called included, and a note says the two lines disagree
-        said_pay = [w.strip() for w in pays.split(",") if w.strip() and w.strip() != "cable"]
-        if said_pay:
-            included = ""
-            facts.append(f"The listing says utilities are included, but it also says you pay {', '.join(said_pay)}. Ask the landlord what the rent really covers.")
     if not buying:
         for isf in _try(lambda: _included_seasonal_figures(utext, included)) or []:
             shown = _join_names([_money_cents(x) for x in isf["figs"]])

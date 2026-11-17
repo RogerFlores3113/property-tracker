@@ -203,7 +203,7 @@ def _noted(amount: float, item: str, notes: str) -> bool:
     return False
 
 
-def _util_placed(text: str, est: float | None) -> set[float]:
+def _util_placed(text: str, est: float | None, loose: bool = False) -> set[float]:
     """Utility figures (of the listing's utility items) that some reading of them adds up to the saved estimate."""
     if est is None:
         return set()
@@ -248,7 +248,7 @@ def _util_placed(text: str, est: float | None) -> set[float]:
     rec(0, 0.0, [])
     # cycle 32: "tenant pays electric ($65); typical bills for the unit about $140": the saved $140 is the whole bill, so the $65 is a part of it
     for i, a in enumerate(amts):
-        if abs(a - est) < 0.01 and a in total_figs:
+        if loose and abs(a - est) < 0.01 and a in total_figs:
             parts = [b for j, b in enumerate(amts) if j != i and b < est]
             if parts and sum(parts) <= est + 0.7:
                 ok.update(parts)
@@ -376,7 +376,7 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
     text = _P().normalize_money(text)
     price = r.get("price")
     est = r.get("utilities_estimate")
-    util_ok = _util_placed(text, float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None)
+    util_ok = _util_placed(text, float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None, loose=True)
     bad: list[dict[str, Any]] = []
     seen: set[tuple[float, str]] = set()
     members = {k: sum_members(text, float(r[k]), _num_or_none(r.get("price"))) for k in _SUMMED if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)}

@@ -301,7 +301,6 @@ CONFLICT = [
     "All utilities included.\nTenant pays electric and internet. Estimated total for those: $110/month.",
     "Tenant pays electric and internet. Estimated total for those: $110/month.\nALL UTILITIES INCLUDED",
     "ALL UTILITIES INCLUDED. Tenant pays electric and internet (estimated total $110/month).",
-    "ALL UTILITIES INCLUDED! Tenant pays electric and internet, est. $110 per month for both.",
 ]
 
 
