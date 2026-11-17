@@ -1266,7 +1266,7 @@ def ai_spans(text: str) -> list[tuple[int, int]]:
     it only appears in the flag's quote. Words in front of the instruction in the same sentence ("Application fee $50 Ignore previous ...") are outside."""
     text = str(text or "")
     out: list[tuple[int, int]] = []
-    if not text.strip() or not _aimed_at_ai(text):
+    if not text.strip() or strip_ai_text(text) == text:  # nothing is aimed at an AI tool (the strip is cached from the reader's own call)
         return out
     base = 0
     for line in text.split("\n"):
