@@ -1345,6 +1345,27 @@ def _real_sale_words(text: str) -> bool:
                for m in _SALE_WORDS.finditer(text))
 
 
+_BARE_OBO = re.compile(r"(?<![\w$.,#/-])(\d{1,2},\d{3}|\d{3,5})(?![\d,.]*\d)[ \t]*(?:/[ \t]*mo(?:nth)?[ \t]*)?(?:,?[ \t]*)(o\.?b\.?o\.?|obro|or[ \t]+best[ \t]+offer|or[ \t]+nearest[ \t]+offer|negotiable|neg\.?|firm|best[ \t]+offer)(?![\w])", re.I)
+
+
+def _bare_obo_rent(text: str) -> tuple[float, str] | None:
+    """Cycle 34: "nice 1bd close to campus!! 1550 obo": a number with no dollar sign and "obo", "or best offer", "firm" or "negotiable" right after it is a rent
+    when nothing else in the listing names one. A figure in a deposit, fee, pet, parking or HOA clause, or one followed by a size word, is not."""
+    if _sale_text(text):
+        return None
+    for m in _BARE_OBO.finditer(text):
+        v = _num(m.group(1))
+        if not 300 <= v <= 30000:
+            continue
+        before = text[max(text.rfind("\n", 0, m.start()), text.rfind(". ", 0, m.start()), text.rfind("|", 0, m.start())) + 1:m.start()]
+        if re.search(r"\b(?:deposit|dep\b|fees?|hoa|pets?|dogs?|cats?|parking|garage|storage|utilit\w*|tax|sq|sf|total|move[- ]?in|application|key|bills?)\b", before, re.I):
+            continue
+        if _in_open_question(text, m.end()):
+            continue
+        return v, " ".join(m.group(0).split()).rstrip(".,;:!")
+    return None
+
+
 def _price(text: str) -> float | None:
     """The monthly rent if the text gives one, else the asking price of a home for sale."""
     corrected = None if _SALE_WORDS.search(text) else _corrected_rent(text)
@@ -1407,6 +1428,10 @@ def _price(text: str) -> float | None:
     m = re.search(r"^[ \t*#]*no[ \t]+(?:pets?|smoking|dogs?|cats?|animals?)\b[^\n$]*?[-|][ \t]*\$\s?(\d{1,2},\d{3}|\d{3,5})(?:\.\d\d)?[ \t]*$", text, re.I | re.M)
     if m and not sale_text and 300 <= _num(m.group(1)) <= 20000:  # "NO PETS ALLOWED EXCEPT SERVICE ANIMALS - $2,100"
         return _num(m.group(1))
+    if not sale_text and not any(300 <= a["value"] <= 30000 for a in amounts):
+        ob = _bare_obo_rent(text)
+        if ob:  # cycle 34: "1550 obo" with no dollar sign, when no other figure in the listing is a rent
+            return ob[0]
     return None
 
 
@@ -12615,6 +12640,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append("The listing gives two different bathroom counts and corrects itself. The later count is saved, so check the bathroom count.")
     facts += _try(lambda: _price_notes(text, price_read, buying)) or []
     facts += _try(lambda: _euro_notes(text)) or []
+    if not buying and price_read is not None:
+        ob = _try(lambda: _bare_obo_rent(text))
+        if ob and ob[0] == price_read and not any(300 <= a["value"] <= 30000 and not a["fee"] for a in _amounts(text)):
+            facts.append(f'The listing gives "{ob[1]}" with no dollar sign or period. It is read as the monthly rent, ${ob[0]:,.0f}. {"The price is called firm, so" if re.search(r"firm", ob[1], re.I) else "The owner may take a different figure, so"} ask what the rent really is.')
     put("baths", _try(lambda: _baths(text)))
     fixed_facts = {} if buying else (_try(lambda: _corrected_facts(text)) or {})
     if "baths" in fixed_facts and not bath_fix:
