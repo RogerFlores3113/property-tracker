@@ -1380,7 +1380,7 @@ def _stepup_matches(text: str) -> list[tuple[int, int, float, str, float]]:
             out.append((m.start(), m.end(), a, mo, b))
     seen: set[tuple[float, float]] = set()
     uniq = []
-    for it in sorted(out, key=lambda x: x[0]):
+    for it in out:  # the order the readers found them in (the first one is the old single-step-up read)
         if (it[2], it[4]) not in seen:
             seen.add((it[2], it[4]))
             uniq.append(it)
@@ -1423,7 +1423,9 @@ def _stepup_label(text: str, start: int, end: int) -> tuple[float | None, int, i
 def _stepup_pick(text: str, cands: list[tuple[int, int, float, str, float]]) -> tuple[tuple[float, str, float] | None, list[tuple[float | None, float, str, float]]]:
     """Step-ups for more than one size: the one for this listing's own bedroom count. Returns (the pick as (A, months, B) or None when the listing's size is not
     known or none fits, the other step-ups as (bedrooms or None, A, months, B))."""
-    info = [(c, _stepup_label(text, c[0], c[1])) for c in cands]
+    info = [(c, _stepup_label(text, c[0], c[1])) for c in sorted(cands, key=lambda x: x[0])]
+    if all(lb is None for _c, (lb, _s0, _e1) in info):
+        return (cands[0][2], cands[0][3], cands[0][4]), []  # no size is named anywhere: the first step-up is read as before
     blank = text
     for _c, (_lb, s0, e1) in sorted(info, key=lambda x: -x[1][1]):
         blank = blank[:s0] + " " * (e1 - s0) + blank[e1:]
@@ -1471,6 +1473,8 @@ def _stepup_units_note(text: str, promo: tuple[float, str, float] | None) -> tup
     if len(cands) < 2:
         return None
     pick, others = _stepup_pick(text, cands)
+    if pick is not None and not others:
+        return None
 
     def name(b: float | None) -> str:
         return "another size" if b is None else ("the studio" if b == 0 else f"the {b:g} bedroom")
@@ -12843,11 +12847,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     else:
         from . import dropguard as _dg
         facts = _try(lambda: _dg.clean_quote_notes(out, facts, text)) or facts  # cycle 29: no link, spaced or huge figure and no credit called a cost in a buyer's notes either
+    mm_figs = {_num(m.group(1)) for f in facts for m in [re.match(r"The listing gives a rent of \$([\d,]+) a month, but the rent saved on this place is ", f)] if m}
+    if mm_figs and not buying:  # cycle 32: the rent mismatch note names the listed rent, so no second note calls the same figure a floor plan, an old price or a fee
+        facts = [f for f in facts if not (_QUOTE_ONLY.match(f) and _dollar_values(_QUOTE_ONLY.match(f).group(1)) <= mm_figs)]
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
             out["found_in_listing"] = re.sub(r"\b([Aa]sk|[Cc]heck with) the landlord\b", r"\1 the seller or listing agent", out["found_in_listing"])
     return out
+
+
+_QUOTE_ONLY = re.compile(r'The listing also says "([^"]+)"\. It (?:looks like|is a monthly fee|is not counted)[^\n]*$')
 
 
 def _pet_quote_placed(note: str, out: dict[str, Any]) -> bool:

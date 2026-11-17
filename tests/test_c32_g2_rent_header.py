@@ -98,3 +98,11 @@ def test_no_mismatch_note_when_the_rents_agree_or_the_listing_has_none(t, cur):
 def test_correction_note_and_mismatch_note_are_not_both_given():
     n = notes(read("Rent $1,500. Reduced to $1,650/mo", current={"price": 1500}))
     assert n.count("$1,650") == 1
+
+
+def test_mismatch_note_replaces_the_floor_plan_guess_for_the_same_figure():
+    r = read("Studio $950/mo. Move-in package $3,500 includes first month.", current={"price": 3290})
+    n = notes(r)
+    assert n.count("$950") == 1
+    assert "another floor plan" not in n
+    assert "rent saved on this place is $3,290" in n
