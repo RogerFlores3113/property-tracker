@@ -180,14 +180,14 @@ def test_monthly_permit_still_monthly():
     assert rent("Parking permit $15/mo.")["parking_cost"] == 15
 
 
-def test_surface_lot_with_covered_choice_saves_covered():
+def test_surface_lot_with_covered_choice_saves_the_free_lot():
     r = rent("Parking: surface lot included, covered $35. In-unit washer/dryer.")
-    assert r["parking"] == "covered" and r["parking_cost"] == 35  # cycle 19: options of different kinds save the best kind offered
+    assert r["parking"] == "lot" and r["parking_cost"] == 0  # cycle 26: a free spot beside a priced upgrade is $0 (was the best kind offered in cycle 19)
     assert "$35" in notes(r)
 
 
 @pytest.mark.parametrize("text,kind", [
-    ("Parking: surface lot included, covered $40/mo.", "covered"),
+    ("Parking: surface lot included, covered $40/mo.", "lot"),  # cycle 26: the free lot is the parking, the covered spot is an optional upgrade
     ("Parking: off-street, carport $30 extra.", "lot"),
     ("Parking: covered, assigned.", "covered"),
 ])
