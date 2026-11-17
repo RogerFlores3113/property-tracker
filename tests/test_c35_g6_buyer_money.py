@@ -456,3 +456,40 @@ def test_reviewer_listings_l37_and_l40_do_not_ask_who_pays():
 def test_assessment_note_still_asks_who_pays_when_no_payer_is_named(line):
     out = read("Condo $300,000\n2 bed 2 bath. HOA $200/mo. Taxes $3,000/yr. " + line)
     assert "who pays" in notes(out).lower()
+
+
+# ---- item 9 (buyer T5, U4): "Seller pays $1,500 title policy" gets a "paid by the seller" note
+SP_BASE = "Condo $300,000\n2 bed. HOA $200/mo. Taxes $3,000/yr. Insurance $900/yr. "
+
+
+@pytest.mark.parametrize("line,named", [
+    ("Seller pays $1,500 title policy.", "$1,500 title policy"),
+    ("Title policy $1,500 paid by seller.", "$1,500 title policy"),
+    ("The seller will pay the $1,500 title policy at closing.", "$1,500 title policy"),
+    ("Seller to pay owner's title policy $1,500 and recording $120.", "$1,500 owner's title policy"),
+    ("Closing: seller pays $1,500 title policy | Parking: street", "$1,500 title policy"),
+    ("- Seller pays $1,500 title policy\n- Buyer pays own lender", "$1,500 title policy"),
+    ("Seller pays $1,500 title policy, buyer pays $350 survey.", "$1,500 title policy"),
+])
+def test_seller_paid_closing_item_gets_a_paid_by_the_seller_note(line, named):
+    out, _p, cash = full(SP_BASE + line)
+    n = notes(out)
+    assert f"the seller pays the {named}" in n and "paid by the seller" in n and "not a cost to you" in n
+    assert "title policy" not in " ".join(p["label"] for p in cash["parts"])
+
+
+def test_seller_paid_item_beside_a_buyer_item_keeps_the_buyer_item():
+    out, _p, cash = full(SP_BASE + "Seller pays $1,500 title policy, buyer pays $350 survey.")
+    label = " ".join(p["label"] for p in cash["parts"])
+    assert "$350 for survey" in label and "1,500" not in label
+
+
+@pytest.mark.parametrize("line", [
+    "Buyer pays $1,500 title policy.",
+    "Seller will credit $5,000 toward closing costs.",
+    "Seller pays $7,000 toward closing costs.",
+])
+def test_seller_paid_note_negatives(line):
+    out = read(SP_BASE + line)
+    assert "the seller pays the" not in notes(out) or "toward" in line
+    assert "$1,500 title policy. It is paid by the seller" not in notes(out)

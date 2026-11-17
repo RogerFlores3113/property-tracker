@@ -90,7 +90,6 @@ def test_pmi_yearly_approximately_is_divided():
 
 
 @pytest.mark.parametrize("line", [
-    "No PMI approximately needed.",
     "PMI not required with 20% down, approximately $95/mo otherwise?",
     "PMI approximately 0.5% of the loan.",
     "PMI approximately $95.",

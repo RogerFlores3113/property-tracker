@@ -6376,14 +6376,25 @@ _SELLER_PROVIDES = re.compile(r"\b(?:seller|owner)(?:'s)?\b[^.\n]{0,25}\b(?:prov
 def seller_paid_fees(text: str) -> list[tuple[str, float]]:
     """Cycle 27: one-time fees the listing says the seller pays ("Transfer fee $350 paid by seller", "Seller pays the $800 move-in fee"). Not a cost to the buyer."""
     got: list[tuple[str, float]] = []
-    for sent in re.split(r"[.\n;]", text or ""):
-        if not (_PAYER_SELLER.search(sent) or _SELLER_PROVIDES.search(sent)) or _PAYER_BUYER.search(sent):
-            continue
-        for m in _BUYER_FEE.finditer(sent):
-            label = " ".join((m.group("n1") or m.group("n2")).lower().split())
-            amount = _num(m.group(1) if m.group("n1") else m.group(m.lastindex))
-            if not re.fullmatch(r"(?:working[ \t]+)?capital[ \t]+contributions?", label) and 50 <= amount <= 100000 and (label, amount) not in got:
-                got.append((label, amount))
+    for sent0 in re.split(r"(?<!\d)\.|\.(?!\d)|[\n;|]", text or ""):
+        clauses = [sent0]
+        if _PAYER_SELLER.search(sent0) and _PAYER_BUYER.search(sent0):
+            clauses = re.split(r"[ \t]*(?:,(?!\d)|\|)[ \t]*|[ \t]+(?:and|but|while|whereas)[ \t]+(?=(?:the[ \t]+)?(?:buyer|seller|purchaser|owner)\b)", sent0, flags=re.I)  # cycle 35: "Seller pays $1,500 title policy, buyer pays $350 survey"
+        for sent in clauses:
+            if not (_PAYER_SELLER.search(sent) or _SELLER_PROVIDES.search(sent)) or _PAYER_BUYER.search(sent):
+                continue
+            for m in _BUYER_FEE.finditer(sent):
+                label = " ".join((m.group("n1") or m.group("n2")).lower().split())
+                amount = _num(m.group(1) if m.group("n1") else m.group(m.lastindex))
+                if not re.fullmatch(r"(?:working[ \t]+)?capital[ \t]+contributions?", label) and 50 <= amount <= 100000 and (label, amount) not in got:
+                    got.append((label, amount))
+            if re.search(r"\bcredits?\b|\bconcessions?\b|\bclosing[ \t]+(?:costs?|help|assistance)\b|\btoward\b", sent, re.I):
+                continue  # a credit toward the buyer's costs is read by the seller credit readers, never as a named item
+            bare = re.sub(r"\b(?:the[ \t]+)?(?:seller|owner|vendor)(?:'s)?[ \t]+(?:(?:will|to|shall|should)[ \t]+)*(?:pays?|covers?|paying|is[ \t]+paying|is[ \t]+responsible[ \t]+for|responsible[ \t]+for)[ \t:]*(?:for[ \t]+)?(?:the[ \t]+)?"
+                          r"|[ \t]*[(,]?[ \t]*(?:(?:paid|covered|provided)[ \t]+(?:in[ \t]+full[ \t]+)?by[ \t]+(?:the[ \t]+)?(?:seller|owner|vendor)|(?:seller|owner)[- ]paid)[ \t]*\)?", " ", sent, flags=re.I)
+            for label, amount in _closing_bound_items(bare, insurance=False) or []:  # cycle 35: "Seller pays $1,500 title policy": a closing item the seller pays is named, never silently dropped
+                if 50 <= amount <= 100000 and (label, amount) not in got:
+                    got.append((label, amount))
     return got
 
 
@@ -6681,7 +6692,7 @@ def _buyer_only_fees(text: str, out: dict[str, Any], saved_closing: float | None
         notes.append(f"The listing mentions {art}{label} equal to {months:g} month{'s' if months != 1 else ''} of HOA but does not say who pays it, so it is not counted in the cash to close. Ask who pays it.")
     seller_fees = _try(lambda: seller_paid_fees(text)) or []
     for label, amount in seller_fees:
-        notes.append(f"The listing says the seller pays the ${amount:,.0f} {label}. It is not a cost to you, so it is not counted in the cash to close.")
+        notes.append(f"The listing says the seller pays the {_money_c(amount)} {label}. It is paid by the seller, not a cost to you, so it is not counted in the cash to close.")
     for label, amount in unclear_fees:
         if fee is not None and abs(fee - amount) < 0.01:
             continue  # a move-in fee with no payer keeps its own note below
