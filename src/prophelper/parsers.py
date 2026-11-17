@@ -5311,7 +5311,8 @@ def _seller_also_pays_fees_notes(text: str, credit: Any) -> list[str]:
         for m in _SELLER_PAYS_FEES.finditer(sent):
             if re.match(r"[ \t]*(?:\(|:|of|-|=|about|approx\.?)?[ \t]*\$\s?\d", sent[m.end():m.end() + 25], re.I) or re.search(r"\$\s?[\d,]+(?:\.\d\d)?[ \t]*$", sent[:m.start("names")]):
                 continue
-            names = " and ".join(dict.fromkeys(w.lower() for w in re.findall(_SELLER_FEE_NAMES, m.group("names"), re.I)))
+            tail = re.match(r"(?:(?:[ \t]*,[ \t]*|[ \t]+(?:and|&)[ \t]+)" + _SELLER_FEE_NAMES + r"(?:[ \t]+(?:fees?|costs?|charges))?)+", sent[m.end():], re.I)  # "title fees and recording fees"
+            names = " and ".join(dict.fromkeys(w.lower() for w in re.findall(_SELLER_FEE_NAMES, m.group("names") + (tail.group(0) if tail else ""), re.I)))
             notes.append(f"The listing says the seller also pays the buyer's {names} fees but gives no amount for them. Only the ${float(credit):,.0f} seller credit is taken off "
                          "the cash to close, nothing is taken off for these fees. Ask the seller's agent what they come to and whether they are part of the credit.")
             return notes

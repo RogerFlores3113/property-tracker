@@ -101,6 +101,11 @@ def test_seller_credit_plus_title_fees_is_noted(line):
     assert cash["total"] == DOWN + GUESS - 2000  # only the stated $2,000 comes off
 
 
+def test_seller_credit_plus_two_named_fees_names_both():
+    out, place, cash = read(BASE + "Seller will credit $2,000. Seller pays the buyer's title fees and recording fees.")
+    assert "title and recording fees" in notes(out)
+
+
 def test_seller_credit_alone_has_no_title_fee_note():
     out, place, cash = read(BASE + "Seller will credit $2,000 toward closing costs.")
     assert out["seller_credit"] == 2000 and "title fees" not in notes(out).lower()
