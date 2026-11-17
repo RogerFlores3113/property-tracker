@@ -63,6 +63,27 @@ def test_reviewer_listing_uiuc_l18():
     assert "not counted anywhere" not in notes(r)
 
 
+LAYOUTS = [
+    "util: you pay elec + gas | water/sewer/trash is on us | ~$90/mo for elec+gas",
+    "Utilities:\n- you pay elec + gas\n- water/sewer/trash is on us\n- figure ~$90/mo for the elec+gas",
+    "* you pay elec + gas\n* water/sewer/trash on us\n* figure ~$90/mo for the elec+gas",
+    "UTIL: YOU PAY ELEC + GAS, WATER/SEWER/TRASH IS ON US. FIGURE ~$90 A MONTH FOR THE ELEC+GAS",
+    "util: you pay elec + gas; water/sewer/trash is on us; figure ~$90 a month for elec + gas",
+    "Water/sewer/trash is on us, you pay the electric and gas (figure ~$90 a month for both)",
+    "you pay elec + gas, water/sewer/trash on the house. figure ~$90 a month for the elec+gas",
+    "utilities: elec + gas are on you, water/sewer/trash on us, figure ~$90 for elec+gas",
+]
+
+
+@pytest.mark.parametrize("body", LAYOUTS)
+def test_landlord_clause_in_other_layouts(body):
+    r = P(HEAD + body)
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}, r.get("tenant_pays")
+    assert _set(r["utilities_included"]) == {"water", "sewer", "trash"}
+    assert r["utilities_estimate"] == 90, notes(r)
+    assert "unclear" not in notes(r)
+
+
 def test_on_us_without_any_pay_line_is_included_only():
     for body in ("Water/sewer/trash is on us.", "Water and trash on the house.", "Water, sewer, trash: on us."):
         r = P(HEAD + body)
@@ -239,3 +260,20 @@ def test_english_negatives_unchanged():
     assert _set(r["tenant_pays"]) == {"electric", "gas"} and r["utilities_included"] == "water"
     r = P(HEAD + "Great natural light and gas stove. Water included.")
     assert not r.get("tenant_pays") and r["utilities_included"] == "water"
+
+
+def test_billed_back_note_keeps_the_listing_hedge_and_adds_none():
+    r = P(HEAD + "Tenant pays electric. Water, sewer and trash billed back by Conservice approximately $60/month.")
+    assert "billed back at about $60/month" in notes(r)
+    r = P(HEAD + "Tenant pays electric and gas. Water & trash billed back $45.")
+    assert r["utilities_estimate"] == 45 and "billed back at $45/month" in notes(r)
+
+
+def test_quarterly_passed_through_figure_is_not_made_monthly():
+    r = P("Rent $3,100/mo. Tenant pays electric. Quarterly water bill passed through, around $150.")
+    assert r.get("utilities_estimate") == 50, notes(r)
+
+
+def test_corpus_pay_list_and_spanish_neighbours():
+    r = P(saved("r33-nontech-l26"))
+    assert _set(r["tenant_pays"]) == FIVE and r["utilities_estimate"] == 230
