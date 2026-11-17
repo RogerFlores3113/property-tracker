@@ -186,6 +186,15 @@ def normalize_money(text: str) -> str:
         text = text.translate(_FULLWIDTH)
         text = re.sub(r"(?<=\d)\uFF0C(?=\d)", ",", text)
         text = re.sub(r"(?<=\d)\uFF0E(?=\d)", ".", text)
+    if "$" in text:
+        # cycle 34: a space as the thousands mark ("2 300 $ par mois", "2 300,00 $", "$2 300 par mois") is read whole, never as the small part ("300")
+        def _spaced(m: re.Match[str]) -> str:
+            return "$" + m.group(1).replace(" ", ",") + (("." + m.group(2)) if m.group(2) and m.group(2) != "00" else "")
+        text = re.sub(r"(?<![\w$.,])(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?[ \t]?\$(?![ \t]?\d)", _spaced, text)
+        text = re.sub(r"\$[ \t]?(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?(?![\d])(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|a[ \t]+month|mensu|monat|mois|mes\b|mo\b|monthly|por\b|[.,;)]|$))", _spaced, text, flags=re.M)
+    if re.search(r"\d \d{3}", text):  # cycle 34: "Loyer 2 300 par mois", "Miete: 2 300 pro Monat": a rent label then a spaced number with no sign
+        text = re.sub(r"(?i)\b(loyer|miete|kaltmiete|warmmiete|alquiler|renta|rent)\b([ \t:=-]*(?:mensuel(?:le)?|mensual|monatlich|monthly)?[ \t:=-]*)(\d{1,3}(?: \d{3})+)(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|por\b|a[ \t]+month|mois|mes\b|monat))",
+                      lambda m: m.group(1) + m.group(2) + "$" + m.group(3).replace(" ", ","), text)
     if "$" in text or re.search(r"usd|dollar|bucks|\d\s?k\b", text, re.I):
         text = re.sub(r"\bUS\s?\$\s?(?=\d)", "$", text, flags=re.I)
         text = re.sub(r"\bUSD\s?\$?\s?(?=\d)", "$", text, flags=re.I)
@@ -2156,8 +2165,27 @@ def _in_open_question(text: str, pos: int) -> bool:
 
 
 _FREE_MONTH_WORDING = re.compile(
-    r"(?<![\w/.$])(?:(?:the[ \t]+)?(?:first|1st)[ \t]+(?:(?:one|two|three|\d{1,2})[ \t]+)?months?[ \t]+(?:only[ \t]+)?(?:is[ \t]+|are[ \t]+)?(?:free|half[ \t-]*price)"
-    r"|months?[ \t]+(?:one|two|three|\d{1,2})(?:[ \t]*(?:-|\u2013|to|through|thru|and|&|,)[ \t]*(?:one|two|three|\d{1,2}))?[ \t]+(?:is[ \t]+|are[ \t]+)?(?:free|half[ \t-]*price))\b", re.I)
+    r"(?<![\w/.$])(?:(?:the[ \t]+)?(?:first|1st)[ \t]+(?:(?:one|two|three|\d{1,2})[ \t]+)?months?[ \t]*[:,-]?[ \t]*(?:only[ \t]+)?(?:is[ \t]+|are[ \t]+)?(?:free|(?:half|\d{1,2}[ \t]*%)[ \t-]*(?:price|off))"
+    r"|months?[ \t]+(?:one|two|three|\d{1,2})(?:[ \t]*(?:-|\u2013|to|through|thru|and|&|,)[ \t]*(?:one|two|three|\d{1,2}))?[ \t]*[:,-]?[ \t]*(?:is[ \t]+|are[ \t]+)?(?:free|(?:half|\d{1,2}[ \t]*%)[ \t-]*(?:price|off))"
+    # cycle 34: "Half off months 1-2", "50% off the first two months", "Half price for the first 2 months": the word comes before the months
+    r"|(?:half|\d{1,2}[ \t]*%)[ \t-]*(?:price|off)[ \t]+(?:(?:for|during|on)[ \t]+)?(?:the[ \t]+)?(?:(?:first|1st)[ \t]+(?:(?:one|two|three|\d{1,2})[ \t]+)?months?|months?[ \t]+(?:one|two|three|\d{1,2})(?:[ \t]*(?:-|\u2013|to|through|thru|and|&|,)[ \t]*(?:one|two|three|\d{1,2}))?))\b", re.I)
+
+
+_EURO_AMOUNT = re.compile(r"(?<![\w$.,])(?:(?:€|EUR|euros?)[ \t]?(\d{1,3}(?:[ .,]\d{3})+|\d{3,6})(?:[,.]\d{2})?(?![\d])|(\d{1,3}(?:[ .,]\d{3})+|\d{3,6})(?:[,.]\d{2})?[ \t]?(?:€|EUR\b|euros?\b))", re.I)
+
+
+def _euro_notes(text: str) -> list[str]:
+    """Cycle 34: "Miete 2.300 EUR pro Monat", "Loyer 2 300 € par mois": an amount in euros is never saved as dollars and never read as a smaller part of itself
+    ("300"). One plain note quotes it whole."""
+    out: list[str] = []
+    for m in _EURO_AMOUNT.finditer(text):
+        raw = m.group(1) or m.group(2)
+        digits = re.sub(r"[ .,]", "", raw)
+        if not digits.isdigit():
+            continue
+        out.append(f"The listing gives {int(digits):,} EUR, which is in euros, not dollars. It is not saved. Ask for the figure in dollars.")
+        break
+    return out
 
 
 def _price_notes(text: str, price: float | None = None, buying: bool = False) -> list[str]:
@@ -12586,6 +12614,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         else:
             facts.append("The listing gives two different bathroom counts and corrects itself. The later count is saved, so check the bathroom count.")
     facts += _try(lambda: _price_notes(text, price_read, buying)) or []
+    facts += _try(lambda: _euro_notes(text)) or []
     put("baths", _try(lambda: _baths(text)))
     fixed_facts = {} if buying else (_try(lambda: _corrected_facts(text)) or {})
     if "baths" in fixed_facts and not bath_fix:
