@@ -539,9 +539,32 @@ _WAIVABLE = re.compile(r"\b(?:unless|without[ \t]+(?:prior[ \t]+|written[ \t]+)?
                        r"(?:larger|bigger|heavier|big) (?:dogs?|pets?)(?!\s+(?:are\s+|will\s+be\s+)?(?:not|never)\b)[^.\n]{0,30}(?:considered|approved|reviewed|ask))\b", re.I)  # cycle 34: "larger dogs not considered" is a no
 
 
+# cycle 35: "Pets by approval only", "Pets with approval only", "Pets: approval required": the whole pet policy needs approval, so a weight or count limit beside it is
+# the landlord's starting point, not a hard no. A sentence about one breed ("Pit bulls need approval") is not this.
+_POLICY_APPROVAL = re.compile(r"\b(?:pets?|dogs?|animals?)\b[^.\n!?]{0,25}?\b(?:(?:by|with|upon|on|subject[ \t]+to|needs?|requires?|required)[ \t]+(?:prior[ \t]+|written[ \t]+)?(?:landlord[ \t]+|owner[ \t]+|management[ \t]+)?(?:approval|permission)"
+                              r"|approval[ \t]+(?:is[ \t]+)?(?:only|required|needed)|permission[ \t]+(?:is[ \t]+)?(?:required|needed))", re.I)
+_POLICY_APPROVAL_NOT = re.compile(r"\bbreeds?\b|\bpit[ \t]*bulls?\b|\brottweilers?\b|\baggressive\b|\bexotic\b|\b(?:birds?|reptiles?|fish|snakes?)\b|\b(?:no|without|not)[ \t]+(?:\w+[ \t]+)?(?:approval|permission)\b", re.I)
+
+
+def _pets_need_approval(place: dict[str, Any]) -> bool:
+    """True when the listing says the pet policy as a whole needs approval ("Pets by approval only")."""
+    for key in ("listing_text",):  # the reader's own notes also quote question lines ("No pets with approval only? Please inquire."), so only the listing itself counts
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+|\s*\|\s*", str(place.get(key) or "")):
+            if sentence.rstrip().endswith("?"):
+                continue
+            for piece in re.split(r";", sentence):
+                if _POLICY_APPROVAL.search(piece) and not _POLICY_APPROVAL_NOT.search(piece):
+                    return True
+    return False
+
+
 def _limit_can_be_waived(place: dict[str, Any]) -> bool:
     """True when a sentence of the listing about a pet weight or count limit also says it can be waived or needs approval
     ("No dogs over 50 lbs unless approved by management", "case-by-case")."""
+    for key in ("listing_text", "pet_breed_note", "reader_notes", "notes"):
+        text = str(place.get(key) or "")
+    if _pets_need_approval(place):
+        return True
     for key in ("listing_text", "pet_breed_note", "reader_notes", "notes"):
         text = str(place.get(key) or "")
         sentences = re.split(r"(?<=[.!?])\s+|\n+", text)

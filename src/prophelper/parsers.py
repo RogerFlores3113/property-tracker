@@ -4264,7 +4264,7 @@ def _pets(text: str, weight_rules: bool = True) -> str:
     if re.search(r"(?<!\bno )(?<!\bnot )(?<!\bwithout )\b(?:one |a |1 )?(?:cats?|dogs?) or (?:one |a |1 )?(?:(?:small|medium|large|big|little|tiny|young|well[- ]behaved)\s+)*(?:dogs?|cats?)\b(?!\s+(?:is |are )?(?:not|prohibited|banned))", work) \
             and not re.search(r"\b(?:no|not|without)\s+(?:\w+\s+)?(?:cats?|dogs?) or\b", work):
         cats = dogs = True  # "We allow one cat or small dog": both kinds are taken (one animal of either kind)
-    for gm in re.finditer(r"\bpet[- ]friendly\b|\bpets (?:ok|okay|allowed|welcome|accepted)\b(?!\s+(?:with|by|on|upon|subject to)\s+(?:landlord\s+|owner\s+|management\s+)?(?:approval|permission))|\bpets\s*[:\-]\s*(?:yes|ok|okay|allowed|welcome)\b", work):
+    for gm in re.finditer(r"\bpet[- ]friendly\b|\bpets (?:(?:are|is) )?(?:ok|okay|allowed|welcome|accepted)\b(?!\s+(?:with|by|on|upon|subject to)\s+(?:landlord\s+|owner\s+|management\s+)?(?:approval|permission))|\bpets\s*[:\-]\s*(?:yes|ok|okay|allowed|welcome)\b", work):
         seg = work[max(work.rfind(c, 0, gm.start()) for c in ".;\n|!?") + 1:]
         seg = re.split(r"[.;\n|!?]", seg)[0]
         named = re.sub(r"\bno\s+(?:cats?|dogs?)\b|\b(?:cats?|dogs?)\s+(?:are\s+)?not\s+(?:allowed|permitted|accepted)", " ", seg)
@@ -4608,8 +4608,8 @@ def _pet_clause_charges(text: str) -> dict[str, float]:
             start = sm.start() + part.start()
             if not (_PET_WORD.search(sent) or (re.match(r"\s*\$", sent) and _after_pet_sentence(text, start))) or _PC_SKIP.search(sent):
                 continue
-            for am in re.finditer(r"(?<![\w$])\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])", sent):
-                value = float(am.group(1))
+            for am in re.finditer(r"(?<![\w$])\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])", sent):
+                value = _num(am.group(1))
                 right = re.split(r"\$|,|\band\b|\bplus\b|\+", sent[am.end():am.end() + 40])[0]
                 left = re.split(r",|\band\b|\bplus\b|\+|\$", sent[:am.start()])[-1]
                 if re.match(r"[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+|refundable[ \t]+)?(?:pet[ \t]+)?deposits?\b", right, re.I) or re.search(r"deposits?\W{0,4}$", left, re.I):
@@ -4629,11 +4629,11 @@ def _pet_fees(text: str) -> dict[str, float]:
     """Pet rent (monthly) and pet fee or deposit (one time), kept apart."""
     out: dict[str, float] = {}
     used: set[int] = set()
-    for m in re.finditer(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b"
+    for m in re.finditer(r"\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b"
                          r"|(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b)", text, re.I):
         used.add(m.start())
-        out.setdefault("pet_rent", float(m.group(1)))
-    for m in re.finditer(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(/[ \t]*mo(?:nth)?|per month|monthly|a month)?[ \t]*(?:per pet[ \t]*)?"
+        out.setdefault("pet_rent", _num(m.group(1)))
+    for m in re.finditer(r"\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(/[ \t]*mo(?:nth)?|per month|monthly|a month)?[ \t]*(?:per pet[ \t]*)?"
                          r"(?:(?:one[- ]?time|non[- ]?refundable|refundable|up[- ]?front|flat)(?:[ \t]+|,[ \t]*(?=(?:one[- ]?time|non[- ]?refundable|refundable|up[- ]?front|flat)))){0,3}(?:pet\s+(rent|fees?|deposit|charge)\b|per pet\b)", text, re.I):
         if m.start() in used:
             continue  # "$35 per pet per month" was read as pet rent above, so it is not also a pet fee
@@ -4644,14 +4644,14 @@ def _pet_fees(text: str) -> dict[str, float]:
             continue  # "deposit $250 per pet" and "Monthly pet rent $35 per pet": the label owns the amount, not a pet fee
         used.add(m.start())
         rent = bool(m.group(2)) or (m.group(3) or "").lower() in ("rent", "charge")
-        out.setdefault("pet_rent" if rent else "pet_fee", float(m.group(1)))
+        out.setdefault("pet_rent" if rent else "pet_fee", _num(m.group(1)))
     labels = [lm for lm in re.finditer(r"\bpet\s+(rent|fees?|deposit|charge)s?\b", text, re.I)
               if not re.search(r"\b(?:no|zero|without|waived)\W{0,3}$", text[max(0, lm.start() - 10):lm.start()], re.I)]  # "No pet fee"
     for i, m in enumerate(labels):
         stop = min([m.end() + 60, text.find("\n", m.end()) if text.find("\n", m.end()) >= 0 else len(text)]
                    + ([labels[i + 1].start()] if i + 1 < len(labels) else []))
         rest = re.split(r"[.;!?](?:\s|$)", text[m.end():stop])[0]  # the next sentence's amount ("Pet fee n/a. Application $40") is not a pet amount
-        am = re.match(r"[^$\n]{0,25}?(\$\s?(\d{1,4})(?:\.\d\d)?)(?!\d)(.{0,24})", rest)
+        am = re.match(r"[^$\n]{0,25}?(\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?))(?!\d)(.{0,24})", rest)
         if not am or (m.end() + am.start(1)) in used or re.search(r"\bpet\b", rest[:am.start(1)], re.I):
             continue
         if re.match(r"[\s:\-=]*(?:n/?a|none|no|not|waived|free)\b", rest, re.I):
@@ -4659,65 +4659,65 @@ def _pet_fees(text: str) -> dict[str, float]:
         trailing = re.split(r"[.;]\s", am.group(3))[0]
         monthly = (m.group(1).lower() in ("rent", "charge") or bool(re.match(r"\s*(?:/\s*mo|per month|monthly|a month)", trailing, re.I))
                    or "monthly" in re.split(r"[.;!?\n](?:\s|$)|\n", text[max(0, m.start() - 10):m.start()])[-1].lower())  # cycle 18: only the same sentence ("$35 per cat monthly. Pet fee $250" is not a monthly fee)
-        out.setdefault("pet_rent" if monthly else "pet_fee", float(am.group(2)))
-    m = re.search(r"\bmonthly\s+pet\s+(?:fee|rent|charge)\s*[:\-]?\s*\$\s?(\d{1,4})", text, re.I)
+        out.setdefault("pet_rent" if monthly else "pet_fee", _num(am.group(2)))
+    m = re.search(r"\bmonthly\s+pet\s+(?:fee|rent|charge)\s*[:\-]?\s*\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)", text, re.I)
     if m:
-        out["pet_rent"] = float(m.group(1))
+        out["pet_rent"] = _num(m.group(1))
     if "pet_fee" not in out:  # "Cats up to 2, $250 fee, $30 pet rent": a bare "$250 fee" in a pet sentence is the one-time pet fee
-        for m in re.finditer(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;$]{0,45}?\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:(?:one[- ]?time|non[- ]?refundable|refundable)[ \t,]+){0,3}fee\b"
+        for m in re.finditer(r"\b(?:cats?|dogs?|pets?|animals?)\b[^.\n;$]{0,45}?\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:(?:one[- ]?time|non[- ]?refundable|refundable)[ \t,]+){0,3}fee\b"
                              r"(?![ \t]+(?:for|to)[ \t]+(?:app|apply|screen|background|credit|admin|move|tour))([ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)?)", text, re.I):
             if text[max(0, m.start(1) - 12):m.start(1)].lower().rstrip().endswith(("application", "app", "admin")):
                 continue
-            out.setdefault("pet_rent" if m.group(2).strip() else "pet_fee", float(m.group(1)))
+            out.setdefault("pet_rent" if m.group(2).strip() else "pet_fee", _num(m.group(1)))
             break
     if "pet_fee" not in out and "pet_rent" not in out:  # "Cat fee $150" / "Dog fee: $200": a fee named for one animal is the pet fee
-        m = re.search(r"\b(?:cat|dog)s?[ \t]+fee[ \t:\-=]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])([ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month))?", text, re.I)
+        m = re.search(r"\b(?:cat|dog)s?[ \t]+fee[ \t:\-=]*\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])([ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month))?", text, re.I)
         if m:
-            out["pet_rent" if m.group(2) else "pet_fee"] = float(m.group(1))
+            out["pet_rent" if m.group(2) else "pet_fee"] = _num(m.group(1))
     if "pet_fee" not in out and "pet_rent" not in out:  # cycle 31: "a non-refundable $200 cat fee", "$150 dog fee": the amount comes first, the animal names the fee
-        m = re.search(r"(?<![\w$])\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])[ \t]*(?:(?:one[- ]?time|non[- ]?refundable|refundable|up[- ]?front|flat)[ \t,]+){0,3}(?:cat|dog)s?[ \t]+fees?\b(?![ \t]*(?:/[ \t]*mo|per[ \t]+month|monthly|a[ \t]+month))", text, re.I)
+        m = re.search(r"(?<![\w$])\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])[ \t]*(?:(?:one[- ]?time|non[- ]?refundable|refundable|up[- ]?front|flat)[ \t,]+){0,3}(?:cat|dog)s?[ \t]+fees?\b(?![ \t]*(?:/[ \t]*mo|per[ \t]+month|monthly|a[ \t]+month))", text, re.I)
         if m:
-            out["pet_fee"] = float(m.group(1))
+            out["pet_fee"] = _num(m.group(1))
     if "pet_rent" not in out:  # "cat rent $25", "Dog rent $40": rent named for one animal is the monthly pet rent
-        m = re.search(r"\b(?:cat|dog)s?[ \t]+rent[ \t:\-=]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:one[- ]time|deposit|fee))", text, re.I)
+        m = re.search(r"\b(?:cat|dog)s?[ \t]+rent[ \t:\-=]*\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])(?![ \t]*(?:one[- ]time|deposit|fee))", text, re.I)
         if m:
-            out["pet_rent"] = float(m.group(1))
+            out["pet_rent"] = _num(m.group(1))
     if "pet_fee" not in out:  # "Pets ok. One time fee $200.": the fee sentence right after the pet sentence
-        m = re.search(_PET_THEN_ONE_TIME.pattern + r"[ \t]+fee[ \t:\-]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])", text, re.I)
+        m = re.search(_PET_THEN_ONE_TIME.pattern + r"[ \t]+fee[ \t:\-]*\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])", text, re.I)
         if m:
-            out["pet_fee"] = float(m.group(3))
+            out["pet_fee"] = _num(m.group(3))
     if "pet_fee" not in out and "pet_rent" in out:  # "Dogs max 2. $300 fee, $35 pet rent": the fee sits beside the pet rent
-        m = re.search(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b[ \t]*,?[ \t]*(?:and[ \t]+)?\$[ \t]?\d{1,4}(?:\.\d\d)?[^.\n;$]{0,15}pet[ \t]+rent", text, re.I) \
-            or re.search(r"\bpet[ \t]+rent\b[^.\n;$]{0,25}\$[ \t]?\d{1,4}(?:\.\d\d)?[^.\n;$]{0,15}?,[ \t]*(?:and[ \t]+)?\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b(?![ \t]*(?:/|per month|monthly))", text, re.I)
+        m = re.search(r"\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b[ \t]*,?[ \t]*(?:and[ \t]+)?\$[ \t]?(?:\d{1,3}(?:,\d{3})+|\d{1,6})(?:\.\d\d)?[^.\n;$]{0,15}pet[ \t]+rent", text, re.I) \
+            or re.search(r"\bpet[ \t]+rent\b[^.\n;$]{0,25}\$[ \t]?(?:\d{1,3}(?:,\d{3})+|\d{1,6})(?:\.\d\d)?[^.\n;$]{0,15}?,[ \t]*(?:and[ \t]+)?\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b(?![ \t]*(?:/|per month|monthly))", text, re.I)
         if m:
-            out["pet_fee"] = float(m.group(1))
+            out["pet_fee"] = _num(m.group(1))
     if "pet_rent" not in out:  # "Pet friendly (cats only, $40/month, deposit $250)": a monthly amount inside a pet sentence is the pet rent
-        for m in re.finditer(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b(?![ \t]*(?:deposit|fee))", text, re.I):
+        for m in re.finditer(r"\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b(?![ \t]*(?:deposit|fee))", text, re.I):
             if _in_pet_sentence(text, m.start()) and not re.search(r"parking|garage|storage|utilit|trash|hoa|internet|cable|water|\brent\b", text[max(0, m.start() - 20):m.start()], re.I):
-                out["pet_rent"] = float(m.group(1))
+                out["pet_rent"] = _num(m.group(1))
                 break
     if "pet_rent" not in out:  # "$35 each pet rent", "Pets welcome, $35 each, max 2 pets": an amount for each pet in a pet sentence
         for sent in re.split(r"[.;\n|]", text):
-            em = re.search(r"\$[ \t]?(\d{1,4})(?:\.\d\d)?[ \t]*(?:(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)[ \t]*)?(?:each|apiece)\b(?:[ \t]+(?:for[ \t]+)?pets?)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b)?(?![ \t]+(?:adult|applicant|person|occupant|tenant|resident|roommate|app|screen|background|credit|admin))", sent, re.I)
+            em = re.search(r"\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)[ \t]*)?(?:each|apiece)\b(?:[ \t]+(?:for[ \t]+)?pets?)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b)?(?![ \t]+(?:adult|applicant|person|occupant|tenant|resident|roommate|app|screen|background|credit|admin))", sent, re.I)
             if em and _PET_WORD.search(sent) and not re.search(r"\b(?:one[- ]time|deposit|non[- ]?refundable|fee)\b", sent[em.end():em.end() + 25], re.I) \
                     and not re.search(r"parking|garage|storage|utilit|application|admin", sent[:em.start()], re.I):
-                out["pet_rent"] = float(em.group(1))
+                out["pet_rent"] = _num(em.group(1))
                 break
     if "pet_fee" not in out:  # cycle 20: "Pet policy: Cats only, 1 max, $35 monthly rent, $200 fee.": a bare "$N fee" inside a line that starts with a pet word
         for sent in re.split(r"[.;\n|](?=\s|$)|\n", text):
             if not _PET_LEAD.match(sent.strip()):
                 continue
-            fm = re.search(r"(?<![\w$])\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b(?![ \t]*(?:/|per[ \t]+month|monthly|a[ \t]+month|each[ \t]+month))(?![ \t]+(?:for|to)[ \t]+(?:app|apply|screen|background|credit|admin|move|tour|lease|parking))", sent, re.I)
+            fm = re.search(r"(?<![\w$])\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])[ \t]*(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?fee\b(?![ \t]*(?:/|per[ \t]+month|monthly|a[ \t]+month|each[ \t]+month))(?![ \t]+(?:for|to)[ \t]+(?:app|apply|screen|background|credit|admin|move|tour|lease|parking))", sent, re.I)
             if fm and not re.search(r"(?:application|app|admin|move[- ]in|credit|screening|background|parking|key|lease|holding)\W{0,3}$", sent[:fm.start()].rstrip(), re.I):
-                out["pet_fee"] = float(fm.group(1))
+                out["pet_fee"] = _num(fm.group(1))
                 break
     for key, value in _pet_clause_charges(text).items():
         out.setdefault(key, value)
     if not out:  # "cats negotiable, $50 extra": an extra charge for the pet, taken as monthly pet rent
-        m = re.search(r"\b(?:cats?|dogs?|pets?)\b[^.\n$]{0,40}\$\s?(\d{1,4})(?:\.\d\d)?\s*(?:extra|more|additional)\b([^.\n]{0,25})", text, re.I)
+        m = re.search(r"\b(?:cats?|dogs?|pets?)\b[^.\n$]{0,40}\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)\s*(?:extra|more|additional)\b([^.\n]{0,25})", text, re.I)
         if m:
             one_time = re.search(r"one[- ]time|deposit|non[- ]?refundable|once", m.group(2), re.I)
-            out["pet_fee" if one_time else "pet_rent"] = float(m.group(1))
+            out["pet_fee" if one_time else "pet_rent"] = _num(m.group(1))
     return out
 
 _NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4}
@@ -4747,12 +4747,12 @@ def _no_pet_deposit(text: str) -> bool:
 def _pet_deposit(text: str) -> tuple[float | None, str]:
     """A refundable pet deposit ("$400 refundable pet deposit"), kept apart from the one-time pet fee: it comes back,
     so it counts only as cash needed at move-in. Returns (amount, text with that phrase blanked so _pet_fees skips it)."""
-    pats = (r"\$\s?(\d{1,4})(?:\.\d\d)?[ \t]*(?:one[- ]time[ \t]+)?(?:refundable[ \t]+)?pet[ \t]+deposit\b",
-            r"\bpet[ \t]+deposit[ \t]*(?:[(\[][ \t]*(?:fully[ \t]+)?refundable[ \t]*[)\]]|(?:fully[ \t]+)?refundable)?[ \t]*(?:[:\-=]|of|is)?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?\b(?!/)",
+    pats = (r"\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:one[- ]time[ \t]+)?(?:refundable[ \t]+)?pet[ \t]+deposit\b",
+            r"\bpet[ \t]+deposit[ \t]*(?:[(\[][ \t]*(?:fully[ \t]+)?refundable[ \t]*[)\]]|(?:fully[ \t]+)?refundable)?[ \t]*(?:[:\-=]|of|is)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)\b(?!/)",
             # "$250 per pet deposit", "$250 each pet deposit", "deposit: $250 per pet"
-            r"\$\s?(\d{1,4})(?:\.\d\d)?[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]+(?:refundable[ \t]+)?deposit\b",
-            r"\b(?:pets?|dogs?|cats?|animals?)[ \t]+deposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b",
-            r"(?<!pet )\bdeposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?(?=[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b)")
+            r"\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]+(?:refundable[ \t]+)?deposit\b",
+            r"\b(?:pets?|dogs?|cats?|animals?)[ \t]+deposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b",
+            r"(?<!pet )\bdeposit[ \t]*(?:[:\-]|of)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?=[ \t]*(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?\b)")
     for pat in pats:
         for m in re.finditer(pat, text, re.I):
             before = re.split(r"[,;.\n]", text[max(0, m.start() - 20):m.start()])[-1]
@@ -4761,7 +4761,7 @@ def _pet_deposit(text: str) -> tuple[float | None, str]:
             around = before + " " + text[m.start():m.end()] + " " + after
             if re.search(r"non[- ]?refundable", around, re.I):
                 continue  # a non-refundable pet deposit is a fee, not money that comes back
-            return float(m.group(1)), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+            return _num(m.group(1)), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
     return None, text
 
 
@@ -4941,21 +4941,21 @@ def _pet_deposit_nonrefundable_split(text: str) -> tuple[float | None, float | N
 def _pet_application(text: str) -> tuple[float, bool, str] | None:
     """"Pet application $40 per pet", "$40 pet application fee": a screening charge for the pet, not the pet fee. Returns
     (amount, charged per pet, text with that phrase blanked), or None."""
-    m = re.search(r"\bpet[ \t]+(?:application|screening|app)(?:[ \t]+fee)?[ \t:\-=]*\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])(" + _PER_PET_TAIL + r")"
-                  r"|\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])(" + _PER_PET_TAIL + r")[ \t]*pet[ \t]+(?:application|screening|app)\b(?:[ \t]+fee)?(" + _PER_PET_TAIL + r")", text, re.I)
+    m = re.search(r"\bpet[ \t]+(?:application|screening|app)(?:[ \t]+fee)?[ \t:\-=]*\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])(" + _PER_PET_TAIL + r")"
+                  r"|\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])(" + _PER_PET_TAIL + r")[ \t]*pet[ \t]+(?:application|screening|app)\b(?:[ \t]+fee)?(" + _PER_PET_TAIL + r")", text, re.I)
     if not m:
         # cycle 34: "$35 application per pet" (amount first, no "pet" before "application") in a sentence about pets
-        m2 = re.search(r"(?<![\w$])\$[ \t]?(\d{1,4})(?:\.\d\d)?(?![\d,])[ \t]*(?:pet[ \t]+)?(?:application|screening)(?:[ \t]+fee)?[ \t]*(?:per|each|/)[ \t]*(?:pet|animal|dog|cat)s?\b", text, re.I)
+        m2 = re.search(r"(?<![\w$])\$[ \t]?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)(?![\d,])[ \t]*(?:pet[ \t]+)?(?:application|screening)(?:[ \t]+fee)?[ \t]*(?:per|each|/)[ \t]*(?:pet|animal|dog|cat)s?\b", text, re.I)
         if m2 and (_PET_WORD.search(text[max(0, m2.start() - 90):m2.start()]) or _in_pet_sentence(text, m2.start())):
-            return float(m2.group(1)), True, text[:m2.start()] + " " * (m2.end() - m2.start()) + text[m2.end():]
+            return _num(m2.group(1)), True, text[:m2.start()] + " " * (m2.end() - m2.start()) + text[m2.end():]
         return None
-    return float(m.group(1) or m.group(3)), bool((m.group(2) or m.group(4) or m.group(5) or "").strip()), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    return _num(m.group(1) or m.group(3)), bool((m.group(2) or m.group(4) or m.group(5) or "").strip()), text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
 
 
 def _per_animal_charges(text: str) -> tuple[str, dict[str, float], str] | None:
     """"Pet fee $250 cat, $400 dog", "Cat fee $250, dog fee $400": one kind of charge with a price for each animal. Returns
     (kind "fee" / "rent" / "deposit", {"cat": amount, "dog": amount}, text with those phrases blanked), or None."""
-    amt = r"\$\s?(\d{1,4})(?:\.\d\d)?"
+    amt = r"\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)"
     animal = r"(cat|dog)s?"
     pats = (r"\bpet[ \t]+(fee|rent|deposit)s?[ \t:\-=]*(?:" + amt + r"[ \t]*(?:for[ \t]+(?:a[ \t]+|each[ \t]+)?)?" + animal + r"|" + animal + r"[ \t]*[:\-=]?[ \t]*" + amt + r")"
             r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month|each)?[ \t]*(?:,|/|&|;|and|\|)[ \t]*(?:and[ \t]+)?(?:" + amt + r"[ \t]*(?:for[ \t]+(?:a[ \t]+|each[ \t]+)?)?" + animal + r"|" + animal + r"[ \t]*[:\-=]?[ \t]*" + amt + r"))",
@@ -4964,15 +4964,15 @@ def _per_animal_charges(text: str) -> tuple[str, dict[str, float], str] | None:
     if m:
         g = m.groups()
         kind = g[0].lower()
-        first = (g[2].lower(), float(g[1])) if g[1] else (g[3].lower(), float(g[4]))
-        second = (g[6].lower(), float(g[5])) if g[5] else (g[7].lower(), float(g[8]))
+        first = (g[2].lower(), _num(g[1])) if g[1] else (g[3].lower(), _num(g[4]))
+        second = (g[6].lower(), _num(g[5])) if g[5] else (g[7].lower(), _num(g[8]))
     else:
         m = re.search(pats[1], text, re.I)
         if not m:
             return None
         g = m.groups()
         kind = g[1].lower()
-        first, second = (g[0].lower(), float(g[2])), (g[3].lower(), float(g[4]))
+        first, second = (g[0].lower(), _num(g[2])), (g[3].lower(), _num(g[4]))
     if first[0] == second[0]:
         return None
     return kind, {first[0]: first[1], second[0]: second[1]}, text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
@@ -5176,7 +5176,7 @@ def _kinded_pet_step(pet_text: str, pet_kind: str, out: dict[str, Any], pet_coun
 
 def _pet_deposit_then_monthly(text: str) -> float | None:
     """"Pet deposit $300, $40 monthly": the amount after the deposit that says monthly is the pet rent."""
-    m = re.search(r"\bpet[ \t]+(?:deposit|fee)[ \t:\-]*(?:of[ \t]+)?\$\s?\d{1,4}(?:\.\d\d)?[ \t]*(?:,|and|plus|\+)[ \t]*\$\s?(\d{1,4})(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b(?![ \t]*(?:deposit|fee|parking|garage|storage))", text, re.I)
+    m = re.search(r"\bpet[ \t]+(?:deposit|fee)[ \t:\-]*(?:of[ \t]+)?\$\s?(?:\d{1,3}(?:,\d{3})+|\d{1,6})(?:\.\d\d)?[ \t]*(?:,|and|plus|\+)[ \t]*\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d{1,6}(?:\.\d\d)?)[ \t]*(?:/[ \t]*mo(?:nth)?|per month|monthly|a month)\b(?![ \t]*(?:deposit|fee|parking|garage|storage))", text, re.I)
     return float(m.group(1)) if m else None
 
 
@@ -13116,7 +13116,7 @@ def _per_animal_notes(kind: str, prices: dict[str, float], pet_kind: str, out: d
     return [f"The listing has a {label} of {both}. The {label} is left empty because it depends on the pet. Fill in the one that applies to you."]
 
 
-_ES_QUICK = re.compile(r"dep[o\u00f3]sito|estacionamiento|parqueo|aparcamiento|\bcochera|\bgaraje\b|/\s*mes\b|\bse permiten?\b|\bpermitid[oa]s\b|\bmascotas?\b", re.I)
+_ES_QUICK = re.compile(r"dep[o\u00f3]sito|estacionamiento|parqueo|aparcamiento|\bcochera|\bgaraje\b|/\s*mes\b|\bse permiten?\b|\bpermitid[oa]s\b|\bmascotas?\b|\bperr(?:o|a)s?\b|\bgat(?:o|a)s?\b", re.I)
 _ES_RULES = (
     (re.compile(r"\bdep[o\u00f3]sito[ \t]+(?:por|de|para)[ \t]+(?:la[ \t]+)?(?:mascotas?|animal(?:es)?|perros?|gatos?)(?:[ \t]+de)?\b", re.I), "Pet deposit"),
     (re.compile(r"\bdep[o\u00f3]sito(?:[ \t]+de[ \t]+(?:seguridad|garant[i\u00ed]a))?(?:[ \t]+(?:de|es|ser[a\u00e1]))?(?=[ \t]*[:=]?[ \t]*\$)", re.I), "Security deposit"),
@@ -13131,14 +13131,119 @@ _ES_RULES = (
 )
 
 
+_ES_PET_WORD = re.compile(r"\b(?:perr(?:o|a|os|as|it[oa]s?)|gat(?:o|a|os|as|it[oa]s?)|mascotas?)\b", re.I)
+_ES_PET_KINDS = (
+    ("dogs", r"perr(?:o|a|os|as|it[oa]s?)"),
+    ("cats", r"gat(?:o|a|os|as|it[oa]s?)"),
+    ("pets", r"mascotas?"),
+)
+_ES_PET_ALLOW = re.compile(r"\b(?:se[ \t]+(?:permiten?|aceptan?|admiten?)|permitimos|aceptamos|permitid[oa]s?|aceptad[oa]s?|admitid[oa]s?|bienvenid[oa]s?)\b[ \t]*(?:(?:los|las)\b[ \t]*)?", re.I)
+_ES_PET_UPTO = re.compile(r"\b(?:de[ \t]+)?(?:hasta|m[aá]ximo|m[aá]x\.?|menos[ \t]+de|no[ \t]+m[aá]s[ \t]+de)[ \t]+(?=\d)", re.I)
+_ES_LB = re.compile(r"(?<=\d)[ \t]*(?:libras?|lbs?\b\.?)", re.I)
+_ES_PET_SENT = re.compile(r"([.!;]+(?=\s|$)|\n)")
+_ES_PET_CONTEXT = re.compile(r"\b(?:se|permitimos|aceptamos|con|hasta|los|las|sin|permitid\w*|aceptad\w*|bienvenid\w*|dep[oó]sito|renta|cuota|m[aá]ximo|y|e|de|no)\b", re.I)
+
+
+def _spanish_pet_negative(sent: str) -> tuple[str, bool]:
+    """The sentence with each Spanish "no" about a pet kind ("No mascotas", "Sin perros", "Gatos no permitidos", "Mascotas: no") put into English ("No pets"),
+    and whether there was one."""
+    found = False
+    for en, pat in _ES_PET_KINDS:
+        for rx in (
+            r"\b(?:no|sin)[ \t]+(?:se[ \t]+(?:permiten?|aceptan?|admiten?)[ \t]+)?(?:(?:los|las)[ \t]+)?" + pat + r"\b",
+            r"\b" + pat + r"[ \t]+(?:no[ \t]+(?:se[ \t]+)?(?:permitid\w*|aceptad\w*|admitid\w*|permiten?|aceptan?)|prohibid\w*)",
+        ) + ((r"\bmascotas?[ \t]*[:\-][ \t]*(?:no|ninguna?)\b",) if en == "pets" else ()):
+            sent, n = re.subn(rx, "No " + en, sent, flags=re.I)
+            found = found or bool(n)
+    return sent, found
+
+
+def _spanish_pet_sentence(sent: str) -> str:
+    """Cycle 35: one Spanish sentence about pets ("Perros hasta 70 lb con depósito de $300", "Se permiten gatos y perros", "No mascotas") becomes the English
+    words the pet readers know. A sentence with no pet word, or already in English, is returned as it is."""
+    if not _ES_PET_WORD.search(sent) or not _ES_PET_CONTEXT.search(sent):
+        return sent
+    lead = sent[: len(sent) - len(sent.lstrip())]
+    tail = sent[len(sent.rstrip()):]
+    sent_neg, neg = _spanish_pet_negative(sent)
+    if neg:
+        return sent_neg
+    allowed = bool(_ES_PET_ALLOW.search(sent)) or bool(_ES_PET_UPTO.search(sent))
+    out = _ES_PET_ALLOW.sub("", sent)
+    for en, pat in _ES_PET_KINDS:
+        out = re.sub(r"\b" + pat + r"\b", en, out, flags=re.I)
+    out = re.sub(r"\b(dogs|cats)[ \t]+(?:y|e|o)[ \t]+(?:(?:los|las)[ \t]+)?(dogs|cats)\b", r"\1 and \2", out)
+    out = _ES_PET_UPTO.sub("up to ", out)
+    out = _ES_LB.sub(" lb", out)
+    out = re.sub(r"\b[Cc]on[ \t]+(?=up to|pet\b|\$|renta|cuota)", "with ", out)
+    out = re.sub(r"\bdep[oó]sito[ \t]+(?:por|de|para)[ \t]+(?:la[ \t]+)?(?:pets?|dogs|cats|animal(?:es)?)(?:[ \t]+de)?\b", "pet deposit", out, flags=re.I)
+    out = re.sub(r"(\bcon[ \t]+(?:un[ \t]+)?|\([ \t]*)dep[oó]sito(?:[ \t]+de)?(?=[ \t]*[:=]?[ \t]*\$)", r"\1pet deposit", out, flags=re.I)  # only "con dep\u00f3sito de $300" or "(dep\u00f3sito $300)" is the pet's; a bare "dep\u00f3sito $2,300" after a pet clause stays the security deposit
+    out = re.sub(r"\b[Cc]on[ \t]+(?:un[ \t]+)?(?=pet deposit)", "with ", out)
+    out = re.sub(r"\bcuota(?:[ \t]+(?:de|por))?(?:[ \t]+(?:pets?))?(?=[ \t]*[:=]?[ \t]*\$)", "pet fee", out, flags=re.I)
+    out = re.sub(r"(\$[ \t]*\d[\d.,]*)[ \t]+(?:al[ \t]+mes[ \t]+)?(?:de[ \t]+)?renta(?:[ \t]+mensual)?\b", r"\1 monthly pet rent", out, flags=re.I)
+    out = re.sub(r"\brenta(?:[ \t]+mensual)?(?:[ \t]+(?:de|por|para))?[ \t]+(?=(?:pets?|dogs|cats)\b)", "pet rent ", out, flags=re.I)
+    if allowed and not re.search(r"\ballowed\b", out, re.I):
+        out = re.sub(r"\b((?:dogs|cats|pets)(?:[ \t]+and[ \t]+(?:dogs|cats))?)\b", r"\1 allowed", out, count=1)
+    return out
+
+
+def _spanish_pet_words(text: str) -> str:
+    parts = _ES_PET_SENT.split(text)
+    prev_pet = False
+    for i in range(0, len(parts), 2):
+        if _ES_PET_WORD.search(parts[i]):
+            parts[i] = _spanish_pet_sentence(parts[i])
+            prev_pet = "$" not in parts[i] and not re.search(r"\bNo (?:dogs|cats|pets)\b", parts[i])
+        elif parts[i].strip():
+            m = re.fullmatch(r"([ \t]*(?:[-*\u2022][ \t]*)?)(\$[ \t]*\d[\d.,]*)[ \t]+(?:al[ \t]+mes[ \t]+)?(?:de[ \t]+)?renta(?:[ \t]+mensual)?([ \t]*)", parts[i], re.I)
+            if m and prev_pet:  # a line of its own right after the pet line: "Gatos permitidos" / "$25 de renta mensual"
+                parts[i] = m.group(1) + m.group(2) + " monthly pet rent" + m.group(3)
+            else:
+                m = re.fullmatch(r"([ \t]*(?:[-*\u2022][ \t]*)?)con[ \t]+dep[o\u00f3]sito(?:[ \t]+de)?[ \t]*[:=]?[ \t]*(\$[ \t]*\d[\d.,]*)([ \t]*)", parts[i], re.I)
+                if m and prev_pet:  # "Perros hasta 70 lb" / "Con dep\u00f3sito de $300"
+                    parts[i] = m.group(1) + "pet deposit " + m.group(2) + m.group(3)
+            prev_pet = False
+    return "".join(parts)
+
+
 def _spanish_money_words(text: str) -> str:
     """Cycle 34: Spanish labels for the deposit, parking and pets ("Dep\u00f3sito $1,650", "Estacionamiento $200/mes requerido", "Se permiten gatos") are read as the English
     words they stand for, so the same readers apply. Text with none of those words is returned as it is."""
     if not _ES_QUICK.search(text):
         return text
+    text = _try(lambda: _spanish_pet_words(text)) or text  # cycle 35: "Perros hasta 70 lb con dep\u00f3sito de $300", "Se permiten gatos y perros", "No mascotas"
     for pat, repl in _ES_RULES:
         text = pat.sub(repl, text)
     return text
+
+
+_DEP_ABBREV = (
+    re.compile(r"(?<![\w$.])dep\b\.?(?=[ \t]*[:=\-]?[ \t]*\$)", re.I),
+    re.compile(r"(?<=\d)([ \t]*(?:\(|-|,)?[ \t]*)dep\b(?!\.?[ \t]*\d)", re.I),
+)
+
+
+def _deposit_abbreviation(text: str) -> str:
+    """Cycle 35: "Dep $1,350", "Dep: $1,350", "$1500 dep" and "Pet dep $300" are deposits: the abbreviation next to a dollar amount is read as the word.
+    "dep" with no amount beside it (a departure, "dep. 5/1") is left alone."""
+    if not re.search(r"\bdep\b", text, re.I):
+        return text
+    text = _DEP_ABBREV[0].sub("deposit", text)
+    text = _DEP_ABBREV[1].sub(lambda m: m.group(1) + "deposit", text)
+    return re.sub(r"\b(pets?|cats?|dogs?|animal|key|fob|parking|garage)([ \t]+)dep\b(?!\.?[ \t]*\d)", r"\1\2deposit", text, flags=re.I)
+
+
+_PET_NOW = re.compile(r"\b((?:cats?|dogs?|pets?|animals?|puppies|kittens?)(?:[ \t]+(?:are|is))?)[ \t]+(?:now|currently|also|still|even|just)[ \t]+(?=(?:allowed|permitted|accepted|welcome|ok|okay|fine|friendly|ok'd)\b)", re.I)
+_PET_NOW_VERB = re.compile(r"\b(?:now|currently|also|still)[ \t]+(?=(?:accepting|allowing|welcoming|permitting)[ \t]+(?:cats?|dogs?|pets?|animals?)\b)", re.I)
+
+
+def _pet_adverbs(text: str) -> str:
+    """Cycle 35: "Dogs now allowed under 30 lbs" and "Pets are now welcome" are the same rule as "Dogs allowed under 30 lbs": a word like now, also or still between the
+    pet and its "allowed" does not hide the yes from the pet readers."""
+    if not re.search(r"\b(?:now|currently|also|still|even|just)\b", text, re.I):
+        return text
+    text = _PET_NOW.sub(r"\1 ", text)
+    return _PET_NOW_VERB.sub("", text)
 
 
 def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "", pet_count: Any = None) -> dict[str, Any]:
@@ -13151,6 +13256,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     _periodic_src = text
     title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(raw_text))))))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    text = _pet_adverbs(text)  # cycle 35: "Dogs now allowed under 30 lbs"
+    text = _deposit_abbreviation(text)  # cycle 35: "Dep $1,350" and "$1500 dep" are the deposit
     text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
@@ -14511,6 +14618,15 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                     facts.append(f"The broker fee is {broker_months:g} month{'s' if broker_months != 1 else ''} of rent (${broker_months * float(rent_b):,.0f}), worked out from the rent.")
                 else:
                     facts.append(f"The listing says the broker fee is {broker_months:g} month{'s' if broker_months != 1 else ''} of rent, but the rent was not read, so the broker fee is left empty. Fill it in once you know the rent.")
+            elif not _is_sale_text(text):  # cycle 35 (rule hh): a broker fee the reader could not read ("Broker fee: two weeks") is named, never silently dropped
+                for bm in re.finditer(r"\b(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[^.\n;|]{0,50}", text, re.I):
+                    seg = text[max(0, text.rfind("\n", 0, bm.start()) + 1):bm.end()]
+                    if not re.search(r"[A-Za-z0-9]", re.sub(r"^.*?\bfee\b", "", bm.group(0), flags=re.I | re.S)):
+                        continue  # a bare label with nothing after it ("Broker fee" as a heading) says nothing to read
+                    if re.search(r"\b(?:no|zero|none|waived|free|nothing)\b|\$\s?0\b|(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?(?:owner|landlord|seller)|(?:landlord|owner)[ \t]+pays?|\?", seg, re.I):
+                        continue
+                    facts.append(f"The listing mentions a broker fee (\"{' '.join(bm.group(0).split()).rstrip(' ,:-')}\"), but I could not read an amount from it, so no broker fee is saved. Ask what it comes to.")
+                    break
         for fl_name, fl_amt in _try(lambda: _fee_list_utilities(text)) or []:
             # cycle 26: "Fees: admin $175 | Trash $12 | lease processing $125": a utility inside a fee list is a utility, counted once in the utilities estimate
             said = any(re.search(rf"\b{fl_name}\b", f, re.I) and re.search(r"counted|flat fee|billed back", f, re.I) for f in facts)
@@ -16667,7 +16783,7 @@ def _broker_fee_percent(text: str) -> tuple[float, str, float] | None:
     m = re.search(head + r"(\d{1,3}(?:\.\d)?)[ \t]*%[ \t]*of[ \t]+(?:(?:a|one|1|the)[ \t]+)?(?:full[ \t]+)?(?:year(?:'?s)?|12[ \t]+months'?)[ \t]+(?:of[ \t]+)?rent", text, re.I)
     if m and 0 < float(m.group(1)) <= 100 and not re.match(r"[ \t]*\?", text[m.end():]):  # cycle 21: "Broker fee is 8% of a year of rent"; "5% of one year's rent? No, ask" stays unread
         return float(m.group(1)), "a year of rent", 12.0
-    m = re.search(head + r"(half)[ \t]+(?:of[ \t]+)?(?:(?:a|one|1)[ \t]+)?month(?:'?s)?(?:[ \t]+(?:of[ \t]+)?rent)?", text, re.I)
+    m = re.search(head + r"(?:(?:one|a)[ \t-]+half|half|1[ \t]*/[ \t]*2|0?\.5)[ \t-]+(?:of[ \t]+)?(?:(?:a|one|1)[ \t]+)?months?(?:'?s)?(?:[ \t]+(?:of[ \t]+)?rent)?", text, re.I)
     if m:
         return 50.0, "one month's rent", 1.0
     m = re.search(r"\b(\d{1,3}(?:\.\d)?)[ \t]*%[ \t]+(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[ \t]*(?:of|on)[ \t]+(?:the[ \t]+)?(?:(annual|yearly)[ \t]+rent|" + month + r")", text, re.I)
@@ -16681,11 +16797,12 @@ def _broker_fee_percent(text: str) -> tuple[float, str, float] | None:
 def _broker_fee_months(text: str) -> float | None:
     """Months of rent a broker fee is worth: "Broker fee one month", "broker fee: one month's rent", "one month broker fee"."""
     nums = {"one": 1.0, "1": 1.0, "two": 2.0, "2": 2.0, "half": 0.5, "1/2": 0.5}
-    m = re.search(r"\b(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[ \t:\-=(]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(?:(one|two|1|2)|(half)(?: a)?)[ \t-]*month", text, re.I) \
-        or re.search(r"\b(?:(one|two|1|2)|(half)(?: a)?)[ \t-]*month(?:'?s)?(?: of rent| rent)?[ \t]+(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b", text, re.I)
+    m = re.search(r"\b(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[ \t:\-=(]{0,4}(?:is |of |equal to |equals |=)?[ \t]*(?:(one|two|1|2)|((?:(?:one|a)[ \t-]+)?half(?: a)?|1[ \t]*/[ \t]*2|0?\.5))[ \t-]*(?:of[ \t]+(?:a[ \t]+|one[ \t]+)?)?month", text, re.I) \
+        or re.search(r"\b(?:(one|two|1|2)|((?:(?:one|a)[ \t-]+)?half(?: a)?|1[ \t]*/[ \t]*2|0?\.5))[ \t-]*month(?:'?s)?(?: of rent| rent)?[ \t]+(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b", text, re.I)
     if not m:
         return None
-    return nums[(m.group(1) or m.group(2)).lower()]
+    word = (m.group(1) or m.group(2)).lower()
+    return nums.get(word, 0.5 if "half" in word or word in ("0.5", ".5") else nums.get("1/2") if "/" in word else None)
 
 
 _SVC_STRONG = (r"pest(?:[ \t]+control)?|package(?:[ \t]+(?:locker|lockers|service|room))?|parcel(?:[ \t]+locker)?|valet(?:[ \t]+(?:trash|waste))?|trash[ \t]+valet|"

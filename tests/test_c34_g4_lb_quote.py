@@ -30,7 +30,8 @@ def limit_quote(r: dict) -> list[str]:
 ])
 def test_quote_stops_at_the_full_stop_after_lb(line, quote):
     r = read(line)
-    assert limit_quote(r) == [quote], notes(r)
+    # cycle 35 (G3): the Spanish dog limit is now read ("Perros ... hasta 70 lb" is a 70 lb limit), so no note has to quote it
+    assert limit_quote(r) == [] and r["pet_weight_limit"] == 70, notes(r)
     assert r["price"] == 1500
 
 
@@ -38,7 +39,7 @@ def test_family_spanish_whole_listing():
     t = ("Apartamento en alquiler. Alquiler: $2,300 al mes. 2 dormitorios, 1 baño.\n"
          "Perros permitidos hasta 70 lb. Depósito de $2,300.\n100 Calle Sol, Testville IL")
     r = read(t)
-    assert limit_quote(r) == ["Perros permitidos hasta 70 lb"], notes(r)
+    assert limit_quote(r) == [] and r["pet_weight_limit"] == 70, notes(r)  # cycle 35 (G3): the limit is read, nothing to quote
     assert r["price"] == 2300
 
 
@@ -47,7 +48,8 @@ def test_family_spanish_whole_listing():
     ("Rent $1,500. Se aceptan perros hasta 70 lb., depósito $2,300.", "Se aceptan perros hasta 70 lb., Security deposit $2,300"),
 ])
 def test_a_comma_after_the_full_stop_keeps_its_clause(line, quote):
-    assert limit_quote(read(line)) == [quote]
+    r = read(line)
+    assert limit_quote(r) == [] and r["pet_weight_limit"] == 70 and r["deposit"] == 2300 and "pet_deposit" not in r  # cycle 35 (G3): limit read; a bare "dep\u00f3sito" after the pet clause stays the security deposit
 
 
 def test_a_lowercase_word_after_lb_is_the_same_sentence():
