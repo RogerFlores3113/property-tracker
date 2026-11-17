@@ -281,7 +281,7 @@ def test_pmi_without_a_quote_stays_an_estimate():
     assert "estimate" in pmi["label"] and pmi["amount"] != 95
 
 
-@pytest.mark.parametrize("line", ["No PMI required.", "PMI not required with 20% down.", "Optional PMI $95/mo if you put less down."])
+@pytest.mark.parametrize("line", ["PMI not required with 20% down.", "Optional PMI $95/mo if you put less down."])  # cycle 35: a plain "No PMI required." is now a stated zero (tests/test_c35_g6_buyer_money.py)
 def test_no_pmi_or_optional_pmi_is_not_a_quote(line):
     out, place = read(BASE + "HOA $300/mo. " + line)
     cost = money.buy_cost(place, {"down_payment_pct": 15})

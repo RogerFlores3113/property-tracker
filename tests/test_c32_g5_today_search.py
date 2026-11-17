@@ -71,9 +71,16 @@ def _line(store):
     return m.group(1) if m else None
 
 
+def _to_closing(store, pid):
+    # cycle 35: only a place in the Closing stage drives the countdown
+    for st_ in ("Toured", "Offer drafted", "Offer made", "Under contract", "Inspection", "Closing"):
+        store.move_stage(pid, st_)
+
+
 def test_place_closing_date_beats_search_target(store):
     s, ids = _buy(store, 1, 0, target=_iso(90))
     store.add_place_date(ids[0], "closing", _iso(87))
+    _to_closing(store, ids[0])
     nice = helpers.closing_info({"mode": "buy", "target_close": _iso(87)})
     line = _line(store)
     assert line == nice["today_line"] + " (for Condo 0)"
@@ -91,6 +98,8 @@ def test_nearest_future_place_date_wins(store):
     store.add_place_date(ids[0], "closing", _iso(60))
     store.add_place_date(ids[1], "closing", _iso(45))
     store.add_place_date(ids[2], "closing", _iso(120))
+    for pid in ids:
+        _to_closing(store, pid)
     line = _line(store)
     assert "in 45 days" in line and line.endswith("(for Condo 1)")
 
@@ -117,6 +126,7 @@ def test_same_day_as_target_is_plain(store):
 def test_place_date_alone_without_search_target(store):
     s, ids = _buy(store, 1, 0)
     store.add_place_date(ids[0], "closing", _iso(20))
+    _to_closing(store, ids[0])
     assert _line(store) == helpers.closing_info({"mode": "buy", "target_close": _iso(20)})["today_line"] + " (for Condo 0)"
 
 

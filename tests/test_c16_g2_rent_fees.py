@@ -117,15 +117,16 @@ def test_second_vehicle_is_optional_not_counted(t):
     "Buyer pays a $3,200 transfer fee at closing",
 ])
 def test_buyer_transfer_fee_counts_in_closing_costs(t):
+    # cycle 35: a transfer fee is one named one-time item, never the whole closing costs; the cash to close adds it
     r = parse_listing("3 bed house for sale $450,000. " + t, buying=True)
-    assert r["closing_costs"] == 3200
-    assert "counted in the closing costs" in note(r)
+    assert "closing_costs" not in r
+    assert "counted in the cash to close as a one-time fee" in note(r)
 
 
 def test_buyer_transfer_fee_does_not_double_closing_costs():
     r = parse_listing("3 bed house for sale $450,000. Estimated closing costs $9,800. Buyer pays one-time $3,200 transfer fee at closing", buying=True)
     assert r["closing_costs"] == 9800
-    assert "not added again" in note(r)
+    assert "on top of the closing costs" in note(r)
 
 
 def test_seller_transfer_fee_is_not_closing_costs():

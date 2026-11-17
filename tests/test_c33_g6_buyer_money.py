@@ -390,7 +390,6 @@ def test_tool_added_place_with_an_unpaid_assessment_is_not_complete(store):
     "Buyer pays $175 recording.",
     "Buyer pays title $900 and recording $175.",
     "Buyer pays lender fees $1,500; appraisal $525; title $900.",
-    "Buyer pays a $350 transfer fee at closing.",
     "Buyer to pay $1,250 lender origination, $625 appraisal, and $1,400 for owner's title policy.",
 ])
 def test_closing_costs_sent_by_the_caller_is_not_a_guess(line):
@@ -399,6 +398,14 @@ def test_closing_costs_sent_by_the_caller_is_not_a_guess(line):
     n = out.get("found_in_listing", "")
     assert "guess" not in n and "estimate" not in n.replace("the closing cost estimate", "")
     assert "$6,000" in n and "not added" in n
+
+
+def test_closing_costs_sent_by_the_caller_with_a_transfer_fee():
+    # cycle 35: a buyer-paid transfer fee is a one-time item on top of the closing costs the caller sent
+    text_ = BASE + "HOA $200/month. Taxes $3,000/yr. Insurance $900/yr. Buyer pays a $350 transfer fee at closing."
+    out = parse_listing(text_, buying=True, current={"closing_costs": 6000})
+    n = out.get("found_in_listing", "")
+    assert "guess" not in n and "on top of the closing costs" in n and "$350" in n
 
 
 def test_without_caller_closing_costs_the_note_still_says_the_cash_to_close_uses_a_guess():

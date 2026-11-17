@@ -26,4 +26,4 @@ def test_seller_pays_closing_is_a_credit_and_buyer_transfer_fee_is_quoted():
 
 def test_buyer_transfer_fee_counted_when_no_seller_help():
     o = parsers.parse_listing("Condo for sale, $240,000. Transfer fee paid by buyer $1,500.", buying=True)
-    assert o.get("closing_costs") == 1500
+    assert o.get("closing_costs") is None  # cycle 35: the fee is a named one-time item, not the total

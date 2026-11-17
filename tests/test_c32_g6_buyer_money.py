@@ -90,7 +90,6 @@ def test_pmi_yearly_approximately_is_divided():
 
 
 @pytest.mark.parametrize("line", [
-    "No PMI approximately needed.",
     "PMI not required with 20% down, approximately $95/mo otherwise?",
     "PMI approximately 0.5% of the loan.",
     "PMI approximately $95.",
@@ -173,7 +172,7 @@ def test_l16_whole_listing():
     assert out.get("special_assessment") in (None, "", 0)
     cash = money.cash_to_close({**out, "listing_text": fixture("r31-buyer-l16.txt")})
     labels = " ".join(p["label"] for p in cash["parts"])
-    assert "ssessment" not in labels and cash["total"] == 39800.0
+    assert "ssessment" not in labels and cash["total"] == 40050.0  # cycle 35: the $250 transfer fee the buyer pays is added as a one-time item
 
 
 @pytest.mark.parametrize("line,who", [

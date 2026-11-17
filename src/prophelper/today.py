@@ -714,6 +714,7 @@ def more_incomplete_text(hidden: list[dict[str, Any]]) -> str:
 def closing_target(store: Store, search: dict[str, Any], today_: date | None = None) -> dict[str, str] | None:
     """Cycle 32: the closing countdown on Today. A closing date saved on a place still in play beats the search's target date (the place page already
     does this); with several, the nearest one that has not passed is used and the place is named, unless it is the same day as the search's target.
+    Cycle 35: ONLY a place in the Closing stage counts; with none there the search's target is the countdown, whatever dates other places carry.
     Cycle 34: a place in the Closing stage comes first: its own date is used (the nearest ahead, else the latest past one, like its place page) and it is always named.
     With none in the future the search's target is used, and with no target either the most recent past one ("Closing was ...")."""
     if not search or search.get("mode") != "buy":
@@ -723,7 +724,7 @@ def closing_target(store: Store, search: dict[str, Any], today_: date | None = N
         rows = [d for d in store.list_place_dates(search_id=search["id"]) if d.get("kind") == "closing" and d.get("stage") not in (stages.PASSED, "Closed")]
     except Exception:  # noqa: BLE001
         rows = []
-    rows = [d for d in rows if d.get("date")]
+    rows = [d for d in rows if d.get("date") and d.get("stage") == "Closing"]  # cycle 35: only a place in Closing drives the countdown; a closing date from a Saved place's listing is a wish, never the target
     if not rows:
         return base
     now = (today_ or helpers.today()).isoformat()
