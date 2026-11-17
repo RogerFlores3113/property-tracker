@@ -98,7 +98,8 @@ _BR_MARK = re.compile(r"^\s*/\s*(?:\d\s*(?:br|bd|bed)|studio)", re.I)  # Craigsl
 _PER_BED = re.compile(r"^\s*\+?\s*(?:/|per)\s*(?:bed|bedroom|person|resident|tenant|student)", re.I)
 _FEE_AFTER_STRICT = re.compile(r"^\s*\+?\s*(?:one[- ]time\s+|non[- ]refundable\s+|refundable\s+|monthly\s+|price\s+)?(?:" + _FEE + r")", re.I)
 _FEE_AFTER_MONTHLY = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r")?\s*(?:for\s+|per\s+|-\s*)?(?:pet|parking|garage|storage|utilit|hoa|trash|"
-                                r"internet|cable|amenity|water|insurance|lawn|cleaning|reserved|covered|tax|assessment)(?![a-z]*[ \t]*(?:is[ \t]+|are[ \t]+)?(?:not[ \t]+)?(?:incl\b|included|extra\b|separate))", re.I)
+                                r"internet|cable|amenity|water|insurance|lawn|cleaning|reserved|covered|tax|assessment)(?![a-z]*[ \t]*(?:is[ \t]+|are[ \t]+)?(?:not[ \t]+)?(?:incl\b|included|extra\b|separate))"
+                                r"(?![a-z]*(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=(]?[ \t]*(?:none|nil|n/a|\$0)(?![\w/]))", re.I)  # cycle 34: "$1,500 HOA none" is the rent and an HOA of none
 _UTIL_WORD = re.compile(r"\b(?:utilit\w*|electric\w*|power|gas|water|sewer|trash|garbage|internet|wi-?fi|cable|heat\w*)\b", re.I)
 _EST_CUE_END = re.compile(r"(?:\babout|\bapprox\.?|\bapproximately|\baround|\broughly|\best\.?|\bestimated|\bavg\.?|\baverage|\btypically|\busually|\bbetween|~|\btotal|\bcosts?|\bis|\bare|[:=-])[ \t]*$", re.I)
 _UTIL_AFTER = re.compile(r"^[ \t]*(?:\(?(?:all[- ]in|total|combined|each)\)?[ \t,]*)?(?:(?:/|per|a)[ \t]*(?:mo\w*|month\w*)[ \t]*)?(?:total[ \t]+)?(?:(?:for|on|toward|towards|covers?|covering|to[ \t]+cover|in)[ \t]+)?(?:all[ \t]+)?(?:the[ \t]+)?(?:your[ \t]+)?(?:electric\w*|power|gas|water|sewer|trash|garbage|internet|wi-?fi|cable|heat\w*|utilit\w*)\b(?![ \t,]*(?:and[ \t]+\w+[ \t]+)?(?:is[ \t]+|are[ \t]+)?(?:not|no|incl\w*|extra|separate|excluded|additional|plus|paid[ \t]+by[ \t]+(?:the[ \t]+)?(?:landlord|owner))\b)", re.I)
@@ -279,6 +280,8 @@ def _amounts(text: str) -> list[dict[str, Any]]:
                 or (bool(_FOREIGN_FEE.search(clause[-32:])) and not _RENT_LABEL.search(clause[-14:]))  # cycle 33: "Cuota de mascotas $300 al mes" is a pet fee
         elif not fee:
             fee = bool(_FEE_AFTER_STRICT.match(tail)) and not re.match(r"\s*\+\s*(?:all\s+)?(?:the\s+)?utilit", tail, re.I)  # "$1,150 + utilities" is the rent
+            if fee and re.match(r"\s*\w+(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=(]?[ \t]*(?:none|nil|n/a|\$0)(?![\w/])", tail, re.I):
+                fee = False  # cycle 34: "$1,500 HOA none" is the rent and then an HOA of none, the figure is not the HOA
         if not fee and _NOT_RENT_EXTRA.search(clause):
             fee = True  # cycle 26: "Second space $200/mo", "extra storage $50/mo", "additional occupant $75": never a rent candidate
         if fee and value >= 20000 and marker == "" and re.match(r"^\s*(?:hoa|assoc\w*|dues|condo fee)", tail, re.I):
@@ -10781,8 +10784,8 @@ def _hoa_search(pattern: str, text: str) -> re.Match[str] | None:
 def _hoa(text: str) -> float | None:
     if (q := _hoa_after_question(text)):
         return q[0]
-    if re.search(r"\bno[ \t]+(?:hoa|h\.o\.a\.|homeowners'?[ \t]+association)(?:[ \t]+(?:fees?|dues))?\b(?![ \t]+(?:info\w*|details?|data|yet|known|listed|available|provided|given|confirmed|figures?|amounts?|numbers?|on[ \t]+file))|\bhoa(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=][ \t]*(?:none|no(?![ \t]+(?:info\w*|details?|data|figures?))|n/a|\$0(?![\d,]|\.\d*[1-9]))\b|\bwithout[ \t]+(?:an?[ \t]+)?hoa\b|\b(?:hoa|association)[ \t]+(?:fees?|dues)?[ \t]*(?:\(none\)|not required)", text, re.I) \
-            and not re.search(r"\$\s?[1-9]\d*(?:,\d{3})*(?:\.\d\d)?\s*(?:/\s*\w+|per\s+\w+|\w+ly)\s*(?:hoa|association)|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t:\-=(]{0,6}\$\s?[1-9]", text, re.I):
+    if re.search(r"\bno[ \t]+(?:hoa|h\.o\.a\.|homeowners'?[ \t]+association)(?:[ \t]+(?:fees?|dues))?\b(?![ \t]+(?:info\w*|details?|data|yet|known|listed|available|provided|given|confirmed|figures?|amounts?|numbers?|on[ \t]+file))|\bhoa(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=][ \t]*(?:none|no(?![ \t]+(?:info\w*|details?|data|figures?))|n/a|\$0(?![\d,]|\.\d*[1-9]))\b|\bwithout[ \t]+(?:an?[ \t]+)?hoa\b|\b(?:hoa|association)[ \t]+(?:fees?|dues)?[ \t]*(?:\(none\)|not required)|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t]+(?:none|nil|n/a|\$0(?![\d,]|\.\d*[1-9]))(?![\w/])", text, re.I) \
+            and not re.search(r"\$\s?[1-9]\d*(?:,\d{3})*(?:\.\d\d)?\s*(?:/\s*\w+|per\s+\w+|\w+ly)\s*(?:hoa|association)(?![ \t]+(?:(?:fees?|dues)[ \t]+)?[:\-=(]?[ \t]*(?:none|nil|n/a|\$0)(?![\w/]))|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t:\-=(]{0,6}\$\s?[1-9]", text, re.I):
         return 0.0
     bm = re.search(r"\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t]+(?:is|are)?[ \t]*(?:billed|paid|due|charged|payable|collected)[ \t]+(quarterly|annually|yearly|monthly|semi-?annually|semi-?yearly|twice[ \t]+a[ \t]+year|every[ \t]+(?:six|6)[ \t]+months|every[ \t]+(?:three|3)[ \t]+months)[ \t:\-=,]*(?:at|of|for|as)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", text, re.I)
     if bm:  # "HOA fee is billed quarterly at $900", "HOA is paid quarterly: $780 per quarter": the period comes before the amount
