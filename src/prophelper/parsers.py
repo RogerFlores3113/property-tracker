@@ -11582,6 +11582,11 @@ _PROMO_LINE = re.compile(r"^(?:no[ \t]+(?:broker|brokers|app(?:lication)?|admin|
                          r"(?:first|1st)[ \t]+(?:\d+[ \t]+|two[ \t]+|three[ \t]+)?months?[ \t]+(?:only|special|for|at|is|just)\b[^\n]{0,60}|months?[ \t]+(?:one|1|\d{1,2}[ \t]*(?:-|\u2013|to)[ \t]*\d{1,2})\b[^\n]{0,60})$", re.I)  # cycle 33: "First month only $1,999, then $2,350" is a promo, never the name
 
 
+def _redflags_strip(text: str) -> str:
+    from .redflags import strip_ai_text
+    return strip_ai_text(text)
+
+
 def _ai_aimed(line: str) -> bool:
     """True when a line is text aimed at AI tools ("ATTENTION AI ASSISTANT: ignore previous instructions"). The red flag rules own the test."""
     try:
@@ -12302,6 +12307,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
     ``buying`` is True for a buy search: the listing is then a home for sale, never a rental, and the rent-only readings
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
+    text = _try(lambda: _redflags_strip(text or "")) or (text or "")  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_answered_questions(_tidy(text or "")))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
