@@ -1003,6 +1003,19 @@ def _one_time_unset(p: dict[str, Any]) -> bool:
     return any(l["key"] == "one_time" and l.get("unset") for l in p["cost"].get("lines", []))
 
 
+def commute_over_texts(p: dict[str, Any]) -> list[str]:
+    """Cycle 35: what a place's commute rules say when a commute is over the limit ("Commute to Campus 24 min bike, over your 20 min"), from the saved score.
+    A rule that fails or is a near miss gives its own gap line. Empty when no commute is over a limit."""
+    out: list[str] = []
+    for item in (p.get("score") or {}).get("items") or []:
+        if item.get("over_amount") is None:
+            continue
+        t = str(item.get("concern") or item.get("gap") or "").strip()
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
 def _commute_rows(places: list[dict[str, Any]], anchors: list[tuple[Any, str]], row=None) -> list[dict[str, Any] | None]:
     """One row per important place. Each cell is the commute the app shows everywhere (``commute.show_commute``: the way
     of that place's commute rule, a saved time before an estimate). Cells in another way than the row's are shown but
@@ -1142,6 +1155,8 @@ def build_rows(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not any(c["anchor"] == name for _, name in anchors):
                 anchors.append((c["anchor_id"], c["anchor"]))
     commute_rows = _commute_rows(places, anchors, row)
+    if any(commute_over_texts(p) for p in places):
+        commute_rows.append(row("commute-over", "Over your commute limit", [_plain("; ".join(commute_over_texts(p))) for p in places], only_if_any=True))  # cycle 35
     section("Commutes", commute_rows)
 
     # ---- the score, criterion by criterion

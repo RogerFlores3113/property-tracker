@@ -488,6 +488,22 @@ def _fit_text(e: dict[str, Any]) -> str:
     return f"Fit: {label}" + (f" ({'; '.join(_t(r, 'fit reason', 160) for r in reasons or [])})" if reasons else "")
 
 
+def _with_commute_over(e: dict[str, Any], cell: str) -> str:
+    """Cycle 35: a commute over a commute rule's limit is named in the deal-breaker cell, never only in the fit note ("ok" would hide it)."""
+    over = compare_mod.commute_over_texts(e)
+    if not over:
+        return cell
+    named = "over the commute limit: " + "; ".join(_t(o, "commute limit", 160) for o in over)
+    return f"ok, but {named}" if cell == "ok" else f"{cell}; {named}"
+
+
+def _concerns_cell(e: dict[str, Any]) -> str:
+    """Cycle 35: the things to check on a place that fits (concerns) and the fit notes (a commute a little over the limit), or "none"."""
+    s = e["score"]
+    bits = [str(c) for c in (s.get("concerns") or []) if c] + [str(n) for n in (s.get("notes") or []) if n]
+    return "; ".join(_t(b, "concern", 160) for b in bits) if bits else "none"
+
+
 def _deal_text(e: dict[str, Any]) -> str:
     s = e["score"]
     if not any(i["dealbreaker"] for i in s["items"]):
@@ -1671,9 +1687,10 @@ def build_server(store: Store) -> FastMCP:
             *([(f"Each adult ({_split_count(search)} adults)" if _split_noun(search) == "adults" else f"Per person ({_split_count(search)} {_split_noun(search)})", [_money(e.get("per_person")) for e in es])]
               if _split_count(search) > 1 else []),
             ("Score", ["none" if e["score_total"] is None else str(e["score_total"]) for e in es]),
-            ("Deal-breakers", ["near miss: " + _near_line(e) if e["score"].get("fit") == "near_miss" and e["score"].get("near_parts") else
-                               "fails " + _labs(e["score"]["failed"]) if e["score"]["failed"] else
-                               ("check " + _labs(e["score"]["check"]) if e["score"]["check"] else "ok") for e in es]),
+            ("Deal-breakers", [_with_commute_over(e, "near miss: " + _near_line(e) if e["score"].get("fit") == "near_miss" and e["score"].get("near_parts") else
+                                                  "fails " + _labs(e["score"]["failed"]) if e["score"]["failed"] else
+                                                  ("check " + _labs(e["score"]["check"]) if e["score"]["check"] else "ok")) for e in es]),
+            *([("Concerns", [_concerns_cell(e) for e in es])] if any(_concerns_cell(e) != "none" for e in es) else []),
             ("Size", [helpers.place_line(e) or "unknown" for e in es]),
             ("Laundry", [_plain(compare_mod.LAUNDRY_TEXT, e["laundry"]) or "unknown" for e in es]),
             ("Dishwasher", ["unknown" if e["dishwasher"] is None else ("yes" if e["dishwasher"] else "no") for e in es]),
