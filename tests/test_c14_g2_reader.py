@@ -93,7 +93,9 @@ def test_range_without_saved_rent_stays_empty():
     r = parse_listing("Bridgeport 2BR\n$3,000 - $3,800 / month")
     assert "price" not in r and "rent range of $3,000 to $3,800" in notes(r)
     r = parse_listing("Bridgeport 2BR\nRent from $3,000 - $3,200 / month")
-    assert "price" not in r and "rent range of $3,000 to $3,200" in notes(r)
+    assert r["price"] == 3200 and "rent range of $3,000 to $3,200" in notes(r)  # cycle 26 (c): a narrow range (high at most 10% above low) saves the higher figure whatever the words
+    r = parse_listing("Bridgeport 2BR\nRent from $3,000 - $3,500 / month")
+    assert "price" not in r and "rent range of $3,000 to $3,500" in notes(r)
 
 
 def test_narrow_plain_range_saves_the_higher_figure():
