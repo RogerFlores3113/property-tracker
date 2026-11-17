@@ -12786,7 +12786,7 @@ def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
         fm = _FORMULA_BIT.search(line)
         if not fm:
             continue
-        figs = [m for m in _NET_DOLLARS.finditer(line[:fm.start()]) if line[:fm.start()].rstrip().endswith(m.group(0)) or fm.start() - m.end() <= 12]
+        figs = [m for m in _NET_DOLLARS.finditer(line[:fm.start()]) if fm.start() - m.end() <= 25 and not re.search(r"[.!?;](?:\s|$)", line[m.end():fm.start()])]
         if not figs:
             continue
         m = figs[-1]
@@ -12796,7 +12796,7 @@ def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
         shown = _money_words(vals[0])
         if re.search(re.escape(shown) + r"(?![\d,])", have):
             continue
-        words = re.findall(r"[A-Za-z][A-Za-z'&-]*", line[:m.start()])[-3:]
+        words = re.findall(r"[A-Za-z][A-Za-z'&-]*", re.split(r"[.;,!?:|]", line[:m.start()])[-1])[-3:]
         label = " ".join(w for w in words if w.lower() not in ("and", "the", "a", "also", "plus", "is", "are", "of", "for"))
         what = f"{shown} for {label.lower()}" if label else shown
         add.append(f"The listing has {what} next to text that looks like a spreadsheet formula. The odd text was ignored. Ask the landlord what the {shown} is for, and whether it is a monthly cost.")

@@ -52,3 +52,13 @@ def test_ordinary_lines_unchanged():
 def test_no_double_note_when_a_note_already_names_it():
     r = read("Rent $1,500 a month. 1 bed 1 bath. Utilities included.\nSurprise charge $99 =cmd|calc!A0 applies monthly.\nDeposit $1,500.")
     assert notes(r).count("$99") == 1
+
+
+@pytest.mark.parametrize("line", [
+    'Parking $80/mo. =cmd|\' /C calc\'!A0 @SUM(1+1)*cmd Storage $15 monthly.',
+    'Cable $30 per month. =HYPERLINK("http://evil","x") $25 monthly',
+    'Pest control $8/mo; =cmd|calc!A0',
+])
+def test_a_figure_ended_by_a_full_stop_is_not_beside_the_formula(line):
+    r = read("Rent $1,500. 1 bed. Utilities included.\n" + line)
+    assert "spreadsheet formula" not in notes(r)
