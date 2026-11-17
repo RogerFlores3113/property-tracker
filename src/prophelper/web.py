@@ -34,7 +34,7 @@ from .store import Store
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-DOWNLOADS = {"/backup", "/backup/files.zip", "/export.csv", "/export.json", "/places.csv", "/calendar.ics", "/skills/property-helper.plugin", "/compare/share.html", "/search/export.json"}  # whole-database or personal downloads: never for another site's page
+DOWNLOADS = {"/backup", "/backup/files.zip", "/export.csv", "/export.json", "/places.csv", "/calendar.ics", "/skills/property-helper.plugin", "/compare/share.html", "/search/export.json", "/share", "/export/places.csv"}  # whole-database or personal downloads: never for another site's page
 DOWNLOAD_PREFIXES = ("/files/",)  # a place's documents
 OPEN_PATHS = {"/launch", "/api/health"}  # everything else needs the app window's key
 KEY_HEADER = "x-prophelper-key"

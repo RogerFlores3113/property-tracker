@@ -150,6 +150,28 @@ def export_alias(request: Request):
     return RedirectResponse("/places.csv" + (f"?{query}" if query else ""), status_code=307)
 
 
+@router.get("/export.csv", include_in_schema=False)
+@router.get("/export/places.csv", include_in_schema=False)
+def export_csv_alias(request: Request):
+    """Cycle 29: /export.csv is the same download as /places.csv (a guessed address must not be a dead end), keeping the query."""
+    return export_alias(request)
+
+
+SHARE_HELP = ("To share places, pick two to four of them on Compare and use Share a copy. To share a whole search with a housemate, use Export this search on the "
+              "Search page. For a spreadsheet, use Download spreadsheet (CSV) on the Board. Nothing is sent anywhere: you save a file and send it yourself.")
+
+
+@router.get("/share", include_in_schema=False)
+def share_alias(request: Request):
+    """Cycle 29: sharing lives under /compare/share.html (a copy of a comparison) and /search/export.json (a whole search). /share goes to the
+    comparison copy when the link names places (?ids=), and otherwise to Compare with a plain line on how to share and export."""
+    ids = [v for v in request.query_params.getlist("ids") if v]
+    if ids:
+        query = request.url.query
+        return RedirectResponse("/compare/share.html?" + query, status_code=307)
+    return redirect("/compare", notice=SHARE_HELP)
+
+
 @router.get("/places.csv", include_in_schema=False)
 def places_csv(request: Request, search_id: int | None = None, stage: str = "", q: str = ""):
     store = get_store(request)
