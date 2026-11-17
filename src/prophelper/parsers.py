@@ -939,7 +939,7 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
                     facts.append(f"The listing corrects the rent: it is now {_usd(new)}. Ask the landlord to confirm it.")
         if fld == "price" and not buying and olds:  # cycle 32: the rent figure stated before the correction is an old figure too, named in the same note
             for v in _gc_earlier_rents(text, ent, new):
-                if len(olds) < 3 and not any(_same_num(v, o) for o in olds):
+                if len(olds) < 3 and not any(_same_num(v, o) for o in olds) and not any(_usd(v) in f for f in facts):  # a figure another note already names is not named twice
                     olds.append(v)
         out[fld] = _tidy_number(new)
         if not olds:
