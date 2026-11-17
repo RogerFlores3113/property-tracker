@@ -162,3 +162,15 @@ def test_saved_title_is_trimmed(store):
     assert p["title"] == "Elm Street Commons - bright 1 bedroom, 1 bath, $1,420"
     p2 = store.update_place(p["id"], title="Elm Street Commons, $1,420 ($1,350 before)")
     assert p2["title"] == "Elm Street Commons, $1,420"
+
+
+@pytest.mark.parametrize("t", [
+    "2 bed 1 bath. Rent $1,800. Reduced to $1,700 with a 12 month lease. Deposit $1,800.",
+    "2 bed 1 bath. Rent $1,800. Reduced to $1,700 if you sign by Dec 1. Deposit $1,800.",
+    "2 bed 1 bath. Rent $1,800 (reduced to $1,700 for the first 6 months). Deposit $1,800.",
+    "2 bed 1 bath. Rent $1,800/mo\nReduced to $1,700 during the first 3 months\nDeposit $1,800",
+])
+def test_conditional_or_temporary_reduced_price_is_not_the_rent(t):
+    r = read(t)
+    assert r["price"] == 1800 and r["deposit"] == 1800
+    assert "$1,700" in notes(r)

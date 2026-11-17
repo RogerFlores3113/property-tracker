@@ -664,6 +664,7 @@ def _gc_special(s: str, buying: bool) -> bool:
     return bool(_GC_SPECIAL.search(re.sub(r"concessions?", " ", s, flags=re.I) if buying else s))
 
 
+_GC_TEMP_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month)?[ \t]*[)\]]?[ \t]*,?[ \t]*(?:for|during|over)[ \t]+(?:the[ \t]+)?(?:first|next|initial|opening)\b", re.I)  # cycle 30: "reduced to $1,700 for the first 6 months" is a promo, never the rent
 _GC_LEASE_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*[ \t]*)?(?:with|for|on|if)[ \t]+(?:a[ \t]+|an[ \t]+)?(?:\d{1,2}|one|two|three|six|nine|ten|eleven|twelve|thirteen|fourteen|eighteen)[- ]*(?:months?|mos?\b|year)", re.I)
 
 
@@ -811,7 +812,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 continue
             if role == "soft" and _gc_special(s, buying):
                 continue  # "now $1,450 if you sign by Dec 15", "was $1,600, now $1,450 special": a special, never a correction
-            if (_COND_AFTER.match(after) or _GC_LEASE_AFTER.match(after)) and role != "old":
+            if (_COND_AFTER.match(after) or _GC_LEASE_AFTER.match(after) or _GC_TEMP_AFTER.match(after)) and role != "old":
                 continue
             if field is None:
                 if hard and role != "old" and value >= 100 and re.search(r"\b(?:now|corrected?|corrections?|updated?|revised)\b", s, re.I) \
