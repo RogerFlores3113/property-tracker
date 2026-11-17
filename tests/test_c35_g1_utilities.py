@@ -144,3 +144,52 @@ def test_not_covered_by_landlord_stays_on_the_pay_list():
     r = P(HEAD + "Tenant pays electric, gas, water not covered by landlord.")
     assert _set(r["tenant_pays"]) == {"electric", "gas", "water"}
     assert not r.get("utilities_included")
+
+
+# ---- 3. a billed-back group keeps its own figure
+RUBS = [
+    "Trash/pest $15/mo, water/sewer/trash via RUBS about $70, electric/internet tenant.",
+    "Water/sewer/trash via RUBS about $70; electric/internet tenant.",
+    "Water, sewer and trash billed through RUBS, about $70/mo. Electric and internet are tenant.",
+    "Electric/internet tenant. Water/sewer/trash via RUBS about $70.",
+    "Utilities: water/sewer/trash via RUBS (about $70), electric/internet tenant paid.",
+    "Water/sewer/trash RUBS ~$70/mo - electric and internet paid by tenant.",
+    "Water/sewer/trash via Conservice about $70 a month, tenant pays electric/internet.",
+    "Water/sewer/trash via RUBS about $70\nElectric/internet tenant",
+]
+
+
+@pytest.mark.parametrize("body", RUBS)
+def test_rubs_figure_belongs_to_water_sewer_trash(body):
+    r = P("Rent $1,299. " + body)
+    assert _set(r["tenant_pays"]) == {"electric", "water", "sewer", "trash", "internet"}, (r.get("tenant_pays"), notes(r))
+    assert r["utilities_estimate"] == 70
+    low = notes(r).lower()
+    assert "electric and internet are about $70" not in low
+    assert "internet are about" not in low
+
+
+def test_rubs_group_alone_after_a_fee():
+    r = P("Rent $1,299. Pest $15/mo, water/sewer/trash via RUBS about $70")
+    assert _set(r["tenant_pays"]) == {"water", "sewer", "trash"}
+    assert r["utilities_estimate"] == 70
+
+
+def test_reviewer_listing_nontech_l4():
+    r = P(saved("r34-nontech-l4"))
+    assert _set(r["tenant_pays"]) == {"electric", "water", "sewer", "trash", "internet"}
+    assert r["utilities_estimate"] == 70
+    assert "Electric and internet are about $70" not in notes(r)
+
+
+def test_negative_one_figure_for_electric_after_a_plain_water_line():
+    r = P("Rent $1,299. Water/sewer/trash included, electric/internet tenant about $90.")
+    assert _set(r["utilities_included"]) == {"water", "sewer", "trash"}
+    assert _set(r["tenant_pays"]) == {"electric", "internet"}
+    assert r["utilities_estimate"] == 90
+
+
+def test_negative_flat_fee_for_three_utilities_is_unchanged():
+    r = P("Rent $1,299. Tenant pays electric. Water/sewer/trash flat $55/mo.")
+    assert r["utilities_estimate"] == 55
+    assert "electric" in _set(r["tenant_pays"])

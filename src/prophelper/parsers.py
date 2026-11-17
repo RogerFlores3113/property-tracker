@@ -8779,6 +8779,23 @@ _LANDLORD_TAIL = re.compile(
     r"(?![ \t]*(?:if|unless|only|when|but|until)\b)(?![ \t]*\?)[ \t]*\)?[ \t]*[,;]?", re.I)
 
 
+_BGB_VIA = r"(?:(?:billed(?:[ \t]+back)?[ \t]+)?(?:via|through|thru|by|using)[ \t]+[A-Za-z][\w&'.-]*(?:[ \t]+[A-Za-z][\w&'.-]*)?|RUBS|rubs|ratio[ \t]+billing|submetered|sub-metered)"
+_BGB_FIG = r"\(?[ \t]*(?:(?:about|approx\w*|around|roughly|est\w*|~|avg\.?|average|typically|usually)[ \t]*)*~?\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|total|combined))*[ \t]*\)?"
+_BILLED_GROUP_BREAK = re.compile(
+    r"(?<![\w/])(?P<grp>" + _LLT_NAMES + r")[ \t]+(?:(?:is|are)[ \t]+)?(?P<via>" + _BGB_VIA + r")[ \t,:-]*(?P<fig>" + _BGB_FIG + r")(?P<cut>[ \t]*[,;][ \t]*)"
+    r"(?=(?:and[ \t]+)?(?:(?:tenants?|residents?|renters?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for)[ \t]+)?" + _ROLE_LIST_RAW + r")", re.I)
+
+
+_BILLED_GROUP_LEAD = re.compile(r"(?P<m>\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly))?)[ \t]*,[ \t]*(?=" + _LLT_NAMES + r"[ \t]+(?:(?:is|are)[ \t]+)?" + _BGB_VIA + r")", re.I)
+
+
+def _billed_group_break(text: str) -> str:
+    """Cycle 35 (nontech l4): "water/sewer/trash via RUBS about $70, electric/internet tenant" -- the figure belongs to the billed-back group before it. A comma
+    or semicolon right after that figure, when the next words are another utility list, ends the sentence, so the $70 is never tied to electric and internet."""
+    text = _BILLED_GROUP_BREAK.sub(lambda m: m.group("grp") + " " + m.group("via") + " " + m.group("fig").strip() + ". ", text)
+    return _BILLED_GROUP_LEAD.sub(lambda m: m.group("m") + ". ", text)  # "Trash/pest $15/mo, water/sewer/trash via RUBS about $70": the fee ends before the billed-back group
+
+
 def _landlord_party_tail(text: str) -> str:
     """Cycle 35 (uiuc l27): "Tenant pays electric and gas, water sewer trash are covered by landlord" -- the landlord's clause after a pay list (after a
     comma, semicolon, dash or in brackets) is its own sentence, "water sewer trash included.", so the tenant's list stops before it. Without "is" or "are",
@@ -12931,8 +12948,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
     raw_text = text or ""
     text = _try(lambda: _redflags_strip(raw_text)) or raw_text  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
-    title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(raw_text))))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
-    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(raw_text)))))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
+    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(text or ""))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
