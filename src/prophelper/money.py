@@ -275,7 +275,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
             line["note"] = f"{note}. It covers only what the listing prices; you also pay {names}, not counted yet"
             missing.append(names)  # name only what is really missing ("electric and gas"), not the whole estimate
             uncounted.append(f"utilities ({names})")
-            notes.append(f"You also pay {names}; not counted yet. Add them to your utilities estimate under Facts.")
+            # cycle 26: the "Not counted yet because it is missing: ..." line (from ``missing``) already says this, so no second sentence for the same utilities
         lines.append(line)
 
     parking = num(place.get("parking_cost"))
@@ -796,10 +796,10 @@ _EXPL_FEE = re.compile(r"\bdeposit|\bfees?\b|\bdues\b|\btax|insurance|\bhoa\b|pa
                        r"\bdrops?\b|\bdropped\b|reduc|discount|\boff\b|\bfree\b|concession|credit|rebate|waive|bonus", re.I)
 _EXPL_LEASE_BEFORE = re.compile(r"\b\d{1,2}[- ]?(?:months?|mos?)\b(?:[- ]?(?:lease|term|contract))?[^$\n;]{0,25}$", re.I)
 _EXPL_LEASE_AFTER = re.compile(r"^\s*(?:/\s*mo\w*\s*)?(?:for|on|with|if you sign)\s+(?:a\s+|an\s+)?\d{1,2}[- ]?(?:months?|mos?)\b", re.I)
-_EXPL_LEASE_WORDS = re.compile(r"\blease (?:length|term)s?\b|\bother lease\b|\banother lease\b|\bdifferent lease\b|\blease options?\b|\bmonth lease options?\b", re.I)
+_EXPL_LEASE_WORDS = re.compile(r"\bmonth[- ]to[- ]month\b|\bmtm\b|\blease (?:length|term)s?\b|\bother lease\b|\banother lease\b|\bdifferent lease\b|\blease options?\b|\bmonth lease options?\b", re.I)
 _EXPL_PLAN = re.compile(r"\b(?:another|other|different) (?:floor ?)?plans?\b|\bfloor[- ]?plans?\b|\b(?:\d[- ]?)?(?:bed(?:room)?s?|br|bd|studio)[- ]plans?\b|\bplans? (?:at|from)\b|\bstarting (?:at|from)\b|\bplan options?\b|\bother (?:unit|size)s?\b", re.I)
 _EXPL_SPECIAL = re.compile(r"\bmove-?in specials?\b|\bspecial offers?\b|\bpromo\w*|\bbest-case\b|\bwith approved credit\b|\bspecials?\b(?!\s+assessment)", re.I)
-_EXPL_ONE_TIME = re.compile(r"\bone[- ]time\b|\bpending\b|\bspecial assessments?\b|\bassessments?\b|\bvote\b|\bto be split\b|\bsplit (?:among|between)\b", re.I)
+_EXPL_ONE_TIME = re.compile(r"\bseller(?:'s)?\s+(?:pays?|paid|will pay|credits?|contribut\w*|concessions?|covers?|help\w*)\b|\bone[- ]time\b|\bpending\b|\bspecial assessments?\b|\bassessments?\b|\bvote\b|\bto be split\b|\bsplit (?:among|between)\b", re.I)
 _EXPL_OLD = re.compile(r"\bold price\b|\bolder (?:price|rent)\b|\bformerly\b|\bno longer\b|\bwas an old\b|\bis the old\b", re.I)
 
 
@@ -843,10 +843,86 @@ def figure_explained(note: str, start: int, end: int) -> str:
     return ""
 
 
-def note_figures_explained(note: str) -> bool:
-    """True when the note has dollar figures and every one of them is explained as not a missing monthly amount (see ``figure_explained``)."""
+# Cycle 26 (rule e): a figure set to $0, included, counted, optional (an upgrade, "if you want") or explained in another note is never named in the
+# "missing" list or the monthly headline. Decided here, once, from the saved notes and fields, so every reader of the notes gets the same answer.
+_OPTIONAL_NOTE = re.compile(r"\blooks optional\b|\bis optional\b|\bare optional\b|\bit is optional\b|\boptional,? so it is not counted\b|\bnot required\b|\bis optional for one car\b", re.I)
+
+
+def _figure_piece(note: str, start: int, end: int) -> str:
+    """The comma or semicolon item a figure sits in ("garage upgrade $130/mo" inside "reserved covered spot $55/mo, garage upgrade $130/mo")."""
+    text, lo, hi = _figure_segment(note, start, end)
+    off = 0
+    for qm in re.finditer(r'"([^"]*)"', note):
+        if qm.start(1) <= start and end <= qm.end(1):
+            off = qm.start(1)
+            break
+    s0, e0 = start - off, end - off
+    before = text[lo:s0]
+    after = text[e0:hi]
+    cut_b = max([m.end() for m in re.finditer(r"[,;(]|\bplus\b|\band\b", before)] or [0])
+    cut_a = min([m.start() for m in re.finditer(r"[,;)]|\bplus\b|\band\b", after)] or [len(after)])
+    return before[cut_b:] + text[s0:e0] + after[:cut_a]
+
+
+def _amount_of(m: re.Match[str]) -> float:
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return -1.0
+
+
+def _note_figures(note: str) -> list[re.Match[str]]:
+    """The dollar figures of a note. A note that quotes a listing line holds the figure twice ("..$130/mo". Only $130 of that ..."): the quote's figure is the one."""
     figs = list(_FIG.finditer(note))
-    return bool(figs) and all(figure_explained(note, m.start(), m.end()) for m in figs)
+    qs = [m for m in re.finditer(r'"([^"]*)"', note)]
+    if not qs:
+        return figs
+    inside = {_amount_of(f) for f in figs if any(q.start(1) <= f.start() and f.end() <= q.end(1) for q in qs)}
+    return [f for f in figs if any(q.start(1) <= f.start() and f.end() <= q.end(1) for q in qs) or _amount_of(f) not in inside]
+
+
+def _note_figures_loose(note: str) -> list[re.Match[str]]:
+    """Like ``_note_figures`` for the looser figure pattern the missing-list code uses ("$ 35", "$1,200.")."""
+    loose = list(re.finditer(r"\$\s?\d[\d,]*(?:\.\d+)?", note))
+    qs = list(re.finditer(r'"([^"]*)"', note))
+    if not qs:
+        return loose
+    def in_q(f: re.Match[str]) -> bool:
+        return any(q.start(1) <= f.start() and f.end() <= q.end(1) for q in qs)
+    inside = {f.group(0).replace(" ", "").rstrip(",.") for f in loose if in_q(f)}
+    return [f for f in loose if in_q(f) or f.group(0).replace(" ", "").rstrip(",.") not in inside]
+
+
+def optional_amounts(notes: list[str]) -> set[float]:
+    """Amounts that some note says outright are optional (a second space, an upgrade): another note that quotes the same figure is explained."""
+    out: set[float] = set()
+    for n in notes:
+        if _OPTIONAL_NOTE.search(n) and not re.search(r"\b(?:required|mandatory)\b", re.sub(r"\b(?:ask|check)\b[^.]{0,30}\bif\b[^.]{0,30}\b(?:required|mandatory)\b|\bif it is (?:required|mandatory)\b", " ", n, flags=re.I), re.I):
+            out.update(_amount_of(m) for m in _FIG.finditer(n))
+    return out
+
+
+def figure_closed(note: str, start: int, end: int, optional: set[float] | frozenset[float] = frozenset()) -> str:
+    """Why the figure ``m`` of ``note`` is never a missing monthly amount: "zero", "explained", "optional" or "" (still open)."""
+    fm = _FIG.search(note[start:end])
+    amount = _amount_of(fm) if fm else -1.0
+    if amount == 0:
+        return "zero"
+    if figure_explained(note, start, end):
+        return "explained"
+    piece = _figure_piece(note, start, end)
+    if re.search(r"\bupgrades?\b|\boptional\b|\bif you want\b|\byour choice\b|\bby request\b|\badd[- ]ons?\b", piece, re.I) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):
+        return "optional"
+    if amount in optional and not re.search(r"\b(?:required|mandatory)\b", re.sub(r"\b(?:ask|check)\b[^.]{0,30}\bif\b[^.]{0,30}\b(?:required|mandatory)\b", " ", note, flags=re.I), re.I):
+        return "optional"
+    return ""
+
+
+def note_figures_explained(note: str, optional: set[float] | frozenset[float] = frozenset()) -> bool:
+    """True when the note has dollar figures and every one of them is closed: another lease length, another plan, a special, a one-time or pending
+    amount, an old price, a $0, or an optional extra (see ``figure_closed``)."""
+    figs = _note_figures(note)
+    return bool(figs) and all(figure_closed(note, m.start(), m.end(), optional) for m in figs)
 
 
 def _note_is_stale(note: str, place: dict[str, Any] | None) -> bool:
@@ -868,7 +944,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     whole = " ".join(str(reader_notes or "").split())
     if "\n" not in str(reader_notes or "").strip() and _note_is_stale(whole, place):
         return out  # one saved note whose sentences were cut apart: judged as one note, every amount in it is already counted
-    if "\n" not in str(reader_notes or "").strip() and note_figures_explained(whole):
+    optional = optional_amounts(note_units(reader_notes))
+    if "\n" not in str(reader_notes or "").strip() and note_figures_explained(whole, optional):
         return out  # cycle 25: one saved note whose every figure is explained (a best-case deposit special, another lease length): its sentences without a figure are the same note
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
@@ -881,14 +958,18 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
             continue  # a wire warning, or the other parking choices of a place whose parking is counted: not a cost left out of the number
         if re.search(r"\boptional\b", note, re.I) and not re.search(r"\b(?:required|mandatory)\b", note, re.I):
             continue  # an optional carport, garage or pool fee is not a cost you have to pay
-        if re.search(r"\bseller\b[^.]*\b(?:credit|toward closing|concessions?|closing costs?)\b", note, re.I) and not re.search(r"\b(?:parking|garage|fee|deposit|hoa)\b", note, re.I):
+        if re.search(r"\bseller\b[^.]*\b(?:credit|toward closing|concessions?|closing costs?|pays?|paid|contribut\w*)\b", note, re.I) and not re.search(r"\b(?:parking|garage|fee|deposit|hoa)\b", note, re.I):
             continue  # what the seller gives toward closing is about the cash to close, not a monthly cost the buyer left out
         if _note_is_stale(note, place):
             continue
         if re.search(r"\bassessments?\b", note, re.I) and not re.search(r"\bmonthly\b|per month|/\s*mo\b|a month|\b(?:parking|garage|fee|deposit|hoa|dues|utilit\w*|insurance|tax)\b", re.sub(r"\bspecial assessments?\b", " ", note, flags=re.I), re.I):
             continue  # cycle 25: a special assessment (pending or not) is one-time money, handled by the cash to close, never a missing monthly amount
-        if note_figures_explained(note):
+        if note_figures_explained(note, optional):
             continue  # cycle 25: every figure in the note is another lease length, another plan, a special, a one-time or pending amount or an old price
+        if place is not None and _FIG.search(note):
+            vals, used_, placed_ = _note_open_figures(note, place, optional)
+            if not any(v not in placed_ and (_util_names_of(note, a) or round(v, 2) not in used_) for v, a in vals.items()):
+                continue  # cycle 26: every figure is closed by meaning or placed by a field (a $35 electric counted, a $60 optional space): nothing is left out
         if _NOTE_CLOSED.search(note) and not re.search(r"\bOnly [^.]{1,80} of that\b", note):
             continue  # "counted once in other monthly fees", "not counted again": the note says the money IS counted
         if _NOTE_CONDITIONAL.search(note):
@@ -981,6 +1062,26 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
     return _open_notes_parts(reader_notes, place)[1]
 
 
+def _note_open_figures(note: str, place: dict[str, Any] | None, optional: set[float] | frozenset[float] = frozenset()) -> tuple[dict[float, str], set[float], set[float]]:
+    """The figures of a note that are not closed by meaning (see ``figure_closed``), with the amounts the place's fields hold (``used``) and the
+    ones its fields place for this note (``placed``)."""
+    used: set[float] = set()
+    placed: set[float] = set()
+    values = {float(m.group(0).replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): m.group(0).replace(" ", "").rstrip(",.")
+              for m in _note_figures_loose(note) if not figure_closed(note, m.start(), m.end(), optional)}  # cycle 25: an explained figure is never named as missing
+    if place:
+        try:
+            from .parsers import _CURRENT_EXTRA, _NET_NOTE, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
+            fields = {k: v for k, v in place.items() if v is not None and k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
+            if place.get("listing_text"):
+                fields["_text"] = str(place["listing_text"])
+            used = {round(u, 2) for u in _net_used_numbers(fields, [], str(place.get("listing_text") or "")) | _field_sums(place)}
+            placed = placed_amounts(set(values), used, _field_sums(place), note, fields, semantic=not _NET_NOTE.match(note))  # cycle 23: a last-check note is settled only by a field holding the figure itself
+        except Exception:
+            used, placed = set(), set()
+    return values, used, placed
+
+
 def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) -> tuple[list[str], str]:
     """A few words for what is open in the notes, naming the amounts: "the $75 flat fee in the listing notes" for one amount,
     "the $96 and $40 amounts in the listing notes" for several (up to four), else the generic "some amounts in the listing notes"."""
@@ -992,24 +1093,12 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
         rest = [n for n in notes if n not in ranges]
         other = open_notes_label("\n".join(rest), place) if rest else ""
         return [], (RENT_RANGE_LABEL if not other else f"{other} and {RENT_RANGE_LABEL}")
+    optional = optional_amounts(note_units(reader_notes))
     seen: dict[float, str] = {}
     unplaced: dict[float, str] = {}
     named: dict[float, list[str]] = {}
     for note in notes:
-        used: set[float] = set()
-        placed: set[float] = set()
-        values = {float(m.group(0).replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): m.group(0).replace(" ", "").rstrip(",.")
-                  for m in re.finditer(r"\$\s?\d[\d,]*(?:\.\d+)?", note) if not figure_explained(note, m.start(), m.end())}  # cycle 25: an explained figure is never named as missing
-        if place:
-            try:
-                from .parsers import _CURRENT_EXTRA, _NET_NOTE, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
-                fields = {k: v for k, v in place.items() if v is not None and k in _NET_REAL_FIELDS + _CURRENT_EXTRA}
-                if place.get("listing_text"):
-                    fields["_text"] = str(place["listing_text"])
-                used = {round(u, 2) for u in _net_used_numbers(fields, [], str(place.get("listing_text") or "")) | _field_sums(place)}
-                placed = placed_amounts(set(values), used, _field_sums(place), note, fields, semantic=not _NET_NOTE.match(note))  # cycle 23: a last-check note is settled only by a field holding the figure itself
-            except Exception:
-                used, placed = set(), set()
+        values, used, placed = _note_open_figures(note, place, optional)
         for value, amount in values.items():
             seen.setdefault(value, amount)
             util = _util_names_of(note, amount)
