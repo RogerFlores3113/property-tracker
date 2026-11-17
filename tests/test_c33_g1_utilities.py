@@ -358,3 +358,37 @@ def test_all_utilities_not_included_answer_counts_the_bills():
     r = P(HEAD + "Utilities included? No. Typical bills about $200.")
     assert r["utilities_estimate"] == 200
     assert "not counted anywhere" not in notes(r)
+
+
+# ---- 9. things that must not move (found by the corpus check)
+def test_gas_for_cooking_inside_an_included_list_stays_included():
+    r = P(HEAD + "Included in rent: heat, hot water, gas for cooking. Tenant pays: electricity, cold water.")
+    assert "gas" in _set(r["utilities_included"]) and "heat" in _set(r["utilities_included"])
+    assert "gas" not in _set(r["tenant_pays"])
+
+
+def test_payer_clause_before_an_included_list_is_not_merged_with_it():
+    r = P(HEAD + "Tenant pays electric and gas (about $140/mo combined); water, sewer and trash included.")
+    assert _set(r["utilities_included"]) == {"water", "sewer", "trash"}
+    assert r["utilities_included"] == "water, sewer, trash"
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}
+
+
+def test_named_list_with_comma_typical_bills_keeps_the_old_reading():
+    r = P(HEAD + "Heat and water included. Tenant pays electric and gas, typical bills $120.")
+    assert r["utilities_estimate"] == 120
+    assert _set(r["utilities_included"]) == {"heat", "water"}
+
+
+def test_answered_yes_against_tenant_pays_all_is_a_conflict_not_included():
+    r = P(HEAD + "Tenant pays all utilities. Typical bills: $175 per month. Electric included? Yes.")
+    assert _set(r["tenant_pays"]) == FIVE
+    assert "electric" not in _set(r.get("utilities_included"))
+    assert r["utilities_estimate"] == 175
+    assert "disagree" in notes(r)
+
+
+def test_typical_total_with_a_named_extra_plan_keeps_the_sum_of_the_parts():
+    r = P(HEAD + "Tenant pays electric and gas. Water, sewer, trash billed through RUBS about $70/mo. Electric and gas about $130 a month.")
+    assert r["utilities_estimate"] == 200
+    assert "counted once" not in notes(r)

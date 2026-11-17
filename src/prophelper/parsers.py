@@ -6838,12 +6838,17 @@ _ANSWERED_INCLUDED = re.compile(
     r"(?P<ans>yes|yep|yeah|no|nope|nah)\b(?![ \t]+(?:idea|clue)\b)", re.I)
 
 
+_TENANT_ALL_UTILS = re.compile(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n?]{0,25}\b(?:pays?|responsible|will pay)\b[^.\n?]{0,25}\ball\b[^.\n?]{0,15}\butilit|\ball[ \t]+(?:the[ \t]+)?utilities[^.\n?]{0,30}\b(?:paid[ \t]+by|tenant|resident|renter)\b", re.I)
+
+
 def _answered_questions(text: str) -> str:
     """Cycle 33 (rule x): a question followed by its answer is the answer. "Electric included? No." is "Electric not included." and
     "Gas included? Yes." is "Gas included."; only a question with nothing after it stays a question (and is read by _asked_included)."""
     def one(m: re.Match[str]) -> str:
         names = " ".join(m.group("names").split())
         yes = m.group("ans").lower() in ("yes", "yep", "yeah")
+        if yes and _TENANT_ALL_UTILS.search(text):
+            return m.group(0)  # "Tenant pays all utilities. ... Electric included? Yes.": two lines that disagree, read in _util_tail as a conflict, never as included
         rest = text[m.end():m.end() + 1]
         tail = "" if rest in ("", ",", ".", ";", "!", "\n", ")", "|") else ". "
         if rest == " " and re.match(r"[ \t]+[a-z]", text[m.end():m.end() + 3]):
@@ -6951,6 +6956,11 @@ def _util_tail(text: str, est: Any, pays: str, included: str, counted: set[str],
         gone = [w for w in names if w in inc_l]
         inc_l = [w for w in inc_l if w not in names]
         add_pay(*[w for w in names if w != "internet" or w in pay_l])
+        _qi = text.find(_q)
+        if _qi >= 0 and re.match(r"[ \t]*\n?[ \t]*(?:yes|yep|yeah)\b", text[_qi + len(_q):_qi + len(_q) + 12], re.I):  # cycle 33: an answered question that clashes with "tenant pays all utilities"
+            notes.append(f"The listing says you pay all the utilities, and also answers that {_join_names(names)} {'is' if len(names) == 1 else 'are'} included. "
+                         f"Those two lines disagree, so {_join_names(names)} {'is' if len(names) == 1 else 'are'} kept as something you pay and not counted as included. Ask the landlord what the rent really covers.")
+            continue
         notes.append(f"The listing asks whether {_join_names(names)} {'is' if len(names) == 1 else 'are'} included in the rent. That is a question, not an answer, so "
                      f"{_join_names(names)} {'is' if len(names) == 1 else 'are'} not counted as included. Ask the landlord.")
     return {"drop_counted": bool(ep), "est": est_op, "pays": _ordered_utilities(pay_l), "included": "all" if all_inc else _ordered_utilities(inc_l), "facts": notes, "counted": new_counted, "text": out_text}
@@ -7638,7 +7648,7 @@ _SEMI_UTIL_LIST = re.compile(
 _SEMI_UTIL_CUE = re.compile(r"\b(?:pays?|paid|payer|included?|includes|responsible|utilities|tenants?|residents?|renters?|separate(?:ly)?|extra|you|landlord|owner|covers?|billed|not)\b", re.I)
 
 
-_COOKING_GAS_CLAUSE = re.compile(r"(?<![\w$])(?:(?:and|plus|also)[ \t]+)?(?<!no )gas[ \t]+(?:for|used[ \t]+for)[ \t]+(?:the[ \t]+)?(?:cooking|stove|range|oven)(?=[ \t]*(?:[;.\n|]|$))", re.I)
+_COOKING_GAS_CLAUSE = re.compile(r"(?:(?<=[;.|\n])[ \t]*|^[ \t]*)(?:(?:and|plus|also)[ \t]+)?(?<!no )gas[ \t]+(?:for|used[ \t]+for)[ \t]+(?:the[ \t]+)?(?:cooking|stove|range|oven)(?=[ \t]*(?:[;.\n|]|$))", re.I)
 
 
 def _cooking_gas_clause(text: str) -> str:
@@ -7646,7 +7656,7 @@ def _cooking_gas_clause(text: str) -> str:
     listing gives no payer for, in a listing that says the tenant pays the others: it joins the pay list as "Tenant pays gas for cooking"."""
     if not re.search(r"\b(?:tenants?|residents?|renters?)[ \t]+pays?\b", text, re.I) or re.search(r"\bgas\b[^.;\n]{0,20}\b(?:included|covered|paid by (?:the )?(?:landlord|owner))|\b(?:landlord|owner)\b[^.;\n]{0,15}\bpays?\b[^.;\n]{0,25}\bgas\b", text, re.I):
         return text
-    return _COOKING_GAS_CLAUSE.sub("Tenant pays gas for cooking", text)
+    return _COOKING_GAS_CLAUSE.sub(lambda m: m.group(0)[:len(m.group(0)) - len(m.group(0).lstrip(" \t"))] + "Tenant pays gas for cooking", text)
 
 
 def _join_semicolon_utility_lists(text: str) -> str:
@@ -7662,7 +7672,10 @@ def _join_semicolon_utility_lists(text: str) -> str:
                 prev_line = text[text.rfind("\n", 0, seg_start - 1) + 1:seg_start - 1]
                 if prev_line.rstrip().endswith(":"):
                     cue_from = seg_start - 1 - len(prev_line)
-            if not (m.group("suf") or _SEMI_UTIL_CUE.search(text[cue_from:m.start()])):
+            if m.group("suf"):  # "Water; sewer; trash included": the piece before it must be a bare utility name, never another payer's clause
+                if not re.fullmatch(r"[ \t]*(?:(?:" + _ROLE_WORD + r")\b[ \t]*(?:,|/|&|\band\b)?[ \t]*)+", text[seg_start:m.end("a")].rstrip(" \t;"), re.I):
+                    continue
+            elif not _SEMI_UTIL_CUE.search(text[cue_from:m.start()]):
                 continue
             text = text[:m.end("a")].rstrip(" \t") + ", " + text[m.end():]
             done = False
@@ -8968,7 +8981,13 @@ def _standalone_estimates(text: str) -> str:
     "Estimated electric+gas $120") right after a line that says what the tenant pays is that line's utilities estimate. It is written as
     "Utilities estimate $X/month." (or "Estimated $X/month for NAMES.") so the estimate readers see one plain form."""
     text = re.sub(r"[ \t]*\([ \t]*((?:typical|average|avg\.?|usual(?:ly)?)\b[^()$\n]{0,30}\b(?:bills?|total|utilit\w*)\b[^()$\n]{0,25}\$[ \t]?\d[\d,]*(?:\.\d\d)?[^()$\n]{0,25})\)[ \t]*\.?", r". \1.", text)  # cycle 32: "(typical bills for the unit about $180 per month)" is a sentence of its own
-    text = re.sub(r"(?<=[a-z\)])[ \t]*[,\-][ \t]+((?:typical|average|avg\.?|usual(?:ly)?)\b[^()$\n,.;]{0,30}\b(?:bills?|total|utilit\w*)\b[^()$\n,.;]{0,25}\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly))?)(?=[ \t]*(?:[.!;\n]|$))", r". \1", text, flags=re.I)  # cycle 33: "Tenant pays all utilities, typical bills $210." is two sentences
+    def _comma_bills(m: re.Match[str]) -> str:  # cycle 33: only after "all utilities", "everything", "not included" (a named list keeps the older reading)
+        before = m.string[max(0, m.start() - 70):m.start()]
+        before = re.split(r"[.;\n]", before)[-1]
+        if re.search(r"\b(?:all|every|everything)\b[^,;\n]{0,25}\butilit|\beverything\b|\butilit(?:y|ies)[^,;\n]{0,30}(?:tenants?|residents?|renters?)|\bnot[ \t]+included\b|\butilit(?:y|ies)\b[ \t]*$", before, re.I):
+            return ". " + m.group(1)
+        return m.group(0)
+    text = re.sub(r"(?<=[a-z\)])[ \t]*[,\-][ \t]+((?:typical|average|avg\.?|usual(?:ly)?)\b[^()$\n,.;]{0,30}\b(?:bills?|total|utilit\w*)\b[^()$\n,.;]{0,25}\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly))?)(?=[ \t]*(?:[.!;\n]|$))", _comma_bills, text, flags=re.I)  # cycle 33: "Tenant pays all utilities, typical bills $210." is two sentences
     segs = re.split(r"(?<=[.!?;])([ \t]+)|(\n)", text)  # cycle 31: a semicolon ends a piece too ("Tenant pays electric and gas; typical bills for the unit about $165.")
     # re.split keeps the separators; rebuild pieces as (text, separator) pairs
     pieces: list[tuple[str, str]] = []
@@ -12061,7 +12080,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.append(f"{billed[0].capitalize()} {_util_verb(billed[0])} billed back at {_money_cents(billed[1])}/month, counted as your utilities estimate.")
         else:
             facts.append(f"The listing gives a billed-back average of {_money_cents(billed[1])} a month but doesn't say which utilities it covers. Ask the landlord.")
-        tot_items = [i for i in (_try(lambda: _estimate_items(utext)) or []) if i["total"] and i["amount"] > billed[1]] if billed[0] else []  # cycle 33: a billed-back amount beside a "typical bills" total is read the same way as a flat fee
+        tot_items = [i for i in (_try(lambda: _estimate_items(utext)) or []) if i["total"] and i["amount"] > billed[1]] if (billed[0] and (flat == billed or (lambda _pl: not _pl or _pl["total"])(_try(lambda: _estimate_plan_for(utext, {w.strip() for w in billed[0].split(",") if w.strip()}))))) else []  # cycle 33: a billed-back amount beside a "typical bills" total is read the same way as a flat fee
         if tot_items:
             # cycle 29: a flat "$45 water/sewer/trash package" next to a "$125 estimate for the utilities" (or a $170 total): the listing's own whole-bill figure
             # is counted once. When the package is only part of what the total covers it is not added; when it prices a utility the total leaves out
