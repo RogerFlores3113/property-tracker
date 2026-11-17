@@ -745,6 +745,8 @@ def _special_price(text: str, rent: float | None) -> tuple[float, str, float | N
             continue
         after = text[m.end():m.end() + 120]
         before = text[max(0, m.start() - 40):m.start()]
+        if re.match(r"[ \t]*(?:off|discount|credit|bonus|rebate|gift|cash|back|reward)\b", after, re.I) or (rent is not None and v < 0.5 * rent):
+            continue  # "Rent specials: $500 off first month" is a discount, not a price for the rent
         am = _SPECIAL_AFTER.match(after)
         if not am and not _SPECIAL_BEFORE.search(before):
             continue
@@ -9407,7 +9409,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         elif by_months and isinstance(rent_now, (int, float)) and 200 <= rent_now <= 30000 and not _is_sale_text(text):
             put("deposit", by_months * float(rent_now))  # "security deposit one month", "deposit equal to one month's rent"
             hm = re.search(r"\$[ \t]?\d(?:\.\d+)?[ \t]*months?\b[^.\n;|]{0,30}?\bdeposit\b[^.\n;|]{0,12}", dep_src, re.I)
-            if not hm and _SALE_WORDS.search(text):  # cycle 26: "Deposit 1.5 months" in a rental that says "open house": filled from the rent, and the note says it was worked out
+            if not hm and _SALE_WORDS.search(re.sub(r"\bnew[ \t]+construction\b", " ", text, flags=re.I)):  # cycle 26: "Deposit 1.5 months" in a rental that says "open house": filled from the rent, and the note says it was worked out
                 facts.append(f"The listing gives the deposit as {by_months:g} month{'s' if by_months != 1 else ''} of rent, so the deposit is worked out from the rent. Ask the landlord to confirm it.")
             if hm:  # cycle 25: "$1.5 months rent deposit hold": the dollar sign is a typo for the months, so the figure is explained here and no note repeats it
                 facts.append(f'The listing says "{" ".join(hm.group(0).split())}". It is read as a deposit of {by_months:g} months of rent, '
