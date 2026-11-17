@@ -8160,6 +8160,7 @@ def _util_text(text: str) -> str:
     "Valet trash" is a service fee, not a utility, so it is hidden from the utility readers."""
     for _q, _n in _asked_included(text):
         text = text.replace(_q, " ")  # cycle 24: "gas incl. in rent?" is a question, not a statement
+    text = re.sub(r"(?:(?<=[.;!,\n])|^)[ \t]*(?:is|are|does|do|will|who|can|could|would)\b[^.\n;!?]{0,80}\b(?:covered|paid|pays?|included|provided|covers?|responsible)\b[^.\n;!?]{0,60}\?+", " ", text, flags=re.I)  # cycle 35 (rule l): "Is water covered by landlord?" sets nothing
     # cycle 29: "Landlord covers water/sewer? No - tenant pays." is a question the listing answers with the opposite: it sets nothing for the landlord's side
     text = re.sub(r"\b" + _LANDLORD_WORD_U + r"[ \t]+(?:pays?|covers?|provides?)[ \t]+(?:for[ \t]+)?(?:the[ \t]+)?(?:" + _ROLE_LIST_RAW + r")[ \t]*\?+(?:[ \t]+(?:no|nope|not)\b[^.\n;?]{0,30}[.!]?)?", " ", text, flags=re.I)
     text = _strip_choice_internet(text)  # cycle 22: optional internet is a choice, never a utility the estimate counts
@@ -8768,6 +8769,32 @@ def _spanish_utilities(text: str) -> str:
             c = re.sub(pat, word, c, flags=re.I)
         return c
     return re.sub(r"[^.\n;]+", clause, text)
+
+
+_LLT_ITEM = r"\b(?:" + _ROLE_WORD + r"|elec)\b"
+_LLT_NAMES = _LLT_ITEM + r"(?:(?:[ \t]*(?:,|/|&|\+)[ \t]*|[ \t]+(?:and[ \t]+)?)" + _LLT_ITEM + r")*"
+_LANDLORD_TAIL = re.compile(
+    r"(?P<pre>[,;(\u2013\u2014-][ \t]*)(?P<names>" + _LLT_NAMES + r")[ \t]+(?P<verb>(?:is|are|being)[ \t]+)?"
+    r"(?:covered|paid|provided|supplied|included|handled|taken[ \t]+care[ \t]+of)[ \t]+(?:for[ \t]+)?by[ \t]+(?:the[ \t]+)?(?:landlord|owner|management|property[ \t]+manager)\b"
+    r"(?![ \t]*(?:if|unless|only|when|but|until)\b)(?![ \t]*\?)[ \t]*\)?[ \t]*[,;]?", re.I)
+
+
+def _landlord_party_tail(text: str) -> str:
+    """Cycle 35 (uiuc l27): "Tenant pays electric and gas, water sewer trash are covered by landlord" -- the landlord's clause after a pay list (after a
+    comma, semicolon, dash or in brackets) is its own sentence, "water sewer trash included.", so the tenant's list stops before it. Without "is" or "are",
+    a comma list ("gas, water, sewer paid by landlord") is ambiguous about where the landlord's part starts, so it is left to the conflict note."""
+    def one(m: re.Match[str]) -> str:
+        names = m.group("names")
+        if m.group("pre").strip() == "," and "," in names and not m.group("verb") \
+                and not re.search(r"\band[ \t]+" + _LLT_ITEM + r"[ \t]*$", m.string[max(0, m.start() - 40):m.start()], re.I):  # "electric and gas, water, sewer paid by landlord": "and" closes the tenant's list
+            return m.group(0)
+        before = m.string[max(0, m.start() - 6):m.start()].lower()
+        seg_start = max(m.string.rfind(c, 0, m.start()) for c in ".\n!?") + 1
+        if not _IDIOM_PAY_CUE.search(m.string[seg_start:m.start()]) and not re.search(r"\b(?:utilit\w*|pays?|paid)\b", m.string[seg_start:m.start()], re.I):
+            return m.group(0)
+        names = re.sub(r"\belec\b", "electric", names, flags=re.I)
+        return ". " + names + " included. "
+    return _LANDLORD_TAIL.sub(one, text)
 
 
 def _landlord_idioms(text: str) -> str:
@@ -12904,8 +12931,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
     raw_text = text or ""
     text = _try(lambda: _redflags_strip(raw_text)) or raw_text  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
-    title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(raw_text)))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
-    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(text or ""))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(raw_text))))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
+    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_landlord_party_tail(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []

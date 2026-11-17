@@ -86,3 +86,61 @@ def test_negative_english_listing_is_unchanged():
     r = P(HEAD + "Tenant pays gas. Water included.")
     assert _set(r["tenant_pays"]) == {"gas"}
     assert _set(r["utilities_included"]) == {"water"}
+
+
+# ---- 2. the landlord's clause after a pay list
+LL_TAIL = [
+    "Utilities: tenant pays electric and gas, water sewer trash are covered by landlord.",
+    "Tenant pays electric and gas, water sewer trash are paid by landlord.",
+    "Tenant pays electric and gas; water sewer trash covered by the owner.",
+    "Tenant pays electric and gas. Water sewer trash included by landlord.",
+    "Water sewer trash are covered by landlord. Tenant pays electric and gas.",
+    "Tenant pays electric and gas, water, sewer, trash paid by landlord.",
+    "Tenant pays electric and gas (water sewer trash covered by the owner).",
+    "Tenant pays electric and gas - water sewer trash included by the landlord.",
+    "Water sewer trash paid by owner, tenant pays electric and gas.",
+    "Tenant pays electric and gas,\nwater sewer trash covered by landlord.",
+]
+
+
+@pytest.mark.parametrize("body", LL_TAIL)
+def test_landlord_clause_keeps_water_sewer_trash_off_the_pay_list(body):
+    r = P(HEAD + body)
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}, (r.get("tenant_pays"), notes(r))
+    assert _set(r["utilities_included"]) == {"water", "sewer", "trash"}
+    assert "unclear" not in notes(r)
+
+
+def test_landlord_clause_with_internet_after_it():
+    r = P(HEAD + "Tenant pays electric and gas, water sewer trash covered by landlord, internet by tenant.")
+    assert _set(r["tenant_pays"]) == {"electric", "gas", "internet"}
+    assert _set(r["utilities_included"]) == {"water", "sewer", "trash"}
+
+
+def test_reviewer_listing_uiuc_l27():
+    r = P(saved("r34-uiuc-l27"))
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}
+    assert _set(r["utilities_included"]) == {"water", "sewer", "trash"}
+    assert r["utilities_estimate"] == 80
+    assert "unclear" not in notes(r)
+
+
+@pytest.mark.parametrize("body", [
+    "Tenant pays electric and gas. Is water covered by landlord?",
+    "Tenant pays electric and gas, is water covered by landlord?",
+])
+def test_a_question_about_the_landlord_sets_nothing(body):
+    r = P(HEAD + body)
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}
+    assert not r.get("utilities_included")
+
+
+def test_conditional_landlord_clause_is_not_a_plain_included():
+    r = P(HEAD + "Tenant pays electric and gas, water sewer trash covered by landlord if you sign by Dec 1.")
+    assert not r.get("utilities_included")
+
+
+def test_not_covered_by_landlord_stays_on_the_pay_list():
+    r = P(HEAD + "Tenant pays electric, gas, water not covered by landlord.")
+    assert _set(r["tenant_pays"]) == {"electric", "gas", "water"}
+    assert not r.get("utilities_included")
