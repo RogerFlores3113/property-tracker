@@ -243,7 +243,7 @@ def test_thousands_dot(raw, want):
 
 
 def test_a_figure_in_a_one_line_listing_is_quoted_with_its_own_words():
-    t = "Helle Wohnung, Miete $1.700 warm, Haustiere nach Absprache. Vorherige Mieter haben die Küche renoviert."
+    t = "Helle Wohnung, Preis $1.700, Haustiere nach Absprache. Vorherige Mieter haben die Küche renoviert."
     r = P.parse_listing(t, "")
     assert dropguard.find_unplaced(t, r, r["found_in_listing"]) == []
-    assert 'The listing also says "Miete $1,700". It is not counted anywhere. Check what it is for.' in r["found_in_listing"]
+    assert 'The listing also says "Preis $1,700". It is not counted anywhere. Check what it is for.' in r["found_in_listing"]
