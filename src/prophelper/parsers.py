@@ -91,7 +91,7 @@ _FEE = (r"deposits?|fees?|pet|pets|parking|garage|carport|admin(?:istrative|istr
         r"assessment\w*|contribut\w*|seller")
 _FEE_BEFORE = re.compile(r"\b(?:" + _FEE + r")", re.I)
 _MONTHLY = r"(?:/\s*|per\s+|a\s+|each\s+|every\s+)?(?:mo\b|mos\b|month\b|months\b|monthly\b|mth\b)"
-_RENT_MARK = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r"|/\s*(?:unit|apt)\b)", re.I)
+_RENT_MARK = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r"|/\s*(?:unit|apt)\b|(?:al|por|cada|/)\s*mes\b|/\s*mensual\b|mensual(?:es)?\b|pro\s+monat\b|monatlich\b|par\s+mois\b|/\s*mois\b)", re.I)  # cycle 33: "$1,400 al mes"
 _BR_MARK = re.compile(r"^\s*/\s*(?:\d\s*(?:br|bd|bed)|studio)", re.I)  # Craigslist: "$1100 / 1br - 700ft2"
 _PER_BED = re.compile(r"^\s*\+?\s*(?:/|per)\s*(?:bed|bedroom|person|resident|tenant|student)", re.I)
 _FEE_AFTER_STRICT = re.compile(r"^\s*\+?\s*(?:one[- ]time\s+|non[- ]refundable\s+|refundable\s+|monthly\s+|price\s+)?(?:" + _FEE + r")", re.I)
@@ -119,7 +119,8 @@ def _utility_clause_amount(text: str, start: int, end: int) -> bool:
     return False
 
 
-_RENT_LABEL = re.compile(r"\b(?:rent|monthly|price|asking|lease|per month|list(?:ed|ing)?(?: price)?|offered|cost)\b", re.I)
+_FOREIGN_FEE = re.compile(r"\b(?:cuotas?|mascotas?|dep[o\u00f3]sito|fianza|tarifa|estacionamiento|parqueo|cochera|garaje|gastos|servicios|luz|agua|internet|limpieza|administraci[o\u00f3]n|mantenimiento|geb[u\u00fc]hr|gebuehr|kaution|nebenkosten|haustier\w*|stellplatz|frais|caution|charges|animaux)\b", re.I)
+_RENT_LABEL = re.compile(r"\b(?:rent|monthly|price|asking|lease|per month|list(?:ed|ing)?(?: price)?|offered|cost|alquiler|renta|arriendo|miete|kaltmiete|warmmiete|loyer)\b", re.I)
 _SALE_WORDS = re.compile(r"\b(?:for sale|list price|listed (?:at|for)|asking price|offered at|mls|sold(?![ \t]+as[ \t-]+is\b)|est\.? ?payment|"
                          r"mortgage|down payment|home value|zestimate|redfin estimate|price cut|days on (?:zillow|market|redfin)|"
                          r"open house|new construction|sale price|purchase price|buy)\b", re.I)
@@ -272,7 +273,8 @@ def _amounts(text: str) -> list[dict[str, Any]]:
             fee = bool(re.search(r"\b(?:deposit|fee|pet|hoa|tax)\s*[:\-]?\s*$", clause, re.I))
         elif marker == "monthly":
             fee = bool(_FEE_BEFORE.search(clause[-22:])) and not _RENT_LABEL.search(clause[-14:]) or bool(_FEE_AFTER_MONTHLY.match(tail)) \
-                or _utility_clause_amount(text, m.start(), m.end())
+                or _utility_clause_amount(text, m.start(), m.end()) \
+                or (bool(_FOREIGN_FEE.search(clause[-32:])) and not _RENT_LABEL.search(clause[-14:]))  # cycle 33: "Cuota de mascotas $300 al mes" is a pet fee
         elif not fee:
             fee = bool(_FEE_AFTER_STRICT.match(tail)) and not re.match(r"\s*\+\s*(?:all\s+)?(?:the\s+)?utilit", tail, re.I)  # "$1,150 + utilities" is the rent
         if not fee and _NOT_RENT_EXTRA.search(clause):
@@ -610,7 +612,7 @@ def _corrected_fact_note(label: str, new_text: str, old_text: str | None) -> str
 # ----------------------------------------------------------------- cycle 27: one general correction step
 _GC_KW = re.compile(
     r"(?P<named>\b(?:pet|parking|key|garage|holding|reservation|storage|fob|cleaning|move[- ]in|admin\w*|lease|late|utility|utilities|amenity|trash|internet|valet|package|pest|processing|community|technology|cable|gym|pool|bike|waste|sewer|water|laundry)[ \t]+(?:rent|deposit|dep|fees?|charges?)\b)"
-    r"|(?P<credit>\b(?:seller|sellers|seller's)[ \t]+(?:credits?|concessions?|contribution|paying|pays|paid|giving|gives|offering|offers)\b|\b(?:closing[ \t]+(?:cost[ \t]+)?)?(?:credit|concessions?)\b(?![ \t]+(?:checks?|scores?|reports?|history|cards?)))"
+    r"|(?P<credit>\b(?:seller|sellers|seller's)[ \t]+(?:(?:will|to|would|shall|is[ \t]+(?:going|willing)[ \t]+to)[ \t]+)?(?:credits?|concessions?|contribution|contribute|paying|pays?|paid|giving|gives?|offering|offers?|cover|covers|provide|provides)\b|\b(?:closing[ \t]+(?:cost[ \t]+)?)?(?:credit|concessions?)\b(?![ \t]+(?:checks?|scores?|reports?|history|cards?)))"
     r"|(?P<closing>\bclosing[ \t]+(?:costs?|fees?|expenses)\b)"
     r"|(?P<dep>\b(?:(?:security|sec\.?|refundable|damage)[ \t]+)?(?:deposit|dep)\b)"
     r"|(?P<hoa>\bhoa\b|\b(?:condo|association|assoc\.?)[ \t]+(?:fees?|dues)\b)"
@@ -833,6 +835,8 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     and re.match(r"^[ \t\-*#:(]*(?:previously|formerly|originally|earlier|before|prior|was|were|used[ \t]+to[ \t]+be|old(?:[ \t]+(?:value|figure|amount))?)[ \t:,\-]*(?:it[ \t]+)?(?:(?:was|were)[ \t]+)?$", window, re.I):
                 field = next(iter(prev_fields[-1]))  # cycle 30: "Closing costs: $6,000" then a line "Previously $6,500": the old figure of the fact before it
                 inherit_old.add(field)
+            if field == "seller_credit" and _GC_CREDIT_OTHER.search(s[a.end():a.end() + 70]) and not re.search(r"\bclosing\b|\bbuyer'?s?[ \t]+costs?\b", s, re.I):
+                field = None  # cycle 33: "Actually the seller will pay $7,500 toward the roof repair" is not a closing credit
             if field is not None:
                 chain = field
                 if field == "named":
@@ -893,6 +897,14 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
             ent["new"] = _gc_unit_value(fld, bv, bafter)
             ent["spans"].append((b0, b1))
             ent["sentence"] = "plain figure with an earlier figure named"
+    for fld, (bv, bafter, b0, b1) in bare_last.items():  # cycle 33: "Seller pays $3,000 closing. Update: seller will give $7,500": the plain figure that stood before the correction is the old one
+        ent = found.get(fld)
+        if ent is None or ent["new"] is None or fld not in ("seller_credit", "closing_costs", "hoa", "property_tax") or not ent.get("spans"):
+            continue
+        old_v = _gc_unit_value(fld, bv, bafter)
+        if b0 < min(a0 for a0, _e in ent["spans"]) and not _same_num(old_v, ent["new"]) and not any(_same_num(old_v, o) for o in ent["olds"]) \
+                and not any(a0 <= b0 < e0 for a0, e0 in ent["spans"]):
+            ent["olds"].append(old_v)
     ranges = {"price": (300, 30000), "deposit": (0, 50000), "hoa": (1, 6000), "property_tax": (50, 200000), "application_fee": (0, 1000), "parking_cost": (0, 1000),
               "seller_credit": (0, 500000), "closing_costs": (0, 500000)}
     for fld in list(found):
@@ -909,6 +921,7 @@ def _gc_fmt(field: str, v: float) -> str:
     return _usd(v) + (" a month" if field == "hoa" else " a year" if field == "property_tax" else "")
 
 
+_GC_CREDIT_OTHER = re.compile(r"^[^.\n]{0,25}?\b(?:toward|towards|for|on|to[ \t]+(?:fix|repair|replace)|of|per[ \t]+month[ \t]+for)\b[^.\n]{0,40}?\b(?:repairs?|roof|hvac|furnace|a/?c|appliances?|flooring|carpet|paint|inspection|warranty|hoa|dues|assessments?|taxes|rent|utilit\w*|renovations?|upgrades?|landscap\w*)\b", re.I)
 _GC_MOVE_ONLY = re.compile(r"\b(?P<down>reduced|lowered|dropped|cut|slashed|decreased|marked[ \t]+down|price[ \t]+(?:cut|drop|reduction))\b|\b(?P<up>increased|raised|rose|risen|climbed|jumped|went[ \t]+up)\b", re.I)
 _GC_HARD_WORD = re.compile(r"\b(?:corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)|(?:is|are)[ \t]+now|new[ \t]+(?:rent|price))\b|(?:\bignore\b|\bnot[ \t]+\$|\bwas[ \t]+\$)", re.I)
 
@@ -991,14 +1004,15 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
         label = _GC_LABEL[fld]
         olds_txt = [_gc_fmt(fld, o) for o in olds]
         kw = {"price": r"\b(?:rent|price)\b", "deposit": r"\bdeposit\b", "hoa": r"\b(?:hoa|condo)\b", "property_tax": r"\btax", "application_fee": r"\bapplication\b", "parking_cost": r"\bparking\b",
-              "seller_credit": r"\b(?:seller|credit)", "closing_costs": r"\bclosing\b"}[fld]
+              "seller_credit": r"\b(?:seller(?:'s)?[ \t]+(?:credit|concession|contribut\w*|pays?|will|to)|credit|concession)", "closing_costs": r"\bclosing\b"}[fld]
         have = [f for f in facts if ("correct" in f.lower() or f.startswith(_RENT_MOVE_NOTE_START)) and re.search(kw, f, re.I) and any(re.search(re.escape(_usd(o)) + r"(?![\d,])", f) for o in olds)]
         facts[:] = [f for f in facts if f in have or "correct" in f.lower() or f.startswith(_RENT_MOVE_NOTE_START) or not re.search(kw, f, re.I) or not any(re.search(re.escape(_usd(o)) + r"(?![\d,])", f) for o in olds)]
         if have:
             continue
         old_list = " and ".join(olds_txt) if len(olds_txt) <= 2 else ", ".join(olds_txt)
         lead = _gc_rent_lead(ent, new) if fld == "price" else f"The listing corrects the {label}: it is now {_gc_fmt(fld, new)}."
-        facts.append(f"{lead} The earlier {old_list} {'is' if len(olds_txt) == 1 else 'are'} not used. Ask the landlord to confirm it.")
+        upto = " The listing says \"up to\", so this is the most the seller gives, not a sure amount." if fld == "seller_credit" and re.search(r"\b(?:up[ \t]+to|as[ \t]+much[ \t]+as|maximum|max\.?)\b", ent.get("sentence") or "", re.I) else ""
+        facts.append(f"{lead} The earlier {old_list} {'is' if len(olds_txt) == 1 else 'are'} not used.{upto} Ask the landlord to confirm it.")
 
 
 def _saved_vs_corrected_notes(found: dict[str, dict[str, Any]], current: dict[str, Any], buying: bool) -> list[str]:
@@ -4056,7 +4070,7 @@ def _pet_stances(text: str) -> tuple[dict[str, set[str]], list[str]]:
 
 def _ask_who(text: str) -> str:
     """Who to ask about the pet rule: the landlord for a rental, the seller or listing agent for a home for sale."""
-    return "the seller or listing agent" if _SALE_WORDS.search(text) else "the landlord"
+    return "the seller or listing agent" if _sale_text(text) else "the landlord"
 
 
 def _quoted_pieces(quoted: list[str]) -> str:

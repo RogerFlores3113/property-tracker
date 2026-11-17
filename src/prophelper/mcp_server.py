@@ -987,6 +987,23 @@ def build_server(store: Store) -> FastMCP:
                 notes.append(f"Skipped a commute ({exc})")
         return notes
 
+    def listing_rent_check(place: dict[str, Any]) -> list[str]:
+        """Cycle 33: the rent saved on the place is not the rent its own listing text gives (update_place sent a price that differs, "price 2400" on a place whose text says
+        $2,310). One plain line says so, in the update reply and in get_place. Never for a home for sale, and never when the text gives no clear rent."""
+        try:
+            if store.place_mode(place["id"]) == "buy" or not str(place.get("listing_text") or "").strip():
+                return []
+            from . import parsers
+            saved = float(place.get("price"))
+            read = parsers.parse_listing(str(place["listing_text"]), "").get("price")
+            read = float(read)
+        except (TypeError, ValueError, KeyError, Exception):  # noqa: BLE001 - a reader failure must not break the reply
+            return []
+        if abs(read - saved) < 0.5:
+            return []
+        return [f"Rent check: the listing text saved on this place gives a rent of {_money(read)} a month, but the rent saved on this place is {_money(saved)}, and the cost uses "
+                f"{_money(saved)}. Check which one is right with the landlord."]
+
     def _newer_rent_note(search: dict[str, Any], dup: dict[str, Any] | None, fields: dict[str, Any]) -> str:
         """Cycle 33: add_place on a place that is already saved, and the paste gives another rent ("$3,295 now, not $3,640"). The saved rent is not changed by a repeat
         add, so one line names both figures and says how to apply the new one."""
@@ -1213,6 +1230,7 @@ def build_server(store: Store) -> FastMCP:
         lines.append("Score by criterion: " + "; ".join(f"{_lab(i['label'], i['kind'])} {round(i['score'] * 100)}%" + ("" if i["known"] else " (unknown)")
                                                         for i in e["score"]["items"]))
         lines += _cash_lines(e)
+        lines += listing_rent_check(e)
         gap = movein.gap_warning(e, _search_of(store, e))
         if gap:
             lines.append(gap + ".")
@@ -1384,6 +1402,7 @@ def build_server(store: Store) -> FastMCP:
             lines += insurance_warning(after)
         if "price" in fields:
             lines += rent_warning(after)
+            lines += listing_rent_check(after)
         lines += covers_lines
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)
