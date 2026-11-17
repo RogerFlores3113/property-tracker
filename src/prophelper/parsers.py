@@ -5651,6 +5651,64 @@ _CLOSING_ITEM = re.compile(r"\b((?:title(?:[ \t]+(?:and|&)[ \t]+escrow)?|escrow|
 _SELLER_PAREN = re.compile(r"\([^()\n]*\b(?:seller|owner)(?:'s)?\b[^()\n]*\)", re.I)
 
 
+_CL_AMT = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
+_CL_SEP = re.compile(r"[ \t]*(?:,(?!\d)|\band\b|\bplus\b|\+|&|\|)[ \t]*", re.I)
+_CL_KNOWN = re.compile(r"\b(?:title|escrow|recording|attorney|settlement|survey|appraisal|lender|loan|origination|prepaids?)\b", re.I)
+_CL_LEAD = re.compile(r"^(?:closing[ \t]+(?:costs?|fees?|items?|charges?)[ \t]*[:\-]?[ \t]*|(?:the[ \t]+)?buyer(?:'?s)?[ \t]+(?:(?:will|to|should)[ \t]+)*(?:pays?|covers?)[ \t]*:?[ \t]*|(?:the[ \t]+)?buyers?'?s?[ \t]+(?=[a-z])|(?:buyer|buyers)[ \t]*:[ \t]*|(?:also|about|around|approx\.?|approximately|roughly|est\.?|estimated|of|for|a|an|the|at|is|are|to|pay|pays|\(|~|:|-)[ \t]+)+", re.I)
+_CL_TAIL = re.compile(r"(?:[ \t]+(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|of|for|a|an|the|at|is|are|to|~|\)|:|-))+$", re.I)
+
+
+_CL_WORDS = {"title", "escrow", "recording", "attorney", "settlement", "survey", "appraisal", "lender", "loan", "origination", "prepaid", "prepaids", "fee", "fees", "cost", "costs", "charge", "charges",
+             "policy", "search", "set-up", "setup", "set", "up", "report", "and", "&", "owner's", "owners", "lender's", "lenders", "buyer's", "attorney's", "processing", "underwriting"}
+
+
+def _closing_bound_items(sent: str, insurance: bool = False) -> list[tuple[str, float]] | None:
+    """Cycle 33: closing parts in a sentence with two or more dollar figures, each figure bound to the label in its own piece, in either order:
+    "Buyer to pay $1,250 lender origination, $625 appraisal, and $1,400 for owner's title policy" -> lender origination 1,250; appraisal 625; owner's title policy 1,400.
+    Pieces are cut at commas, "and", "plus", "+", "&" and pipes; a piece that is only item words ("title" in "title and escrow about $2,100") joins the next piece.
+    None when the sentence has no figure, or a piece holds two (the old readers then decide)."""
+    amts = list(_CL_AMT.finditer(sent))
+    if not amts:
+        return None
+    pieces: list[str] = []
+    pos = 0
+    for sep in _CL_SEP.finditer(sent):
+        pieces.append(sent[pos:sep.start()])
+        pos = sep.end()
+    pieces.append(sent[pos:])
+    merged: list[str] = []
+    carry = ""
+    for piece in pieces:
+        if not _CL_AMT.search(piece):
+            words = re.sub(r"[^a-z' ]", " ", _CL_LEAD.sub("", piece.strip()).lower()).split()
+            if words and all(_CL_KNOWN.fullmatch(w) or w in ("fee", "fees", "cost", "costs", "charge", "charges") for w in words):
+                carry = (carry + " " + piece).strip() + " and "
+                continue
+            carry = ""
+            continue
+        merged.append(carry + piece)
+        carry = ""
+    items: list[tuple[str, float]] = []
+    for piece in merged:
+        found = list(_CL_AMT.finditer(piece))
+        if len(found) != 1:
+            return None
+        a = found[0]
+        amount = _num(a.group(1)) + (int(a.group(2)) / 100 if a.group(2) else 0)
+        label = (piece[:a.start()] + " " + piece[a.end():]).strip()
+        label = _CL_TAIL.sub("", _CL_LEAD.sub("", " ".join(label.split()))).strip(" ,:;-")
+        label = " ".join(label.lower().split())
+        if re.search(r"\b(?:hoa|association|condo|warrant\w*)\b|\bprepaids?[ \t]+(?!(?:fees?|costs?|charges?)\b)", label):
+            continue  # a one-time HOA or warranty item and prepaid taxes, insurance or dues have their own reader (buyer_one_time_fees)
+        words = re.findall(r"[a-z]+(?:'s)?(?:-[a-z]+)?|&", label)
+        if not all(w in _CL_WORDS or (insurance and w == "insurance") for w in words):
+            continue  # "priced under appraisal", "escrow set-up of paid by buyer": not a plain closing item name, the older readers decide
+        if label and _CL_KNOWN.search(label) and amount >= 50 and label not in [n for n, _a in items]:
+            items.append((label, amount))
+    return items or None
+
+
+
 def _closing_sentences(text: str) -> list[str]:
     """Cycle 32: the sentences the named closing parts are read from. A bracketed aside about the seller ("title fees $1,100 (seller also pays title fees on
     their side)") is the seller's own business and does not make the buyer's sentence a seller sentence."""
@@ -5663,9 +5721,12 @@ def _closing_items_parts(text: str) -> list[tuple[str, float]]:
     for sent in _closing_sentences(text):
         if re.search(r"\bseller|\bcredit|\bconcession|\bcash[ \t]+(?:needed|to[ \t]+close)", sent, re.I):
             continue
+        bound = _closing_bound_items(sent) or []  # cycle 33: each figure keeps the label in its own piece, in either order
+        bound_amounts = {a for _n, a in bound}
+        parts.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in parts])
         for m in _CLOSING_ITEM.finditer(sent):
             name, amount = " ".join(m.group(1).lower().split()), _num(m.group(2))
-            if amount >= 50 and name not in [n for n, _a in parts]:
+            if amount >= 50 and name not in [n for n, _a in parts] and amount not in bound_amounts:
                 parts.append((name, amount))
     return parts if len(parts) >= 2 and not _closing_parts_are_total(text) else []
 
@@ -5677,9 +5738,12 @@ def _closing_items(text: str) -> tuple[float, str] | None:
     for sent in _closing_sentences(text):
         if re.search(r"\bseller|\bcredit|\bconcession|\bcash[ \t]+(?:needed|to[ \t]+close)", sent, re.I):
             continue
+        bound = _closing_bound_items(sent) or []  # cycle 33: each figure keeps the label in its own piece, in either order
+        bound_amounts = {a for _n, a in bound}
+        parts.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in parts])
         for m in _CLOSING_ITEM.finditer(sent):
             name, amount = " ".join(m.group(1).lower().split()), _num(m.group(2))
-            if amount >= 50 and name not in [n for n, _a in parts]:
+            if amount >= 50 and name not in [n for n, _a in parts] and amount not in bound_amounts:
                 parts.append((name, amount))
     if len(parts) >= 2:
         total = round(sum(a for _n, a in parts), 2)
@@ -5991,11 +6055,14 @@ def _lender_credit_notes(text: str) -> list[str]:
     return notes
 
 
+_SELLER_PROVIDES = re.compile(r"\b(?:seller|owner)(?:'s)?\b[^.\n]{0,25}\b(?:provid\w*|includes?|gives?|offers?|throws?[ \t]+in)\b", re.I)
+
+
 def seller_paid_fees(text: str) -> list[tuple[str, float]]:
     """Cycle 27: one-time fees the listing says the seller pays ("Transfer fee $350 paid by seller", "Seller pays the $800 move-in fee"). Not a cost to the buyer."""
     got: list[tuple[str, float]] = []
     for sent in re.split(r"[.\n;]", text or ""):
-        if not _PAYER_SELLER.search(sent) or _PAYER_BUYER.search(sent):
+        if not (_PAYER_SELLER.search(sent) or _SELLER_PROVIDES.search(sent)) or _PAYER_BUYER.search(sent):
             continue
         for m in _BUYER_FEE.finditer(sent):
             label = " ".join((m.group("n1") or m.group("n2")).lower().split())
@@ -6084,7 +6151,124 @@ def _closing_help_offer(text: str) -> list[str]:
     return notes[:1]
 
 
-def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
+_MONTH_ABBR = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12}
+_MONTH_WORD = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_CLOSE_LEAD = (r"\b(?:closing(?:[ \t]+date)?|close(?:s)?(?:[ \t]+date)?|settlement(?:[ \t]+date)?)(?![ \t]+(?:costs?|fees?|credits?|help|assistance|attorney|agent|table|statement|disclosure|documents?))"
+               r"[ \t]*(?:(?:is|will[ \t]+be|are)[ \t]+)?(?:(?:set|scheduled|targeted|planned|expected)[ \t]+(?:for|on|to)[ \t]+|:|=|-|\u2013)?[ \t]*(?:on|by|before|no[ \t]+later[ \t]+than|around|about|approximately)?[ \t]*")
+_CLOSE_DATE = re.compile(_CLOSE_LEAD + r"(?:(?P<mon>" + _MONTH_WORD + r")\.?[ \t]+(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,?[ \t]+(?P<year>20\d\d))?(?!\d)"
+                         r"|(?P<day2>\d{1,2})(?:st|nd|rd|th)?[ \t]+(?:of[ \t]+)?(?P<mon2>" + _MONTH_WORD + r")\.?(?:,?[ \t]+(?P<year2>20\d\d))?(?!\d)"
+                         r"|(?P<m3>\d{1,2})/(?P<d3>\d{1,2})/(?P<y3>(?:20)?\d\d)(?!\d)|(?P<iso>20\d\d-\d\d-\d\d))", re.I)
+
+
+def listing_closing_date(text: str) -> tuple[str, str]:
+    """Cycle 33: the closing date a sale listing gives ("Closing date Feb 20, 2027", "Close by March 1, 2027", "closing on 3/15/2027", "Closing: 2027-02-20").
+    Returns (ISO date, the quoted words) or ("", note words) when the date can not be used: no year ("Close by March 1": year = "missing"), two different dates
+    ("conflict"), or a date that does not exist. ("", "") when the listing gives no closing date. A sentence that ends in "?" sets nothing."""
+    import calendar
+    found: dict[str, str] = {}
+    noyear = ""
+    for sent in re.split(r"[\n;]|(?<!\d)\.(?!\d)|\.(?=\s)", text or ""):
+        if sent.rstrip().endswith("?"):
+            continue
+        for m in _CLOSE_DATE.finditer(sent):
+            quote = " ".join(m.group(0).split()).strip(" ,.:;-")
+            if m.group("iso"):
+                y, mo, d = (int(x) for x in m.group("iso").split("-"))
+            elif m.group("mon") or m.group("mon2"):
+                mon = (m.group("mon") or m.group("mon2")).lower().rstrip(".")
+                mo = _MONTH_ABBR[mon[:4] if mon.startswith("sept") else mon[:3]]
+                d = int(m.group("day") or m.group("day2"))
+                yr = m.group("year") or m.group("year2")
+                if not yr:
+                    noyear = noyear or quote
+                    continue
+                y = int(yr)
+            else:
+                mo, d, y = int(m.group("m3")), int(m.group("d3")), int(m.group("y3"))
+                y = y + 2000 if y < 100 else y
+            if not (1 <= mo <= 12 and 1 <= d <= calendar.monthrange(y, mo)[1]):
+                continue
+            found.setdefault(f"{y:04d}-{mo:02d}-{d:02d}", quote)
+    if len(found) > 1:
+        return "", "conflict: " + " and ".join(f'"{q}"' for q in found.values())
+    if found:
+        day, quote = next(iter(found.items()))
+        return day, quote
+    return ("", "missing: " + noyear) if noyear else ("", "")
+
+
+def _closing_date_notes(text: str) -> list[str]:
+    day, quote = listing_closing_date(text)
+    if day:
+        import datetime as _dt
+        _d = _dt.date.fromisoformat(day)
+        nice = f"{_d.strftime('%b')} {_d.day}, {_d.year}"
+        return [f'The listing gives a closing date ("{quote}"). A place saved from it gets {nice} as its closing date, which Today and the place page use instead of the search\'s target date. '
+                "Check it against the contract."]
+    if quote.startswith("conflict: "):
+        return [f"The listing gives two different closing dates ({quote[10:]}), so no closing date is saved. Ask the seller's agent which one is right."]
+    if quote.startswith("missing: "):
+        return [f'The listing says "{quote[9:]}" but gives no year, so no closing date is saved. Add the closing date on the place page.']
+    return []
+
+
+_RANGE_AMT = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?"
+_RANGE_UNIT = r"(?:[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly|annual\w*))?"
+_BUYER_RANGE = re.compile(r"(?P<between>\bbetween[ \t]+)?" + _RANGE_AMT + r"(?P<u1>" + _RANGE_UNIT + r")[ \t]*(?P<sep>to|-|\u2013|\u2014|through|thru|or|and)[ \t]*\$?[ \t]?(?P<hi>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?P<u2>" + _RANGE_UNIT + r")", re.I)
+_BUYER_RANGE_LABEL = re.compile(r"\b(?P<hoa>hoa|h\.o\.a\.|association|condo(?:minium)?[ \t]+(?:fees?|dues)|maintenance|(?:monthly|building)[ \t]+dues)\b|\b(?P<tax>(?:property[ \t]+|real[ \t]+estate[ \t]+)?tax(?:es)?)\b", re.I)
+
+
+def _collapse_buyer_ranges(text: str) -> tuple[str, list[str]]:
+    """Cycle 33: "HOA $300 to $350/mo depending on unit", "Taxes $5,000 - $6,000", "HOA is between $300 and $350 per month": a range for the HOA or the property tax
+    counts the higher figure (never a silent low one). Returns (the text with each such range replaced by its high figure, plain notes that say so). A range
+    with no HOA or tax word in its own clause, or whose second figure is not higher, is left alone ("and" counts as a range only after "between")."""
+    notes: list[str] = []
+    out = text
+    for m in list(_BUYER_RANGE.finditer(text))[::-1]:
+        sep = m.group("sep").lower()
+        if sep == "and" and not m.group("between"):
+            continue
+        lo, hi = _num(m.group(2)), _num(m.group("hi"))
+        if not hi > lo or hi < 20:
+            continue
+        clause_start = max(text.rfind(".", 0, m.start()) if not text[text.rfind(".", 0, m.start()) + 1:text.rfind(".", 0, m.start()) + 2].isdigit() else -1, text.rfind("\n", 0, m.start()), text.rfind(";", 0, m.start())) + 1
+        lead = text[clause_start:m.start()]
+        lab = None
+        for lm in _BUYER_RANGE_LABEL.finditer(lead):
+            lab = lm
+        if lab is None or len(lead) - lab.end() > 40:
+            continue
+        kind = "HOA" if lab.group("hoa") else "property tax"
+        unit = (m.group("u2") or m.group("u1") or "").strip()
+        repl = f"${hi:,.0f}" + (" " + unit if unit and not m.group("u2") else "")
+        out = out[:m.start()] + repl + out[m.end():]
+        per = " a month" if re.search(r"mo|month|monthly", unit, re.I) else (" a year" if re.search(r"yr|year|annual", unit, re.I) else "")
+        notes.append(f"The listing gives the {kind} as a range, {_money_c(lo)} to {_money_c(hi)}{per}. The higher figure, {_money_c(hi)}, is used so the cost is not too low. "
+                     "Ask the seller's agent for the exact amount.")
+    return out, notes[::-1]
+
+
+def _down_payment_assistance_notes(text: str, facts: list[str]) -> list[str]:
+    """Cycle 33: "Down payment assistance program available" is an offer the listing gives no terms for. It never lowers the cash to close, and a plain note
+    names it so the line is not silently dropped. An amount in the same sentence is quoted. "No down payment assistance" is not an offer."""
+    for sent in re.split(r"[.\n;](?!\d)", text):
+        if not re.search(r"\bdown[ \t-]?payment[ \t]+(?:assistance|help|grants?|aid)\b|\bDPA\b", sent, re.I):
+            continue
+        if re.search(r"\bno[ \t]+down[ \t-]?payment[ \t]+(?:assistance|help|grants?|aid)|\bnot[ \t]+(?:available|offered|eligible)|\?\s*$", sent, re.I):
+            continue
+        quote = " ".join(sent.split())[:120]
+        if any(quote in f for f in facts):
+            continue
+        amt = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", sent)
+        if amt:
+            return [f'The listing mentions down payment assistance ("{quote}"). It is an offer with its own terms, so the {_money_c(_num(amt.group(1)))} in it is not taken off the cash to close. '
+                    "Ask the lender or the seller's agent who qualifies and what it pays."]
+        return [f'The listing mentions a down payment assistance program ("{quote}") but gives no amount, so nothing is taken off the cash to close. '
+                "Ask the lender or the seller's agent who qualifies and what it pays."]
+    return []
+
+
+def _buyer_only_fees(text: str, out: dict[str, Any], saved_closing: float | None = None) -> list[str]:
     """For a buy search. Parking cost and move-in fees are rent-side money: the buy cost and the cash to close do not count
     them, so they are not filled in (the reader never says "filled in" for money that is not counted). Each becomes a plain
     note instead. Also a broker percent and a transfer fee, which have no field. Takes the two fields out of ``out``."""
@@ -6109,12 +6293,21 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
     fee = out.pop("move_in_fees", None)
     counted_fees, unclear_fees = _try(lambda: buyer_one_time_fees(text, out.get("special_assessment"), str(out.get("special_assessment_payer") or ""))) or ([], [])
     for label, amount in counted_fees:
+        sent_of = next((x for x in re.split(r"[.\n;]", text) if re.search(r"\$\s?" + re.escape(f"{amount:,.0f}") + r"(?!\d)", x)), "")
+        if label in ("prepaid HOA dues", "HOA dues paid up front", "first year of HOA dues", "first month of HOA dues") and sent_of and not _PAYER_BUYER.search(sent_of) \
+                and not re.search(r"\bat[ \t]+(?:closing|close|settlement)\b", sent_of, re.I):
+            notes.append(f"The listing mentions {_money_c(amount)} of {label} paid ahead but does not say who pays it. Dues paid ahead are normally the buyer's cost at closing, so it is counted in the cash to close "
+                         "as a one-time fee, not in the monthly cost. Ask the seller's agent to confirm who pays it.")
+            continue
         notes.append(f"The listing says the buyer pays the ${amount:,.0f} {label} at closing. It is counted in the cash to close as a one-time fee, not in the monthly cost. "
                      "Ask the seller's agent to confirm it.")
     stated = _try(lambda: buyer_closing_items_stated(text)) or []
     if len(stated) == 1:  # cycle 28: one stated item is never added on top of the closing costs (a guess or a figure already read)
         name, amount = stated[0]
-        if out.get("closing_costs") in (None, ""):
+        if out.get("closing_costs") in (None, "") and saved_closing:  # cycle 33: the caller already sent the closing costs: the cash to close uses them, never "a guess"
+            notes.append(f"The listing says the buyer pays {name} about ${amount:,.0f}. The closing costs saved on this place ({_money_c(saved_closing)}) are what the cash to close uses, "
+                         "so this item is not added on top. Ask whether that figure already includes it.")
+        elif out.get("closing_costs") in (None, ""):
             notes.append(f"The listing says the buyer pays {name} about ${amount:,.0f}. The cash to close uses a guess for the whole closing costs. This item is only part of them, "
                          "so it is not added on top. The rest of the closing costs is not known. Ask for the full closing cost estimate.")
     addl_paid, addl_unclear = _try(lambda: buyer_closing_items_additional(text)) or ([], [])
@@ -6171,7 +6364,10 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
             buyer_pays = buyer_pays or next_payer == "buyer"
             if buyer_pays:  # cycle 17: a transfer fee the buyer pays is a closing cost, with or without the word "closing"
                 prior = out.get("closing_costs")
-                if prior in (None, "") and _seller_gives_toward_closing(text):
+                if prior in (None, "") and saved_closing:
+                    notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. The closing costs saved on this place ({_money_c(saved_closing)}) are what the cash to close uses, "
+                                 "so it is not added again. Ask whether that figure already includes it.")
+                elif prior in (None, "") and _seller_gives_toward_closing(text):
                     notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. It is not saved as the closing costs, because the seller is also paying toward closing "
                                  "and the fee alone would make the cash to close look too low. The cash to close uses an estimate of the closing costs. Ask for the full closing cost estimate.")
                 elif prior in (None, ""):
@@ -6189,14 +6385,32 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
     return notes
 
 
-_BUYER_FEE_NAME = (r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contribution|charge))?|reserve(?:s)?(?:[ \t]+fund)?(?:[ \t]+(?:contribution|fee|deposit|payment))|"
+_BUYER_FEE_NAME = (r"home[ \t]+warrant(?:y|ies)(?:[ \t]+(?:plan|fee|policy))?|"
+                   # cycle 33: HOA dues the buyer pays ahead at closing: "first year of HOA dues up front", "prepaid HOA $630 (3 months)", "HOA dues up front"
+                   r"(?:the[ \t]+)?first[ \t]+(?:year|month)(?:'?s)?(?:[ \t]+of)?[ \t]+(?:hoa|association|condo)[ \t]+(?:dues|fees?)(?:[ \t]+(?:up[ \t-]?front|prepaid|at[ \t]+closing))?|"
+                   r"(?:prepaid|pre-paid)[ \t]+(?:hoa|association|condo)(?:[ \t]+(?:dues|fees?|assessments?))?|(?:hoa|association|condo)[ \t]+(?:dues|fees?)[ \t]+(?:up[ \t-]?front|prepaid|pre-paid)|"
+                   r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contribution|charge))?|reserve(?:s)?(?:[ \t]+fund)?(?:[ \t]+(?:contribution|fee|deposit|payment))|"
                    r"reserve[ \t]+fund|move[- ]in[ \t]+fee|initiation[ \t]+fee|working[ \t]+capital(?:[ \t]+(?:contribution|fee))?|capital[ \t]+contribution|"
                    # cycle 30: one-time buyer items at closing: a condo document fee, prepaid taxes and insurance, a move-in deposit to the association
                    r"(?:(?:condo|hoa|association)[ \t]+)?(?:document|documents|docs?)[ \t]+fees?|"
                    r"prepaids?[ \t]+(?:property[ \t]+)?(?:taxes|insurance|interest|items|escrow|homeowners'?[ \t]+insurance)(?:[ \t]*(?:,|and|&)[ \t]*(?:property[ \t]+)?(?:taxes|insurance|interest|homeowners'?[ \t]+insurance))*|"
                    r"(?:(?:association|hoa|condo)[ \t]+)?move[- ]in[ \t]+deposit(?:[ \t]+(?:to|with|for)[ \t]+(?:the[ \t]+)?(?:association|hoa|condo[ \t]+association|building))?")
-_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+)?(?:one[- ]time[ \t]+|new[ \t]+)?(?:(?:hoa|association|condo)[ \t]+(?=(?:working[ \t]+)?capital))?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
+_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+(?:(?:an?|the)[ \t]+)?)?(?:one[- ]time[ \t]+|new[ \t]+)?(?:(?:hoa|association|condo)[ \t]+(?=(?:working[ \t]+)?capital))?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
                         r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
+
+
+def _nice_fee_label(label: str) -> str:
+    """Cycle 33: plain names for the new one-time HOA items; every other label stays as the old readers made it."""
+    if re.fullmatch(r"home[ \t]+warrant(?:y|ies)(?:[ \t]+(?:plan|fee|policy))?", label):
+        return "home warranty"
+    fm = re.fullmatch(r"(?:the[ \t]+)?first[ \t]+(year|month)(?:'?s)?(?:[ \t]+of)?[ \t]+(?:hoa|association|condo)[ \t]+(?:dues|fees?)(?:[ \t]+.*)?", label)
+    if fm:
+        return f"first {fm.group(1)} of HOA dues"
+    if re.fullmatch(r"(?:prepaid|pre-paid)[ \t]+(?:hoa|association|condo)(?:[ \t]+(?:dues|fees?|assessments?))?", label):
+        return "prepaid HOA dues"
+    if re.fullmatch(r"(?:hoa|association|condo)[ \t]+(?:dues|fees?)[ \t]+(?:up[ \t-]?front|prepaid|pre-paid)", label):
+        return "HOA dues paid up front"
+    return label
 
 
 def buyer_one_time_fees(text: str, sa_amount: Any = None, sa_payer: str = "") -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
@@ -6209,20 +6423,24 @@ def buyer_one_time_fees(text: str, sa_amount: Any = None, sa_payer: str = "") ->
     seen: set[tuple[str, float]] = set()
     for sent in re.split(r"[.\n;]", text):
         for m in _BUYER_FEE.finditer(sent):
-            label = " ".join((m.group("n1") or m.group("n2")).lower().split())
+            label = _nice_fee_label(" ".join((m.group("n1") or m.group("n2")).lower().split()))
             amount = _num(m.group(1) if m.group("n1") else m.group(m.lastindex))
             if re.fullmatch(r"capital[ \t]+contributions?", label) and sa_payer == "buyer" and isinstance(sa_amount, (int, float)) and sa_amount >= amount - 0.005:
                 continue  # cycle 30: read with the special assessment the buyer pays (it is already in the cash to close); on its own it is counted here
             if (label, amount) in seen or not 50 <= amount <= 100000:
                 continue
             seen.add((label, amount))
-            if _PAYER_SELLER.search(sent) and not _PAYER_BUYER.search(sent):
+            if (_PAYER_SELLER.search(sent) or _SELLER_PROVIDES.search(sent)) and not _PAYER_BUYER.search(sent):
                 continue
             if sent.count("(", 0, m.start()) > sent.count(")", 0, m.start()) and _try(lambda: _closing_costs(sent[:sent.rfind("(", 0, m.start())])):
                 continue
             if re.search(r"\b(?:including|includes?|incl\.?|which[ \t]+covers?|covering|of[ \t]+which)\b", sent[:m.start()], re.I) and _try(lambda: _closing_costs(sent[:m.start()])):
                 continue  # "closing costs about $7,000, including a $350 condo document fee": inside the total  # cycle 30: "Buyer closing costs about $7,000 (title $1,600, lender $2,900, prepaid taxes $2,500)": a part of the stated total, never added again
-            if _PAYER_BUYER.search(sent) or re.search(r"\bat[ \t]+closing\b|\bat[ \t]+settlement\b|\bdue[ \t]+at[ \t]+(?:closing|signing)\b", sent, re.I):
+            soft = label in ("home warranty", "prepaid HOA dues", "HOA dues paid up front") and re.search(r"\bincluded\b|\bprovid\w*|\boffer\w*|\bcomplimentary\b|\bfree\b|\bcredit\b|\bseller\b|\boptional\b|\bavailable\b|\bif[ \t]+(?:you|desired|wanted)\b", sent, re.I)
+            if soft and not _PAYER_BUYER.search(sent):
+                unclear.append((label, amount))  # cycle 33: a warranty or prepaid dues "provided" or "offered" may not be the buyer's cost
+            elif _PAYER_BUYER.search(sent) or re.search(r"\bat[ \t]+closing\b|\bat[ \t]+settlement\b|\bdue[ \t]+at[ \t]+(?:closing|signing)\b", sent, re.I) \
+                    or label in ("prepaid HOA dues", "HOA dues paid up front", "first year of HOA dues", "first month of HOA dues"):
                 counted.append((label, amount))
             else:
                 unclear.append((label, amount))
@@ -6360,7 +6578,7 @@ def buyer_closing_items_stated(text: str) -> list[tuple[str, float]]:
         sent, sep_before = _bits[_i], (_bits[_i - 1] if _i else "")
         sent = _SELLER_PAREN.sub(" ", sent)  # cycle 32: "(seller also pays title fees on their side)" is an aside, not the sentence's payer
         had_buyer = bool(re.search(r"\bbuyer\b|\bbuyer'?s\b|\bpurchaser\b", sent, re.I))
-        carried = prev_buyer and sep_before == ";" and not had_buyer and not re.search(r"\bseller|\bowner|\bcredit|\bconcession", sent, re.I)
+        carried = prev_buyer and sep_before == ";" and not had_buyer and not re.search(r"\bseller|\bowner(?!'?s?[ \t]+(?:title|policy|insurance|coverage))|\bcredit|\bconcession", sent, re.I)
         prev_buyer = had_buyer or (prev_buyer and carried)  # cycle 32: "Buyer pays lender fees $2,000; appraisal $550; title fees $1,100": the list goes on after ";"
         if not (had_buyer or carried) or re.search(r"\bcredit|\bconcession|\bcash[ \t]+(?:needed|to[ \t]+close)|\bwire\b|\bescrow[ \t]+(?:deposit|money)|\bearnest", sent, re.I):
             continue
@@ -6368,9 +6586,12 @@ def buyer_closing_items_stated(text: str) -> list[tuple[str, float]]:
             continue
         if _ADDL_WORDS.search(sent):
             continue  # cycle 29: an item stated as additional is on top of the closing costs (buyer_closing_items_additional), never inside the guess
+        bound = _closing_bound_items(sent, insurance=True) or []  # cycle 33: "$1,250 lender origination, $625 appraisal": each figure keeps the label in its own piece
+        bound_amounts = {a for _n, a in bound}
+        found.extend((n, a) for n, a in bound if n not in [n2 for n2, _a2 in found])
         for m in _STATED_ITEM.finditer(sent):
             name, amount = " ".join(m.group(1).lower().split()), _num(m.group(2))
-            if amount >= 50 and name not in [n for n, _a in found]:
+            if amount >= 50 and name not in [n for n, _a in found] and amount not in bound_amounts:
                 found.append((name, amount))
     return found
 
@@ -6614,6 +6835,8 @@ def _plain_assessment(text: str) -> tuple[float, str, str] | None:
         amounts = re.findall(r"\$\s?\d", sent)
         if len(amounts) != 1 or _PLAIN_ASSESS_RECURRING.search(sent) or re.search(r"\?\s*$", sent):
             continue
+        if _SPREAD_RE.search(sent):
+            continue  # cycle 33: "$3,600 over 24 months" is paid in monthly pieces, never "due at closing" (the spread and split readers say what it is)
         payer = _assessment_payer(text, sent)
         at_closing = re.search(r"\bat[ \t]+(?:closing|close|settlement)\b|\bdue[ \t]+(?:at|on)[ \t]+(?:closing|close|settlement)\b|\bclosing[ \t]+(?:statement|table)\b", sent, re.I)
         if not payer and not at_closing and not re.search(r"\b(?:seller|buyer|purchaser)\b", sent, re.I):
@@ -6658,6 +6881,8 @@ def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | 
         return (plain[0], plain[1], plain[2]) if plain else (None, "", "")
     amount = _assessment_amount(sentence, skip_monthly=True)
     payer = _assessment_payer(text, sentence)
+    if _assessment_split(text) and amount and abs(_assessment_split(text)[2] - amount) < 0.5:
+        return None, "", sentence  # cycle 33: split between buyer and seller over months: the buyer's half is read as a monthly figure
     if amount and (sp := _assessment_spread(text, True)) and abs(_num(sp[2].lstrip("$")) - amount) < 0.5:
         amount = None  # cycle 32: the monthly pieces are read apart from the closing amount ("Special assessment $9,000. Buyer pays it over 3 years.")
     return amount, payer, sentence
@@ -6705,6 +6930,75 @@ def _assessment_spread(text: str, any_payer: bool = False) -> tuple[float, int, 
     return None
 
 
+_SPLIT_WORDS = re.compile(r"\bsplit\b[^.\n]{0,30}?(?:50[ \t]*/[ \t]*50|evenly|equally|(?:in|into)[ \t]+half|half[ \t]+and[ \t]+half)|\b50[ \t]*/[ \t]*50\b|\b50[ \t]*%[ \t]*(?:each|/)|"
+                          r"\b(?:shared|divided)[ \t]+(?:equally|evenly)\b|\b(?:buyer|purchaser)[ \t]+(?:pays?|covers?|owes?)[ \t]+(?:half|50[ \t]*%)|\bhalf[ \t]+(?:is[ \t]+)?(?:paid[ \t]+)?by[ \t]+(?:the[ \t]+)?(?:buyer|purchaser)\b|"
+                          r"\b(?:each|both)[ \t]+(?:side|party|of[ \t]+(?:them|you))[ \t]+pays?[ \t]+half\b", re.I)
+
+
+def _assessment_split(text: str) -> tuple[float, int, float, str] | None:
+    """Cycle 33: "Assessment: $3,600 over 24 months, split 50/50 between buyer and seller" is paid in monthly pieces and the buyer pays half. Returns
+    (the buyer's monthly share, the number of months, the whole amount, the sentence) when ONE dollar figure sits in an assessment sentence with a month
+    count and an even split between buyer and seller; otherwise None. Only an even split is read: any other share stays unread (the callers then say
+    who pays is not known)."""
+    pieces = re.split(r"[.\n;](?!\d)", text)
+    for i, sent in enumerate(pieces):
+        if not re.search(r"\bassessments?\b", sent, re.I) or re.search(r"\?\s*$", sent):
+            continue
+        whole = sent
+        if not _SPLIT_WORDS.search(whole) and i + 1 < len(pieces) and "$" not in pieces[i + 1] and _SPLIT_WORDS.search(pieces[i + 1]) \
+                and re.search(r"\b(?:it|this|that|the[ \t]+assessment|buyer|seller)\b", pieces[i + 1], re.I):
+            whole = sent + ". " + pieces[i + 1]  # "Assessment $3,600 over 24 months. Split 50/50 between buyer and seller."
+        if not _SPLIT_WORDS.search(whole) or not re.search(r"\b(?:buyer|purchaser)\b", whole, re.I):
+            continue
+        if not re.search(r"\bseller|\bowner|50[ \t]*/[ \t]*50|\bhalf\b", whole, re.I):
+            continue
+        amts = re.findall(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)(?!,\d)", whole)
+        if len(amts) != 1 or re.search(r"/[ \t]*mo\b|/[ \t]*month|per[ \t]+month|a[ \t]+month|each[ \t]+month", whole, re.I):
+            continue
+        sm = _SPREAD_RE.search(whole)
+        if not sm:
+            continue
+        n_raw, unit = (sm.group(1), (sm.group(2) or "")) if sm.group(1) else (sm.group(3), "monthly payments")
+        n = int(n_raw) if n_raw.isdigit() else _SPREAD_NUM.get(re.sub(r"\s+", " ", n_raw.lower()), _SPREAD_NUM.get(n_raw.lower().replace(" ", "-")))
+        if not n:
+            continue
+        if re.match(r"y", unit, re.I):
+            n *= 12
+        elif re.match(r"(?:payments?|installments?)", unit, re.I) and re.search(r"quarter|annual|yearly|year|weekly", whole, re.I):
+            continue
+        total = _num(amts[0])
+        if not 2 <= n <= 120 or total < 100:
+            continue
+        return round(total / 2 / n, 2), n, total, " ".join(whole.split())
+    return None
+
+
+def _assessment_split_note(text: str) -> str:
+    got = _assessment_split(text)
+    if not got:
+        return ""
+    share, n, total, _sent = got
+    return (f"The listing has an assessment of {_money_c(total)} paid over {n} months and split 50/50 between the buyer and the seller. Your half is {_money_c(total / 2)}, "
+            f"which is {_money_c(share)} a month for {n} months. It is counted in the monthly cost as other monthly fees, and not as cash at closing. "
+            "It ends after the last payment, so the monthly cost drops by that amount then. Ask whether the payments carry interest and who pays if you sell before then.")
+
+
+def assessment_spread_payer_unknown(text: str) -> tuple[float, int, float] | None:
+    """Cycle 33: "Special assessment $9,000 over 36 months" with no word on who pays it. Returns (monthly piece, number of months, the whole amount) so the cash
+    to close can say the amount is left out until the payer is known, or None when a payer is named, the buyer's half is read (_assessment_split) or there is no
+    such assessment."""
+    if _assessment_split(text):
+        return None
+    sp = _assessment_spread(text, True)
+    if not sp:
+        return None
+    total = _num(sp[2].lstrip("$"))
+    for sent in re.split(r"[.\n;](?!\d)", text):
+        if re.search(r"\bassessments?\b", sent, re.I) and sp[2] in sent.replace(" ", ""):
+            return (sp[0], sp[1], total) if _assessment_payer(text, sent) == "" else None
+    return None
+
+
 def _assessment_monthly(text: str) -> tuple[float, int | None] | None:
     """("Assessment for windows: $150/month for 24 months") -> (150, 24). Months is None when the listing gives no length."""
     m = re.search(r"\bassessments?\b[^.\n$]{0,40}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)"
@@ -6716,6 +7010,8 @@ def _assessment_monthly(text: str) -> tuple[float, int | None] | None:
                       r"(?:[^.\n]{0,15}?\b(?:for|x|over)[ \t]+(\d{1,3})[ \t]*(?:months?|mos?\b))?", text, re.I)
         if m:
             return _num(m.group(1) or m.group(3)), (int(m.group(2) or m.group(4)) if (m.group(2) or m.group(4)) else None)
+    if not m and (sp33 := _assessment_split(text)):
+        return sp33[0], sp33[1]  # cycle 33: "$3,600 over 24 months, split 50/50": the buyer's half, a month at a time
     if not m:
         sp = _assessment_spread(text)  # cycle 32: "$9,000 ... buyer pays over 36 months" is $250 a month for 36 months
         return (sp[0], sp[1]) if sp else None
@@ -6749,6 +7045,8 @@ def _monthly_assessment_items(text: str) -> list[dict[str, Any]]:
             continue
         if not re.search(r"/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|each[ \t]+month|\bmonthly\b|\bmo\b", seg, re.I):
             continue
+        if _SPREAD_RE.search(seg) and not re.search(r"/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|each[ \t]+month", seg, re.I):
+            continue  # cycle 33: "$4,800 in 24 monthly payments" is a total paid over months (the spread and split readers), not a monthly figure
         amts = list(re.finditer(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", seg))
         if not amts:
             continue
@@ -6797,6 +7095,11 @@ def _assessment_monthly_note(text: str) -> str:
         return ""
     amount, months = got
     length = f" for {months} months (${amount * months:,.0f} in all)" if months else ""
+    for sent in re.split(r"[.\n;](?!\d)", text):  # cycle 33: "...$450 per month for 18 months, seller to pay": the payer is named, so the note never says "ask who pays"
+        if re.search(r"\bassessments?\b", sent, re.I) and re.search(r"\$\s?" + re.escape(f"{amount:,.0f}") + r"(?!\d)", sent):
+            if _assessment_payer(text, sent) == "seller":
+                return (f"The listing says the seller pays an assessment of ${amount:,.0f} a month{length}. It is not a cost to you, so it is not counted in the monthly cost or the cash to close.")
+            break
     return (f"The listing mentions an assessment of ${amount:,.0f} a month{length}. It is not saved as the "
             f"one-time special assessment. Add it to other monthly fees if you will pay it, and ask who pays.")
 
@@ -6813,6 +7116,8 @@ def _special_assessment(text: str) -> str:
     if sentence is None:
         return ""
     am = _assessment_amount(sentence, skip_monthly=True)
+    if _assessment_split(text):
+        return ""  # cycle 33: an even split over months has its own note (_assessment_split_note)
     if am and (sp0 := _assessment_spread(text, True)) and abs(_num(sp0[2].lstrip("$")) - am) < 0.5:
         am = None  # cycle 32: the same figure paid in monthly pieces
     if not am and (_assessment_monthly(sentence) or _assessment_yearly(sentence)):
@@ -10445,6 +10750,34 @@ def _hoa_after_question(text: str) -> tuple[float, str] | None:
     return (round(value, 2), " ".join(m.group(0).split())) if 0 < value < 5000 else None
 
 
+_HOA_ONE_TIME_BEFORE = re.compile(r"(?:prepaid|pre-paid|prepay|one[- ]time|initial|(?:the[ \t]+)?first[ \t-]+(?:year|month)s?(?:'s)?(?:[ \t]+of)?|(?:\d+|one|two|three|six|twelve)[ \t]+months?(?:'s)?(?:[ \t]+(?:worth[ \t]+)?of)?)[ \t]*$", re.I)
+_HOA_ONE_TIME_AFTER = re.compile(r"[ \t]*(?:fees?[ \t]+|dues[ \t]+)?(?:transfer|documents?|docs?|capital|move[- ]in|initiation|resale|status|estoppel|set[- ]?up|application|contribution|deposit|prepaid|"
+                                 r"up[- ]?front|at[ \t]+(?:closing|close|settlement)|due[ \t]+(?:at|on)[ \t]+(?:closing|close|settlement)|one[- ]time|for[ \t]+(?:the[ \t]+)?first|\(?[ \t]*\d+[ \t]+months?\b|certificate)", re.I)
+_HOA_MONTHLY_MARK = re.compile(r"/[ \t]*mo|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month", re.I)
+
+
+def _hoa_one_time_label(text: str, m: re.Match[str]) -> bool:
+    """Cycle 33: True when an HOA-looking figure is a one-time buyer charge, never the monthly HOA: "Buyer pays $300 HOA transfer fee", "HOA transfer fee: $300"
+    (the figure sits beside a transfer, document, capital, move-in, resale or prepaid word), "Prepaid HOA $630 (3 months)", "$1,200 HOA dues up front",
+    "first year of HOA dues $1,200". A figure the listing marks as monthly stays the HOA."""
+    whole = m.group(0)
+    if _HOA_MONTHLY_MARK.search(whole) or _HOA_MONTHLY_MARK.match(text[m.end():m.end() + 14]):
+        return False
+    before = text[max(0, m.start() - 40):m.start()]
+    after = text[m.end():m.end() + 70]
+    if _HOA_ONE_TIME_BEFORE.search(before) or _HOA_ONE_TIME_AFTER.match(after):
+        return True
+    return bool(re.search(r"\b(?:hoa|association|condo)[ \t]+(?:transfer|documents?|docs?|capital|move[- ]in|initiation|resale|status|estoppel|set[- ]?up|application|contribution|deposit|prepaid)\b", whole, re.I))
+
+
+def _hoa_search(pattern: str, text: str) -> re.Match[str] | None:
+    """The first match of an HOA pattern that is not a one-time charge (see _hoa_one_time_label)."""
+    for m in re.finditer(pattern, text, re.I):
+        if not _hoa_one_time_label(text, m):
+            return m
+    return None
+
+
 def _hoa(text: str) -> float | None:
     if (q := _hoa_after_question(text)):
         return q[0]
@@ -10460,9 +10793,9 @@ def _hoa(text: str) -> float | None:
         else:
             value = value / 3 if ("quarter" in w or "three" in w or w == "3") else (value / 12 if w in ("annually", "yearly") else value)
         return round(value, 2) if 0 < value < 5000 else None
-    m = re.search(r"(?:\bhoa|association|\bassoc\.?(?=[ \t]*(?:fees?|dues))|homeowners'? association|\b(?:monthly|building|unit owners?)[ \t]+dues(?![ \t]+(?:to|for)\b)|\bcondo(?=\s*(?:fee|fees|dues|payment|assessment))|\bcommon (?:area )?(?:charges?|fees?))(?:\s*(?:fee|fees|dues|payment|assessments?))*(?:[ \t]+(?:is|are|was|were|run|runs|total|totals|come|comes)\b(?:[ \t]+(?:to|in[ \t]+at))?)?[ \t:\-=(]{0,6}(?:of[ \t]+)?(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:half[- ]?year|\w+)|per\s+(?:half[- ]?year|(?:six|6)[ \t]+months|\w+)|\w+ly|annual\w*)?", text, re.I)
+    m = _hoa_search(r"(?:\bhoa|association|\bassoc\.?(?=[ \t]*(?:fees?|dues))|homeowners'? association|\b(?:monthly|building|unit owners?)[ \t]+dues(?![ \t]+(?:to|for)\b)|\bcondo(?=\s*(?:fee|fees|dues|payment|assessment))|\bcommon (?:area )?(?:charges?|fees?))(?:\s*(?:fee|fees|dues|payment|assessments?))*(?:[ \t]+(?:is|are|was|were|run|runs|total|totals|come|comes|ranges?)\b(?:[ \t]+(?:to|in[ \t]+at|from))?)?[ \t:\-=(]{0,6}(?:of[ \t]+)?(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:half[- ]?year|\w+)|per\s+(?:half[- ]?year|(?:six|6)[ \t]+months|\w+)|\w+ly|annual\w*)?", text)
     if not m:
-        m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:half[- ]?year|\w+)|per\s+(?:half[- ]?year|(?:six|6)[ \t]+months|\w+)|\w+ly|annual\w*)?\s*(?:hoa|association) (?:fee|dues)?", text, re.I)
+        m = _hoa_search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:half[- ]?year|\w+)|per\s+(?:half[- ]?year|(?:six|6)[ \t]+months|\w+)|\w+ly|annual\w*)?\s*(?:hoa|association) (?:fee|dues)?", text)
     if not m:
         # "Monthly condo fee 385", "Condo fee: 385/mo": a plain number with no dollar sign counts only when the listing says monthly
         nm = re.search(r"\b(monthly[ \t]+)?(?:hoa|condo|association)[ \t]+(?:fees?|dues)[ \t:\-=]{0,4}(\d{2,4})(?:\.\d\d)?(?![\d,]|\.\d|[ \t]*(?:%|sq|sf|/[ \t]*(?:br|bd|bed)))"
@@ -10648,6 +10981,9 @@ def _hoa_maintenance(text: str) -> float | None:
         seg_start = max(text.rfind(".", 0, m.start()), text.rfind("\n", 0, m.start()), text.rfind(";", 0, m.start())) + 1
         seg_end = [i for i in (text.find(".", m.end()), text.find("\n", m.end()), text.find(";", m.end())) if i != -1]
         seg = text[seg_start:min(seg_end) if seg_end else len(text)]
+        cs = max((c.end() for c in re.finditer(r",(?!\d)", seg) if seg_start + c.end() <= m.start()), default=0)  # cycle 33: only this comma clause ("..., maintenance $190/month")
+        ce = next((c.start() for c in re.finditer(r",(?!\d)", seg) if seg_start + c.start() >= m.end()), len(seg))
+        seg = seg[cs:ce]
         if re.search(r"\b(?:garage|lawn|yard|pool|parking|pest|snow|road|home|house|property|unit|pet|move[- ]in|boat|storage|equipment|vehicle|car)[ \t]+$", before, re.I) \
                 or re.search(r"\boptional\b|\bone[- ]time\b|\bseller|\bspecial\b|\bassessment|\bat[ \t]+closing\b|\bif[ \t]+(?:you|desired|wanted)\b|\bby[ \t]+request\b|\bwaived?\b|\bno[ \t]+maintenance\b|\bcost[ \t]+of[ \t]+maintenance", seg, re.I):
             continue
@@ -13526,6 +13862,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         facts.extend(_try(lambda: _seller_side_fee_notes(text)) or [])
         if not credit_notes:
             facts.extend(_try(lambda: _closing_help_offer(text)) or [])
+        if buying:
+            facts.extend(_try(lambda: _down_payment_assistance_notes(text, facts)) or [])
+            facts.extend(_try(lambda: _closing_date_notes(text)) or [])
         insurance = _try(lambda: _insurance(text))
         if insurance is not None:
             put("insurance", insurance)
@@ -13535,6 +13874,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         assessment = _try(lambda: _special_assessment(text))
         if assessment:
             facts.append(assessment)
+        elif buying and (unpaid := _try(lambda: assessment_spread_payer_unknown(text))):  # cycle 33: a plain "Assessment of $9,000 payable over 36 months" has no "special" in it
+            facts.append(f"The listing has an assessment of {_money_c(unpaid[2])} paid over {unpaid[1]} months but does not say who pays it, so it is not counted. "
+                         "Ask the seller's agent who pays it, then set Who pays on this page.")
         monthly_assessment = _try(lambda: _assessment_monthly_note(text))
         m_items = _try(lambda: _monthly_assessment_items(text)) or []
         reg_items = [i for i in m_items if i["kind"] == "regular"]
@@ -13595,7 +13937,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         elif (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)) and (items := _try(lambda: _closing_items(text))):
             price_now = out.get("price")
             guess_now = price_now * 0.03 if isinstance(price_now, (int, float)) and price_now else None
-            if not _try(lambda: _closing_parts_are_total(text)) and (guess_now is None or items[0] < guess_now):
+            _saved_cc2 = (current or {}).get("closing_costs")
+            if isinstance(_saved_cc2, (int, float)) and not isinstance(_saved_cc2, bool) and _saved_cc2 > 0:
+                facts.append(f"The listing names some closing costs ({items[1]}, ${items[0]:,.0f} in all). The closing costs saved on this place ({_money_c(_saved_cc2)}) are what the cash to close uses, "
+                             "so these are not added on top. Ask whether that figure already includes them.")
+            elif not _try(lambda: _closing_parts_are_total(text)) and (guess_now is None or items[0] < guess_now):
                 # cycle 30: a few named parts are not the whole bill. They never replace a larger guess (and with no price there is nothing to compare), so no closing cost is saved.
                 facts.append(f"The listing names some closing costs ({items[1]}, ${items[0]:,.0f} in all). That is only part of the closing costs, so it is not saved as the closing costs "
                              "and the cash to close keeps its own estimate. Ask the lender for the full closing cost estimate.")
@@ -13615,13 +13961,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         cut = _try(lambda: _price_cut(text))
         if cut:
             facts.append(f"Price reduced ${cut:,.0f}.")
-        hoa = _try(lambda: _hoa(text))
+        rtext, range_notes = (text, [])
+        if buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000):
+            rtext, range_notes = _try(lambda: _collapse_buyer_ranges(text)) or (text, [])
+            facts.extend(range_notes)
+        hoa = _try(lambda: _hoa(rtext))
         hq = _try(lambda: _hoa_after_question(text))
         if hq:
             facts.append(f"The listing asks about the fee with a question mark and then says \"{hq[1].split('?', 1)[1].strip(' -\u2013\u2014,:')}\". The HOA is read from that stated fee, {_money_c(hq[0])} a month. "
                          "Ask the seller's agent to confirm it.")
         if hoa is None and (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)):
-            plain_hoa = _try(lambda: _hoa_plain_monthly(text))
+            plain_hoa = _try(lambda: _hoa_plain_monthly(rtext))
             if plain_hoa:
                 hoa = plain_hoa
                 maint = _try(lambda: _hoa_maintenance(text))
@@ -13701,7 +14051,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                         else (f" It ends in {end_year}, so the monthly cost drops by ${amt_m:,.0f} after that." if end_year else " The listing does not say when it ends."))
                 facts[:] = [f for f in facts if not f.startswith("The listing mentions an assessment of")]
                 sp_now = _try(lambda: _assessment_spread(text))
-                if sp_now and abs(sp_now[0] - amt_m) < 0.01 and months_m == sp_now[1]:
+                split_now = _try(lambda: _assessment_split(text))
+                if split_now and abs(split_now[0] - amt_m) < 0.01 and months_m == split_now[1]:
+                    facts.append(_assessment_split_note(text))
+                elif sp_now and abs(sp_now[0] - amt_m) < 0.01 and months_m == sp_now[1]:
                     facts.append(f"The listing has a special assessment of {sp_now[2]} that the buyer pays over {months_m} months. It is counted as {_money_c(amt_m)} a month for {months_m} months "
                                  f"({sp_now[2]} in all) in the monthly cost as other monthly fees, and not as cash at closing. "
                                  "It ends after the last payment, so the monthly cost drops by that amount then. Ask whether the payments carry interest and who pays it if you sell before then.")
@@ -13733,7 +14086,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if hoa is None and (buying or _SALE_WORDS.search(text)) and (bare_fee := _try(lambda: _bare_monthly_fee(text))):
             facts.append(f'The listing says "{bare_fee[1]}" without saying what the fee is. On a condo it may be the HOA fee, but the listing does not say so, so the HOA is left empty '
                          f"and the {_money_c(bare_fee[0])} a month is not counted in the monthly cost. Ask the seller's agent what it covers, and if it is the HOA, set the HOA on this page.")
-        tax, tax_note = _try(lambda: _tax_detail(text)) or (None, "")
+        tax, tax_note = _try(lambda: _tax_detail(rtext)) or (None, "")
         if tax_note:
             facts.append(tax_note)
         if tax is not None:
@@ -13745,7 +14098,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 put("property_tax", tax)
         if buying:
-            facts.extend(_try(lambda: _buyer_only_fees(text, out)) or [])
+            _saved_cc = (current or {}).get("closing_costs")
+            facts.extend(_try(lambda: _buyer_only_fees(text, out, _saved_cc if isinstance(_saved_cc, (int, float)) and not isinstance(_saved_cc, bool) and _saved_cc > 0 else None)) or [])
 
     _try(fees)
     _try(lambda: _gc_apply(text, out, facts, gc_found, gc_unplaced, buying, only=set(gc_found) - {"price"}))

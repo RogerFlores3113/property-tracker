@@ -1823,7 +1823,23 @@ class Store:
                              tuple(cols.values()))
             pid = cur.lastrowid
             self._add_event(pid, "stage", f"Added as {new_stage}", now, by)
+            self._closing_date_from_listing(pid, mode, values.get("listing_text"))
         return self.get_place(pid), True
+
+    def _closing_date_from_listing(self, place_id: int, mode: str, listing_text: Any) -> None:
+        """Cycle 33: a buy listing that says "Closing date Feb 20, 2027" or "Close by March 1, 2027" gives the new place its own Closing date (the place page,
+        Today and the calendar use it instead of the search's target date). A listing with no year, or with two different dates, saves none (the reader's
+        note says so). Never raises: a reader failure must not stop a save."""
+        if mode != "buy" or not str(listing_text or "").strip():
+            return
+        try:
+            from . import parsers
+            day, _quote = parsers.listing_closing_date(str(listing_text))
+            if day:
+                self._exec("INSERT INTO place_dates(place_id, kind, date, time, note) VALUES (?, ?, ?, ?, ?)", (place_id, "closing", day, "", "From the listing text"))
+                self._add_event(place_id, "note", f"Added a date: Closing on {day} (from the listing text)", None, "you")
+        except Exception:  # noqa: BLE001
+            return
 
     @staticmethod
     def _fallback_title(values: dict[str, Any]) -> str:
