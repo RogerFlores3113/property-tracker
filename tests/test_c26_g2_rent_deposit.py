@@ -44,14 +44,14 @@ def test_now_without_a_fact_is_no_correction():
 ])
 def test_deposit_correction(t):
     r = read(t)
-    assert r["deposit"] == 800 and "$1,000" in notes(r)
+    assert r["deposit"] == 800 and "$1,000" in notes(r) and "$800" not in notes(r)
 
 
 def test_beds_and_date_correction():
     r = read("3 bed 2 bath, $3,100 a month. Update: it is a 2 bedroom, not 3.")
     assert r["beds"] == 2
     r = read("3 bed 2 bath, $3,100 a month. Available Jan 15 2027. Update: available date is now Feb 1 2027 (was Jan 15).")
-    assert r["available_from"] == "2027-02-01" and "Feb 1, 2027" in notes(r)
+    assert r["available_from"] == "2027-02-01" and "Jan 15, 2027" in notes(r)
     r = read("3 bed 2 bath, $3,100 a month. Avail 1/15/27 | Corrected: move-in is 2/1/27")
     assert r["available_from"] == "2027-02-01"
 

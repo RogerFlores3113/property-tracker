@@ -556,8 +556,8 @@ def _corrected_date(text: str) -> str | None:
 
 
 def _corrected_fact_note(label: str, new_text: str, old_text: str | None) -> str:
-    was = f" (it first said {old_text})" if old_text else ""
-    return f"The listing corrects itself about the {label}{was}. The later value, {new_text}, is saved and the earlier one is not used. Check it with the landlord."
+    was = f" It first said {old_text}." if old_text else ""
+    return f"The listing corrects itself about the {label}.{was} The later value is saved and the earlier one is not used. Check it with the landlord."
 
 
 _BB_PRICE = re.compile(r"(?<![\w$#/.,-])\d(?:\.\d)?[ \t]*(?:br|bd|bds|bed|beds|bedrooms?)(?![A-Za-z])[ \t]*[/|,\u00b7x-]?[ \t]*\d(?:\.\d)?[ \t]*(?:ba|bath|baths|bathrooms?)\b[ \t]*[-|,:\u2013\u2014\u00b7]?[ \t]*"
@@ -727,8 +727,8 @@ def _conditional_now_price(text: str, rent: float | None) -> tuple[float, str] |
 
 _SPECIAL_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*[ \t]*|a[ \t]+month[ \t]*|per[ \t]+month[ \t]*|monthly[ \t]*)?(?:[-\u2013,:(][ \t]*)?(?:only[ \t]+)?"
                             r"(?P<cond>(?:if|when)[ \t]+(?:you[ \t]+|u[ \t]+|signed[ \t]+)?(?:sign|lease|move|apply|book|tour|rent|commit)\w*[^.\n;|]{0,50}|signing[ \t]+by[^.\n;|]{0,40}|sign[ \t]+by[^.\n;|]{0,40}|"
-                            r"\(?(?:special|promo\w*|limited[ \t-]+time)\b[^.\n;|]{0,40})", re.I)
-_SPECIAL_BEFORE = re.compile(r"\b(?:specials?|promo\w*|limited[ \t-]+time(?:[ \t]+offer)?)[ \t]*(?:price|rent|offer|rate)?[ \t]*[:=-]?[ \t]*(?:only[ \t]+)?$", re.I)
+                            r"\(?(?:special(?![ \t]+assess)|promo\w*|limited[ \t-]+time)\b[^.\n;|]{0,40})", re.I)
+_SPECIAL_BEFORE = re.compile(r"\b(?:specials?(?![ \t]+assess)|promo\w*|limited[ \t-]+time(?:[ \t]+offer)?)[ \t]*(?:price|rent|offer|rate)?[ \t]*[:=-]?[ \t]*(?:only[ \t]+)?$", re.I)
 _SPECIAL_DEADLINE = re.compile(r"\b(?:by|before|through|until|ends?|expires?)[ \t]+((?:[A-Za-z]{3,9}\.?[ \t]+\d{1,2}(?:st|nd|rd|th)?(?:,?[ \t]+\d{4})?)|\d{1,2}/\d{1,2}(?:/\d{2,4})?)", re.I)
 _REGULAR_AMT = re.compile(r"\b(?:regular(?:ly)?|normally|usually|reg\.|standard|otherwise|after(?:wards)?|then)[ \t:]*(?:rent|price|rate)?[ \t]*(?:is|of|at|returns?[ \t]+to)?[ \t]*\$[ \t]?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?", re.I)
 
@@ -737,7 +737,7 @@ def _special_price(text: str, rent: float | None) -> tuple[float, str, float | N
     """Cycle 26: "$3,600/MO $3,000 IF YOU SIGN BY DEC 1 (SPECIAL)", "Special: $2,950 if you sign by 12/1, regularly $3,100": a price tied to "if you sign by",
     "special", "promo" or "limited time" is a special, never the rent. Returns (the special amount, a short phrase naming it and its deadline, the regular rent when
     the listing states it and it is not the rent that was read, else None) or None."""
-    if _SALE_WORDS.search(text):
+    if _SALE_WORDS.search(text) or (rent is not None and rent > 30000):
         return None
     for m in _AMOUNT.finditer(text):
         v = _num(m.group(1) + (m.group(2) or ""))
@@ -770,10 +770,10 @@ def _special_price(text: str, rent: float | None) -> tuple[float, str, float | N
     return None
 
 
-def _special_note(special: tuple[float, str, float | None], rent: float) -> str:
+def _special_note(special: tuple[float, str, float | None], rent: float) -> str:  # the regular rent is in its field, so the note does not repeat it
     amt, phrase, _reg = special
     when = f" {phrase}" if phrase else ""
-    return (f"The listing has a special: {_usd(amt)} a month{when}. The regular rent, {_usd(rent)}, is saved. Ask if you can still get the special and what the rent is after it.")
+    return (f"The listing has a special: {_usd(amt)} a month{when}. The regular rent is saved. Ask if you can still get the special and what the rent is after it.")
 
 
 def _rent_two_prices(text: str) -> tuple[float, float, str] | None:
@@ -3725,14 +3725,15 @@ def _blank_named_deposits(text: str) -> str:
     amt = r"\$[ \t]?\d{1,3}(?:,\d{3})*(?:\.\d\d)?|\$[ \t]?\d+(?:\.\d\d)?"
     pat = re.compile(r"(?:(?:security[ \t]+|refundable[ \t]+|non[- ]?refundable[ \t]+|one[- ]time[ \t]+)?deposits?\b[ \t:\-=(]{0,4}(?:of[ \t]+|is[ \t]+)?(?:" + amt + r"))|(?:(?:" + amt + r")[ \t]*(?:/[ \t]*mo\w*[ \t]*)?(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+|refundable[ \t]+)*(?:[a-z]+[ \t]+)?deposits?\b)", re.I)
     for m in pat.finditer(text):
-        a = max(_sentence_break(text, m.start(), c) for c in ".!?;\n|") + 1
-        b_candidates = [i for i in (text.find(c, m.end()) for c in ".!?;\n|") if i >= 0]
-        b = min(b_candidates) if b_candidates else len(text)
+        brk = list(re.finditer(r"[.!?](?=\s|$)|[;|\n]", text))
+        a = max([x.end() for x in brk if x.end() <= m.start()] + [0])
+        b = min([x.start() for x in brk if x.start() >= m.end()] + [len(text)])
         sent = text[a:b]
         cs = max(text.rfind(",", a, m.start()), text.rfind("(", a, m.start()), a - 1) + 1
         ce_c = [i for i in (text.find(c, m.end(), b) for c in ",)") if i >= 0]
         clause = text[cs:min(ce_c) if ce_c else b]
-        named = re.search(r"\b" + _NAMED_DEP_WORDS + r"\b", clause, re.I) and not _NAMED_DEP_KEEP.search(clause)
+        near = text[max(cs, m.start() - 30):min(m.end() + 12, cs + len(clause))]
+        named = re.search(r"\b" + _NAMED_DEP_WORDS + r"\b", near, re.I) and not _NAMED_DEP_KEEP.search(clause)
         pet_sentence = bool(_PET_LEAD.match(sent.strip())) and not _NAMED_DEP_KEEP.search(clause) and not re.search(r"\bsecurity[ \t]+deposit|\blease\b", sent, re.I)
         if named or pet_sentence:
             out = out[:m.start()] + " " * (m.end() - m.start()) + out[m.end():]
@@ -9384,8 +9385,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if isinstance(rent_now, (int, float)) and 200 <= rent_now <= 30000:
                 pick = max(dep[0], pct * float(rent_now)) if word in ("greater", "higher", "more", "larger") else min(dep[0], pct * float(rent_now))
                 dep = [pick]
-                facts.append(f"The listing says the deposit is {_usd(float(wm.group('amt').replace(',', '')))} or {wm.group('pct')}% of rent, whichever is {word}. With the {_usd(float(rent_now))} rent "
-                             f"{wm.group('pct')}% is {_usd(pct * float(rent_now))}, so {_usd(pick)} is saved. Ask the landlord to confirm the deposit.")
+                facts.append(f"The listing says the deposit is {_usd(float(wm.group('amt').replace(',', '')))} or {wm.group('pct')}% of rent, whichever is {word}. The {word} one, worked out from the rent, "
+                             "is saved. Ask the landlord to confirm the deposit.")
             else:
                 dep = []
                 facts.append(f"The listing says the deposit is {_usd(float(wm.group('amt').replace(',', '')))} or {wm.group('pct')}% of rent, whichever is {word}, but the rent was not read, "
@@ -9406,9 +9407,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         elif by_months and isinstance(rent_now, (int, float)) and 200 <= rent_now <= 30000 and not _is_sale_text(text):
             put("deposit", by_months * float(rent_now))  # "security deposit one month", "deposit equal to one month's rent"
             hm = re.search(r"\$[ \t]?\d(?:\.\d+)?[ \t]*months?\b[^.\n;|]{0,30}?\bdeposit\b[^.\n;|]{0,12}", dep_src, re.I)
-            if not hm:  # cycle 26: "Deposit 1.5 months": filled from the rent, and the note says it was worked out
-                facts.append(f"The listing gives the deposit as {by_months:g} month{'s' if by_months != 1 else ''} of rent. Worked out from the {_usd(float(rent_now))} rent that is "
-                             f"{_usd(by_months * float(rent_now))}. Ask the landlord to confirm the deposit.")
+            if not hm and _SALE_WORDS.search(text):  # cycle 26: "Deposit 1.5 months" in a rental that says "open house": filled from the rent, and the note says it was worked out
+                facts.append(f"The listing gives the deposit as {by_months:g} month{'s' if by_months != 1 else ''} of rent, so the deposit is worked out from the rent. Ask the landlord to confirm it.")
             if hm:  # cycle 25: "$1.5 months rent deposit hold": the dollar sign is a typo for the months, so the figure is explained here and no note repeats it
                 facts.append(f'The listing says "{" ".join(hm.group(0).split())}". It is read as a deposit of {by_months:g} months of rent, '
                              f"{_usd(by_months * float(rent_now))} from the {_usd(float(rent_now))} rent. Ask what the deposit is and whether it is a hold.")
