@@ -128,6 +128,42 @@ def headline_vs_notes(text: str, buying: bool = False) -> list[str]:
     return bad
 
 
+def superseded_deposit_dupes(text: str, buying: bool = False) -> list[str]:
+    """Cycle 28: (a) a figure a correction note says is not used is on no surface (headline, missing list, Unknowns, "not counted"); (b) a deposit is
+    never named as a monthly missing amount; (c) one figure is quoted by one "The listing also says" note only."""
+    from prophelper import compare, money
+    r = P.parse_listing(text, "", buying=buying)
+    place = dict(r, reader_notes=r.get("found_in_listing"), listing_text=text)
+    cost = money.true_monthly_cost(place, "buy" if buying else "rent")
+    pl = dict(place, cost=cost, score={"unknown": []})
+    head = cost.get("headline") or ""
+    surfaces = [head.split(", ", 1)[1] if ", " in head else "", compare._not_counted_text(pl), *compare._missing_names(pl), *[str(x) for x in cost.get("missing") or []]]
+    notes = money.note_units(str(r.get("found_in_listing") or ""))
+    bad = []
+    for old in money.superseded_amounts(notes):
+        pat = r"\$" + f"{old:,.0f}" + r"(?![\d,])"
+        for item in surfaces:
+            if re.search(pat, item):
+                bad.append(f"[superseded figure on a surface] ${old:g} in {item!r}")
+    for item in surfaces:
+        for m in _MISSING_AMOUNT.finditer(item):
+            v = float(m.group(1).replace(",", ""))
+            for n in notes:
+                q = re.match(r'The listing also says "([^"]*)"', n)
+                if q and re.search(r"\bdeposit", q.group(1), re.I) and re.search(r"\$" + f"{v:,.0f}" + r"(?![\d,])", q.group(1)) and not re.search(r"/\s*mo|per month|a month|monthly|zelle|venmo|cash ?app|paypal|wire|western union|gift card|crypto|bitcoin|send|hold", q.group(1), re.I):
+                    bad.append(f"[a deposit is named as a monthly missing amount] ${v:g} in {item!r}")
+    quotes = []
+    for n in notes:
+        q = re.match(r'The listing also says "([^"]*)"', n)
+        if q:
+            quotes.append((frozenset(m.group(0) for m in _MISSING_AMOUNT.finditer(q.group(1))), re.sub(r"[^a-z0-9$.]+", " ", q.group(1).lower()).strip()))
+    for i, (fi, wi) in enumerate(quotes):
+        for j, (fj, wj) in enumerate(quotes):
+            if i < j and fi & fj and (wi in wj or wj in wi):
+                bad.append(f"[figure quoted by two notes] {sorted(fi & fj)}")
+    return bad
+
+
 def run_all(guard: bool) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for f, text in listings(include_buyer=True):
@@ -138,6 +174,7 @@ def run_all(guard: bool) -> dict[str, list[str]]:
                 bad += missing_vs_fields(text)
             if guard:
                 bad += headline_vs_notes(text, buying="buyer" in f)
+                bad += superseded_deposit_dupes(text, buying="buyer" in f)
         except Exception as e:  # noqa: BLE001
             bad = [f"ERROR {e!r}"]
         if bad:

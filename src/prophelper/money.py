@@ -236,7 +236,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
             missing.append("utilities estimate")
             uncounted.append(f"utilities ({names})")
             note = f"You pay {names}; not counted yet"
-            notes.append(note + ". Add a utilities estimate under Facts.")
+            # cycle 28: the cost line and the "Not counted yet because it is missing ... Fill it in under Facts" line already say this, so no third sentence
             lines.append(_line("utilities", "Utilities", None, note))
         else:
             missing.append("utilities estimate")
@@ -790,7 +790,7 @@ def note_units(text: str) -> list[str]:
     if len(lines) > 1:
         return lines
     units: list[str] = []
-    for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", " ".join(str(text or "").split())):
+    for sentence in re.split(r"(?<!\.\.)(?<=[.!?])\s+(?=[A-Z])", " ".join(str(text or "").split())):  # cycle 28: "..." inside a quoted line is not a sentence end
         if units and (_NOTE_CONTINUES.match(sentence) or _NOTE_CONTINUES_LEFT.match(sentence)):
             units[-1] += " " + sentence
         elif sentence:
@@ -954,15 +954,69 @@ def optional_amounts(notes: list[str]) -> set[float]:
     return out
 
 
-def figure_closed(note: str, start: int, end: int, optional: set[float] | frozenset[float] = frozenset()) -> str:
-    """Why the figure ``m`` of ``note`` is never a missing monthly amount: "zero", "explained", "optional" or "" (still open)."""
+# Cycle 28: a figure the listing itself took back. The correction notes ("The listing corrects the HOA: it is now $385 a month. The earlier $340 a month is
+# not used.", "...says the rent dropped from $1,500 to $1,450... the old $1,500 is not used", "It first said $X ... the $X is the old price") name the old
+# figure as not used. That figure is then closed everywhere (missing list, headline, Unknowns, Compare, Today), whatever other note quotes it.
+_CORRECTION_NOTE = re.compile(r"\bThe listing (?:corrects|says the (?:rent|price) (?:dropped|was cut))|\bcorrects itself\b|\bwas a mistake or an old figure\b|\bis the old price\b|\bfirst said\b|\bprice was cut from\b|\b(?:earlier|old|previous|first)\b[^.\n]{0,40}\b(?:is|are) not used\b", re.I)
+_SUPERSEDED_BEFORE = re.compile(r"\b(?:earlier|old|older|previous|previously|first said|first|was|were|from|originally|formerly|not)\b[^$.\n]{0,24}$", re.I)
+_SUPERSEDED_AFTER = re.compile(r"^[^$.\n]{0,40}?\b(?:is|are) (?:the )?(?:not used|old|an old|a mistake)\b|^[^$.\n]{0,40}?\bwas a mistake\b", re.I)
+_NEW_BEFORE = re.compile(r"\b(?:now|then says|to|later value|current|new)\b[^$.\n]{0,12}$", re.I)
+
+
+def superseded_amounts(notes: list[str]) -> set[float]:
+    """The dollar figures that a correction note says are no longer used (see above). Decided from the saved correction notes only."""
+    out: set[float] = set()
+    for n in notes:
+        if not _CORRECTION_NOTE.search(n):
+            continue
+        for m in _FIG.finditer(n):
+            before = n[max(0, m.start() - 40):m.start()]
+            after = n[m.end():m.end() + 60]
+            if _NEW_BEFORE.search(before) and not _SUPERSEDED_AFTER.search(after):
+                continue
+            if _SUPERSEDED_BEFORE.search(before) or _SUPERSEDED_AFTER.search(after):
+                out.add(_amount_of(m))
+    return out
+
+
+# Cycle 28: a figure the listing itself took back. The correction notes ("The listing corrects the HOA: it is now $385 a month. The earlier $340 a month is
+# not used.", "...the rent dropped from $1,500 to $1,450... the old $1,500 is not used", "It first said $X ... the $X is the old price") name the old figure
+# as not used. That figure is then closed everywhere (missing list, headline, Unknowns, Compare, Today), whatever other note quotes it.
+_CORRECTION_NOTE = re.compile(r"\bThe listing (?:corrects|says the (?:rent|price) (?:dropped|was cut))|\bcorrects itself\b|\bwas a mistake or an old figure\b|\bis the old price\b|\bfirst said\b|\bprice was cut from\b|\b(?:earlier|old|previous|first)\b[^.\n]{0,40}\b(?:is|are) not used\b", re.I)
+_SUPERSEDED_BEFORE = re.compile(r"\b(?:earlier|old|older|previous|previously|first said|first|was|were|from|originally|formerly)\b[^$.\n]{0,24}$", re.I)
+_SUPERSEDED_AFTER = re.compile(r"^[^$.\n]{0,40}?\b(?:is|are) (?:the )?(?:not used|old|an old|a mistake)\b|^[^$.\n]{0,40}?\bwas a mistake\b", re.I)
+_NEW_BEFORE = re.compile(r"\b(?:now|then says|to|later value|current|new)\b[^$.\n]{0,12}$", re.I)
+
+
+def superseded_amounts(notes: list[str]) -> set[float]:
+    """The dollar figures that a correction note says are no longer used (see above). Decided from the saved correction notes only."""
+    out: set[float] = set()
+    for n in notes:
+        if not _CORRECTION_NOTE.search(n):
+            continue
+        for m in _FIG.finditer(n):
+            before = n[max(0, m.start() - 40):m.start()]
+            after = n[m.end():m.end() + 60]
+            if _NEW_BEFORE.search(before) and not _SUPERSEDED_AFTER.search(after):
+                continue
+            if _SUPERSEDED_BEFORE.search(before) or _SUPERSEDED_AFTER.search(after):
+                out.add(_amount_of(m))
+    return out
+
+
+def figure_closed(note: str, start: int, end: int, optional: set[float] | frozenset[float] = frozenset(), superseded: set[float] | frozenset[float] = frozenset()) -> str:
+    """Why the figure ``m`` of ``note`` is never a missing monthly amount: "zero", "superseded", "deposit", "explained", "optional" or "" (still open)."""
     fm = _FIG.search(note[start:end])
     amount = _amount_of(fm) if fm else -1.0
     if amount == 0:
         return "zero"
+    if amount in superseded:
+        return "superseded"
     if figure_explained(note, start, end):
         return "explained"
     piece = _figure_piece(note, start, end)
+    if re.search(r"\bdeposits?\b", piece, re.I) and not re.search(r"\b(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin|send|hold(?:ing)?|before|upfront|up front)\b", piece, re.I) and not re.search(r"^\s*(?:/\s*(?:mo|month)\b|per\s+month|a\s+month|monthly|each\s+month)", note[end:end + 20], re.I):
+        return "deposit"  # cycle 28: a deposit is cash at move-in, never a monthly amount left out
     if _EXPL_SECOND.search(piece) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):
         return "optional"
     if re.search(r"\bupgrades?\b|\boptional\b|\bif you want\b|\byour choice\b|\bby request\b|\badd[- ]ons?\b", piece, re.I) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):
@@ -972,11 +1026,11 @@ def figure_closed(note: str, start: int, end: int, optional: set[float] | frozen
     return ""
 
 
-def note_figures_explained(note: str, optional: set[float] | frozenset[float] = frozenset()) -> bool:
+def note_figures_explained(note: str, optional: set[float] | frozenset[float] = frozenset(), superseded: set[float] | frozenset[float] = frozenset()) -> bool:
     """True when the note has dollar figures and every one of them is closed: another lease length, another plan, a special, a one-time or pending
     amount, an old price, a $0, or an optional extra (see ``figure_closed``)."""
     figs = _note_figures(note)
-    return bool(figs) and all(figure_closed(note, m.start(), m.end(), optional) for m in figs)
+    return bool(figs) and all(figure_closed(note, m.start(), m.end(), optional, superseded) for m in figs)
 
 
 def _note_is_stale(note: str, place: dict[str, Any] | None) -> bool:
@@ -999,7 +1053,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     if "\n" not in str(reader_notes or "").strip() and _note_is_stale(whole, place):
         return out  # one saved note whose sentences were cut apart: judged as one note, every amount in it is already counted
     optional = optional_amounts(note_units(reader_notes))
-    if "\n" not in str(reader_notes or "").strip() and note_figures_explained(whole, optional):
+    superseded = superseded_amounts(note_units(reader_notes))
+    if "\n" not in str(reader_notes or "").strip() and note_figures_explained(whole, optional, superseded):
         return out  # cycle 25: one saved note whose every figure is explained (a best-case deposit special, another lease length): its sentences without a figure are the same note
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
@@ -1018,10 +1073,10 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
             continue
         if re.search(r"\bassessments?\b", note, re.I) and not re.search(r"\bmonthly\b|per month|/\s*mo\b|a month|\b(?:parking|garage|fee|deposit|hoa|dues|utilit\w*|insurance|tax)\b", re.sub(r"\bspecial assessments?\b", " ", note, flags=re.I), re.I):
             continue  # cycle 25: a special assessment (pending or not) is one-time money, handled by the cash to close, never a missing monthly amount
-        if note_figures_explained(note, optional):
+        if note_figures_explained(note, optional, superseded):
             continue  # cycle 25: every figure in the note is another lease length, another plan, a special, a one-time or pending amount or an old price
         if place is not None and _FIG.search(note):
-            vals, used_, placed_ = _note_open_figures(note, place, optional)
+            vals, used_, placed_ = _note_open_figures(note, place, optional, superseded)
             if not any(v not in placed_ and (_util_names_of(note, a) or round(v, 2) not in used_) for v, a in vals.items()):
                 continue  # cycle 26: every figure is closed by meaning or placed by a field (a $35 electric counted, a $60 optional space): nothing is left out
         if _NOTE_CLOSED.search(note) and not re.search(r"\bOnly [^.]{1,80} of that\b", note):
@@ -1136,13 +1191,13 @@ def _rent_like_figure(note: str, start: int, end: int, place: dict[str, Any] | N
     return not _RENT_LIKE_COST_WORD.search(_figure_piece(note, start, end))
 
 
-def _note_open_figures(note: str, place: dict[str, Any] | None, optional: set[float] | frozenset[float] = frozenset()) -> tuple[dict[float, str], set[float], set[float]]:
+def _note_open_figures(note: str, place: dict[str, Any] | None, optional: set[float] | frozenset[float] = frozenset(), superseded: set[float] | frozenset[float] = frozenset()) -> tuple[dict[float, str], set[float], set[float]]:
     """The figures of a note that are not closed by meaning (see ``figure_closed``), with the amounts the place's fields hold (``used``) and the
     ones its fields place for this note (``placed``)."""
     used: set[float] = set()
     placed: set[float] = set()
     values = {float(m.group(0).replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): m.group(0).replace(" ", "").rstrip(",.")
-              for m in _note_figures_loose(note) if not figure_closed(note, m.start(), m.end(), optional) and not _rent_like_figure(note, m.start(), m.end(), place)}  # cycle 25: an explained figure is never named as missing
+              for m in _note_figures_loose(note) if not figure_closed(note, m.start(), m.end(), optional, superseded) and not _rent_like_figure(note, m.start(), m.end(), place)}  # cycle 25: an explained figure is never named as missing
     if place:
         try:
             from .parsers import _CURRENT_EXTRA, _NET_NOTE, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
@@ -1168,11 +1223,12 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
         other = open_notes_label("\n".join(rest), place) if rest else ""
         return [], (RENT_RANGE_LABEL if not other else f"{other} and {RENT_RANGE_LABEL}")
     optional = optional_amounts(note_units(reader_notes))
+    superseded = superseded_amounts(note_units(reader_notes))
     seen: dict[float, str] = {}
     unplaced: dict[float, str] = {}
     named: dict[float, list[str]] = {}
     for note in notes:
-        values, used, placed = _note_open_figures(note, place, optional)
+        values, used, placed = _note_open_figures(note, place, optional, superseded)
         values = {v: a for v, a in values.items() if v != 0}  # cycle 26 join: a $0 figure is free, never named as missing
         for value, amount in values.items():
             seen.setdefault(value, amount)

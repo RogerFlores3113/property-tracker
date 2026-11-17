@@ -504,7 +504,7 @@ def _deal_text(e: dict[str, Any]) -> str:
 def _unknown_text(e: dict[str, Any]) -> str:
     """Everything still unknown or guessed, in the Compare page's words (the same list as its "Still unknown" row):
     criterion labels (outside text, fenced), unpriced utilities, pet charges and guessed costs. '' when nothing is."""
-    text = compare_mod.still_unknown_text(e, label=_lab)
+    text = compare_mod.nothing_unknown_guard(e, compare_mod.still_unknown_text(e, label=_lab))  # cycle 28: the same words as the Compare row ("Unknown: deposit" for a deposit nobody filled in)
     return "" if text == compare_mod.unknown_text([], []) else text
 
 
