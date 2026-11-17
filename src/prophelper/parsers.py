@@ -5312,6 +5312,7 @@ def _util_text(text: str) -> str:
     text = re.sub(r"(\b" + _un + r")[ \t]+[|\u2022\u00b7][ \t]+(?=" + _un + r"\b)", r"\1, ", text, flags=re.I)  # cycle 20: "Electric | Gas | Internet - about $140 combined" is one list of names, not three sentences
     text = re.sub(r"[ \t]+[|*\u2022\u00b7][ \t]+", ". ", text)  # "Heat + water included | Gas cooking, electric tenant" and "Water included * Electric not included, budget about $75 * pets": a pipe or bullet ends the sentence
     text = _ONLY_SCOPE.sub(lambda m: "/".join(_only_scope_split(m)[0]) if _only_scope_split(m) else m.group(0), text)  # cycle 25: "Water/sewer/trash (water and trash only) $60" is "water/trash $60"
+    text = _flat_forms(text)  # cycle 27: "Water, sewer and trash (flat $75)", "Water and trash only $60 flat"
     text = _say_all_utilities(text)  # cycle 26: "Resident pays all except trash" is "all utilities except trash"
     text = _scope_only_brackets(text)
     text = _PAYER_AFTER.sub(lambda m: m.group(0) if re.search(r"\bgas[ \t]+(?:cooking|stove|range|oven|fireplace)[ \t]*$", m.string[max(0, m.start() - 20):m.start()] + m.group("lead").split(",")[0], re.I)
@@ -6907,6 +6908,32 @@ _ALL_UTIL_PAID_BY = re.compile(
 
 
 _UTIL_PACKAGE = re.compile(r"\butilit(?:y|ies)[ \t]+(?:package|bundle|plan|program|fee|charge)s?[^.\n;|]*?\$[ \t]?\d[^.\n;|]*", re.I)
+_FLAT_NAMES = r"(?:(?:hot[ \t]+water|water|sewer|sewage|trash(?:[ \t]+removal)?|garbage|gas|electric(?:ity)?|heat(?:ing)?)(?:[ \t]*(?:,|/|&|\+|\band\b)[ \t]*(?:hot[ \t]+water|water|sewer|sewage|trash(?:[ \t]+removal)?|garbage|gas|electric(?:ity)?|heat(?:ing)?))*)"
+_FLAT_AMT = r"\$[ \t]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?"
+_PERIOD_U = r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month))"
+_FLAT_FORMS = (
+    # "Water, sewer and trash (flat $75)" / "(flat fee $75/mo)" / "(about $75 flat)"
+    re.compile(r"(?<![\w/])(?P<n>" + _FLAT_NAMES + r")[ \t]*\([ \t]*(?:a[ \t]+)?(?:flat(?:[ \t]+(?:fee|rate|charge))?[ \t]*[:\-]?[ \t]*(?P<a>" + _FLAT_AMT + r")|(?P<b>" + _FLAT_AMT + r")[ \t]*flat)" + _PERIOD_U + r"?[ \t]*\)", re.I),
+    # "Water and trash only $60 flat" / "Water and trash only: $60/mo" / "Water and trash: $60 flat" (the names are the only ones the figure covers)
+    re.compile(r"(?<![\w/])(?P<n>" + _FLAT_NAMES + r")[ \t]+only[ \t]*[:\-]?[ \t]*(?:is[ \t]+)?(?:flat[ \t]+)?(?P<a>" + _FLAT_AMT + r")(?:" + _PERIOD_U + r"|[ \t]*flat\b(?:[ \t]+(?:fee|rate))?)", re.I),
+    re.compile(r"(?<![\w/])(?P<n>" + _FLAT_NAMES + r")[ \t]*:[ \t]*(?P<a>" + _FLAT_AMT + r")[ \t]*flat\b(?:[ \t]+(?:fee|rate))?", re.I),
+)
+
+
+def _flat_forms(text: str) -> str:
+    """Cycle 27: one written form for a flat figure that covers named utilities: "Water, sewer and trash (flat $75)", "Water and trash only $60 flat" and
+    "Water and trash: $60 flat" all become "Water, sewer and trash flat $75/month", which every reader already understands. Items with a figure that
+    names a payer or says included are left alone."""
+    for pat in _FLAT_FORMS:
+        def fix(m: re.Match[str]) -> str:
+            if re.search(r"\b(?:included|incl|free|no charge)\b", m.string[m.end():m.end() + 14], re.I):
+                return m.group(0)
+            amt = (m.group("a") or m.group("b")).replace(" ", "")
+            return f"{m.group('n')} flat {amt}/month"
+        text = pat.sub(fix, text)
+    return text
+
+
 _STD_FIVE = ("electric", "gas", "water", "sewer", "trash")
 _EST_WORDS = r"(?:(?:est(?:imated|imate)?|approx(?:imately|imate)?|about|around|roughly|avg|average|approximately|~)\.?[ \t]*:?[ \t]*)"
 _MONEY_U = r"\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|total|combined))*"
