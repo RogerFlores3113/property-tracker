@@ -63,3 +63,11 @@ def test_negatives_a_plain_limit_still_fails(t):
     it = item(t)
     assert it["passes"] is False, it
     assert "60 lb" in it["gap"] and "50 lb" in it["gap"]
+
+
+@pytest.mark.parametrize("t", [
+    "3BR house. No dogs over 50 lbs. No pets with approval only? Please inquire.",
+    "3BR house. No dogs over 50 lbs. Pets by approval only? Ask us.",
+])
+def test_negatives_a_question_about_approval_is_not_a_policy(t):
+    assert item(t)["passes"] is False

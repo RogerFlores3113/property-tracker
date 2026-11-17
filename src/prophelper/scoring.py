@@ -548,7 +548,7 @@ _POLICY_APPROVAL_NOT = re.compile(r"\bbreeds?\b|\bpit[ \t]*bulls?\b|\brottweiler
 
 def _pets_need_approval(place: dict[str, Any]) -> bool:
     """True when the listing says the pet policy as a whole needs approval ("Pets by approval only")."""
-    for key in ("listing_text", "reader_notes"):
+    for key in ("listing_text",):  # the reader's own notes also quote question lines ("No pets with approval only? Please inquire."), so only the listing itself counts
         for sentence in re.split(r"(?<=[.!?])\s+|\n+|\s*\|\s*", str(place.get(key) or "")):
             if sentence.rstrip().endswith("?"):
                 continue
