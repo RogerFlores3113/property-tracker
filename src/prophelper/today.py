@@ -191,8 +191,8 @@ def insurance_only_unknown(place: dict[str, Any]) -> bool:
 
 def is_best_fit(place: dict[str, Any]) -> bool:
     return (fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place) and not cost_unsettled(place)
-            and not over_budget(place) and (not unknown_cost_parts(place) or insurance_only_unknown(place)) and not compare.cash_left_out(place)
-            and not (place.get("score") or {}).get("lease_gap"))  # one rule: an unknown cost part is never a best fit
+            and not over_budget(place) and not unknown_cost_parts(place) and not compare.cash_left_out(place)
+            and not (place.get("score") or {}).get("lease_gap"))  # one rule: a place whose cost is not complete is never a best fit (it is under "Needs a cost check")
 
 
 def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
@@ -431,8 +431,6 @@ def cost_check(rows: list[dict[str, Any]], also: Any = ()) -> list[dict[str, Any
         parts = unknown_cost_parts(p)
         if not why and not parts:
             continue
-        if not why and insurance_only_unknown(p) and is_best_fit(p):
-            continue  # cycle 28: shown under Best fits, marked "insurance not filled in yet"
         ask = "Ask the listing agent before you count on this cost." if (p.get("cost") or {}).get("mode") == "buy" \
             else "Ask the landlord before you count on the rent."
         if why:

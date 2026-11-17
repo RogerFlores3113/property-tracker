@@ -34,11 +34,11 @@ def test_page_and_list_agree(store, client):
     s = _buy(store)
     a, _ = store.add_place(title="Arena", address="1 A St", price=250000, beds=2, property_tax=3000, hoa=100)
     out = text(call(server(store), "todays_list"))
-    assert f"Needs a cost check: #{a['id']}" not in out  # cycle 28: only insurance is missing, so it is a best fit marked "insurance not filled in yet"
-    best = out.split("Best fits right now:")[1]
-    assert "Arena" in best and "insurance not filled in yet" in best
+    # cycle 33: a place with an unknown cost part (here only insurance) is under "Needs a cost check" and nowhere else
+    assert f"Needs a cost check: #{a['id']}" in out and "Insurance is not counted yet" in out
+    assert "Arena" not in out.split("Best fits right now:")[1].split("Needs a cost check")[0]
     page = client.get("/").text
-    assert "Needs a cost check" not in page and "insurance not filled in yet" in page
+    assert "Needs a cost check" in page and "Insurance is not counted yet" in page
 
 
 def test_near_miss_with_unknown_cost_is_in_cost_check_too(store):
