@@ -798,8 +798,12 @@ _EXPL_LEASE_BEFORE = re.compile(r"\b\d{1,2}[- ]?(?:months?|mos?)\b(?:[- ]?(?:lea
 _EXPL_LEASE_AFTER = re.compile(r"^\s*(?:/\s*mo\w*\s*)?(?:for|on|with|if you sign)\s+(?:a\s+|an\s+)?\d{1,2}[- ]?(?:months?|mos?)\b", re.I)
 _EXPL_LEASE_WORDS = re.compile(r"\bmonth[- ]to[- ]month\b|\bmtm\b|\blease (?:length|term)s?\b|\bother lease\b|\banother lease\b|\bdifferent lease\b|\blease options?\b|\bmonth lease options?\b", re.I)
 _EXPL_PLAN = re.compile(r"\b(?:another|other|different) (?:floor ?)?plans?\b|\bfloor[- ]?plans?\b|\b(?:\d[- ]?)?(?:bed(?:room)?s?|br|bd|studio)[- ]plans?\b|\bplans? (?:at|from)\b|\bstarting (?:at|from)\b|\bplan options?\b|\bother (?:unit|size)s?\b", re.I)
-_EXPL_SPECIAL = re.compile(r"\bmove-?in specials?\b|\bspecial offers?\b|\bpromo\w*|\bbest-case\b|\bwith approved credit\b|\bspecials?\b(?!\s+assessment)", re.I)
-_EXPL_ONE_TIME = re.compile(r"\bseller(?:'s)?\s+(?:pays?|paid|will pay|credits?|contribut\w*|concessions?|covers?|help\w*)\b|\bone[- ]time\b|\bpending\b|\bspecial assessments?\b|\bassessments?\b|\bvote\b|\bto be split\b|\bsplit (?:among|between)\b", re.I)
+_EXPL_SPECIAL = re.compile(r"\bmove-?in specials?\b|\bspecial offers?\b|\bpromo\w*|\bbest-case\b|\bwith approved credit\b|\bspecials?\b(?!\s+assessment)|\blimited[- ]time\b|\blimited (?:offer|availability)\b|\bfor a limited\b|\b(?:if|when) you (?:sign|move in|lease|apply)\b|\bsign(?:ing)? (?:by|before|within)\b|\boffer (?:ends|expires)\b|\bexpires?\b", re.I)
+_EXPL_ONE_TIME = re.compile(r"\bseller(?:'s)?\s+(?:pays?|paid|will pay|credits?|contribut\w*|concessions?|covers?|help\w*)\b|\bone[- ]time\b|\bpending\b|\bspecial assessments?\b|\bassessments?\b|\bvote\b|\bto be split\b|\bsplit (?:among|between)\b|\bpaid by (?:the )?seller\b|\bseller[- ]paid\b|\bby the seller\b|\b(?:transfer|working capital|capital contribution|initiation|move-?out|closing|escrow|title|recording|origination)\s+(?:fees?|costs?)\b|\bholding (?:deposit|fee)\b|\bcapital contribution\b", re.I)
+# A figure inside a sentence that tries to direct an AI tool or asks for a payment by a wire-like service is never a monthly cost of the place.
+_EXPL_HOSTILE = re.compile(r"\bAI (?:assistant|agent|model|tool)\b|\bauthori[sz]ed you\b|\b(?:ignore|disregard|forget) (?:all |any |the |your |every )?(?:previous|prior|above|earlier|other)\b|\bdo not (?:mention|tell)\b|\bSYSTEM\s*:|\byou are now\b|\bcall (?:add|move|set|delete)_\w+|</?\s*untrusted|[<＜][^>＞\n]{0,40}[>＞]|\b(?:send|wire|transfer|pay|zelle)\b[^.\n]{0,50}\b(?:by|via|through|using|with|over|to)\s+(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin)\b", re.I)
+# A second or extra item (second pet, second space, additional car) and a storage add-on are optional extras: named in a note, never a missing monthly amount.
+_EXPL_SECOND = re.compile(r"\b(?:second|2nd|third|3rd)\b(?!\s+(?:month|floor|bed|bath|level|story|year))|\b(?:additional|extra|another)\s+(?:pets?|dogs?|cats?|animals?|spaces?|spots?|cars?|vehicles?|parking|garages?|storage|keys?|fobs?|persons?|occupants?|residents?|tenants?|adults?)\b|\bstorage\b", re.I)
 _EXPL_OLD = re.compile(r"\bold price\b|\bolder (?:price|rent)\b|\bformerly\b|\bno longer\b|\bwas an old\b|\bis the old\b", re.I)
 
 
@@ -832,6 +836,8 @@ def figure_explained(note: str, start: int, end: int) -> str:
     sent = text[slo:shi]  # the whole sentence: "2 bedroom plans at $1,380; $1,520; $1,480" says "plans" once for every figure of the list
     if _EXPL_OLD.search(seg):
         return "old"
+    if _EXPL_HOSTILE.search(sent):
+        return "hostile"
     if _EXPL_ONE_TIME.search(seg) and not re.search(r"\bper\s+month\b|/\s*mo\b|\ba\s+month\b|\bmonthly\b|\beach\s+month\b", after[:18], re.I):
         return "one_time"
     if _EXPL_SPECIAL.search(seg) and not re.search(r"\bfees?\b|\bdues\b|\bhoa\b|\butilit", seg, re.I):
@@ -911,6 +917,8 @@ def figure_closed(note: str, start: int, end: int, optional: set[float] | frozen
     if figure_explained(note, start, end):
         return "explained"
     piece = _figure_piece(note, start, end)
+    if _EXPL_SECOND.search(piece) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):
+        return "optional"
     if re.search(r"\bupgrades?\b|\boptional\b|\bif you want\b|\byour choice\b|\bby request\b|\badd[- ]ons?\b", piece, re.I) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):
         return "optional"
     if amount in optional and not re.search(r"\b(?:required|mandatory)\b", re.sub(r"\b(?:ask|check)\b[^.]{0,30}\bif\b[^.]{0,30}\b(?:required|mandatory)\b", " ", note, flags=re.I), re.I):
@@ -1065,13 +1073,30 @@ def open_notes_label(reader_notes: Any, place: dict[str, Any] | None = None) -> 
     return _open_notes_parts(reader_notes, place)[1]
 
 
+_RENT_LIKE_COST_WORD = re.compile(r"\bdeposit|\bfees?\b|\bdues\b|\btax|insurance|\bhoa\b|parking|garage|carport|\bpets?\b|\bdog|\bcats?\b|utilit|electric|\bgas\b|\bwater\b|sewer|trash|internet|cable|storage|locker|"
+                                  r"amenity|package|valet|permit|admin|application|cleaning|\bkeys?\b|\bfobs?\b|\bgym\b|\bpool\b|\bspace\b|\bspot\b|concession|credit|\bmove-?in\b|assessment|closing|\bpaid\b|\bpays?\b", re.I)
+
+
+def _rent_like_figure(note: str, start: int, end: int, place: dict[str, Any] | None) -> bool:
+    """A figure with no cost word of its own ("Nice place $1,550") that sits near the saved rent is another rent or a price, not an extra monthly
+    amount left out: the note still quotes it, the headline and the missing list do not name it."""
+    price = num((place or {}).get("price"))
+    fm = _FIG.search(note[start:end])
+    if not price or not fm:
+        return False
+    amount = _amount_of(fm)
+    if not (0.6 * price <= amount <= 1.6 * price) or amount == price:
+        return False
+    return not _RENT_LIKE_COST_WORD.search(_figure_piece(note, start, end))
+
+
 def _note_open_figures(note: str, place: dict[str, Any] | None, optional: set[float] | frozenset[float] = frozenset()) -> tuple[dict[float, str], set[float], set[float]]:
     """The figures of a note that are not closed by meaning (see ``figure_closed``), with the amounts the place's fields hold (``used``) and the
     ones its fields place for this note (``placed``)."""
     used: set[float] = set()
     placed: set[float] = set()
     values = {float(m.group(0).replace(" ", "").rstrip(",.").lstrip("$").replace(",", "")): m.group(0).replace(" ", "").rstrip(",.")
-              for m in _note_figures_loose(note) if not figure_closed(note, m.start(), m.end(), optional)}  # cycle 25: an explained figure is never named as missing
+              for m in _note_figures_loose(note) if not figure_closed(note, m.start(), m.end(), optional) and not _rent_like_figure(note, m.start(), m.end(), place)}  # cycle 25: an explained figure is never named as missing
     if place:
         try:
             from .parsers import _CURRENT_EXTRA, _NET_NOTE, _NET_REAL_FIELDS, _field_sums, _net_used_numbers, placed_amounts
