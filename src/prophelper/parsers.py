@@ -10353,15 +10353,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 if label_x.startswith(("admin", "processing")) and per_applicant and v_x == per_applicant[0]:
                     continue
                 extra_one_time += v_x  # cycle 21: "Fees: application $50, admin $120, lease processing $60", "$250 amenity fee one-time"
-                if kind_x == "key" and isinstance(out.get("deposit"), (int, float)) and not isinstance(out.get("deposit"), bool) and out["deposit"] > 0 and label_x.startswith("key deposit"):
-                    # cycle 23: a key deposit is money you get back, so it is added once to the deposit (not spread over the lease like a fee)
-                    extra_one_time -= v_x
-                    sec_x = float(out["deposit"])
-                    out["deposit"] = _tidy_number(sec_x + v_x)
-                    facts.append(f"The security deposit is {_usd(sec_x)} and the key deposit is {_usd(v_x)}, so the deposit saved is both together, {_usd(sec_x + v_x)}. "
-                                 "The key deposit is counted once in the cash at move-in and not spread over the lease. Ask when you get it back.")
-                elif kind_x == "key":
-                    facts.append(f"The {_usd(v_x)} {label_x} is counted in the cash at move-in. The listing may say it comes back, so ask when you get it back.")
+                if kind_x == "key":  # cycle 28: a key or parking deposit is never the security deposit; it is counted once in the move-in fees
+                    facts.append(f"The {_usd(v_x)} {label_x} is counted once in the cash at move-in as a one-time amount. It is not the security deposit. The listing may say it comes back, so ask when you get it back.")
         if nonref_dep and not buying and not _is_sale_text(text):
             extra_one_time += nonref_dep[0]
             _dep_read = out.get("deposit")
@@ -12324,7 +12317,7 @@ def _is_sale_text(text: str) -> bool:
 
 _ONE_TIME_LABELS = (
     r"admin(?:istrative|istration)?(?:[ \t]+fees?)?", r"lease[- ](?:processing|up|initiation|signing|admin\w*|set-?up|start-?up)(?:[ \t]+fees?)?",
-    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
+    r"lease[ \t]+fees?", r"processing[ \t]+fees?", r"move[- ]?in[ \t]+fees?", r"key[ \t]+(?:deposit|fees?)", r"(?:parking|garage|carport)[ \t]+deposit", r"keys?(?=[ \t]*[:=]?[ \t]*\$)", r"(?:set-?up|start-?up|onboarding)[ \t]+fees?",
     r"(?:amenity|community|technology|tech)[ \t]+fees?",
     r"(?:one[- ]?time|non[- ]?refundable)[ \t]+(?:amenity|community|technology|tech)(?:[ \t]+fees?)?",  # cycle 22: "one-time amenity $200"
     r"move[- ]?in(?![ \t]*(?:fees?|total|costs?|specials?|date|day|ready|cash|charges?|money|price|amount|incentive|offer|-)\b)",
@@ -12370,7 +12363,7 @@ def _one_time_fee_items(text: str) -> list[tuple[str, float, str]]:
                     if not _ONE_TIME_CUE.search(around):
                         continue
                 apos = m.start(2 if i == 0 else 1)
-                item = (label, v, "key" if label.startswith("key") else "fee")
+                item = (label, v, "key" if label.startswith(("key", "parking", "garage", "carport")) else "fee")
                 if apos in out_pos:  # the same amount again under a second label: keep the longer label, count it once
                     j = out_pos.index(apos)
                     if len(label) > len(out[j][0]):
