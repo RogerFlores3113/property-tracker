@@ -373,3 +373,55 @@ def test_negative_tenant_electric_with_seasonal_figures_is_not_touched():
     r = P(HEAD + "Tenant pays electric, approx $55 summer, $60 winter.")
     assert r["utilities_estimate"] == 60
     assert "electric" in _set(r["tenant_pays"])
+
+
+# ---- 9. "paid by tenant" is never read as "included" (also without the word "all", and for "all other utilities")
+PAID_BY = [
+    "Utilities paid by tenant.",
+    "Utilities are paid by the resident.",
+    "Utilities paid separately by tenant.",
+    "UTILITIES PAID BY TENANT.",
+    "Rent only. Utilities are the tenant's responsibility.",
+    "Utilities: paid by tenant\nW/D in unit",
+]
+
+
+@pytest.mark.parametrize("body", PAID_BY)
+def test_utilities_paid_by_tenant_is_not_included(body):
+    r = P(HEAD + body)
+    assert not r.get("utilities_included"), (body, r.get("utilities_included"))
+    assert _set(r["tenant_pays"]) == {"electric", "gas", "water", "sewer", "trash"}
+
+
+OTHER = [
+    ("Electric included. All other utilities paid by tenant.", {"electric"}, {"gas", "water", "sewer", "trash"}),
+    ("Electric is included. All other utilities are the tenant's responsibility.", {"electric"}, {"gas", "water", "sewer", "trash"}),
+    ("Water included; other utilities paid by the tenant.", {"water"}, {"electric", "gas", "sewer", "trash"}),
+    ("Heat included. Other utilities are paid by tenant.", {"heat"}, {"electric", "gas", "water", "sewer", "trash"}),
+    ("Electric and water included. Remaining utilities tenant pays.", {"electric", "water"}, {"gas", "sewer", "trash"}),
+    ("Electric included, the rest is paid by the tenant.", {"electric"}, {"gas", "water", "sewer", "trash"}),
+    ("ELECTRIC INCLUDED. ALL OTHER UTILITIES PAID BY TENANT.", {"electric"}, {"gas", "water", "sewer", "trash"}),
+]
+
+
+@pytest.mark.parametrize("body,inc,pay", OTHER)
+def test_all_other_utilities_paid_by_tenant(body, inc, pay):
+    r = P(HEAD + body)
+    assert _set(r["utilities_included"]) == inc, body
+    assert _set(r["tenant_pays"]) == pay, body
+
+
+def test_negative_paid_by_landlord_and_billed_to_tenant_keep_their_meaning():
+    assert P(HEAD + "Utilities paid by landlord.").get("utilities_included") == "all"
+    assert P(HEAD + "Utilities are paid by the landlord.").get("utilities_included") == "all"
+    r = P(HEAD + "Utilities all included in rent; $180 a month for utilities billed to tenant by the landlord.")
+    assert "don't agree" in notes(r)
+    r = P(HEAD + "Utilities paid by tenant: electric, gas.")
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}
+    assert not r.get("utilities_included")
+
+
+def test_uiuc_l6_pays_the_other_utilities():
+    r = P(saved("r31-uiuc-l6"))
+    assert _set(r["tenant_pays"]) >= {"gas", "water"}
+    assert "electric" not in _set(r["tenant_pays"])

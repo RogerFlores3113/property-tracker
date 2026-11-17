@@ -6234,7 +6234,7 @@ def _utilities(text: str) -> str:
     if re.search(r"\ball[- ]utilities[- ](?:are[- ])?(?:included|paid|covered)|\butilities (?:are )?all included|\ball[- ]inclusive|\ball bills (?:paid|included)|\bincludes all utilities|\butilities (?:are )?(?:included|paid)\b(?! (?:for|in) )(?!\s*,?\s*(?:separately|directly|individually)\b)(?!\s+(?:by\s+(?:the\s+)?(?:tenants?|residents?|renters?|lessees?|you)\b|to\s+(?:the\s+)?(?:utility|power|electric|gas|water|providers?|compan)))|\bincluded utilities\s*[:\-]\s*all", low) \
             and not re.search(r"\butilities\s*[:\-]?\s*(?:not|excluded)", low):
         return "all"
-    if re.search(r"\b(?:all )?utilities\s*(?:are )?included\s+in\s+(?:the\s+)?(?:rent|lease|price|monthly)\b|\butilities\s*:\s*(?:all\s+)?(?:included|paid)\b", low):
+    if re.search(r"\b(?:all )?utilities\s*(?:are )?included\s+in\s+(?:the\s+)?(?:rent|lease|price|monthly)\b|\butilities\s*:\s*(?:all\s+)?(?:included|paid)\b(?!\s+(?:by\s+(?:the\s+)?(?:tenants?|residents?|renters?|lessees?|you)\b|to\s+(?:the\s+)?(?:utility|power|electric|gas|water|providers?|compan)))", low):
         return "all"
     if _LANDLORD_PAYS_ALL.search(low) and not _PLUS_UTILITIES_WORDS.search(low) and not re.search(r"\b(?:tenants?|residents?|renters?|you)\s+(?:pays?|are responsible for|is responsible for|will pay|must pay)\s+(?:for\s+)?(?:all\b|the\s+utilit)", low):
         return "all"  # a plain "Landlord pays all utilities." with no "except", no RUBS and no line that says the opposite
@@ -8713,7 +8713,10 @@ _UTIL_PAID_BY_PLAIN = re.compile(
     r"(?![ \t]*(?:[:(\-\u2013]|,)[ \t]*(?:electric|gas|water|sewer|trash|heat|internet|cable))"
     r"|\b(?:(?:the[ \t]+)?(?:rest|remainder)|(?:everything|all)[ \t]+else|(?:all[ \t]+)?(?:the[ \t]+)?(?:other|remaining)[ \t]+utilit(?:y|ies))[ \t]+(?:(?:is|are)[ \t]+)?(?:paid[ \t]+by|(?:the[ \t]+)?(?:responsibility|expense)[ \t]+of|on)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
     r"|\b(?:(?:the[ \t]+)?(?:rest|remainder)|(?:everything|all)[ \t]+else|(?:all[ \t]+)?(?:the[ \t]+)?(?:other|remaining)[ \t]+utilit(?:y|ies))[ \t]+(?:is|are)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"(?:'s|s')?[ \t]+(?:responsibility|expense|cost|bill)\b"
-    r"|\b(?:(?:all[ \t]+)?(?:the[ \t]+)?(?:other|remaining)[ \t]+utilit(?:y|ies))[ \t]*[:\-]?[ \t]*" + _TENANT_WORD_U + r"[ \t]+(?:pays?|is[ \t]+responsible)\b", re.I)
+    r"|\b(?:(?:all[ \t]+)?(?:the[ \t]+)?(?:other|remaining)[ \t]+utilit(?:y|ies))[ \t]*[:\-]?[ \t]*" + _TENANT_WORD_U + r"[ \t]+(?:pays?|is[ \t]+responsible)\b"
+    r"|\butilit(?:y|ies)[ \t]*:[ \t]*(?:are[ \t]+)?(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b(?![ \t]*[:(,\-–])"
+    r"|\butilit(?:y|ies)(?:[ \t]*:[ \t]*|[ \t]+(?:are|is)[ \t]+)(?:the[ \t]+)?" + _TENANT_WORD_U + r"[ \t-]+paid\b(?![ \t]*[:(,\-–])"
+    r"|\butilit(?:y|ies)[ \t]+(?:are|is)[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"(?:'s|s')?[ \t]+(?:own[ \t]+)?(?:responsibility|expense)\b(?![ \t]*[:(,\-–])", re.I)
 
 
 def _say_all_utilities(text: str) -> str:
