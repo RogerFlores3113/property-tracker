@@ -499,6 +499,7 @@ def cut_quote(q: str) -> str:
     return out if out and _QUOTE_FIG.search(out) else q
 
 
+_ALSO_GIVES = re.compile(r"^The listing also gives (\$[\d,]+(?:\.\d\d)?)\b")
 _ALSO_SAYS = re.compile(r'^(The listing (?:also says|mentions)[^"]*?\(?")([^"]*)("\)?)')
 
 
@@ -575,4 +576,15 @@ def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool 
         if k and k[0] and any(o is not None and j != i and k[0] < o[0] and k[1] == o[1] and k[2] in o[2] for j, o in enumerate(keys)):
             continue
         keep.append(f)
-    return keep
+    # cycle 28: two notes that both begin "The listing also gives $3,195 ..." are about one price: one note survives (the lease length reading, which names the months, beats the generic "depends on the condition")
+    gives = {}
+    for i, f in enumerate(keep):
+        gm = _ALSO_GIVES.match(f)
+        if gm:
+            gives.setdefault(gm.group(1), []).append(i)
+    drop: set[int] = set()
+    for idxs in gives.values():
+        if len(idxs) > 1:
+            best = next((i for i in idxs if re.search(r"lease length", keep[i], re.I)), idxs[0])
+            drop.update(i for i in idxs if i != best)
+    return [f for i, f in enumerate(keep) if i not in drop]
