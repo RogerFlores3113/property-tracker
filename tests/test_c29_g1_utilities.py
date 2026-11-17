@@ -257,7 +257,8 @@ def test_uiuc_l6_cost_never_says_included_and_missing_trash():
     assert "trash" not in inc(r)
     place = dict(r, listing_text=t)
     c = money.true_monthly_cost(place)
-    assert c["missing"] == [] and c["uncounted"] == []
+    # cycle 29 G3: the "Own garage included, price TBD" line leaves the parking cost unknown; nothing about utilities is missing
+    assert [m for m in c["missing"] if m != "parking cost"] == [] and [u for u in c["uncounted"] if u != "parking"] == []
     util = next(l for l in c["lines"] if l["key"] == "utilities")
     assert "includes: trash" not in (util["note"] or "")
 

@@ -45,7 +45,8 @@ def test_l8_all_surfaces_say_not_complete(store, client):
     p = _buy_place(store, s, "r28-buyer-l8.txt", insurance=1200, hoa=290)
     e, today, page, got, lst, cmp_t = _surfaces(store, client, s, p, q)
     assert compare.cost_incomplete(e)
-    assert "not complete" in today
+    # Today lists it under "Needs a cost check"; the reason line may say "not complete" or "not counted yet"
+    assert "Needs a cost check" in today and ("not complete" in today or "not counted yet" in today)
     assert "not complete" in page.split('id="cost"')[1].split("</section>")[0] or "so far" in page
     assert "True monthly cost $" not in got and "not complete" in got
     line = next(l for l in lst.split("\n") if l.startswith(f"#{p['id']}"))

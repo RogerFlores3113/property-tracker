@@ -70,7 +70,8 @@ class TestCountedNeverMissing:
         r = read(text)
         assert r["utilities_estimate"] == 130 and r["deposit"] == 1200
         assert not any("$100" in s for s in surfaces(text)), surfaces(text)
-        assert not any("$100" in n for n in notes_of(r))
+        # the only note that may name the stale $100 is the utilities correction note, which says it is not used
+        assert all("is not used" in n for n in notes_of(r) if "$100" in n)
         place = dict(r, reader_notes=r["found_in_listing"], listing_text=text)
         assert money.true_monthly_cost(place)["headline"] == "$1,720/mo"
 
