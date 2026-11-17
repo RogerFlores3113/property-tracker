@@ -506,7 +506,9 @@ _TT_NOW = re.compile(r"(?P<old>" + _TT_M + r")(?P<u0>" + _TT_U + r")[ \t]*[(\[][
                      r"|(?P<new2>" + _TT_M + r")(?P<u2>" + _TT_U + r")[ \t]*(?:now|currently|today))[ \t]*[)\]]", re.I)
 # "$284,000 (reduced from $295,000)", "$1,495 (was $1,525)", "$3,195/mo ($3,295 before)": the bracket holds the old figure
 _TT_OLD = re.compile(r"(?P<cur>" + _TT_M + r")(?P<u>" + _TT_U + r")[ \t]*[(\[][ \t]*(?:(?:(?:price[ \t]+)?(?:reduced|dropped|lowered|cut|marked[ \t]+down)[ \t]+from|down[ \t]+from|was|were|previously|formerly|originally|before)[ \t]*:?[ \t]*" + _TT_M + r"[^)\]\n]{0,30}"
-                     r"|" + _TT_M + _TT_U + r"[ \t]*(?:before|previously|prior|earlier|originally|formerly))[ \t]*[)\]]", re.I)
+                     r"|" + _TT_M + _TT_U + r"[ \t]*(?:before|previously|prior|earlier|originally|formerly))[ \t]*(?:[)\]]|$)", re.I)  # cycle 32: a bracket cut off at the end of a sent title is read too
+# cycle 32: "Hartwell Place 1 Bed (previously $1,490)" / "(was $1,490": a bracket that only names the old price, with no current figure in front of it
+_TT_OLD_ONLY = re.compile(r"[ \t]*[(\[][ \t]*(?:(?:price[ \t]+)?(?:reduced|dropped|lowered|cut|marked[ \t]+down)[ \t]+from|down[ \t]+from|was|were|previously|formerly|originally|before)[ \t]*:?[ \t]*" + _TT_M + r"[^)\]\n]{0,30}(?:[)\]]|$)", re.I)
 
 
 # cycle 31: "previously $1,525, now $1,445" with no bracket: the old figure and its word go, the current figure stays
@@ -527,6 +529,7 @@ def trim_stale_price_title(title: str) -> str:
         return m.group("new2") + (m.group("u2") or m.group("u0") or "")
     out = _TT_NOW.sub(now, title)
     out = _TT_OLD.sub(lambda m: m.group("cur") + (m.group("u") or ""), out)
+    out = _TT_OLD_ONLY.sub(" ", out)
     return " ".join(out.split()) if out != title else title
 
 
@@ -545,6 +548,7 @@ def drop_other_price_text(title: str, price: float | None) -> str:
         if 300 <= v <= 30000 and abs(v - float(price)) >= 0.5:
             out = out.replace(m.group(0), " ", 1)
     out = re.sub(r"[ \t]*[(\[][ \t]*[)\]]", " ", out)
+    out = re.sub(r"[ \t]*[(\[][ \t]*(?:price[ \t]+)?(?:previously|formerly|originally|was|were|before|now|currently|reduced[ \t]+from|down[ \t]+from|updated?)[ \t]*:?[ \t]*(?:[)\]]|$)", " ", out, flags=re.I)  # cycle 32: the words of a bracket whose figure was cut
     out = " ".join(out.split()).strip(" ,;:-|/\u2013\u2014")
     out = re.sub(r"(?:[ \t]+(?:at|for|only|just|now|rent|price))+$", "", out, flags=re.I).strip(" ,;:-|/\u2013\u2014")
     return out if len(re.findall(r"[A-Za-z]", out)) >= 3 else title
