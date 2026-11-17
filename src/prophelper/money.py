@@ -988,7 +988,7 @@ def figure_closed(note: str, start: int, end: int, optional: set[float] | frozen
     if figure_explained(note, start, end):
         return "explained"
     piece = _figure_piece(note, start, end)
-    if re.search(r"\bdeposits?\b", piece, re.I) and not re.search(r"^\s*(?:/\s*(?:mo|month)\b|per\s+month|a\s+month|monthly|each\s+month)", note[end:end + 20], re.I):
+    if re.search(r"\bdeposits?\b", piece, re.I) and not re.search(r"\b(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin|send|hold(?:ing)?|before|upfront|up front)\b", piece, re.I) and not re.search(r"^\s*(?:/\s*(?:mo|month)\b|per\s+month|a\s+month|monthly|each\s+month)", note[end:end + 20], re.I):
         return "deposit"  # cycle 28: a deposit is cash at move-in, never a monthly amount left out
     if _EXPL_SECOND.search(piece) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):
         return "optional"

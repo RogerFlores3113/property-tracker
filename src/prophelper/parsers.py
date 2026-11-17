@@ -11429,7 +11429,7 @@ def _uncounted_kind_sentence(phrase: str) -> str:
     one, monthly = bool(_ONE_TIME_WORDS.search(phrase)), bool(_MONTHLY_WORDS.search(phrase))
     if _SELLER_PAID_WORDS.search(phrase):
         return "The seller pays it, so it is not your cost and it is not in the monthly cost."  # cycle 27: a seller-paid figure is never "who pays?"
-    if re.search(r"\bdeposits?\b", phrase, re.I) and not monthly:
+    if re.search(r"\bdeposits?\b", phrase, re.I) and not monthly and not re.search(r"\b(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin|send|hold(?:ing)?|before|upfront|up front)\b", phrase, re.I):
         return "It is a one-time cost, so it is not in the monthly cost."  # cycle 28: a deposit (parking, key, "deposit or fee") is cash at move-in, never a monthly amount
     pieces_ = [x for x in re.split(r"[,;\n]|\bplus\b|\band\b|\*|\s~\s", phrase) if _dollar_values(x)]
     from .money import _EXPL_SECOND
