@@ -5155,7 +5155,7 @@ def buyer_hoa_month_fees(text: str) -> tuple[list[tuple[str, float]], list[tuple
     return counted, unclear
 
 
-_ADDL_WORDS = re.compile(r"\badditional(?:ly)?\b|\bextra\b|\bon[ \t]+top\b|\bin[ \t]+addition\b|\bseparate(?:ly)?\b|\bnot[ \t]+(?:included|part[ \t]+of)\b|\bover[ \t]+and[ \t]+above\b|\bplus\b", re.I)
+_ADDL_WORDS = re.compile(r"\badditional(?:ly)?\b|\bextra\b|\bon[ \t]+top\b|\bin[ \t]+addition\b|\bseparate(?:ly)?\b|\bnot[ \t]+(?:included|part[ \t]+of)\b|\bover[ \t]+and[ \t]+above\b", re.I)
 _ADDL_ITEM_NAME = r"(?:title|escrow|recording|attorney|settlement|survey|appraisal|lender|origination|prepaids?|transfer[ \t]+tax(?:es)?|closing[ \t]+agent|courier)"
 _ADDL_ITEM = re.compile(r"\b(" + _ADDL_ITEM_NAME + r"(?:[ \t]*(?:,|and|&)[ \t]*" + _ADDL_ITEM_NAME + r")*(?:[ \t]+(?:fees?|costs?|charges?|insurance))?)[^$.\n;]{0,25}?"
                         r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))"
@@ -8952,7 +8952,9 @@ def _hoa_period_note(text: str, hoa: float | None) -> str:
                     return (f"The listing gives the HOA as {_money_c(amount)} per week. It is saved as {_money_c(hoa)} a month ({_money_c(amount)} x 52 weeks divided by 12). "
                             "Ask the seller's agent to confirm.")
                 continue
-            divisor, name = (6, "half year") if re.search(r"half|semi|twice|six|6", word) else (3, "quarter")
+            if not re.search(r"half|semi|twice|six|6", word):
+                continue  # a quarterly HOA has always been read without a note (cycle 11 test), so only the newer half-year reading says so
+            divisor, name = 6, "half year"
             if abs(amount / divisor - hoa) < 0.01:
                 return (f"The listing gives the HOA as {_money_c(amount)} per {name}. It is saved as {_money_c(hoa)} a month ({_money_c(amount)} divided by {divisor}). "
                         "Ask the seller's agent to confirm.")

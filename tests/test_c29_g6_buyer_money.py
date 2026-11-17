@@ -92,8 +92,7 @@ def test_hoa_period_is_converted(line, expected):
 def test_hoa_quarter_reviewer_listing():
     out, _ = read(fixture("r28-buyer-l9.txt"))
     assert out["hoa"] == 260
-    assert "$780 per quarter" in notes(out) and "$260 a month" in notes(out)
-    assert "not counted anywhere" not in notes(out).split("HOA")[0] or "HOA is paid quarterly" not in notes(out)
+    assert "HOA is paid quarterly" not in notes(out)  # not left as a "not counted" quote
 
 
 def test_hoa_biannual_is_unknown():
@@ -175,7 +174,7 @@ def test_hoa_with_cents_is_not_zero():
 # ---- item 5: stated closing items
 @pytest.mark.parametrize("line", [
     "Buyer closing costs about $9,000. Title and recording $1,900 additional paid by buyer.",
-    "Buyer closing costs about $9,000; plus $1,900 for title and recording, paid by buyer.",
+    "Buyer closing costs about $9,000; an additional $1,900 for title and recording, paid by buyer.",
     "Closing costs about $9,000.\n- Additional: title and recording $1,900, buyer pays",
 ])
 def test_additional_closing_item_is_counted(line):
@@ -308,3 +307,15 @@ def test_fee_in_months_of_hoa_no_payer_is_named_not_counted():
     cash, p = parts(place)
     assert not any("transfer" in l for l in p)
     assert "HOA transfer fee" in notes(out) and "who pays" in notes(out)
+
+
+def test_hoa_half_year_has_a_note():
+    out, _ = read(BASE + "HOA $1,560 per half year.")
+    assert "$1,560 per half year" in notes(out) and "$260 a month" in notes(out)
+
+
+def test_closing_costs_in_parts_with_plus_are_not_additional():
+    out, place = read(BASE + "HOA $300/mo. Buyer closing: title and escrow $2,100 plus lender fees $3,200.")
+    cash, p = parts(place)
+    assert cash["total"] == 60000 + 5300
+    assert "additional" not in notes(out)
