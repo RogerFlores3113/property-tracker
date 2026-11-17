@@ -315,3 +315,46 @@ def test_whole_roommates_l4():
     assert _set(r["tenant_pays"]) == {"electric", "gas"}
     assert _set(r["utilities_included"]) == {"heat"}
     assert r["utilities_estimate"] == 140
+
+
+# ---- 8. other layouts of the same rules
+BULLETS = [
+    "Tenant pays:\n- electric\n- gas\n- water\n- sewer\n- trash\nTypical bills $165/mo",
+    "Tenant pays:\n* Electric\n* Gas\n* Water\n* Sewer\n* Trash\nTypical bills: $165/mo",
+    "Tenant pays: electric / gas / water / sewer / trash. Typical bills: $165 per month.",
+    "Tenant pays electric, gas, water, sewer, and trash. Typical bills $165 per month.",
+    "Tenant pays: Electric; Gas; Water; Sewer; Trash. Typical bills: $165 per month.",
+]
+
+
+@pytest.mark.parametrize("body", BULLETS)
+def test_other_layouts_keep_five_and_count_the_bills(body):
+    r = P("Rent $1,400.\n" + body)
+    assert _set(r["tenant_pays"]) == FIVE
+    assert r["utilities_estimate"] == 165, notes(r)
+    assert "not counted anywhere" not in notes(r)
+
+
+def test_included_list_with_the_payer_word_after():
+    r = P(HEAD + "Water; sewer; trash included. Tenant pays electric; gas.")
+    assert _set(r["utilities_included"]) == {"water", "sewer", "trash"}
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}
+
+
+def test_two_answers_in_one_line_with_semicolon():
+    r = P(HEAD + "Electric included? No; gas included? No. Typical bills about $130.")
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}
+    assert r["utilities_estimate"] == 130
+
+
+def test_gas_yes_electric_no_counts_the_bills_for_electric_only_pay_list():
+    r = P(HEAD + "Gas included? Yes. Electric included? No. Typical bills about $90.")
+    assert _set(r["utilities_included"]) == {"gas"}
+    assert _set(r["tenant_pays"]) == {"electric"}
+    assert r["utilities_estimate"] == 90
+
+
+def test_all_utilities_not_included_answer_counts_the_bills():
+    r = P(HEAD + "Utilities included? No. Typical bills about $200.")
+    assert r["utilities_estimate"] == 200
+    assert "not counted anywhere" not in notes(r)

@@ -7632,8 +7632,9 @@ def _last_role(gap: str) -> str:
 
 
 _SEMI_UTIL_USE = r"(?:[ \t]+for[ \t]+(?:the[ \t]+)?(?:cooking|stove|range|oven|dryer|heat(?:ing)?))?"
+_SEMI_UTIL_SUF = r"[ \t]+(?:(?:are|is)[ \t]+)?(?:all[ \t]+)?(?:included|covered|provided|extra|separate(?:ly)?|not[ \t]+included)\b"
 _SEMI_UTIL_LIST = re.compile(
-    r"(?P<a>\b(?:" + _ROLE_WORD + r")\b[ \t]*(?:\([^)\n]{0,40}\)[ \t]*)?);[ \t]*(?=(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r"(?:[ \t]*(?:,|/|&|\band\b)[ \t]*(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r")*[ \t]*\)?[ \t]*(?:[;.\n]|$))", re.I)
+    r"(?P<a>\b(?:" + _ROLE_WORD + r")\b[ \t]*(?:\([^)\n]{0,40}\)[ \t]*)?);[ \t]*(?=(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r"(?:[ \t]*(?:,|/|&|\band\b)[ \t]*(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r")*[ \t]*\)?(?:(?P<suf>" + _SEMI_UTIL_SUF + r")|[ \t]*(?:[;.\n]|$)))", re.I)
 _SEMI_UTIL_CUE = re.compile(r"\b(?:pays?|paid|payer|included?|includes|responsible|utilities|tenants?|residents?|renters?|separate(?:ly)?|extra|you|landlord|owner|covers?|billed|not)\b", re.I)
 
 
@@ -7661,7 +7662,7 @@ def _join_semicolon_utility_lists(text: str) -> str:
                 prev_line = text[text.rfind("\n", 0, seg_start - 1) + 1:seg_start - 1]
                 if prev_line.rstrip().endswith(":"):
                     cue_from = seg_start - 1 - len(prev_line)
-            if not _SEMI_UTIL_CUE.search(text[cue_from:m.start()]):
+            if not (m.group("suf") or _SEMI_UTIL_CUE.search(text[cue_from:m.start()])):
                 continue
             text = text[:m.end("a")].rstrip(" \t") + ", " + text[m.end():]
             done = False
@@ -8944,7 +8945,7 @@ _SE_SENTENCE = re.compile(
     r"(?P<names>(?:" + _ROLE_ITEM + r"[ \t]*(?:,|/|&|\+|\band\b)?[ \t]*){1,5})?[ \t:,\-\u2013]*(?:" + _SE_FILL + r"[ \t:,\-\u2013]*)*"
     r"\$[ \t]?(?P<amt>\d{2,4}(?:\.\d\d)?)(?![\d,])[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b|each[ \t]+month\b)?"
     r"(?:[ \t,]*(?:" + _SE_FILL + r"|per[ \t]+month)\b)*[ \t]*[.!;]?[ \t]*$", re.I)  # cycle 32: a semicolon may end the estimate piece ("...about $180 per month; gas heat.")
-_SE_PAYER = re.compile(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n]{0,60}\b(?:pays?|responsible|will pay|must pay)\b|\b(?:" + _ROLE_WORD + r")\b[ \t]+(?:is[ \t]+|are[ \t]+)?not[ \t]+included\b|\bpaid[ \t]+by[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?)\b|\bbilled[ \t-]*back\b"
+_SE_PAYER = re.compile(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n]{0,60}\b(?:pays?|responsible|will pay|must pay)\b|\b(?:" + _ROLE_WORD + r"|utilit(?:y|ies))\b[ \t]+(?:is[ \t]+|are[ \t]+)?not[ \t]+included\b|\bpaid[ \t]+by[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?)\b|\bbilled[ \t-]*back\b"
                        r"|\b(?:tenants?|residents?|renters?)[ \t-]+paid\b|\b(?:tenants?|residents?|renters?)(?:'s|s')?[ \t]+(?:responsibility|expense)\b", re.I)  # cycle 32: "gas and electric are tenant paid;"
 _SE_NOT = re.compile(r"\b(?:insurance|parking|garages?|carports?|storage|lockers?|pets?|cats?|dogs?|application|deposit|amenity|valet|hoa|association|rent|tax(?:es)?|fees?|admin|internet|cable|wi-?fi)\b|\b(?:per|a|each)[ \t]+(?:year|quarter|week)\b|/[ \t]*(?:yr|year|qtr|wk)\b|annual|yearly|quarterly", re.I)
 
@@ -8996,7 +8997,10 @@ def _standalone_estimates(text: str) -> str:
             continue
         if k and pieces[k - 1][0].rstrip().endswith(";") and not re.search(r"\b(?:bills?|utilit)", seg, re.I):
             continue  # cycle 31: after a semicolon only "typical bills for the unit about $165" is read here; "; estimate $140 total" keeps the older reading
-        prev = " ".join(p[0] for p in pieces[max(0, k - 4):k])  # cycle 32: "Tenant pays all utilities. Electric included? No. Typical bills for the unit about $180."
+        j0 = max(0, k - 4)
+        while j0 > 0 and k - j0 < 12 and pieces[j0][1] == "\n" and len(pieces[j0][0]) < 40:  # cycle 33: a bulleted pay list of five utilities is longer than four pieces
+            j0 -= 1
+        prev = " ".join(p[0] for p in pieces[j0:k])  # cycle 32: "Tenant pays all utilities. Electric included? No. Typical bills for the unit about $180."
         if not _SE_PAYER.search(prev) and re.search(r"\ball utilities included except\b", prev, re.I):
             prev = "Tenant pays " + prev  # cycle 30: "Everything but electric included. Typical total bills for the unit about $140/mo." the figure is for what the tenant pays
         if not _SE_PAYER.search(prev) or not re.search(_ROLE_ITEM + r"|\butilit", prev, re.I) or (re.search(r"\$[ \t]?\d", pieces[k - 1][0] if k else "") and not _SE_TOTALISH.search(seg)):
