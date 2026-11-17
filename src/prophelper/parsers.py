@@ -3081,6 +3081,32 @@ def _pets_doubt(text: str) -> str:
     return f"The listing says pets depend on approval ({said}). Pets is left empty, so ask {who} which pets are allowed."
 
 
+_APPROVAL_NEED = re.compile(r"\b(?:(?:prior[ \t]+|written[ \t]+)?(?:approval|permission|pre-?approval)[ \t]+(?:is[ \t]+|are[ \t]+)?(?:required|needed|necessary|first)\b|(?:need|needs|require|requires|required|must[ \t]+(?:be|get)|subject[ \t]+to|pending|with|upon)[ \t]+(?:prior[ \t]+|written[ \t]+|landlord[ \t]+|management[ \t]+|owner[ \t]+)?(?:approval|permission|approved))", re.I)
+
+
+def _pets_approval_note(text: str) -> str:
+    """Cycle 28: pets are saved from the rest of the listing, but one sentence says a kind of pet needs approval in a word order the pet reader
+    does not treat as a doubt: "Approval required for dogs.", "Dogs OK, approval needed.". "Dogs need approval." for the kinds named, "" when there is none."""
+    kinds: list[str] = []
+    for sentence in re.split(r"(?<![\d])[.;\n?!|]+", text):
+        m = _APPROVAL_NEED.search(sentence)
+        if not m or re.search(r"\b(?:no|without|not|n't)[ \t]+(?:\w+[ \t]+)?(?:approval|permission)|(?:approval|permission)[ \t]+(?:is[ \t]+)?not[ \t]+(?:needed|required)", sentence, re.I):
+            continue
+        if re.search(r"\b(?:credit|application|lease|loan|board|hoa|rental|income|background)[ \t]+(?:approval|check)|\bapproved[ \t]+(?:credit|applicants?|tenants?)", sentence, re.I):
+            continue
+        sp = [w.lower().rstrip("s") for w in re.findall(r"\b(cats?|dogs?)\b", sentence, re.I)]
+        if not sp and re.search(r"\b(?:pets?|animals?)\b", sentence, re.I):
+            sp = ["pet"]
+        for w in sp:
+            if w not in kinds:
+                kinds.append(w)
+    if not kinds:
+        return ""
+    names = {"dog": "Dogs", "cat": "Cats", "pet": "Pets"}
+    who = " and ".join(names[k] for k in kinds)
+    return f"{who} need approval. Ask {_ask_who(text)} what it takes."
+
+
 def _pets_soft_note(text: str) -> str:
     """"Cats welcome. Dogs considered case by case": cats is saved, and this says dogs are not a yes. "" when there is nothing to say."""
     stances, quoted = _pet_stances(text)
@@ -9609,6 +9635,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         soft = _try(lambda: _pets_soft_note(ptext)) or ""
         if soft:
             facts.append(soft)
+        if out.get("pets") and not soft:
+            appr = _try(lambda: _pets_approval_note(ptext)) or ""
+            if appr:
+                facts.append(appr)  # cycle 28: "Dogs ok, $300 pet fee. Approval required for dogs." keeps pets and says dogs need approval
         if not out.get("pets"):
             no_kind = _try(lambda: _pets_no_species_note(ptext)) or ""
             if no_kind:
