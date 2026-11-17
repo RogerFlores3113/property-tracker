@@ -1199,7 +1199,7 @@ def listing_notes_uncounted(reader_notes: Any, place: dict[str, Any] | None = No
     return bool(open_listing_notes(reader_notes, place))
 
 
-_OPEN_KIND = re.compile(r"\b(flat fee|amenity fee|pool fee|pool|trash fee|parking fee|parking|garage|deposit|hoa|insurance|assessment|pet fee|pet rent|application fee|move-in fee|fee)\b", re.I)
+_OPEN_KIND = re.compile(r"\b(prepaid taxes and insurance|prepaid insurance and taxes|prepaid taxes|prepaid insurance|prepaids|prepaid items|working capital|capital contribution|condo document fee|document fee|flat fee|amenity fee|pool fee|pool|trash fee|parking fee|parking|garage|deposit|hoa|insurance|assessment|pet fee|pet rent|application fee|move-in fee|fee)\b", re.I)
 
 
 _OPEN_KIND_WORDS = {"parking": "parking cost", "garage": "garage cost", "pool": "pool fee", "hoa": "HOA", "assessment": "assessment", "deposit": "deposit"}
