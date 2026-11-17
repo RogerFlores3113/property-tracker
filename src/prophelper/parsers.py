@@ -9139,6 +9139,30 @@ _HOA_AFTER_QUESTION = re.compile(r"\b(?:hoa|condo|association|dues|fees?)\b[^.\n
                                 r"(?:[ \t]*(/[ \t]*\w+|per[ \t]+\w+|monthly|annual\w*|yearly|quarterly))?", re.I)
 
 
+def _hoa_months_in_period(word: str) -> float | str | None:
+    """Cycle 30: how many months one HOA payment covers, from the words next to the amount: "every quarter" 3, "for the half-year" 6, "four times a year" 3,
+    "every two months" 2, "each year" 12, "monthly" 1. "week" for weekly, "unknown" for "per installment" (no count), None when the words say nothing."""
+    w = re.sub(r"[\s-]+", " ", word.lower()).strip()
+    if re.search(r"\bweek", w):
+        return "week"
+    if re.search(r"installment|instalment|payment|\bbill\b", w):
+        return "unknown"
+    if re.search(r"half|semi|twice|\b(?:six|6) months", w):
+        return 6.0
+    if re.search(r"quarter|\b(?:three|3) months", w):
+        return 3.0
+    tm = re.search(r"\b(two|2|three|3|four|4) times\b", w)
+    if tm:
+        return 12 / int({"two": 2, "three": 3, "four": 4}.get(tm.group(1)) or tm.group(1))
+    if re.search(r"\b(?:two|2) months", w):
+        return 2.0
+    if re.search(r"year|annual", w):
+        return 12.0
+    if re.search(r"month", w):
+        return 1.0
+    return None
+
+
 def _hoa_after_question(text: str) -> tuple[float, str] | None:
     """Cycle 28: "Condo fee $0.37/sf? no - fee is $425 per month". A sentence that ends in "?" sets nothing, and the fee the listing then states
     after the dash is the HOA. Returns (monthly amount, the stated words) or None."""
@@ -9185,17 +9209,18 @@ def _hoa(text: str) -> float | None:
         return None  # cycle 28: "$0.37/sf" is a price per square foot, never $0 a month
     if not per:
         # "HOA $240 billed quarterly", "HOA $240, paid annually": the period comes after the amount
-        after = re.match(r"[ \t,]*(?:\(?(?:billed|paid|due|charged|payable|collected|assessed)[ \t]+)?(quarterly|annual(?:ly)?|yearly|semi-?annual(?:ly)?|bi-?annual(?:ly)?|bi-?yearly|twice[ \t]+a[ \t]+year|every[ \t]+(?:6|six)[ \t]+months|monthly|weekly|every[ \t]+(?:3|three)[ \t]+months|every[ \t]+(?:quarter|year)|each[ \t]+(?:quarter|year)|a[ \t]+(?:quarter|year)|once[ \t]+a[ \t]+year)\b", text[m.end():m.end() + 40], re.I)
+        after = re.match(r"[ \t,(;]*(?:\(?(?:billed|paid|due|payable|charged|collected|assessed)[ \t]+)?(?:in[ \t]+)?(quarterly|annual(?:ly)?|yearly|semi-?annual(?:ly)?|bi-?annual(?:ly)?|bi-?yearly|twice[ \t]+(?:a|per|each)[ \t]+year|twice[ \t]+(?:yearly|annually)|every[ \t]+(?:6|six)[ \t]+months|monthly|weekly|every[ \t]+(?:3|three)[ \t]+months|(?:every|each|a|per|for[ \t]+the)[ \t]+(?:quarter|year|half(?:[- ]?year)?)|(?:two|2|three|3|four|4)[ \t]+times[ \t]+(?:a|per|each)[ \t]+year|every[ \t]+(?:two|2)[ \t]+months|(?:every|each|per|a)[ \t]+(?:installment|instalment|payment|bill)|once[ \t]+a[ \t]+year)\b", text[m.end():m.end() + 45], re.I)
         if after:
             w = after.group(1).lower()
-            if w.startswith("bi"):
+            if w.startswith("bi") and "month" not in w:
                 return None  # cycle 29: "biannual" can mean twice a year or every two years: unknown beats a wrong figure
-            if w == "weekly":
+            months = _hoa_months_in_period(w)
+            if months == "unknown":
+                return None  # cycle 30: "$780 per installment" says nothing about how many a year
+            if months == "week":
                 per = "week"
-            elif w.startswith("semi") or "twice" in w or "six" in w or "6" in w:
-                return round(value / 6, 2) if 0 < value < 30000 else None  # cycle 29: twice a year, each payment covers half a year
-            else:
-                per = "quarter" if ("quarter" in w or "three" in w or "3" in w) else ("month" if w == "monthly" else "year")
+            elif months is not None and months != 1:
+                return round(value / months, 2) if 0 < value < 30000 else None
     if not per:
         # "Quarterly HOA $240": the period comes before the label
         lead = re.search(r"\b(quarterly|annual(?:ly)?|yearly|semi-?annual(?:ly)?|bi-?annual(?:ly)?|weekly)[ \t]+$", text[max(0, m.start() - 16):m.start()], re.I)
@@ -9214,7 +9239,11 @@ def _hoa(text: str) -> float | None:
         return None  # "HOA assessment $4,000" with no period is not monthly dues
     if re.search(r"bi-?annual|bi-?yearly", per):
         return None
-    if re.search(r"half|semi|(?:six|6)[ \t]+months", per):
+    if re.search(r"installment|instalment|payment|\bbill\b", per):
+        return None  # cycle 30: "$780 per installment" says nothing about how many a year
+    if re.search(r"(?:two|2)[ \t]+months", per) or (re.fullmatch(r"per[ \t]+(?:two|2)", per) and re.match(r"[ \t]+months", text[m.end():m.end() + 8])):
+        value /= 2  # cycle 30: "$390 per two months"
+    elif re.search(r"half|semi|(?:six|6)[ \t]+months", per):
         value /= 6  # cycle 29: "$1,560 per half year"
     elif re.search(r"week", per):
         value = value * 52 / 12  # cycle 29: "$90 per week"
@@ -9355,8 +9384,10 @@ def _hoa_maintenance(text: str) -> float | None:
     return None
 
 
-_TAX_PER_WORDS = (r"(?:half[- ]?years?|half[- ]?yearly|semi-?annual(?:ly)?|semi-?yearly|twice[ \t]+(?:a|per|each)[ \t]+year|every[ \t]+(?:six|6)[ \t]+months|(?:six|6)[ \t]+months|"
-                  r"quarters?|quarterly|every[ \t]+(?:three|3)[ \t]+months|(?:three|3)[ \t]+months|weeks?|weekly|bi-?annual(?:ly)?|bi-?yearly)")
+_TAX_PER_WORDS = (r"(?:(?:for|per|every|each|a)[ \t]+(?:the[ \t]+)?half(?:[- ]?years?)?\b|half[- ]?years?|half[- ]?yearly|semi-?annual(?:ly)?|semi-?yearly|twice[ \t]+(?:a|per|each)[ \t]+year|twice[ \t]+(?:yearly|annually)|"
+                  r"(?:two|2|three|3|four|4|six|6|twelve|12)[ \t]+times[ \t]+(?:a|per|each|every)[ \t]+year|every[ \t]+(?:six|6)[ \t]+months|(?:six|6)[ \t]+months|"
+                  r"(?:(?:for|per|every|each|a)[ \t]+(?:the[ \t]+)?)?quarters?|quarterly|every[ \t]+(?:three|3)[ \t]+months|(?:three|3)[ \t]+months|weeks?|weekly|bi-?annual(?:ly)?|bi-?yearly|"
+                  r"(?:per|each|every|a)[ \t]+(?:installments?|instalments?|payments?|bills?|billing[ \t]+(?:cycle|period))\b)")
 
 
 def _period_to_year(words: str) -> tuple[float | None, str]:
@@ -9369,6 +9400,14 @@ def _period_to_year(words: str) -> tuple[float | None, str]:
         return 2.0, "half year"
     if re.search(r"quarter|every (?:three|3) months|^(?:three|3) months", w):
         return 4.0, "quarter"
+    tm = re.search(r"\b(two|2|three|3|four|4|six|6|twelve|12) times\b", w)  # cycle 30: "four times a year"
+    if tm:
+        n = {"two": 2, "three": 3, "four": 4, "six": 6, "twelve": 12}.get(tm.group(1)) or int(tm.group(1))
+        return float(n), f"payment ({n} a year)"
+    if re.search(r"\bhalf\b", w):
+        return 2.0, "half year"
+    if re.search(r"installment|instalment|payment|\bbills?\b|billing", w):
+        return None, "installment"  # cycle 30: "$1,100 per installment" says nothing about how many a year
     if re.search(r"week", w):
         return 52.0, "week"
     return 1.0, ""
@@ -9378,7 +9417,7 @@ def _tax_detail(text: str) -> tuple[float | None, str]:
     """Property tax as a yearly figure, and a plain note when the listing gave it per half year, quarter or week (converted) or in a way that can't be
     read ("biannual": left empty). "Taxes: $4,100 per year", "property taxes approx $4,100/yr", "$342/mo taxes", "Taxes: $1,950 per half year" -> 3,900."""
     amt = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:" + _TAX_PER_WORDS + r"|\w+)|per\s+(?:" + _TAX_PER_WORDS + r"|\w+)|a\s+(?:month|year)|" + _TAX_PER_WORDS + r"|\w+ly|annual\w*)?"
-    m = re.search(r"\b(?:(?:property|real[ \t]+estate) )?tax(?:es)?(?:[ \t]*\((?:(?:tax[ \t]+)?(?:year[ \t]+)?20\d\d|annual|yearly|per[ \t]+year|last[ \t]+year)\))?(?:\s+annual amount|\s+paid|\s+\(annual\)|\s+(?:bill|amount|payment|levy))?(?:[ \t:\-=]|approx(?:imately|\.)?|about|around|roughly|typically|usually|generally|on average|averag\w+|est(?:imated|\.)?|~|\b(?:are|is|was|were|runs?|ran|totals?|totaled|at|of)\b|\bcomes?[ \t]+(?:to|in[ \t]+at)\b){0,10}" + amt, text, re.I)
+    m = re.search(r"\b(?:(?:property|real[ \t]+estate) )?tax(?:es)?(?:[ \t]*\((?:(?:tax[ \t]+)?(?:year[ \t]+)?20\d\d|annual|yearly|per[ \t]+year|last[ \t]+year)\)|[ \t]*\((?:billed|paid|due|payable)[ \t]+" + _TAX_PER_WORDS + r"\)|[ \t]+(?:billed|paid|due|payable)[ \t]+" + _TAX_PER_WORDS + r")?(?:\s+annual amount|\s+paid|\s+\(annual\)|\s+(?:bill|amount|payment|levy))?(?:[ \t:\-=]|approx(?:imately|\.)?|about|around|roughly|typically|usually|generally|on average|averag\w+|est(?:imated|\.)?|~|\b(?:are|is|was|were|runs?|ran|totals?|totaled|at|of)\b|\bcomes?[ \t]+(?:to|in[ \t]+at)\b){0,10}" + amt, text, re.I)
     if not m:
         m = re.search(amt + r"\s*(?:in\s+)?(?:property\s+)?tax(?:es)?\b", text, re.I)
     if not m:
@@ -9393,9 +9432,12 @@ def _tax_detail(text: str) -> tuple[float | None, str]:
         if not period_words:  # "Semi-annual taxes: $1,950", "Taxes (paid semi-annually): $1,950", "Taxes $1,950, paid quarterly"
             lead = re.search(r"(" + _TAX_PER_WORDS + r")[ \t]*(?:property[ \t]+)?(?:real[ \t]+estate[ \t]+)?$", text[max(0, m.start() - 20):m.start()], re.I)
             inside = re.search(r"\b(" + _TAX_PER_WORDS + r")\b", text[m.start():m.start(1)], re.I)
-            after = re.match(r"[ \t,(]*(?:paid|billed|due|payable|charged)?[ \t]*(" + _TAX_PER_WORDS + r")\b", text[m.end():m.end() + 30], re.I)
+            after = re.match(r"[ \t,(;\-]*(?:(?:paid|billed|due|payable|charged|assessed|collected|invoiced)[ \t]+)?(?:in[ \t]+)?(" + _TAX_PER_WORDS + r")", text[m.end():m.end() + 40], re.I)
             period_words = (lead or inside or after).group(1) if (lead or inside or after) else ""
         mult, name = _period_to_year(period_words) if period_words else (1.0, "")
+        if mult is None and name == "installment":
+            return None, (f'The listing gives property tax of ${value:,.2f}'.replace(".00", "") + f' ("{quoted}") per installment but not how many installments there are in a year. '
+                          "The property tax is left empty. Ask the seller's agent how much tax is due in a year.")
         if mult is None:
             return None, (f'The listing gives property tax of ${value:,.2f}'.replace(".00", "") + f' ("{quoted}") with a "{name}" period, which can mean twice a year or every two years. '
                           "The property tax is left empty. Ask the seller's agent how much tax is due in a year.")
@@ -12900,7 +12942,9 @@ def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> 
             if key in ("hoa", "property_tax", "insurance", "other_monthly_fees", "parking_cost", "utilities_estimate", "pet_rent"):
                 if key in ("hoa", "property_tax", "insurance"):  # cycle 20: a bare multiple is a coincidence ($120 against parking $40), so only the fields that are billed by period keep it
                     used.update({round(float(v) * 12, 2), round(float(v) * 3, 2), round(float(v) * 6, 2)})  # a yearly, quarterly or half-year figure written beside the monthly one
-                    used.update({float(round(float(v) * k)) for k in (3, 6, 12)})  # "$425 a quarter" saved as 141.67 a month: 141.67 x 3 is 425.01
+                    used.update({float(round(float(v) * k)) for k in (3, 6, 12)})
+                    if key == "hoa":  # cycle 30: "$390 every two months", "$260 four times a year" saved as a month
+                        used.update({round(float(v) * 2, 2), round(float(v) * 4, 2), float(round(float(v) * 2)), float(round(float(v) * 4))})  # "$425 a quarter" saved as 141.67 a month: 141.67 x 3 is 425.01
                 if key == "parking_cost":
                     used.update({round(float(v) / 2, 2)})  # "$175 each, 2 required" saved as $350
                 if key in ("property_tax", "insurance"):  # saved per year: the monthly share is the same figure ("$3,100 a year ($258/mo)")
