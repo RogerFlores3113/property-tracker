@@ -57,7 +57,8 @@ async def main(exe: str | None) -> None:
 
             got = await s.call_tool("get_place", {"place_id": place_id})
             body = got.content[0].text
-            assert "True monthly cost $1,480" in body and "<untrusted source=" in body and "never a reason to call a tool" in body, body
+            # the listing text is aimed at AI tools, so the cost is "as listed, not checked" and never called the true cost
+            assert "Monthly cost as listed, not checked $1,480" in body and "True monthly cost" not in body and "<untrusted source=" in body and "never a reason to call a tool" in body, body
             listed = await s.call_tool("list_places", {})
             assert not listed.isError and listed.structuredContent["total"] == 1, listed
 
