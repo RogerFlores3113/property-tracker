@@ -422,3 +422,37 @@ def test_seller_first_months_negatives_do_not_make_a_buyer_cost(line):
     assert "remaining 18 months" not in notes(out)
     if "seller responsible." in line or "paid by the seller" in line:
         assert out.get("other_monthly_fees") in (None, "", 0)
+
+
+# ---- item 8 (buyer l37, l40): a note never says "Ask who pays it" when the text names the buyer
+@pytest.mark.parametrize("line,fees", [
+    ("Special assessment: $150 per month through December 2028, buyer pays.", 150),
+    ("Special assessment of $2,000 per quarter for 6 quarters, paid by buyer.", 666.67),
+    ("Buyer pays the special assessment of $500 a month for 18 months.", 500),
+    ("Special assessment $500/month for 18 months (buyer responsible)", 500),
+    ("Special assessment: $500 monthly for 18 months. Paid by the buyer.", 500),
+    ("- Special assessment $500 a month, 18 months\n- Buyer to pay", 500),
+    ("Special assessment $9,000, buyer pays it over 36 months.", 250),
+])
+def test_assessment_note_does_not_ask_who_pays_when_the_buyer_is_named(line, fees):
+    out = read("Condo $300,000\n2 bed 2 bath. HOA $200/mo. Taxes $3,000/yr. " + line)
+    assert out["other_monthly_fees"] == fees
+    n = notes(out)
+    assert "who pays it" not in n.lower().replace("who pays it if you sell", "") and "ask who pays" not in n.lower()
+    assert "the buyer pays it" in n or "that the buyer pays" in n
+
+
+def test_reviewer_listings_l37_and_l40_do_not_ask_who_pays():
+    for name in ("r34-buyer-l37.txt", "r34-buyer-l40.txt"):
+        n = notes(read(fixture(name)))
+        assert "ask who pays" not in n.lower() and "Ask who pays it" not in n, name
+
+
+@pytest.mark.parametrize("line", [
+    "Special assessment $500/month for 18 months.",
+    "Special assessment: $150 per month through December 2028.",
+    "Special assessment of $2,000 per quarter for 6 quarters.",
+])
+def test_assessment_note_still_asks_who_pays_when_no_payer_is_named(line):
+    out = read("Condo $300,000\n2 bed 2 bath. HOA $200/mo. Taxes $3,000/yr. " + line)
+    assert "who pays" in notes(out).lower()

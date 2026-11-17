@@ -7191,7 +7191,7 @@ _SPECIAL_SENTENCE = r"[^.\n]*\b(?:special assessments?|(?:seller|owner)[- ]paid[
 
 
 _PAYER_NEXT = re.compile(r"^[ \t\-*\u2022]*(?:(?:it|this|that|the[ \t]+assessment)[ \t]+(?:is[ \t]+|will[ \t]+be[ \t]+)?)?(?:due|payable|owed|to[ \t]+be[ \t]+paid|paid|payment[ \t]+due)[^$]{0,30}?\b(?:from|by)[ \t]+(?:the[ \t]+)?(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)\b"
-                         r"|^[ \t\-*\u2022]*(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)[ \t]+(?:pays|is[ \t]+paying|will[ \t]+be[ \t]+paying|to[ \t]+pay|will[ \t]+pay|covers|is[ \t]+covering|will[ \t]+cover|is[ \t]+responsible|responsible)[ \t]+(?:for[ \t]+)?(?:it|this|that|the[ \t]+assessment)\b", re.I)
+                         r"|^[ \t\-*\u2022]*(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)[ \t]+(?:pays|is[ \t]+paying|will[ \t]+be[ \t]+paying|to[ \t]+pay|will[ \t]+pay|covers|is[ \t]+covering|will[ \t]+cover|is[ \t]+responsible|responsible)(?:[ \t]+(?:for[ \t]+)?(?:it|this|that|the[ \t]+assessment)\b|[ \t]*$)", re.I)
 
 
 def _assessment_payer(text: str, sentence: str) -> str:
@@ -14823,7 +14823,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 spec_total = round(sum(i["amount"] for i in spec_items), 2)
                 put("other_monthly_fees", round((out.get("other_monthly_fees") or 0) + spec_total, 2))
                 facts.append(f"The listing has a regular monthly assessment of ${base:,.0f} (the HOA) and a special assessment of {spec_words}. The special assessment is kept apart from the HOA "
-                             "and counted in the monthly cost as other monthly fees, because it is not forever. Ask who pays it and when it ends.")
+                             "and counted in the monthly cost as other monthly fees, because it is not forever. " + ("The listing says the buyer pays it. Ask when it ends." if payer == "buyer" else "Ask who pays it and when it ends."))
             elif hoa is None:
                 hoa = reg_amts[0]
                 facts.append(f"The listing gives a monthly assessment of ${hoa:,.0f}, read as the regular monthly HOA.")
@@ -14854,7 +14854,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                                  + (" The listing says the cost is split between the owners, but not what share is yours, so the full amount is counted. Ask what share you pay and use that figure instead."
                                     if any(_OWNERS_SPLIT.search(x) and re.search(r"\bassessments?\b", x, re.I) for x in re.split(r"[.\n;](?!\d)", text)) else ""))
                 else:
-                    facts.append(f"The listing has a special assessment of ${amt_m:,.0f} a month{length}. {how}. It is not a one-time cost.{ends} Ask who pays it and when it ends.")
+                    facts.append(f"The listing has a special assessment of ${amt_m:,.0f} a month{length}. {how}. It is not a one-time cost.{ends} " + (("The listing says the buyer pays it." + ("" if (months_m or end_year) else " Ask when it ends.")) if payer == "buyer" else "Ask who pays it and when it ends."))
         if not buying and _try(lambda: listing_hoa_in_rent(text)):
             # HOA dues that are part of the rent are already in the rent: nothing is saved or added on top
             hoa = None
