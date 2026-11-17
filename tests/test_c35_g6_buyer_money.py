@@ -372,3 +372,53 @@ def test_l43_whole_listing_first_year_reserve():
 def test_first_year_of_hoa_reserve_negatives(line):
     _o, _p, cash = full(RES_BASE + line)
     assert not any("first year of HOA reserve" in p["label"] for p in cash["parts"])
+
+
+# ---- item 7 (buyer l43): the seller pays the first months of a monthly assessment, the buyer pays $400 a month after them
+AS_BASE = "Condo $329,500\n1 bd 1 ba 980 sf. HOA $100/mo. Taxes $4,350/yr. HOI $55/mo. "
+
+
+@pytest.mark.parametrize("line", [
+    "Special assessment: $9,600 payable $400 monthly for 2 years, seller responsible for first 6 months.",
+    "Special assessment $9,600, payable $400 a month over 24 months. Seller covers the first 6 months.",
+    "Special assessment of $9,600 payable at $400/month for 24 months; the seller pays the first six months.",
+    "Special assessment: $9,600 ($400 monthly for 2 years; first 6 months paid by the seller)",
+    "- Special assessment: $9,600\n- Payable $400 monthly for 2 years\n- Seller responsible for first 6 months",
+    "Special assessment | $9,600 payable $400 monthly for 24 months | seller is responsible for the first 6 months",
+])
+def test_seller_first_months_then_buyer_monthly(line):
+    out, place, cash = full(AS_BASE + line)
+    assert out["other_monthly_fees"] == 400
+    assert out.get("special_assessment") in (None, "", 0) and out.get("special_assessment_payer") in (None, "")
+    n = notes(out)
+    assert "first 6 months" in n and "remaining 18 months" in n and "$7,200 in all" in n and "$400 a month" in n
+    assert "not a cost to you" not in n and "the seller pays it" not in n and "Only $400" not in n and "not counted anywhere" not in n
+    cost = money.buy_cost(place)
+    other = next(l for l in cost["lines"] if l["key"] == "other")
+    assert other["amount"] == 400 and "18 months" in other["note"]
+    assert not any("assessment" in p["label"].lower() for p in cash["parts"])
+    assert "special assessment" not in " ".join(cash["left_out"]).lower()
+
+
+def test_l43_whole_listing_assessment():
+    out = read(fixture("r34-buyer-l43.txt"))
+    assert out["other_monthly_fees"] == 400 and out["hoa"] == 91.67 and out["property_tax"] == 4350 and out["insurance"] == 660 and out["seller_credit"] == 3295
+    assert "remaining 18 months" in notes(out) and "Only $400 of that" not in notes(out)
+
+
+def test_seller_first_months_shows_in_compare(store):
+    cell, out = assessment_cell(store, fixture("r34-buyer-l43.txt"))
+    assert cell["text"] == "$400 a month for 18 months (you pay it)" or "$400 a month for 18 months" in cell["text"]
+    assert "not entered" not in cell["text"]
+
+
+@pytest.mark.parametrize("line", [
+    "Special assessment $9,600 payable $400 monthly for 2 years, seller responsible.",
+    "Special assessment $9,600 payable $400 monthly for 2 years. Seller covers the first 6 months of HOA dues.",
+    "Special assessment $9,600 payable $400 monthly for 2 years, paid by the seller.",
+])
+def test_seller_first_months_negatives_do_not_make_a_buyer_cost(line):
+    out, _p, cash = full(AS_BASE + line)
+    assert "remaining 18 months" not in notes(out)
+    if "seller responsible." in line or "paid by the seller" in line:
+        assert out.get("other_monthly_fees") in (None, "", 0)
