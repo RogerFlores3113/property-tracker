@@ -987,6 +987,45 @@ def build_server(store: Store) -> FastMCP:
                 notes.append(f"Skipped a commute ({exc})")
         return notes
 
+    def listing_rent_check(place: dict[str, Any]) -> list[str]:
+        """Cycle 33: the rent saved on the place is not the rent its own listing text gives (update_place sent a price that differs, "price 2400" on a place whose text says
+        $2,310). One plain line says so, in the update reply and in get_place. Never for a home for sale, and never when the text gives no clear rent."""
+        try:
+            if store.place_mode(place["id"]) == "buy" or not str(place.get("listing_text") or "").strip():
+                return []
+            from . import parsers
+            saved = float(place.get("price"))
+            read = parsers.parse_listing(str(place["listing_text"]), "").get("price")
+            read = float(read)
+        except (TypeError, ValueError, KeyError, Exception):  # noqa: BLE001 - a reader failure must not break the reply
+            return []
+        if abs(read - saved) < 0.5:
+            return []
+        return [f"Rent check: the listing text saved on this place gives a rent of {_money(read)} a month, but the rent saved on this place is {_money(saved)}, and the cost uses "
+                f"{_money(saved)}. Check which one is right with the landlord."]
+
+    def _newer_rent_note(search: dict[str, Any], dup: dict[str, Any] | None, fields: dict[str, Any]) -> str:
+        """Cycle 33: add_place on a place that is already saved, and the paste gives another rent ("$3,295 now, not $3,640"). The saved rent is not changed by a repeat
+        add, so one line names both figures and says how to apply the new one."""
+        if not dup or search.get("mode") == "buy":
+            return ""
+        try:
+            new, old = float(fields.get("price")), float(dup.get("price"))
+        except (TypeError, ValueError):
+            return ""
+        if isinstance(fields.get("price"), bool) or abs(new - old) < 0.5:
+            return ""
+        return (f"This paste gives a rent of {_money(new)} a month, but the rent saved on this place is {_money(old)}. A repeat add never changes a filled value, so the saved rent stays "
+                f"{_money(old)}. If {_money(new)} is right, call update_place with price {new:g}.")
+
+    def _drop_stale_rent_lines(block: str, new_rent: Any) -> str:
+        """The reader notes on a repeat: a line that calls the new rent "not counted anywhere" is dropped, because the repeat note above now names it."""
+        try:
+            figure = _money(float(new_rent))
+        except (TypeError, ValueError):
+            return block
+        return "\n".join(ln for ln in block.split("\n") if not (figure in ln and "not counted anywhere" in ln))
+
     def add_one(fields: dict[str, Any]) -> tuple[dict[str, Any], bool, list[str], str]:
         """Add or update one place. Returns (place, created, notes, matched_on)."""
         fields = dict(fields)
@@ -1016,6 +1055,11 @@ def build_server(store: Store) -> FastMCP:
                          + " Only empty fields are filled; nothing the user wrote was changed, and its stage did not move.")
             kept = [k.replace("_", " ") for k, v in fields.items() if k in PLACE_KEYS and k not in ("ai_notes", "photo_urls", "listing_text")
                     and dup and not _is_blank(dup.get(k)) and not _same(dup.get(k), v)]
+            new_rent = _newer_rent_note(search, dup, fields)
+            if new_rent:  # cycle 33: a repeat paste that gives another rent names the new figure and how to apply it, in place of a bare "values for price"
+                kept = [k for k in kept if k != "price"]
+                notes.append(new_rent)
+                reader_block = _drop_stale_rent_lines(reader_block, fields.get("price"))
             ignored = (["stage (it stays " + dup["stage"] + "; use move_place to change it)"] if stage and dup else [])
             if kept:
                 ignored.append("values for " + ", ".join(sorted(kept)) + " (already filled; use update_place to change them)")
@@ -1186,6 +1230,7 @@ def build_server(store: Store) -> FastMCP:
         lines.append("Score by criterion: " + "; ".join(f"{_lab(i['label'], i['kind'])} {round(i['score'] * 100)}%" + ("" if i["known"] else " (unknown)")
                                                         for i in e["score"]["items"]))
         lines += _cash_lines(e)
+        lines += listing_rent_check(e)
         gap = movein.gap_warning(e, _search_of(store, e))
         if gap:
             lines.append(gap + ".")
@@ -1288,7 +1333,7 @@ def build_server(store: Store) -> FastMCP:
                     raise ValueError(_named_error(f"Place {i}", f, exc)) from None
                 e = _enrich(store, place)
                 lines.append(("Added " if created else "Already saved, updated ") + _line(e) + ("" if created else " (filled only empty fields)"))
-                lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "Read from the listing text", "The listing text was saved", "Also in the listing"))]
+                lines += ["  " + n for n in notes if n.startswith(("Ignored on this repeat", "This paste gives a rent", "Read from the listing text", "The listing text was saved", "Also in the listing"))]
                 lines += ["  " + n for n in seen_not_counted(place)]
                 lines += ["  " + n for n in insurance_warning(place) + rent_warning(place)]
                 out.append({"id": place["id"], "created": created})
@@ -1357,6 +1402,7 @@ def build_server(store: Store) -> FastMCP:
             lines += insurance_warning(after)
         if "price" in fields:
             lines += rent_warning(after)
+            lines += listing_rent_check(after)
         lines += covers_lines
         lines += photo_notes + notes + _card(e)[1:]
         return reply("\n".join(lines), place_id=e["id"], changed=changed)

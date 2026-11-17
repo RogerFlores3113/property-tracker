@@ -847,7 +847,7 @@ _NOTE_MONEY = re.compile(r"\$\s?\d|\b(?:fee|fees|deposit|assessment|parking|gara
 _NOTE_PLACED = re.compile(r"so nothing is counted for you|\bis saved as the\b|\bso it is counted\b|\bcounted as your\b|\bcounted in (?:other monthly fees|the monthly cost)\b", re.I)
 
 
-_NOTE_CONTINUES = re.compile(r"(?:It|Only|No|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That)\b")
+_NOTE_CONTINUES = re.compile(r"(?:It|Only|No|Ask|Check|Add|Fill|I|Don't|Then|If|Read|So|They|This|That|The[ \t]+earlier)\b")
 
 
 _NOTE_CONTINUES_LEFT = re.compile(r"[A-Z][\w' ]{0,30}\b(?:is|are) (?:left (?:empty|blank)|not filled)\b")
