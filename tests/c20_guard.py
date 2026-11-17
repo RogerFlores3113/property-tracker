@@ -118,8 +118,13 @@ def headline_vs_notes(text: str, buying: bool = False) -> list[str]:
         for m in _MISSING_AMOUNT.finditer(item):
             v = float(m.group(1).replace(",", ""))
             for n in notes:
-                if _EXPLAINED_NOTE.search(n) and any(abs(float(x.replace(",", "")) - v) < 0.01 for x in _MISSING_AMOUNT.findall(n)):
-                    bad.append(f"[headline names an explained figure] ${v:g} in {item!r} but a note says: {n[:120]}")
+                for sent in re.split(r"(?<=[a-z0-9)\"])\.\s+(?=[A-Z])", n):
+                    for fm in _MISSING_AMOUNT.finditer(sent):
+                        if abs(float(fm.group(1).replace(",", "")) - v) >= 0.01:
+                            continue
+                        monthly = re.match(r"[\s/]*(?:a month|per month|mo\b|monthly|each month)", sent[fm.end():], re.I)
+                        if _EXPLAINED_NOTE.search(sent) and not (monthly and not re.search(r"optional", sent, re.I)):
+                            bad.append(f"[headline names an explained figure] ${v:g} in {item!r} but a note says: {sent[:120]}")
     return bad
 
 
