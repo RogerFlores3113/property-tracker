@@ -712,6 +712,9 @@ def _gc_unit_value(field: str, value: float, after: str) -> float:
 _GC_NONRENT = re.compile(r"\b(?:utilit\w*|electric\w*|gas|water|sewer|trash|garbage|internet|cable|wi-?fi|fees?|deposits?|pets?|dogs?|cats?|parking|garage|carport|storage|insurance|cleaning|tax(?:es)?|hoa|dues|bond|credit|closing|application|admin\w*|move[- ]?in|laundry|amenit\w*|per[ \t]+(?:bed|room|person|unit)|each|surcharge|assessment|special|promo\w*|concession|earnest)\b|/[ \t]*(?:bed|room)", re.I)
 
 
+_GC_UNIT_WORD = re.compile(r"\b(?:\d(?:\.\d)?[ \t-]*(?:br|brs|bd|bds|bed(?:room)?s?|bdrm\w*)|studio|unit|apartment|apt|flat|place|home|house|condo|townhouse|suite)\b|\d(?:br|bd)\b", re.I)
+
+
 def _gc_title_rent(window: str) -> bool:
     """"Elm Street Commons - bright 1 bedroom, 1 bath, $1,350 ($1,420 now)": a bare figure in a title or description line, with a bracket that gives
     its new figure, is the rent unless the words just before it (back to the last comma, dash or colon) name some other cost."""
@@ -732,9 +735,11 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
     prev_fields: list[set[str]] = []  # the named fields of each earlier sentence that had an amount
     inherit_old: set[str] = set()
     bare_last: dict[str, tuple[float, str, int, int]] = {}  # cycle 30: the last plain figure of each fact, for a later "Previously $X" line
+    prev_bare_cue = False
     for _off, s in sents:
         amts = list(_GC_MONEY.finditer(s))
-        lead = bool(_GC_LEAD.match(s))
+        lead = bool(_GC_LEAD.match(s)) or prev_bare_cue  # cycle 31: a line that only says "CORRECTION" leads the line after it
+        prev_bare_cue = bool(re.fullmatch(r"[ \t\"'(\[*#-]*(?:corrections?|corrected|updates?|updated|edit(?:ed)?|revised)[ \t:)\]*\-\u2013\u2014]*", s, re.I))
         prev_end, chain, chain_k = 0, None, None
         sent_fields: set[str] = set()
         for a in amts:
@@ -783,6 +788,10 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
             if field is None and not buying and role == "hard" and 300 <= value <= 30000 and _GC_MOVED_END.search(window) \
                     and not _gc_names_other(re.sub(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+month|monthly)", "", window)):
                 field = "price"  # cycle 30: "Reduced to $3,195/mo ($3,295 before)" in a line of its own: a move "to" a figure is the rent, never the fact of the line before it
+                chain = field
+            if field is None and not buying and role in ("hard", "soft") and 300 <= value <= 30000 and _GC_UNIT_WORD.search(window) and not _GC_NONRENT.search(window) \
+                    and not _COND_AFTER.match(after) and not re.match(r"[ \t]*(?:/[ \t]*(?:yr|year|wk|week|night|bed|room)|per[ \t]+(?:year|week|night|bed|room|person))", after, re.I):
+                field = "price"  # cycle 31: "CORRECTION: the 3BR/2BA at 2700 S Wabash is $3,125 not $3,225": a corrected figure for the unit is the rent
                 chain = field
             if field is None and role == "old" and chain is None and not kws and (mo_ or _GC_PAREN_NOW.match(after)) and 300 <= value <= 30000 \
                     and not _GC_CUE.search(window) and (not _gc_names_other(window) or (not buying and _gc_title_rent(window))):
@@ -949,7 +958,10 @@ def _saved_vs_corrected_notes(found: dict[str, dict[str, Any]], current: dict[st
 def _gc_quote_unplaced(facts: list[str], unplaced: list[str]) -> None:
     for q in unplaced:
         if not any(q[:60] in f for f in facts):
-            facts.append(f'The listing has a correction I could not match to one fact: "{q[:140]}". Nothing was changed from it, so the saved amounts may be out of date. Ask the landlord which amount is right.')
+            if any("corrects" in f or "corrected" in f for f in facts):  # cycle 31: another correction was applied, so "nothing was changed" would be wrong
+                facts.append(f'The listing has another correction I could not match to one fact: "{q[:140]}". That one changed nothing, so the saved amounts it names may be out of date. Ask the landlord which amount is right.')
+            else:
+                facts.append(f'The listing has a correction I could not match to one fact: "{q[:140]}". Nothing was changed from it, so the saved amounts may be out of date. Ask the landlord which amount is right.')
 
 
 # ----------------------------------------------------------------- cycle 28: corrections to named fees and to "all utilities", made in the text
