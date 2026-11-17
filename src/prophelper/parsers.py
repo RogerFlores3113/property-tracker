@@ -9729,7 +9729,7 @@ def _fact_headline_name(line: str) -> str:
     pm = _HEADLINE_PLACE.search(line)
     if not pm or re.search(r"\b(?:min|minutes|blocks?|miles?|mi)\b", line[pm.start():pm.start() + 12], re.I):
         return ""
-    out = re.sub(r"\$\s?[\d,.]+[kK]?(?:[ \t]*(?:/|per|a)[ \t]*(?:mo|month))?", " ", line)
+    out = re.sub(r"\$\s?[\d,.]+[kK]?(?:[ \t]*(?:/|per|a)[ \t]*(?:mo|month))?", " ", line[:pm.end()])  # the name stops where the place ends
     out = re.sub(r"(?<![\d,.])(?:\d{1,3}(?:,\d{3})+|\d{3,5})[ \t]*(?:sq\.?[ \t]?ft\.?|sqft|sf)\b\.?", " ", out, flags=re.I)
     out = re.sub(r"[ \t]+", " ", re.sub(r"[ \t]*,[ \t]*(?=,|$|near\b|in\b)", " ", out)).strip(" ,;-|")
     out = re.sub(r"\s+,", ",", out)
@@ -10273,9 +10273,10 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         for _ in range(2):  # "FB Marketplace - 2 bedroom ...", "Rental: 3 Bedroom Home in Belmont": the label is not the title
             line = _LABEL_PREFIX.sub("", line, count=1)
         line = _name_segment(line)
-        fh = _fact_headline_name(line) if line else ""
-        if fh:
-            return fh
+        if line and (_not_a_name(line) or _is_fact_line(line)):
+            fh = _fact_headline_name(line)  # cycle 30: only a line that would be thrown away as "all facts" is rescued as a name
+            if fh:
+                return fh
         if not line or _not_a_name(line) or _money_line_cut(line) or _date_only_line(line) or (len(line.split()) <= 8 and _policy_title_line(line)) or (_fee_or_policy_head(line) and not (found.get("address") and found["address"].lower() in line.lower())):
             continue
         shout = line
