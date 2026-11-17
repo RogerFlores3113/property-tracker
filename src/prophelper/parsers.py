@@ -4432,6 +4432,66 @@ def _seller_credit_detail(text: str, price: float | None) -> tuple[float | None,
     return None, []
 
 
+_LC_AMT = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])"
+_LC_PATS = (
+    # "Lender credit of $2,000 applied at closing", "Lender credit: $2,000", "Closing credit $2,000", "Credit at closing of $2,000"
+    r"\b(lender|closing|settlement)[ \t]+(?:cost[ \t]+)?credits?\b[ \t:\-=(]{0,4}(?:of[ \t]+|about[ \t]+|approx\.?[ \t]+|worth[ \t]+)?" + _LC_AMT,
+    r"\bcredits?[ \t]+(?:at|toward|towards|applied[ \t]+(?:at|to|toward))[ \t]+(?:the[ \t]+)?(?:closing|settlement|close)\b[ \t:\-=(]{0,4}(?:of[ \t]+|about[ \t]+|approx\.?[ \t]+)?" + _LC_AMT,
+    # "$2,000 lender credit", "$2,000 closing credit", "$2,000 credit at closing", "$2,000 credit applied at closing"
+    _LC_AMT + r"[ \t]+(?:(lender|closing|settlement)[ \t]+(?:cost[ \t]+)?credits?|credit[ \t]+(?:at|toward|towards|applied[ \t]+(?:at|to|toward))[ \t]+(?:the[ \t]+)?(?:closing|settlement|close)\b)",
+    # "Lender is giving a $2,000 credit", "Lender will credit $2,000 at closing"
+    r"\blender[ \t]+(?:is[ \t]+|will[ \t]+)?(?:giving|providing|offering|crediting|credit|gives|credits)\b[^$\n.]{0,25}?" + _LC_AMT)
+
+
+def _lender_credits(text: str) -> list[tuple[float, str, str]]:
+    """Cycle 27: credits to the buyer at closing that are not the seller's: "Lender credit of $2,000 applied at closing", "$1,500 closing credit",
+    "Credit at closing: $1,000". Returns (amount, "lender" or "closing", sentence). A sentence that names the seller or owner is the seller credit reader's,
+    a limit ("up to"), an offer ("may", "available", "can"), a question and a credit check or score are never read."""
+    got: list[tuple[float, str, str]] = []
+    for sent in re.split(r"[.\n;](?!\d)", _credit_words(text)):
+        if not re.search(r"\b(?:lender|closing|settlement|close)\b", sent, re.I) or re.search(r"\bcredit[ \t]+(?:check|score|report|history)|\b(?:seller|owner|sellers)\b|\bup[ \t]+to\b|\bmax\b|\bassessment|\bmay\b|\bcould\b|\bavailable\b|\bif\b|\bnegotiab|\bpossible\b|\?\s*$", sent, re.I):
+            continue
+        for pat in _LC_PATS:
+            m = re.search(pat, sent, re.I)
+            if not m:
+                continue
+            amount = _num(next(g for g in m.groups() if g and g[0].isdigit()))
+            kind = "lender" if re.search(r"\blender\b", m.group(0), re.I) else "closing"
+            if 100 <= amount <= 5_000_000 and all(abs(amount - g[0]) > 0.005 for g in got):
+                got.append((amount, kind, sent))
+            break
+    return got
+
+
+def lender_credits(text: str) -> list[tuple[float, str]]:
+    """(amount, "lender" or "closing") for each credit _lender_credits reads."""
+    return [(a, k) for a, k, _s in _lender_credits(text or "")]
+
+
+def _lender_credit_notes(text: str) -> list[str]:
+    notes = []
+    for amount, kind, _sent in _lender_credits(text):
+        who = "a lender credit" if kind == "lender" else "a closing credit"
+        tail = "" if kind == "lender" else " The listing does not say who gives it."
+        notes.append(f"The listing says {who} of ${amount:,.0f} is applied at closing.{tail} It lowers the cash to close, so it is counted there as a credit, together with any seller credit "
+                     "and never below the down payment. It is not a cost. Ask the lender or the seller's agent to confirm it.")
+    return notes
+
+
+def seller_paid_fees(text: str) -> list[tuple[str, float]]:
+    """Cycle 27: one-time fees the listing says the seller pays ("Transfer fee $350 paid by seller", "Seller pays the $800 move-in fee"). Not a cost to the buyer."""
+    got: list[tuple[str, float]] = []
+    for sent in re.split(r"[.\n;]", text or ""):
+        if not _PAYER_SELLER.search(sent) or _PAYER_BUYER.search(sent):
+            continue
+        for m in _BUYER_FEE.finditer(sent):
+            label = " ".join((m.group("n1") or m.group("n2")).lower().split())
+            amount = _num(m.group(1) if m.group("n1") else m.group(m.lastindex))
+            if not re.fullmatch(r"(?:working[ \t]+)?capital[ \t]+contributions?", label) and 50 <= amount <= 100000 and (label, amount) not in got:
+                got.append((label, amount))
+    return got
+
+
 def _seller_gives_toward_closing(text: str) -> bool:
     """True when the listing has the seller paying or crediting something toward the buyer's closing costs."""
     return bool(_seller_credit(text) or _seller_cap(text) or _seller_credit_percent(text)[0] is not None
@@ -4482,6 +4542,9 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
     for label, amount in counted_fees:
         notes.append(f"The listing says the buyer pays the ${amount:,.0f} {label} at closing. It is counted in the cash to close as a one-time fee, not in the monthly cost. "
                      "Ask the seller's agent to confirm it.")
+    seller_fees = _try(lambda: seller_paid_fees(text)) or []
+    for label, amount in seller_fees:
+        notes.append(f"The listing says the seller pays the ${amount:,.0f} {label}. It is not a cost to you, so it is not counted in the cash to close.")
     for label, amount in unclear_fees:
         if fee is not None and abs(fee - amount) < 0.01:
             continue  # a move-in fee with no payer keeps its own note below
@@ -4510,6 +4573,8 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
             amount = _num(t.group(1))
             sent = next((x for x in re.split(r"[.\n;]", text) if t.group(0) in x), "")
             buyer_pays = bool(_PAYER_BUYER.search(sent) or re.search(r"\bbuyer'?s?\b[^.\n]{0,30}\btransfer[ \t]+fee", sent, re.I)) and not _PAYER_SELLER.search(sent)
+            next_payer = "" if (_PAYER_BUYER.search(sent) or _PAYER_SELLER.search(sent)) else (_try(lambda: _assessment_payer(text, sent)) or "")  # cycle 27: "- Transfer fee $350\n- Paid in full by the seller"
+            buyer_pays = buyer_pays or next_payer == "buyer"
             if buyer_pays:  # cycle 17: a transfer fee the buyer pays is a closing cost, with or without the word "closing"
                 prior = out.get("closing_costs")
                 if prior in (None, "") and _seller_gives_toward_closing(text):
@@ -4522,6 +4587,8 @@ def _buyer_only_fees(text: str, out: dict[str, Any]) -> list[str]:
                 else:
                     notes.append(f"The listing says the buyer pays a ${amount:,.0f} transfer fee at closing. The closing costs were already read from the listing, so it is not added again. "
                                  "Ask whether the closing costs already include it.")
+            elif next_payer == "seller" or (_PAYER_SELLER.search(sent) and not _PAYER_BUYER.search(sent)):  # cycle 27: the listing says the seller pays it
+                notes.append(f"The listing says the seller pays the ${amount:,.0f} transfer fee. It is not a cost to you, so it is not counted in the cash to close.")
             else:
                 notes.append(f"The listing mentions a ${amount:,.0f} transfer fee. It is not counted anywhere. Ask what it is for and who pays it.")
             break
@@ -4660,12 +4727,12 @@ def _assessment_amount(sentence: str, *, skip_monthly: bool = False) -> float | 
 _PW_S = r"(?:sellers?|(?:current|present|existing|previous|prior|outgoing)[ \t]+owner|(?<!new[ \t])(?<!incoming[ \t])(?<!next[ \t])owner)"
 _PW_B = r"(?:buyers?|purchasers?|(?:new|incoming|next)[ \t]+owner)"
 _PW_THE_S, _PW_THE_B = r"(?:the[ \t]+)?" + _PW_S, r"(?:the[ \t]+)?" + _PW_B
-_PAYER_SELLER = re.compile(r"\b" + _PW_S + r"\b[^.\n]{0,25}\b(?:pays?|paid|to pay|responsib\w*|covers?|credit)\b|\bpaid (?:in full )?(?:at (?:closing|close) )?by " + _PW_THE_S + r"|\b(?:seller|owner)[- ]paid|\bpayable (?:in full )?by " + _PW_THE_S
+_PAYER_SELLER = re.compile(r"\b" + _PW_S + r"\b[^.\n]{0,25}\b(?:pay(?:s|ing)?|paid|to pay|responsib\w*|cover(?:s|ing)?|credit)\b|\bpaid (?:in full )?(?:at (?:closing|close) )?by " + _PW_THE_S + r"|\b(?:seller|owner)[- ]paid|\bpayable (?:in full )?by " + _PW_THE_S
                            + r"|\bdue from " + _PW_THE_S + r"|\bresponsibility of " + _PW_THE_S + r"|\bowed by " + _PW_THE_S + r"|\b" + _PW_S + r"[ \t]+(?:will |would |shall )?owes?\b"
-                           + r"|\bcharged to " + _PW_THE_S + r"|\b" + _PW_S + r"'?s?[ \t]+(?:responsibility|expense)\b|\bat[ \t]+(?:closing|close|settlement)[ \t]+by[ \t]+" + _PW_THE_S, re.I)
-_PAYER_BUYER = re.compile(r"\b" + _PW_B + r"\b[^.\n]{0,25}\b(?:pays?|assumes?|to pay|responsib\w*|takes?|inherits?|covers?|(?:will |would |shall )?owes?)\b|\bowed by " + _PW_THE_B + r"|\bresponsibility of " + _PW_THE_B
+                           + r"|\bcharged to " + _PW_THE_S + r"|\b" + _PW_S + r"'?s?[ \t]+(?:responsibility|expense|cost)\b|\bat[ \t]+(?:closing|close|settlement)[ \t]+by[ \t]+" + _PW_THE_S, re.I)
+_PAYER_BUYER = re.compile(r"\b" + _PW_B + r"\b[^.\n]{0,25}\b(?:pay(?:s|ing)?|assumes?|to pay|responsib\w*|takes?|inherits?|cover(?:s|ing)?|(?:will |would |shall )?owes?)\b|\bowed by " + _PW_THE_B + r"|\bresponsibility of " + _PW_THE_B
                           + r"|\bpaid (?:in full )?(?:at (?:closing|close) )?by " + _PW_THE_B + r"|\bassumed by " + _PW_THE_B + r"|\bbuyer[- ]paid|\bpayable (?:in full )?by " + _PW_THE_B + r"|\bdue from " + _PW_THE_B
-                          + r"|\bcharged to " + _PW_THE_B + r"|\b" + _PW_B + r"'?s?[ \t]+(?:responsibility|expense)\b|\bat[ \t]+(?:closing|close|settlement)[ \t]+by[ \t]+" + _PW_THE_B, re.I)
+                          + r"|\bcharged to " + _PW_THE_B + r"|\b" + _PW_B + r"'?s?[ \t]+(?:responsibility|expense|cost)\b|\bat[ \t]+(?:closing|close|settlement)[ \t]+by[ \t]+" + _PW_THE_B, re.I)
 
 
 def _buyer_closing_charges(text: str):
@@ -4712,14 +4779,14 @@ _SPECIAL_SENTENCE = r"[^.\n]*\b(?:special assessments?|(?:seller|owner)[- ]paid[
 
 
 _PAYER_NEXT = re.compile(r"^[ \t\-*\u2022]*(?:(?:it|this|that|the[ \t]+assessment)[ \t]+(?:is[ \t]+|will[ \t]+be[ \t]+)?)?(?:due|payable|owed|to[ \t]+be[ \t]+paid|paid|payment[ \t]+due)[^$]{0,30}?\b(?:from|by)[ \t]+(?:the[ \t]+)?(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)\b"
-                         r"|^[ \t\-*\u2022]*(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)[ \t]+(?:pays|to[ \t]+pay|will[ \t]+pay|is[ \t]+responsible|responsible)[ \t]+(?:for[ \t]+)?(?:it|this|that|the[ \t]+assessment)\b", re.I)
+                         r"|^[ \t\-*\u2022]*(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)[ \t]+(?:pays|is[ \t]+paying|will[ \t]+be[ \t]+paying|to[ \t]+pay|will[ \t]+pay|covers|is[ \t]+covering|will[ \t]+cover|is[ \t]+responsible|responsible)[ \t]+(?:for[ \t]+)?(?:it|this|that|the[ \t]+assessment)\b", re.I)
 
 
 def _assessment_payer(text: str, sentence: str) -> str:
     """"seller" / "buyer" / "" for the special assessment sentence. The sentence itself decides ("Buyer to pay special assessment of $3,000 at
     closing", "due from buyer at close"); with no payer word in it, the very next line or sentence may say it on its own ("- Due from buyer at close")."""
     is_seller, is_buyer = bool(_PAYER_SELLER.search(sentence)), bool(_PAYER_BUYER.search(sentence))
-    if re.search(r"\b(?:seller|buyer|purchaser)[ \t]*(?:or|and|/|&)[ \t]*(?:the[ \t]+)?(?:buyer|seller|purchaser)\b|\beither\b|\bsplit\b|\bshared?\b|\bnegotiabl\w*|\bto[ \t]+be[ \t]+(?:determined|negotiated)\b|\bTBD\b", sentence, re.I):
+    if re.search(r"\b(?:seller|buyer|purchaser)[ \t]*(?:or|and|/|&)[ \t]*(?:the[ \t]+)?(?:buyer|seller|purchaser)\b|\beither\b|\bsplit\b(?![ \t]+(?:evenly[ \t]+|equally[ \t]+)?(?:between|among|across|by)[ \t]+(?:all[ \t]+|the[ \t]+)?(?:unit[ \t]+)?owners)|\bshared?\b(?![ \t]+(?:by|among|between)[ \t]+(?:all[ \t]+|the[ \t]+)?(?:unit[ \t]+)?owners)|\bnegotiabl\w*|\bto[ \t]+be[ \t]+(?:determined|negotiated)\b|\bTBD\b", sentence, re.I):
         return ""  # cycle 26: "seller or buyer", "split", "negotiable": the payer is not settled
     if is_seller and is_buyer:
         return ""  # cycle 26: both sides named in one sentence: unknown beats a wrong payer
@@ -10419,6 +10486,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                                    f"so check that the seller credit of ${float(have_credit):,.0f} on this place is what the seller agreed to.", n) for n in credit_notes]
             credit_notes = [n.replace("gives no amount, so the seller credit is blank", "gives no amount") for n in credit_notes]
         facts.extend(credit_notes)
+        facts.extend(_try(lambda: _lender_credit_notes(text)) or [])
         if not credit_notes:
             facts.extend(_try(lambda: _closing_help_offer(text)) or [])
         insurance = _try(lambda: _insurance(text))
