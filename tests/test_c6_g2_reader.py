@@ -8,14 +8,14 @@ def pays(v):
 
 def test_tenant_all_utilities_landlord_pays_garbage_only():
     v = parse_listing("Rent $1500. Tenant responsible for all utilities. Landlord pays garbage only.")
-    assert pays(v) == ["electric", "gas", "water", "sewer", "heat"]
+    assert pays(v) == ["electric", "gas", "water", "sewer"]
     assert v["utilities_included"] == "trash"
 
 
 def test_all_utilities_except_trash_or_garbage():
     for word in ("trash", "garbage"):
         v = parse_listing(f"Rent $1500. Tenant pays all utilities except {word}.")
-        assert pays(v) == ["electric", "gas", "water", "sewer", "heat"], word
+        assert pays(v) == ["electric", "gas", "water", "sewer"], word
         assert v["utilities_included"] == "trash"
     v = parse_listing("Rent $1500. All utilities except trash.")
     assert "trash" not in pays(v) and v["utilities_included"] == "trash"

@@ -51,7 +51,7 @@ def test_all_utilities_except_electric_included():
 
 def test_tenant_pays_all_except_trash_still_works():
     r = P("1 bed $1,200/mo. Tenant pays all utilities except trash")
-    assert r["utilities_included"] == "trash" and r["tenant_pays"] == "electric, gas, water, sewer, heat"
+    assert r["utilities_included"] == "trash" and r["tenant_pays"] == "electric, gas, water, sewer"
 
 
 def test_water_sewer_through_city_trash_included_except_cable():
@@ -150,7 +150,7 @@ def test_renters_insurance_required_is_noted():
 @pytest.mark.parametrize("t", ["3 bed $2,100/mo. Tenant pays all utilities. Approx $180/month"])
 def test_tenant_pays_all_with_an_approximate_amount(t):
     r = P(t)
-    assert r["utilities_estimate"] == 180 and r["tenant_pays"] == "electric, gas, water, sewer, trash, heat"
+    assert r["utilities_estimate"] == 180 and r["tenant_pays"] == "electric, gas, water, sewer, trash"
     assert "not counted anywhere" not in note(r)
 
 

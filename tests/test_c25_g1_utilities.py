@@ -132,7 +132,7 @@ def test_only_scope_bracket_matches_tenant_pays():
 def test_all_except_leaves_the_two_out():
     r = P("4BR/2BA home - 880 Elm St, Belmont - $2,450 monthly. Utilities: tenant pays all except internet and electric (electric avg $40... actually, ask). Lease 12 months.")
     assert "utilities_estimate" not in r
-    assert pays(r) == {"gas", "water", "sewer", "trash", "heat"}
+    assert pays(r) == {"gas", "water", "sewer", "trash"}
     assert "internet and electric are left unknown" in notes(r)
 
 
@@ -186,6 +186,9 @@ def test_gas_and_heat_one_unknown(text):
     assert "gas" in pays(r) and "heat" not in pays(r)
 
 
-def test_all_utilities_without_gas_word_keeps_heat():
+def test_all_utilities_without_gas_word_is_one_gas_or_heat_unknown():
+    # cycle 26: gas and heat are one unknown unless the listing says heat is electric or separate
     r = P("3 bed $2,100/mo. Tenant pays all utilities. Approx $180/month")
-    assert pays(r) == {"electric", "gas", "water", "sewer", "trash", "heat"}
+    assert pays(r) == {"electric", "gas", "water", "sewer", "trash"}
+    r = P("3 bed $2,100/mo. Tenant pays all utilities. Heat is electric. Approx $180/month")
+    assert "heat" in pays(r)

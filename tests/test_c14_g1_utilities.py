@@ -9,8 +9,8 @@ from prophelper import money
 from prophelper.parsers import listing_billed_amount, listing_estimate_names, parse_listing
 
 RENT = "2 bed 1 bath $1,500/month\n"
-ALL6 = "electric, gas, water, sewer, trash, heat"
-ALL6_UNC = "utilities (electric, gas, water, sewer, trash and heat)"
+ALL6 = "electric, gas, water, sewer, trash"  # cycle 26: gas and heat are one unknown, so "all utilities" shows gas only
+ALL6_UNC = "utilities (electric, gas, water, sewer and trash)"
 
 
 def read(text: str) -> dict:
@@ -84,8 +84,8 @@ def test_electric_average_with_gas_tenant_paid_keeps_gas_missing():
 def test_estimate_for_one_utility_of_all_tenant_paid_leaves_the_rest_listed():
     out, r = cost("Tenant pays all utilities. Electric averages $110 a month.")
     assert out["utilities_estimate"] == 110 and out["tenant_pays"] == ALL6
-    assert (r["total"], r["missing"]) == (1610, ["gas, water, sewer, trash and heat"])
-    assert r["uncounted"] == ["utilities (gas, water, sewer, trash and heat)"]
+    assert (r["total"], r["missing"]) == (1610, ["gas, water, sewer and trash"])
+    assert r["uncounted"] == ["utilities (gas, water, sewer and trash)"]
 
 
 # ---- 3. averages and approximations become estimates

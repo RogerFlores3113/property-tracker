@@ -52,7 +52,7 @@ def test_first_plus_last_month_is_two_months_up_front():
 # --------------------------------------------------------------------------- 4. utilities
 def test_tenant_responsible_for_all_utilities():
     out = P("Tenant responsible for all utilities")
-    assert out["tenant_pays"] == "electric, gas, water, sewer, trash, heat"
+    assert out["tenant_pays"] == "electric, gas, water, sewer, trash"
 
 
 def test_sewer_is_kept_in_tenant_pays(store):

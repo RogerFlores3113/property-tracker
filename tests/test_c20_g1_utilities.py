@@ -125,9 +125,10 @@ def test_heat_not_separate_unknown_when_gas_priced(text):
     assert {"electric", "gas"} <= pays_set(r)
 
 
-def test_heat_stays_when_gas_not_priced():
+def test_gas_and_heat_are_one_unknown_when_gas_not_priced():
+    # cycle 26: "all utilities" shows one unknown for gas or heat, not both
     r = read("Tenant pays all utilities. Water paid by owner.")
-    assert "heat" in pays_set(r)
+    assert "gas" in pays_set(r) and "heat" not in pays_set(r)
 
 
 def test_total_for_everything_stays_unnamed():
