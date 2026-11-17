@@ -342,3 +342,53 @@ def test_preview_unsure_rent_is_not_called_not_found(store):
     left = r.split("Not found in the text, so left empty:")[1].split("</p>")[0] if "Not found in the text, so left empty:" in r else ""
     assert "rent" not in left
     assert "1 550 looks like $1,550" in r
+
+
+@pytest.mark.parametrize("t", [
+    "Rent $2,480 per month. Rent split evenly between roommates not required.",
+    "Rent $2,480. No need to split the rent between roommates.",
+    "Rent $2,480. Can the rent be split evenly between two tenants? Please ask.",
+    "Rent $2,480. Rent cannot be split between roommates.",
+])
+def test_negatives_a_split_that_is_not_offered_gets_no_split_note(t):
+    r = read(t)
+    assert r["price"] == 2480
+    assert "split between roommates" not in notes(r)
+
+
+def test_family_l5_no_split_note():
+    r = read(fixture("r34-family-l5.txt"))
+    assert r["price"] == 2480 and r["deposit"] == 2480
+    assert "split between roommates" not in notes(r)
+
+
+def test_thin_and_no_break_spaces_as_the_thousands_mark():
+    from prophelper.parsers import normalize_money
+    assert "$1,550" in normalize_money("Rent 1 550 per month")
+    assert "$2,300" in normalize_money("Rent 2 300 dollars a month")
+    assert "$2,300" in normalize_money("Rent 2 300 USD")
+
+
+@pytest.mark.parametrize("t,rent", [
+    ("Ihre neue Wohnung in Columbus: 2 Zimmer, 1 Bad, 1.100 USD/Monat.", 1100),
+    ("Wohnung, 2 Zimmer. Miete 1.200 $ pro Monat.", 1200),
+    ("Wohnung 2 Zimmer, 1.100 $/Monat", 1100),
+    ("Appartement 2 pièces. Loyer 1.100 $ par mois.", 1100),
+    ("Chambre. 1 200 $ / mois", 1200),
+])
+def test_dotted_and_spaced_rent_in_german_and_french(t, rent):
+    assert read(t)["price"] == rent
+
+
+def test_corpus_german_listing_reads_the_rent():
+    assert read(fixture("r31-nontech-l9.txt"))["price"] == 1100
+
+
+@pytest.mark.parametrize("t", [
+    "Cedar Rise 3BR 2BA $2,200 fenced yard dogs ok 80 lb.",
+    "Rent $2,200, dogs ok, cats ok. Deposit $2,200",
+])
+def test_negative_a_rent_next_to_a_pet_word_keeps_its_comma_in_the_notes(t):
+    r = read(t)
+    assert r["price"] == 2200
+    assert "$2200" not in notes(r)

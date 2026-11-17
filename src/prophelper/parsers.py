@@ -93,7 +93,7 @@ _FEE = (r"deposits?|dep\b\.?|dep[o\u00f3]sito|kaution|fees?|pet|pets|parking|gar
         r"assessment\w*|contribut\w*|seller")
 _FEE_BEFORE = re.compile(r"\b(?:" + _FEE + r")", re.I)
 _MONTHLY = r"(?:/\s*|per\s+|a\s+|each\s+|every\s+)?(?:mo\b|mos\b|month\b|months\b|monthly\b|mth\b)"
-_RENT_MARK = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r"|/\s*(?:unit|apt)\b|(?:al|por|cada|/)\s*mes\b|/\s*mensual\b|mensual(?:es)?\b|pro\s+monat\b|monatlich\b|par\s+mois\b|/\s*mois\b)", re.I)  # cycle 33: "$1,400 al mes"
+_RENT_MARK = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r"|/\s*monat\b|/\s*(?:unit|apt)\b|(?:al|por|cada|/)\s*mes\b|/\s*mensual\b|mensual(?:es)?\b|pro\s+monat\b|monatlich\b|par\s+mois\b|/\s*mois\b)", re.I)  # cycle 33: "$1,400 al mes"
 _BR_MARK = re.compile(r"^\s*/\s*(?:\d\s*(?:br|bd|bed)|studio)", re.I)  # Craigslist: "$1100 / 1br - 700ft2"
 _PER_BED = re.compile(r"^\s*\+?\s*(?:/|per)\s*(?:bed|bedroom|person|resident|tenant|student)", re.I)
 _FEE_AFTER_STRICT = re.compile(r"^\s*\+?\s*(?:one[- ]time\s+|non[- ]refundable\s+|refundable\s+|monthly\s+|price\s+)?(?:" + _FEE + r")", re.I)
@@ -192,6 +192,7 @@ def _grouped_thousands(text: str) -> str:
     """Cycle 35 rule (ee): a number written with a space or a dot as the thousands mark ("1 550 per month", "Rent 2 300 dollars a month", "rent is 1.550 a month",
     "Deposit: 1.950.", "2 100 al mes") is money read whole, never its last three digits. It becomes "$1,550" when a money word sits before it (rent, deposit,
     fee...) and a plain ending follows, or when a money unit follows it (per month, /mo, dollars, USD, al mes). Anything else is left alone."""
+    text = re.sub(r"(?<=\d)[\u00a0\u2009\u202f](?=\d{3}(?!\d))", " ", text)
     if not re.search(r"\d[ .]\d{3}", text):
         return text
     out: list[str] = []
@@ -224,12 +225,13 @@ _PET_NEAR = r"(?:pets?|cats?|dogs?|animals?|puppy|puppies|kittens?)"
 
 
 def _pet_amounts_plain(text: str) -> str:
-    """Cycle 35 rule (ee): the pet readers take up to four digits after the dollar sign, so "Pet deposit $1,200" was read as $1. A pet amount of $1,000 to $9,999
-    is written without its comma ("$1200") so every pet reader sees it whole."""
+    """Cycle 35 rule (ee): the pet readers take up to four digits after the dollar sign, so "Pet deposit $1,200" was read as $1. A pet charge of $1,000 to $9,999 (a pet
+    deposit, fee or rent named next to the amount) is written without its comma ("$1200") so every pet reader sees it whole. Other amounts keep their comma."""
     if "," not in text or "$" not in text:
         return text
-    text = re.sub(r"(\b" + _PET_NEAR + r"\b[^.;\n$]{0,40}?\$\s?)(\d),(\d{3})(?![\d,])", lambda m: m.group(1) + m.group(2) + m.group(3), text, flags=re.I)
-    return re.sub(r"(\$\s?)(\d),(\d{3})(?![\d,])(?=[^.;\n$]{0,25}\b" + _PET_NEAR + r"\b)", lambda m: m.group(1) + m.group(2) + m.group(3), text, flags=re.I)
+    kind = r"(?:non[- ]?refundable[ \t]+|refundable[ \t]+|one[- ]time[ \t]+)?" + _PET_NEAR + r"(?:[ \t]+(?:deposit|fee|rent|charge|screening|application))+"
+    text = re.sub(r"(\b" + kind + r"[ \t]*(?:[(\[][^)\]\n]{0,20}[)\]])?[ \t]*(?:[:=\-]|of|is)?[ \t]*\$\s?)(\d),(\d{3})(?![\d,])", lambda m: m.group(1) + m.group(2) + m.group(3), text, flags=re.I)
+    return re.sub(r"(\$\s?)(\d),(\d{3})(?![\d,])(?=[ \t]*(?:(?:per|each|/)[ \t]*(?:pet|dog|cat|animal)s?[ \t]+)?" + kind + r")", lambda m: m.group(1) + m.group(2) + m.group(3), text, flags=re.I)
 
 
 def unsure_grouped_notes(text: str) -> list[str]:
@@ -345,6 +347,8 @@ def _rent_promo_split_notes(text: str, price: float | None) -> list[str]:
             if not _SPLIT_RENT.search(sent):
                 continue
             core = _SPLIT_RENT.sub(" ", sent)
+            if re.search(r"\b(?:not|no|never|without|cannot)\b|n't\b|\?", sent, re.I):
+                continue  # "Rent split evenly between roommates not required" says no split, and a question sets nothing
             ctx = (sents[i - 1] if i else "") + " " + sent
             if _SPLIT_OTHER.search(re.sub(r"\brent\w*\b", " ", core)) or not (re.search(r"\brent\b|\bprice\b", sent, re.I) or re.search(r"\$\s?" + re.escape(f"{price:,.0f}") + r"(?!\d)", ctx)):
                 continue
