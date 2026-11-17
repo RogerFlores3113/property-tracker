@@ -197,4 +197,4 @@ def test_cats_named_keeps_pets_and_approval_note():
 
 def test_explicit_dogs_and_cats_keep_both():
     r = read("Dogs and cats ok. Approval required for dogs.")
-    assert r["pets"] == "both" and "Dogs need approval" in notes(r)
+    assert not r.get("pets") and "Dogs need approval" in notes(r)  # cycle 30: unknown, not both
