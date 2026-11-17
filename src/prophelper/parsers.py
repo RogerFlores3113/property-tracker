@@ -614,7 +614,7 @@ _GC_LABEL = {"deposit": "deposit", "hoa": "HOA", "property_tax": "property tax",
              "seller_credit": "seller credit", "closing_costs": "closing costs"}
 _GC_MONEY = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
 _GC_LEAD = re.compile(r"^[ \t\"'(\[*#-]*(?:(?:corrected?|corrections?|actually)\b|(?:update[ds]?|revised|edit(?:ed)?)[ \t]*[:,\-\u2013\u2014])", re.I)
-_GC_MOVED = r"(?:reduced|lowered|dropped|cut|slashed|decreased|increased|raised|marked[ \t]+down|discounted)[ \t]+(?:(?:the|its)[ \t]+)?(?:(?:rent|price)[ \t]+)?to"  # cycle 30: "reduced to $2,250", "rent increased to $1,510"
+_GC_MOVED = r"(?:reduced|lowered|dropped|cut|slashed|decreased|increased|raised|marked[ \t]+down|discounted)[ \t]+(?:(?:again|further|once[ \t]+more|once[ \t]+again|even[ \t]+more)[ \t]+)?(?:(?:the|its)[ \t]+)?(?:(?:rent|price)[ \t]+)?(?:(?:again|further)[ \t]+)?to"  # cycle 30: "reduced to $2,250", "rent increased to $1,510"
 _GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)|" + _GC_MOVED
 _GC_MOVED_END = re.compile(r"\b" + _GC_MOVED + r"[ \t:]*(?:only[ \t]+)?$", re.I)
 _GC_CUE = re.compile(r"\b(?P<w>now|" + _GC_HARD + r"|new)\b", re.I)
@@ -920,6 +920,10 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
                 # the earlier figure is unclear (or the saved rent already holds the new one): one short note, without an old figure, so the correction never goes unmentioned
                 if not any("corrects the rent" in f for f in facts):
                     facts.append(f"The listing corrects the rent: it is now {_usd(new)}. Ask the landlord to confirm it.")
+        if fld == "price" and not buying and olds:  # cycle 32: the rent figure stated before the correction is an old figure too, named in the same note
+            for v in _gc_earlier_rents(text, ent, new):
+                if len(olds) < 3 and not any(_same_num(v, o) for o in olds):
+                    olds.append(v)
         out[fld] = _tidy_number(new)
         if not olds:
             continue
@@ -1510,7 +1514,7 @@ def _first_months_special(text: str, rent: float | None) -> tuple[float, str] | 
     return None
 
 
-_NOW_IF = re.compile(r"\b(?:now|just|only|special|promo(?:tional)?(?:[ \t]+(?:rent|price))?|discounted|reduced[ \t]+to)[ \t:]*" + _AMT_G + r"(?![\d,])[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month)?[ \t]*"
+_NOW_IF = re.compile(r"\b(?:now|just|only|special|promo(?:tional)?(?:[ \t]+(?:rent|price))?|discounted|reduced[ \t]+(?:(?:again|further|once[ \t]+more)[ \t]+)?to)[ \t:]*" + _AMT_G + r"(?![\d,])[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month)?[ \t]*"
                      r"(?P<cond>(?:if|when|with|for[ \t]+(?:leases?|signing|new[ \t]+(?:residents?|tenants?)|(?:a|an)[ \t]+(?:\d|one|two|twelve))|by|before|through|until|provided|as[ \t]+long)\b[^.\n;]{0,60})", re.I)
 
 
@@ -11163,7 +11167,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                          f"Ask what you pay in {fm_when} and after.")
     cond_now = None if buying or promo else _try(lambda: _conditional_now_price(text, price_read))
     if cond_now and price_read is not None:
-        facts.append(f"The listing also gives ${cond_now[0]:,.0f} a month {cond_now[1]}. That price depends on the condition, so the saved rent stays ${price_read:,.0f}. Ask if the lower price applies to you.")
+        gc_rent = (gc_found.get("price") or {}).get("new") if gc_found and not price_range else None  # cycle 32: a "($1,420 now)" in the title is the rent the note names
+        stays = gc_rent if isinstance(gc_rent, (int, float)) and gc_rent != cond_now[0] else price_read
+        facts.append(f"The listing also gives ${cond_now[0]:,.0f} a month {cond_now[1]}. That price depends on the condition, so the saved rent stays ${stays:,.0f}. Ask if the lower price applies to you.")
     elif not (buying or promo or price_range or unit_pick or two_prices or first_months):
         special = _try(lambda: _special_price(text, price_read))
         if special:  # cycle 26: "$3,600/MO $3,000 IF YOU SIGN BY DEC 1 (SPECIAL)": the regular rent stays, one short note names the special and its deadline
@@ -11177,7 +11183,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 facts.append(f"The listing says ${old_amt:,.0f} was a mistake or an old figure, so it is not used. Check the rent with the landlord.")
     if not buying and not price_range:
         corr = _try(lambda: _corrected_rent(text))
-        if corr and price_read == corr[0]:
+        gce = gc_found.get("price") if gc_found else None
+        if corr and price_read == corr[0] and gce and gce.get("new") == corr[0] and not promo:
+            pass  # cycle 32: "Rent $2,290. CORRECTION: rent is $2,310 not $2,390": the correction step gives the one note and names every earlier rent figure
+        elif corr and price_read == corr[0]:
             facts.append(f"The listing corrects itself: it first says {corr[1]} and then ${corr[0]:,.0f}. The later ${corr[0]:,.0f} is saved as the rent. Check it with the landlord.")
         elif price_read is None:
             bare_room = _try(lambda: _bare_per_room_rent(text))
