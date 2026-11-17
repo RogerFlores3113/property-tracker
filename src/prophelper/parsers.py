@@ -98,7 +98,8 @@ _BR_MARK = re.compile(r"^\s*/\s*(?:\d\s*(?:br|bd|bed)|studio)", re.I)  # Craigsl
 _PER_BED = re.compile(r"^\s*\+?\s*(?:/|per)\s*(?:bed|bedroom|person|resident|tenant|student)", re.I)
 _FEE_AFTER_STRICT = re.compile(r"^\s*\+?\s*(?:one[- ]time\s+|non[- ]refundable\s+|refundable\s+|monthly\s+|price\s+)?(?:" + _FEE + r")", re.I)
 _FEE_AFTER_MONTHLY = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r")?\s*(?:for\s+|per\s+|-\s*)?(?:pet|parking|garage|storage|utilit|hoa|trash|"
-                                r"internet|cable|amenity|water|insurance|lawn|cleaning|reserved|covered|tax|assessment)(?![a-z]*[ \t]*(?:is[ \t]+|are[ \t]+)?(?:not[ \t]+)?(?:incl\b|included|extra\b|separate))", re.I)
+                                r"internet|cable|amenity|water|insurance|lawn|cleaning|reserved|covered|tax|assessment)(?![a-z]*[ \t]*(?:is[ \t]+|are[ \t]+)?(?:not[ \t]+)?(?:incl\b|included|extra\b|separate))"
+                                r"(?![a-z]*(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=(]?[ \t]*(?:none|nil|n/a|\$0)(?![\w/]))", re.I)  # cycle 34: "$1,500 HOA none" is the rent and an HOA of none
 _UTIL_WORD = re.compile(r"\b(?:utilit\w*|electric\w*|power|gas|water|sewer|trash|garbage|internet|wi-?fi|cable|heat\w*)\b", re.I)
 _EST_CUE_END = re.compile(r"(?:\babout|\bapprox\.?|\bapproximately|\baround|\broughly|\best\.?|\bestimated|\bavg\.?|\baverage|\btypically|\busually|\bbetween|~|\btotal|\bcosts?|\bis|\bare|[:=-])[ \t]*$", re.I)
 _UTIL_AFTER = re.compile(r"^[ \t]*(?:\(?(?:all[- ]in|total|combined|each)\)?[ \t,]*)?(?:(?:/|per|a)[ \t]*(?:mo\w*|month\w*)[ \t]*)?(?:total[ \t]+)?(?:(?:for|on|toward|towards|covers?|covering|to[ \t]+cover|in)[ \t]+)?(?:all[ \t]+)?(?:the[ \t]+)?(?:your[ \t]+)?(?:electric\w*|power|gas|water|sewer|trash|garbage|internet|wi-?fi|cable|heat\w*|utilit\w*)\b(?![ \t,]*(?:and[ \t]+\w+[ \t]+)?(?:is[ \t]+|are[ \t]+)?(?:not|no|incl\w*|extra|separate|excluded|additional|plus|paid[ \t]+by[ \t]+(?:the[ \t]+)?(?:landlord|owner))\b)", re.I)
@@ -288,6 +289,8 @@ def _amounts(text: str) -> list[dict[str, Any]]:
                 or (bool(_FOREIGN_FEE.search(clause[-32:])) and not _RENT_LABEL.search(clause[-14:]))  # cycle 33: "Cuota de mascotas $300 al mes" is a pet fee
         elif not fee:
             fee = bool(_FEE_AFTER_STRICT.match(tail)) and not re.match(r"\s*\+\s*(?:all\s+)?(?:the\s+)?utilit", tail, re.I)  # "$1,150 + utilities" is the rent
+            if fee and re.match(r"\s*\w+(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=(]?[ \t]*(?:none|nil|n/a|\$0)(?![\w/])", tail, re.I):
+                fee = False  # cycle 34: "$1,500 HOA none" is the rent and then an HOA of none, the figure is not the HOA
         if not fee and _NOT_RENT_EXTRA.search(clause):
             fee = True  # cycle 26: "Second space $200/mo", "extra storage $50/mo", "additional occupant $75": never a rent candidate
         if fee and value >= 20000 and marker == "" and re.match(r"^\s*(?:hoa|assoc\w*|dues|condo fee)", tail, re.I):
@@ -2377,6 +2380,10 @@ def _rent_range(text: str, price: float | None) -> tuple[float, float] | None:
 _MOVE_IN_TOTAL = (
     re.compile(r"\bmove[- ]?in[ \t]+(?:cost|costs|total|price|charges?|money|amount)(?:[ \t]+(?:is|are|of))?[ \t]*[:=\-]?[ \t]*(?:about |around |approx\.? |~)?\$?[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?\b(?![ \t]*(?:/|per|a)[ \t]*(?:mo|month))", re.I),
     re.compile(r"\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?[ \t]+(?:total[ \t]+)?(?:to[ \t]+move[- ]?in|due[ \t]+(?:at|before)[ \t]+(?:lease[ \t]+)?(?:signing|move[- ]?in)|move[- ]?in[ \t]+total)\b", re.I),
+    # cycle 34: "Total move-in about $2,600", "Total due at move-in: ~$2,600", "Move-in cost roughly $2,600", "Move-in about $2,600 total": the words "total" or "move-in cost" make it the all-in cash
+    re.compile(r"\btotal[ \t]+(?:due[ \t]+)?(?:(?:at|to|for)[ \t]+)?move[- ]?in(?:[ \t]+(?:cost|costs|amount|price|charges?|money|due))?(?:[ \t]+(?:is|are|of|will[ \t]+be|comes[ \t]+to))?[ \t]*[:=\-]?[ \t]*(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:/|per|a)[ \t]*(?:mo|month))", re.I),
+    re.compile(r"\bmove[- ]?in(?:[ \t]+(?:cost|costs|price|amount|money|charges?))?[ \t]*[:=\-]?[ \t]*(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?[ \t]+(?:in[ \t]+)?total\b", re.I),
+    re.compile(r"\bmove[- ]?in[ \t]+(?:cost|costs|price|amount|money|charges?)[ \t]*(?:is|are|of)?[ \t]*[:=\-]?[ \t]*(?:roughly|est\.?|estimated|approximately)[ \t]*\$[ \t]*(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?(?![\d,])(?![ \t]*(?:/|per|a)[ \t]*(?:mo|month))", re.I),
 )
 
 
@@ -2396,10 +2403,10 @@ def _move_in_line_is_items(text: str, m: re.Match[str]) -> bool:
     return bool(_MOVE_IN_ITEM.search(re.sub(r"\b(?:due|at|by|before|on|per|a|the|about|around|approx)\b", " ", outside[:45])))
 
 
-def _move_in_total_notes(text: str) -> list[str]:
+def _move_in_total_notes(text: str, patterns: tuple[re.Pattern[str], ...] | None = None) -> list[str]:
     """"Move-in cost 2200 total", "$2,100 total to move in": the all-in cash to get in. It is not the rent and it is not split into
     deposit and fees, so it only gets a note."""
-    for pat in _MOVE_IN_TOTAL:
+    for pat in (patterns if patterns is not None else _MOVE_IN_TOTAL[:2]):
         m = pat.search(text)
         if m and pat is _MOVE_IN_TOTAL[1] and re.search(r"\b(?:fees?|deposits?|dep|charges?|cost|admin\w*|application|lease\w*|processing|amenity|key|cleaning|security|sec|pet)\.?[ \t:\-=]*$", text[max(0, m.start() - 20):m.start()], re.I):
             continue  # "Cleaning fee $200 due at move-in": that is one fee, not the total to move in
@@ -2886,6 +2893,67 @@ def _baths_corrected(text: str) -> tuple[float, float] | None:
     return vals[0], vals[1]
 
 
+_ES_NUM = {"un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6}
+_ES_N = r"(\d{1,2}(?:[.,]5)?|un[oa]?|dos|tres|cuatro|cinco|seis)"
+_ES_BEDS = re.compile(r"(?<![\d.,$/#-])\b" + _ES_N + r"[ \t]*(?:habitaci(?:o|ó)n(?:es)?|dormitorios?|rec(?:a|á)maras?|alcobas?|habs?\b\.?)(?![\w])", re.I)
+_ES_BEDS_LABEL = re.compile(r"\b(?:habitaci(?:o|ó)n(?:es)?|dormitorios?|rec(?:a|á)maras?|alcobas?)[ \t]*[:=\-][ \t]*(\d{1,2})\b(?![ \t]*(?:[/x]|m2|pies|sq))", re.I)
+_ES_BATHS = re.compile(r"(?<![\d.,$/#-])\b" + _ES_N + r"[ \t]*(?:completos?[ \t]+)?ba(?:n|ñ)os?(?:[ \t]+completos?)?(?![\w])([ \t]+y[ \t]+medio\b)?", re.I)
+
+
+def _es_number(word: str) -> float | None:
+    w = word.lower().replace(",", ".")
+    if w in _ES_NUM:
+        return float(_ES_NUM[w])
+    try:
+        return float(w)
+    except ValueError:
+        return None
+
+
+def _beds_es(text: str) -> float | None:
+    """Cycle 34: Spanish bedroom counts ("1 habitacion", "2 habitaciones", "3 dormitorios", "2 recamaras"). A range ("1 a 2 habitaciones"), two different
+    counts (a plan list) or no count at all is left empty. "estudio" is a studio only when no count is given."""
+    import unicodedata
+    low = unicodedata.normalize("NFC", text)
+    vals: set[float] = set()
+    for m in _ES_BEDS.finditer(low):
+        before = low[max(0, m.start() - 8):m.start()]
+        if re.search(r"\d[ \t]*(?:a|o|-|–|to|y)[ \t]*$", before, re.I):
+            return None  # "1 a 2 habitaciones": a range, not a count
+        v = _es_number(m.group(1))
+        if v is not None and 0 < v <= 12:
+            vals.add(v)
+    for m in _ES_BEDS_LABEL.finditer(low):
+        vals.add(float(m.group(1)))
+    if len(vals) == 1:
+        return next(iter(vals))
+    if vals:
+        return None
+    if re.search(r"(?<!de[ \t])(?<!área[ \t]de[ \t])(?<!sala[ \t]de[ \t])\b(?:estudio|apartaestudio|monoambiente)\b(?![ \t]+(?:de|para)\b)", low, re.I):
+        return 0.0
+    return None
+
+
+def _baths_es(text: str) -> float | None:
+    """Cycle 34: Spanish bathroom counts ("1 bano", "2 baños", "1 baño y medio", "1,5 baños"). Two different counts leave it empty."""
+    import unicodedata
+    low = unicodedata.normalize("NFC", text)
+    vals: set[float] = set()
+    for m in _ES_BATHS.finditer(low):
+        before = low[max(0, m.start() - 8):m.start()]
+        if re.search(r"\d[ \t]*(?:a|o|-|–|to|y)[ \t]*$", before, re.I):
+            return None
+        v = _es_number(m.group(1))
+        if v is None or not 0 < v <= 10:
+            continue
+        vals.add(v + (0.5 if m.group(2) else 0))
+    for m in re.finditer(r"\bba(?:n|ñ)os?[ \t]*[:=\-][ \t]*(\d{1,2}(?:[.,]5)?)\b", low, re.I):
+        v = _es_number(m.group(1))
+        if v is not None and 0 < v <= 10:
+            vals.add(v)
+    return next(iter(vals)) if len(vals) == 1 else None
+
+
 def _baths(text: str) -> float | None:
     corrected = _baths_corrected(text)
     if corrected:
@@ -2955,6 +3023,21 @@ _SHARED_LAUNDRY = re.compile(
     r"|\$\s?\d+(?:\.\d\d)?\s*(?:per|/|a)\s*(?:load|wash)\b", re.I)
 
 
+_WD_FEATURE_ITEM = re.compile(
+    r"^(?:(?:new|newer|stacked|stackable|stack|full[- ]size|full|front[- ]load(?:ing|er)?|side[- ]by[- ]side|brand[- ]new|energy[- ]efficient|high[- ]efficiency|lg|ge|samsung|whirlpool|maytag|in[- ]unit)[ \t]+)+"
+    r"(?:washer[ \t]*(?:/|and|&|\+|,)?[ \t]*dryer|washers?|dryers?|w/d|laundry)(?:[ \t]+(?:set|units?|machines?|included|provided))?$")
+
+
+def _washer_dryer_feature_item(low: str) -> bool:
+    """Cycle 34: "Stacked washer and dryer, dishwasher, one-car garage $90" lists what is in the unit. A list item that is only a kind of washer
+    (stacked, full size, front load, side by side) with the dryer is in-unit laundry. Shared, coin and building machines are removed before this is asked."""
+    for item in re.split(r"[,;\n|•·*]+|\.(?=\s|$)|[ \t]+[-–—][ \t]+|[ \t]+(?:and|&)[ \t]+(?=(?:a[ \t]+)?(?:dishwasher|garage|microwave|a/c|central))", low):
+        item = " ".join(item.split()).strip(" .:-!")
+        if _WD_FEATURE_ITEM.match(item) and not re.search(r"hook|connect|rent|fee|\$|avail|optional|extra", item):
+            return True
+    return False
+
+
 def _laundry(text: str) -> str:
     low = re.sub(r"\bw\s?&(?:amp;)?\s?d\b", "w/d", text.lower())  # "W&D in unit" is the same as "W/D in unit"
     low = re.sub(r"(?<![\w/&-])(?:wd|w-d|w\.d\.?)(?![\w/&-])", "w/d", low)  # cycle 27: "WD in unit" is the same as "W/D in unit"
@@ -2975,7 +3058,7 @@ def _laundry(text: str) -> str:
                 r"|\b(?:on[- ]?site|shared|community|common|coin[- ]?op\w*|building|bldg)\s*laundry|\blaundry\s*(?:is\s*)?(?:available\s*)?(?:on[- ]?site|in bldg|in building)"
                 r"|\bwasher\s*(?:/|and|&)\s*dryer\s*(?:in|on)\s*(?:the\s*)?(?:building|bldg|floor|site)")
     positive = _SHARED_LAUNDRY.sub(" ", re.sub(negated, " ", low))  # shared machines never count as in the unit
-    if re.search(in_unit, positive):
+    if re.search(in_unit, positive) or _washer_dryer_feature_item(positive):
         return "in_unit"
     if re.search(building, low) or _SHARED_LAUNDRY.search(low):
         return "in_building"
@@ -11102,8 +11185,8 @@ def _hoa_search(pattern: str, text: str) -> re.Match[str] | None:
 def _hoa(text: str) -> float | None:
     if (q := _hoa_after_question(text)):
         return q[0]
-    if re.search(r"\bno[ \t]+(?:hoa|h\.o\.a\.|homeowners'?[ \t]+association)(?:[ \t]+(?:fees?|dues))?\b(?![ \t]+(?:info\w*|details?|data|yet|known|listed|available|provided|given|confirmed|figures?|amounts?|numbers?|on[ \t]+file))|\bhoa(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=][ \t]*(?:none|no(?![ \t]+(?:info\w*|details?|data|figures?))|n/a|\$0(?![\d,]|\.\d*[1-9]))\b|\bwithout[ \t]+(?:an?[ \t]+)?hoa\b|\b(?:hoa|association)[ \t]+(?:fees?|dues)?[ \t]*(?:\(none\)|not required)", text, re.I) \
-            and not re.search(r"\$\s?[1-9]\d*(?:,\d{3})*(?:\.\d\d)?\s*(?:/\s*\w+|per\s+\w+|\w+ly)\s*(?:hoa|association)|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t:\-=(]{0,6}\$\s?[1-9]", text, re.I):
+    if re.search(r"\bno[ \t]+(?:hoa|h\.o\.a\.|homeowners'?[ \t]+association)(?:[ \t]+(?:fees?|dues))?\b(?![ \t]+(?:info\w*|details?|data|yet|known|listed|available|provided|given|confirmed|figures?|amounts?|numbers?|on[ \t]+file))|\bhoa(?:[ \t]+(?:fees?|dues))?[ \t]*[:\-=][ \t]*(?:none|no(?![ \t]+(?:info\w*|details?|data|figures?))|n/a|\$0(?![\d,]|\.\d*[1-9]))\b|\bwithout[ \t]+(?:an?[ \t]+)?hoa\b|\b(?:hoa|association)[ \t]+(?:fees?|dues)?[ \t]*(?:\(none\)|not required)|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t]+(?:none|nil|n/a|\$0(?![\d,]|\.\d*[1-9]))(?![\w/])", text, re.I) \
+            and not re.search(r"\$\s?[1-9]\d*(?:,\d{3})*(?:\.\d\d)?\s*(?:/\s*\w+|per\s+\w+|\w+ly)\s*(?:hoa|association)(?![ \t]+(?:(?:fees?|dues)[ \t]+)?[:\-=(]?[ \t]*(?:none|nil|n/a|\$0)(?![\w/]))|\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t:\-=(]{0,6}\$\s?[1-9]", text, re.I):
         return 0.0
     bm = re.search(r"\b(?:hoa|association)(?:[ \t]+(?:fees?|dues))?[ \t]+(?:is|are)?[ \t]*(?:billed|paid|due|charged|payable|collected)[ \t]+(quarterly|annually|yearly|monthly|semi-?annually|semi-?yearly|twice[ \t]+a[ \t]+year|every[ \t]+(?:six|6)[ \t]+months|every[ \t]+(?:three|3)[ \t]+months)[ \t:\-=,]*(?:at|of|for|as)?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)", text, re.I)
     if bm:  # "HOA fee is billed quarterly at $900", "HOA is paid quarterly: $780 per quarter": the period comes before the amount
@@ -12293,9 +12376,23 @@ def _feature_line(line: str) -> bool:
     return bool(_FEATURE_WORD.search(line)) and not _PROPERTY_NOUN.search(line) and not _ADDRESS.match(line)
 
 
+_MARKETING_WORDS = frozenset(
+    "new lower low lowest price prices pricing reduced reduction again drop dropped drops slashed cut savings save big huge great hot deal deals special specials "
+    "limited time offer offers sale only now just listed listing today this week month weekend hurry wow update updated better best ever rent rents to from "
+    "at more less off lease leasing available a the is are and for sooner price-drop pricedrop reduce".split())
+
+
+def _marketing_line(line: str) -> bool:
+    """Cycle 34: a line made only of sales words ("NEW LOWER PRICE!! Prices reduced again to $1,425", "BIG SAVINGS this month!!") is a banner, never a name."""
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", re.sub(r"\$\s?[\d,.]+[kK]?(?:/[ \t]*mo(?:nth)?)?", " ", line))
+    if len(words) < 2 or len(words) > 12:
+        return False
+    return all(w.lower() in _MARKETING_WORDS for w in words) and bool(re.search(r"\b(?:new|lower|low|price|prices|reduced|drop|dropped|slashed|savings|deal|deals|special|sale|offer|offers|hurry|wow|limited)\b", line, re.I))
+
+
 def _not_a_name(line: str) -> bool:
     """A line that is a field ("Rent $2", "Deposit: 1.5x rent", "Pets: dogs ok"), a money amount or a pet rule, never a title."""
-    return bool(_RULE_LINE.match(line) or _PROMO_LINE.match(line) or _SITE_LINE.match(line) or _ai_aimed(line) or _LABEL_LINE.match(line) or _POLICY_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line)
+    return bool(_marketing_line(line) or _RULE_LINE.match(line) or _PROMO_LINE.match(line) or _SITE_LINE.match(line) or _ai_aimed(line) or _LABEL_LINE.match(line) or _POLICY_LINE.match(line) or _LABEL_NUMBER.match(line) or _MONEY_LINE.match(line) or _PET_LINE.match(line)
                 or _FACT_LABEL_LINE.search(line) or _STATUS_LINE.match(line) or _SENTENCE_LINE.search(line) or _feature_line(line))
 
 
@@ -12353,6 +12450,26 @@ def _headline_over_area(text: str, building: str) -> bool:
     return bool(re.search(r"[A-Za-z]{4,}", _BED_CUE.sub(" ", first)))
 
 
+_GREETING_CUT = re.compile(r"^(?:hi|hello|hey|hiya|howdy|greetings|good[ \t]+(?:morning|afternoon|evening))(?:[ \t]+(?:there|all|everyone|folks|friends|y'all|guys))?[ \t]*[!,.:;–—-]*[ \t]+(?=\S)", re.I)
+_GREETING_ADJ = re.compile(r"^(?:(?:gorgeous|beautiful|lovely|stunning|amazing|charming|cute|cozy|adorable|wonderful|fabulous|spacious|sunny|bright)[ \t,]+(?:and[ \t]+)?)+(?=\S)", re.I)
+
+
+def _greeting_cut(line: str, found: dict[str, Any] | None = None) -> str:
+    """Cycle 34: a greeting and the praise words after it are not part of a name: "Hi!! Gorgeous 2 BR duplex Linden area!!!" -> "2 BR duplex Linden area!!!".
+    Only when what is left reads as a place (a plan or a kind of place), else the line is left as it was."""
+    m = _GREETING_CUT.match(line)
+    if not m:
+        return line
+    addr = str((found or {}).get("address") or "")
+    if addr and addr.lower() in line.lower():
+        return line  # a greeting line that holds the street address is already answered by the street address (see _chatty_title)
+    rest = line[m.end():]
+    rest2 = _GREETING_ADJ.sub("", rest) if (_PLAN_CUE.search(rest) or _PROPERTY_NOUN.search(rest)) else rest
+    if not (_PLAN_CUE.search(rest2) or _PROPERTY_NOUN.search(rest2)) or len(rest2) < 6:
+        return line
+    return rest2
+
+
 def _title_raw(text: str, found: dict[str, Any]) -> str:
     """A short title: the building name, else the first line of the paste that reads like a name or heading, else the street
     address. A site name (Zillow, Realtor.com) is never the title."""
@@ -12388,6 +12505,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         line = re.sub(r"^(?:actually|update|updated|correction|edit|edited|note|ps|p\.s\.)[ \t]*[:,][ \t]*(?=\S)", "", line, flags=re.I)  # "Actually: Campustown Flats 1x1"
         if _ai_aimed(raw_line) or _ai_aimed(line):
             continue
+        line = _greeting_cut(line, found)  # cycle 34: "Hi!! Gorgeous 2 BR duplex Linden area!!!" is a duplex in Linden, never named "Hi Gorgeous ..."
         line = _LABEL_PREFIX.sub("", line, count=1)  # cycle 31: "Zillow-ish listing - Stadium View | 1 Bed | Rent $1,350": the site label goes before the parts are split
         if " | " in line or len(re.findall(r"[ \t]~[ \t]", line)) >= 2:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
             parts = [x.strip() for x in (re.split(r"[ \t]\|[ \t]", line) if " | " in line else re.split(r"[ \t]~[ \t]", line))]
@@ -12995,6 +13113,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if ob and ob[0] == price_read and not any(300 <= a["value"] <= 30000 and not a["fee"] for a in _amounts(text)):
             facts.append(f'The listing gives "{ob[1]}" with no dollar sign or period. It is read as the monthly rent, ${ob[0]:,.0f}. {"The price is called firm, so" if re.search(r"firm", ob[1], re.I) else "The owner may take a different figure, so"} ask what the rent really is.')
     put("baths", _try(lambda: _baths(text)))
+    if out.get("beds") is None:
+        put("beds", _try(lambda: _beds_es(text)))  # cycle 34: "1 habitacion, 1 bano" (Spanish) sets beds and baths when no English count is there
+    if out.get("baths") is None:
+        put("baths", _try(lambda: _baths_es(text)))
     fixed_facts = {} if buying else (_try(lambda: _corrected_facts(text)) or {})
     if "baths" in fixed_facts and not bath_fix:
         nb, ob = fixed_facts["baths"]
@@ -14235,7 +14357,14 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 line += "."
             facts.append(line)
-        facts.extend(_try(lambda: _move_in_total_matched(text, out, _move_in_total_notes(text))) or [])
+        mit_notes = _try(lambda: _move_in_total_notes(text)) or []
+        if not mit_notes:
+            # cycle 34: "Total move-in about $2,600" and the other wordings of a total. When the total equals the rent and deposit that were read, the stated-total
+            # note further down says so, so this note is added only for a total that matches nothing.
+            mit_new = _try(lambda: _move_in_total_notes(text, _MOVE_IN_TOTAL[2:])) or []
+            if mit_new and _try(lambda: _move_in_total_matched(text, out, mit_new)) == mit_new:
+                mit_notes = mit_new
+        facts.extend(_try(lambda: _move_in_total_matched(text, out, mit_notes)) or [])
         facts.extend(_try(lambda: _holding_fee_notes(text)) or [])
         if not buying:
             facts.extend(_try(lambda: _holding_fee_amount_notes(text)) or [])
@@ -15455,6 +15584,18 @@ def _comma_after(text: str, end: int, hi: int) -> int:
 _NET_SEGMENT_SEPS = (" * ", " ~ ")
 
 
+def _laundry_quote(text: str, m: re.Match[str]) -> str:
+    """Cycle 34: the laundry note quotes the laundry words, never a whole feature list ("Stacked washer and dryer, dishwasher, one-car garage $90"):
+    in a clause made of several comma or semicolon items only the item that holds the laundry word is quoted."""
+    clause = _net_clause(text, m.start(), m.end())
+    pieces = [p.strip() for p in re.split(r"[;,][ \t]+|[ \t]+[|•][ \t]+", clause) if p.strip()]
+    if len(pieces) >= 3:
+        for p in pieces:
+            if re.search(r"\b(?:laundry|washer|dryer|w\s*/\s*d|washing machines?|coin[- ]op)\b", p, re.I):
+                return p
+    return clause
+
+
 def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
     """The short phrase around text[start:end]: the clause it sits in. A clause that fits ``limit`` is quoted whole, never
     cut in the middle; a longer one is narrowed to the comma-separated piece that holds the match, and only a piece that is
@@ -15465,6 +15606,9 @@ def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
         if at >= 0:
             left = max(left, at + len(sep))
     rights = [i for i in (_end_after(text, c, end) for c in (*_NET_ENDS, *_NET_SEGMENT_SEPS)) if i >= 0]
+    nxt_word = text[end:].lstrip(" \t")[:1]
+    if end >= 1 and text[end - 1] == "." and end - 1 > start and _real_end(text, end - 1) and not nxt_word.islower():
+        rights.append(end - 1)  # cycle 34: the match itself ends in the sentence's full stop ("hasta 70 lb."): the quote ends there, not at the next sentence's stop
     right = min(rights) if rights else len(text)
     lo, hi = left, right
     if hi - lo > limit:
@@ -15756,7 +15900,7 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         notes.append(f'The listing says "{_net_clause(text, m.start(), m.end())}". The fee is given as {"a share" if "%" in _net_clause(text, m.start(), m.end()) else "months"} of the rent, so no amount is saved. Ask what it comes to.')
     m = re.search(r"\b(?:laundry|washer|dryer|w\s*/\s*d|washing machines?|coin[- ]op)\b", text, re.I)
     if m and not out.get("laundry") and not re.search(r"laundry|washer|dryer|hookup", low_facts) and not any("laundry" in n for n in notes):
-        notes.append(f'The listing mentions laundry ("{_net_clause(text, m.start(), m.end())}"), but I could not tell what kind. Ask if it is in the unit, in the building or off site.')
+        notes.append(f'The listing mentions laundry ("{_laundry_quote(text, m)}"), but I could not tell what kind. Ask if it is in the unit, in the building or off site.')
     m = next((pm for pm in re.finditer(r"\b(?:parking|garage|carport|driveway|off[- ]street)\b", text, re.I)
               if not re.search(r"\bassessments?\b|\brepair|\breplacement|\bresurfac|\bsealcoat", _net_clause(text, pm.start(), pm.end()), re.I)), None)  # "assessment for the parking deck repair" is a cost, not parking
     if m and not out.get("parking") and out.get("parking_cost") is None and not re.search(r"parking|garage|carport|driveway", low_facts) \

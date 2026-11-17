@@ -76,7 +76,11 @@ _NOT_COST_SENTENCES = {
     "old_price": f"It looks like an older price that the listing replaces, {NOT_A_COST_MARK}. Ask if the rent saved is the right one.",
     "deposit_alternative": f"It looks like an alternative to the deposit, {NOT_A_COST_MARK}. Ask which one you would pick and what it costs.",
     "lease_option": f"It looks like the rent for another lease length, {NOT_A_COST_MARK}. Ask which lease length you want.",
+    "elsewhere": f"It is the price the same place has on another listing, {NOT_A_COST_MARK}. The rent saved comes from this listing.",
 }
+_OTHER_SITE = r"(?:elsewhere|(?:on|at|by|in)[ \t]+(?:another|other|a[ \t]+different|different|the[ \t]+other|zillow|craigslist|trulia|apartments\.com|redfin|hotpads|zumper|facebook|competitors?)\b[ \t]*(?:sites?|websites?|listings?|ads?|places?|marketplace)?|online\b|other[ \t]+(?:sites?|websites?|listings?|ads?)|another[ \t]+(?:sites?|websites?|listings?|ad))"
+_ELSEWHERE_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*[ \t]*|a[ \t]+month[ \t]*|per[ \t]+month[ \t]*|monthly[ \t]*)?(?:for[ \t]+the[ \t]+same[ \t]+(?:unit|place|apartment)[ \t]*)?" + _OTHER_SITE, re.I)
+_ELSEWHERE_BEFORE = re.compile(r"(?:\b(?:listed|listing|advertised|posted|priced|shown|found|seen|price|rent|rents?|asking)\b[^$\n;.]{0,25}|" + _OTHER_SITE + r"[^$\n;.]{0,30})$", re.I)
 
 
 def not_cost_kind(text: str, start: int, end: int, amount: float, price: Any = None) -> str:
@@ -92,6 +96,10 @@ def not_cost_kind(text: str, start: int, end: int, amount: float, price: Any = N
                                                               or re.match(r"\s*(?:/\s*mo\w*\s*)?(?:for|on|with)\s+(?:a\s+)?\d{1,2}[- ]?(?:months?|mo)\b", after, re.I)) \
             and not _COST_ITEM.search(item):
         return "lease_option"
+    if amount >= 200 and rent and abs(amount - rent) >= 1 and not _COST_ITEM.search(item) and (
+            (_ELSEWHERE_AFTER.match(after) and re.search(r"\b(?:listed|listing|advertised|posted|priced|shown|found|seen|price|rent|rents?|asking|same|unit|place|apartment)\b", before, re.I))
+            or re.search(_OTHER_SITE + r"[^$\n;.]{0,30}$", before, re.I)):
+        return "elsewhere"  # cycle 34: "Listed at $1,450 elsewhere", "Same unit on Zillow: $1,450": another listing's price, not a cost and not the rent
     if re.search(r"\bor\b[^$\n;.]{0,60}\b(?:surety|bond|waiver|guarantor|alternative)\b[^$\n;.]{0,12}$", before, re.I) and re.search(r"deposit", line, re.I):
         return "deposit_alternative"
     if amount >= 500 and rent and abs(amount - rent) >= 1 and not _COST_ITEM.search(item) and (_START_AT.search(before) or _PLAN_WORDS.search(item)):
