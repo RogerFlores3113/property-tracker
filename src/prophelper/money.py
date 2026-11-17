@@ -1118,7 +1118,12 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
         kind = _nearest_kind(notes[0], amounts[0])
         if kind is None and not _quoted_line_holds(notes[0], amounts[0]):
             kind = _OPEN_KIND.search(notes[0])  # cycle 23: a quoted line gives the figure its own label or none ("the $35 amount"); only a note with no quote is searched whole
-        return names, f"the {amounts[0]} {_OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else 'amount'} in the listing notes"
+        kind_word = _OPEN_KIND_WORDS.get(kind.group(1).lower(), kind.group(1).lower()) if kind else "amount"
+        if kind_word == "deposit":  # cycle 27: a deposit in a parking, pet, key or other named clause is that deposit, never the security deposit
+            nd = re.search(r"\b(parking|pet|key|garage|holding|reservation|storage|fob|cleaning|gate|access|mailbox|locker|bike|pool|move-in)[ \t]+deposit\b[^\"]{0,6}" + re.escape(amounts[0]), notes[0], re.I)
+            if nd:
+                kind_word = f"{nd.group(1).lower()} deposit"
+        return names, f"the {amounts[0]} {kind_word} in the listing notes"
     if 1 <= len(amounts) <= 4:
         return names, f"the {_amount_list(amounts)} amount{'s' if len(amounts) > 1 else ''} in the listing notes"
     if not amounts:

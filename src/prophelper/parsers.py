@@ -10807,7 +10807,7 @@ def _filled(out: dict[str, Any], key: str) -> bool:
 
 # A note that is about one field goes away (or is rewritten) once that field is filled. (pattern, field or fields that settle it)
 _FIELD_NOTES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple((re.compile(pat, re.I), keys) for pat, keys in (
-    (r"so the rent is left empty|rent range of \$|that looks like a monthly amount, not an asking price|Check the asking price", ("price",)),
+    (r"so the rent is left empty|rent range of \$(?![\s\S]*higher figure)|that looks like a monthly amount, not an asking price|Check the asking price", ("price",)),
     (r"billed-back average of \$|billed back to you, but the listing gives no amount|Add a utilities estimate once you know", ("utilities_estimate",)),
     (r"seller credit is blank", ("seller_credit",)),
     (r"broker fee is left empty|so no amount is saved\. Ask what it comes to", ("broker_fee",)),
