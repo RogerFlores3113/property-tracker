@@ -7854,6 +7854,11 @@ def _util_text(text: str) -> str:
     text = re.sub(r"\b(trash|garbage|waste)[ \t]+(?:pick-?ups?|collection|removal|disposal|services?)\b(?![ \t]+(?:fee|charge))", "trash", text, flags=re.I)  # "Trash pickup included" is the trash being included
     # "Tenant pays PG&E, water and trash included": the last comma part is the included one, so it is its own sentence
     text = _PAYS_THEN_INCLUDED.sub(r"\1. \2", text)
+    text = _BILLED_THEN_BRACKET.sub(lambda m: f"{m.group('names')} {m.group('verb')} {m.group('fig')}", text)  # cycle 34: "Utilities billed back by Conservice about $55 (water/sewer/trash)" is the water/sewer/trash bill
+    text = _BILLED_NO_UNIT.sub(lambda m: m.group(0) if re.search(r"deposit|fee|one[- ]time|set[- ]?up|activation|admin|move[- ]in|application", m.group("pre"), re.I)
+                               or re.search(r"quarter|annual|year|semi|bi-?month|every\s+(?:two|2|three|3|six|6)|twice|half", m.string[max(m.string.rfind(".", 0, m.start()), m.string.rfind("\n", 0, m.start()), m.string.rfind(";", 0, m.start())) + 1:(lambda e: e if e >= 0 else len(m.string))(m.string.find(".", m.end()))], re.I)
+                               else m.group("pre") + m.group("fig") + "/month", text)  # cycle 34: "billed back by Conservice about $55" is a monthly bill
+    text = _TYPICAL_NAMED.sub(lambda m: f"{m.group('names')} about ${m.group('amt')}/month", text)  # cycle 34: "Typical electric bill: $55" is the electric's own figure
     text = _scope_util_figures(text)
     text = _standalone_estimates(text)
     return text
@@ -7868,7 +7873,7 @@ def _only_scope_split(m: re.Match[str]) -> tuple[list[str], list[str]] | None:
     """"Water/sewer/trash (water and trash only) $60/mo flat": the bracket narrows the group to the names it lists. (kept, left out) or None
     when the bracket is not a narrowing ("only" or "just" must be in it and every name in it must be in the group)."""
     br = m.group("br").lower()
-    if not re.search(r"\b(?:only|just)\b", br):
+    if not re.search(r"\b(?:only|just)\b", br) or re.search(r"\bcook", br):  # cycle 34: "(gas for cooking only)" says what the gas is used for, it never narrows the list before it
         return None
     kept = [w for w in re.findall(_ONLY_NAME, br)]
     grp = [w for w in re.findall(_ONLY_NAME, m.group("grp").lower())]
@@ -8042,7 +8047,7 @@ def _billed_back_raw(text: str) -> tuple[str, float] | None:
     tenant pays for those utilities. None when the text has no such line."""
     low = text.lower()
     words = "|".join(re.escape(w) for w in _UTILITY_WORDS) + "|garbage|sewage|electricity"
-    m = re.search(r"((?:(?:" + words + r")[ \t]*(?:,|/|&|and|\+)?[ \t]*(?:and[ \t]+)?){1,6})\s*(?:(?:is|are)\s+)?(?:billed|charged|passed)\b[^$\n.]{0,30}?"
+    m = re.search(r"((?:(?:" + words + r")[ \t]*(?:,|/|&|and|\+)?[ \t]*(?:and[ \t]+)?){1,6})\s*(?:(?:is|are)\s+)?(?:billed|charged|passed)\b[^$\n.]{0,50}?"
                   r"\$\s?(\d{1,4}(?:\.\d\d)?)\s*(?:/\s*mo(?:nth)?|per month|monthly|a month)", low)
     if not m:
         # "$25/mo billed back for trash" (the amount first)
@@ -8304,11 +8309,110 @@ def _last_role(gap: str) -> str:
 _SEMI_UTIL_USE = r"(?:[ \t]+for[ \t]+(?:the[ \t]+)?(?:cooking|stove|range|oven|dryer|heat(?:ing)?))?"
 _SEMI_UTIL_SUF = r"[ \t]+(?:(?:are|is)[ \t]+)?(?:all[ \t]+)?(?:included|covered|provided|extra|separate(?:ly)?|not[ \t]+included)\b"
 _SEMI_UTIL_LIST = re.compile(
-    r"(?P<a>\b(?:" + _ROLE_WORD + r")\b[ \t]*(?:\([^)\n]{0,40}\)[ \t]*)?);[ \t]*(?=(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r"(?:[ \t]*(?:,|/|&|\band\b)[ \t]*(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r")*[ \t]*\)?(?:(?P<suf>" + _SEMI_UTIL_SUF + r")|[ \t]*(?:[;.\n]|$)))", re.I)
+    r"(?P<a>\b(?:" + _ROLE_WORD + r")\b[ \t]*(?:\([^)\n]{0,40}\)[ \t]*)?);[ \t]*(?=(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r"(?:[ \t]*(?:,|/|&|\band\b)[ \t]*(?:" + _ROLE_WORD + r")\b" + _SEMI_UTIL_USE + r")*[ \t]*\)?(?:(?P<suf>" + _SEMI_UTIL_SUF + r")|[ \t]*(?:\([^)\n]{0,40}\)[ \t]*)?(?:[;.\n|]|$)))", re.I)
 _SEMI_UTIL_CUE = re.compile(r"\b(?:pays?|paid|payer|included?|includes|responsible|utilities|tenants?|residents?|renters?|separate(?:ly)?|extra|you|landlord|owner|covers?|billed|not)\b", re.I)
 
 
 _COOKING_GAS_CLAUSE = re.compile(r"(?:(?<=[;.|\n])[ \t]*|^[ \t]*)(?:(?:and|plus|also)[ \t]+)?(?<!no )gas[ \t]+(?:for|used[ \t]+for)[ \t]+(?:the[ \t]+)?(?:cooking|stove|range|oven)(?=[ \t]*(?:[;.\n|]|$))", re.I)
+
+
+_TYPICAL_NAMED = re.compile(r"\b(?:typical|average|avg\.?|usual|normal)[ \t]+(?P<names>(?:" + _ROLE_WORD + r")(?:[ \t]*(?:,|/|&|\+|\band\b)[ \t]*(?:" + _ROLE_WORD + r"))*)\b[ \t]*(?:(?:bills?|costs?)\b[ \t]*)?(?:is|are|of|:|-)?[ \t]*"
+                            r"(?:about|around|approx\w*|roughly|~)?[ \t]*\$[ \t]?(?P<amt>\d{2,4}(?:\.\d\d)?)(?![\d,])(?![ \t]*(?:/[ \t]*(?:yr|year|qtr|quarter)|per[ \t]+(?:yr|year|quarter)|a[ \t]+(?:year|quarter)|quarterly|annual|yearly|deposit|fee|one[- ]time))", re.I)
+
+
+_BILLED_THEN_BRACKET = re.compile(r"\butilit(?:y|ies)[ \t]+(?P<verb>(?:are[ \t]+)?(?:billed|charged|passed)[ \t]+(?:back|through|on)?(?:[ \t]+(?:by|via|through|from|thru)[ \t]+[A-Za-z][\w&'.-]*(?:[ \t]+[A-Za-z][\w&'.-]*)?)?)[ \t,]*"
+                                r"(?P<fig>(?:(?:about|around|approx\w*\.?|roughly|~|at|est\w*\.?)[ \t]*)?\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly))?)[ \t]*"
+                                r"\([ \t]*(?P<names>(?:" + _ROLE_WORD + r")(?:[ \t]*(?:,|/|&|\+|\band\b)[ \t]*(?:" + _ROLE_WORD + r"))*)[ \t]*\)", re.I)
+_BILLED_NO_UNIT = re.compile(r"(?P<pre>\b(?:billed|charged|passed)[ \t]+(?:back|through|on)\b[^$\n.;]{0,40}?)(?P<fig>\$[ \t]?\d[\d,]*(?:\.\d\d)?)(?![\d]|,\d)(?![ \t]*(?:/|per\b|a[ \t]+(?:month|year|quarter)|each\b|every\b|monthly|quarterly|annual|yearly|mo\b|month|year|yr\b|qtr|\(|flat\b|total|combined))", re.I)
+_IDIOM_ITEM = r"(?:hot water|water|sewer|sewage|trash removal|trash|garbage|gas|electricity|electric|elec|heat|internet|wi-?fi)"
+_LANDLORD_IDIOM = re.compile(
+    r"(?<![\w/])(?P<names>" + _IDIOM_ITEM + r"(?:[ \t]*(?:,|/|&|\+|\band\b)[ \t]*" + _IDIOM_ITEM + r")*)(?![\w/])(?:[ \t]*[:\-][ \t]*|[ \t]+)(?:(?:is|are)[ \t]+)?"
+    r"(?:on[ \t]+(?:us|me|the[ \t]+house|our[ \t]+(?:dime|tab)|the[ \t]+(?:landlord|owner|management))|(?:covered|paid|handled|taken[ \t]+care[ \t]+of)[ \t]+by[ \t]+(?:us|me)|(?:we|i)[ \t]+(?:cover|pay|handle|provide)|comped)\b"
+    r"(?![ \t]*(?:if|unless|only|when|but|until)\b)(?![ \t]*[?])", re.I)
+_IDIOM_PAY_CUE = re.compile(r"\b(?:tenants?|residents?|renters?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for|is[ \t]+responsible[ \t]+for|responsible[ \t]+for|will[ \t]+pay|must[ \t]+pay|to[ \t]+pay)\b", re.I)
+
+
+_PAY_LIST_LABEL = re.compile(r"(?P<lead>^|[.\n;|][ \t]*)(?:(?:the[ \t]+)?(?:tenants?|residents?|renters?|you)[ \t]+)?(?:pay[ \t]+list|pays[ \t]+for|paid[ \t]+by[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?)|bills[ \t]+you[ \t]+pay|you[ \t]+pay[ \t]+for)[ \t]*[:\-]", re.I | re.M)
+
+
+def _pay_list_label(text: str) -> str:
+    """Cycle 34: "Pay list: electric; gas; water; sewer; trash." is what the tenant pays. The label is written as "Tenant pays:" so the list readers see it."""
+    return _PAY_LIST_LABEL.sub(lambda m: m.group("lead") + "Tenant pays:", text)
+
+
+def _estimate_sentence_is_billed(text: str, amount: Any) -> bool:
+    """Cycle 34: is the sentence that holds the utilities figure itself about a billed-back (RUBS) amount? "Utilities are billed back (RUBS), about $120 a month"
+    is; "Typical bills $95. Utilities are billed back by RUBS." is not: the $95 is the typical bill."""
+    try:
+        amt = float(amount)
+    except (TypeError, ValueError):
+        return True
+    num = f"{int(amt):,}" if amt == int(amt) else f"{amt:,.2f}"
+    for clause in re.split(r"\n|;|\.(?=\s|$)", text):
+        if re.search(r"\$[ \t]?" + re.escape(num).replace(",", ",?") + r"(?!\d)", clause):
+            return bool(re.search(r"\b(?:billed|charged|passed|rubs|conservice|submeter\w*)\b", clause, re.I))
+    return True
+
+
+_ES_UTIL_CUE = re.compile(r"\b(?:inquilinos?|servicios|incluid[oa]s?|arrendador|arrendatario|propietario|due[\u00f1n]o|renta|alquiler)\b", re.I)
+_ES_WORDS = (
+    (r"\bservicios[ \t]+no[ \t]+(?:est[\u00e1a]n[ \t]+)?incluid[oa]s\b", "Utilities not included"),
+    (r"\bservicios[ \t]+(?:est[\u00e1a]n[ \t]+)?incluid[oa]s\b", "Utilities included"),
+    (r"\b(?:el[ \t]+|la[ \t]+)?(?:inquilinos?|arrendatario)[ \t]+(?:paga|pagan|pagar[\u00e1a]n?)\b", "Tenant pays"),
+    (r"\b(?:a[ \t]+cargo[ \t]+del|pagado[ \t]+por[ \t]+el|paga[ \t]+el)[ \t]+inquilino\b", "paid by tenant"),
+    (r"\b(?:el[ \t]+|la[ \t]+)?(?:propietario|due[\u00f1n]o|arrendador|casero)[ \t]+(?:paga|pagan|cubre|incluye)\b", "Landlord pays"),
+    (r"\bno[ \t]+incluid[oa]s?\b", "not included"),
+    (r"\bincluid[oa]s?\b", "included"),
+    (r"\belectricidad\b|\bluz\b(?![ \t]+natural)", "electric"),
+    (r"\bagua\b", "water"),
+    (r"\balcantarillado\b|\bdrenaje\b", "sewer"),
+    (r"\bbasura\b", "trash"),
+    (r"\bcalefacci[\u00f3o]n\b", "heat"),
+    (r"\by\b", "and"),
+)
+
+
+def _spanish_utilities(text: str) -> str:
+    """Cycle 34: "Servicios no incluidos, el inquilino paga luz y gas" and "agua incluida" are read like their English words. Only a sentence that holds a Spanish
+    utility cue (inquilino, servicios, incluido, propietario) is changed, and only for the pay words and the utility names, never the rest of the listing."""
+    if not _ES_UTIL_CUE.search(text) or not re.search(r"\b(?:luz|agua|gas|basura|electricidad|servicios|calefacci[\u00f3o]n|alcantarillado|drenaje)\b", text, re.I):
+        return text
+
+    def clause(m: re.Match[str]) -> str:
+        c = m.group(0)
+        if not re.search(r"\b(?:inquilinos?|arrendatario|servicios|incluid[oa]s?|propietario|due[\u00f1n]o|arrendador|casero)\b", c, re.I) \
+                or not re.search(r"\b(?:luz|agua|gas|basura|electricidad|servicios|calefacci[\u00f3o]n|alcantarillado|drenaje)\b", c, re.I):
+            return c
+        for pat, word in _ES_WORDS:
+            c = re.sub(pat, word, c, flags=re.I)
+        return c
+    return re.sub(r"[^.\n;]+", clause, text)
+
+
+def _landlord_idioms(text: str) -> str:
+    """Cycle 34: "util: you pay elec + gas, water/sewer/trash is on us" -- "is on us", "on the house", "we cover", "covered by us" put the utilities before it
+    on the landlord's side. They are written as their own sentence, "water/sewer/trash included.", so no reader puts them on the pay list. When a
+    "you pay ..." clause leads the same sentence, only the last comma group before the phrase is the landlord's ("you pay electric, water on us"
+    keeps electric on the pay list). A phrase that is a question, negated ("not on us") or conditional ("on us if ...") is left alone."""
+    def one(m: re.Match[str]) -> str:
+        before = m.string[max(0, m.start() - 6):m.start()].lower()
+        if re.search(r"(?:not|n't|never|\bis|\bare|\bnor|\bor)[ \t]+$", before):
+            return m.group(0)
+        names = m.group("names")
+        seg_start = max(m.string.rfind(c, 0, m.start()) for c in ".\n;!") + 1
+        lead = m.string[seg_start:m.start()]
+        keep = ""
+        if _IDIOM_PAY_CUE.search(lead) and not re.search(r"\b(?:landlord|owner|management|we|i)\b[^,]*$", lead, re.I):
+            groups = names.split(",")
+            if len(groups) > 1:
+                keep, names = ",".join(groups[:-1]), groups[-1]
+            else:
+                parts = re.split(r"[ \t]*(?:/|&|\+|\band\b)[ \t]*", names)
+                if len(parts) > 1:
+                    keep, names = names[:names.lower().rfind(parts[-1].lower())].rstrip(" \t/&+").removesuffix("and").rstrip(" \t/&+"), parts[-1]
+        names = re.sub(r"\belec\b", "electric", names.strip(), flags=re.I)
+        return (keep.strip() + ". " if keep.strip() else "") + names + " included"
+    return _LANDLORD_IDIOM.sub(one, text)
 
 
 def _cooking_gas_clause(text: str) -> str:
@@ -8370,7 +8474,7 @@ def _utility_roles(text: str) -> dict[str, Any]:
                 role, used = lead_role, 0
             elif ts:
                 role, used = "tenant", ts.end()
-                if _BILLED_WORDS.match(tail.lstrip()) or re.match(r"\s*(?:billed|charged)", tail):
+                if _BILLED_WORDS.match(re.sub(r"^(?:is|are)\s+", "", tail.lstrip())) or re.match(r"\s*(?:(?:is|are)\s+)?(?:billed|charged)", tail):
                     billed += words
                 bm = re.search(r"\$\s?((?:\d{1,3}(?:,\d{3})+|\d{1,4})(?:\.\d\d)?)", tail[:80])
                 if bm and _BILLED_WORDS.search(tail[:bm.start()]) and not re.search(r"deposit|fee|one[- ]time|set[- ]?up", tail[max(0, bm.start() - 20):bm.end() + 25]):
@@ -8438,7 +8542,7 @@ _EST_NAMED = (
     # "Water/sewer approximate $60 per month", "Water is by meter, typically around $55/month", "Electric averages $110"
     re.compile(_ROLE_LST + _EST_FILL + r"(?:" + _EST_WORD + r"[ \t]*)+" + _EST_MONEY, re.I),
     # "approximately $120/month average for heat", "$140 electric and gas average"
-    re.compile(_EST_MONEY + _EST_PER + r"(?:[ \t]*(?:on[ \t]+average|average|avg\.?|combined|total))?[ \t,]*(?:for|on|of)?[ \t]*" + _ROLE_LST, re.I),
+    re.compile(_EST_MONEY + _EST_PER + r"(?:[ \t]*(?:on[ \t]+average|average|avg\.?|combined|total))?[ \t,]*(?:for|on|of)?[ \t]*(?:(?:the|those|these|your)[ \t]+)?" + _ROLE_LST, re.I),
     # "Water/sewer $55/mo": a plain monthly figure written right after the utilities it is for (the unit is required)
     re.compile(_ROLE_LST + r"[ \t]*[:\-]?[ \t]*\$[ \t]*(\d{1,4}(?:\.\d\d)?)[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b)", re.I),
 )
@@ -12302,7 +12406,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
     ``buying`` is True for a buy search: the listing is then a home for sale, never a rental, and the rent-only readings
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
-    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_answered_questions(_tidy(text or "")))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_spanish_utilities(_answered_questions(_tidy(text or ""))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
     if not buying and text and not _SALE_WORDS.search(text):
@@ -13045,7 +13149,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         dup_i = next((i for i, f in enumerate(facts) if i > rubs_i and f.endswith(("counted as your utilities estimate.", "so ask.")) and re.match(r"The listing (?:gives about|says utilities are extra, about) \$", f)), None)
         if dup_i is not None:
             facts[rubs_i:rubs_i + 1] = []  # one note, not two: the figure the listing gives answers the "no amount" note
-            facts[dup_i - 1] = (f"The listing says utilities are billed back to you (RUBS), about {_money_cents(out['utilities_estimate'])}/month, counted as your utilities estimate. "
+            if not _estimate_sentence_is_billed(text, out["utilities_estimate"]):
+                # cycle 34: "Typical bills $95. Utilities are billed back by RUBS." the $95 is the typical bill, never a billed-back amount
+                facts[dup_i - 1] = ("The listing says utilities are billed back to you (RUBS) but gives no billed-back amount. "
+                                    f"The typical bills figure, {_money_cents(out['utilities_estimate'])} a month, is counted as your utilities estimate"
+                                    + (f" for the utilities you pay: {_join_names([w.strip() for w in pays.split(',') if w.strip() and w.strip() != 'cable'])}. Ask what the billed-back utilities cost on top." if pays and included != "all" else ". Ask which utilities it covers and what the billed-back ones cost on top."))
+            else:
+                facts[dup_i - 1] = (f"The listing says utilities are billed back to you (RUBS), about {_money_cents(out['utilities_estimate'])}/month, counted as your utilities estimate. "
                                 + (f"It is for the utilities you pay: {_join_names([w.strip() for w in pays.split(',') if w.strip() and w.strip() != 'cable'])}." if pays and included != "all" and re.search(r"Estimated? \$|Utilities estimate \$", utext) and re.search(r"\b(?:tenants?|residents?|renters?)\b[^.\n]{0,15}\bpays?\b", utext, re.I) else "It does not say which utilities you pay, so ask."))
     if every is None and re.search(r"\bcable\b", utext, re.I) and not any("Cable is" in f for f in facts):
         if re.search(r"\bcable\b[^.\n;]{0,25}\b(?:extra|separate|not included|tenant|resident|you|paid|additional)\b|\b(?:extra|separate|not included|tenant|resident|you pay|excluding|except|plus)\b[^.\n;]{0,25}\bcable\b", utext, re.I):
