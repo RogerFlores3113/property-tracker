@@ -3991,10 +3991,10 @@ def _pets(text: str, weight_rules: bool = True) -> str:
         cats = True  # "Cat fee $150": a charge for cats means cats are taken
     if re.search(_DOG_CHARGE, work):
         dogs = True
-    if re.search(r"(?<![\w$])\$\s?\d[\d,.]*[^$.;\n]{0,30}?(?:\b(?:for|per|each)[ \t]+(?:an?[ \t]+|each[ \t]+)?|/[ \t]*|\([ \t]*)cats?\b", work):
-        cats = True  # cycle 34: "Pets: $25 per cat, $50 per dog" prices both kinds, so both are taken
-    if re.search(r"(?<![\w$])\$\s?\d[\d,.]*[^$.;\n]{0,30}?(?:\b(?:for|per|each)[ \t]+(?:an?[ \t]+|each[ \t]+)?|/[ \t]*|\([ \t]*)dogs?\b", work):
-        dogs = True
+    _kc = re.search(r"(?<![\w$])\$\s?\d[\d,.]*[^$.;\n]{0,30}?(?:\b(?:for|per|each)[ \t]+(?:an?[ \t]+|each[ \t]+)?|/[ \t]*|\([ \t]*)cats?\b", work)
+    _kd = re.search(r"(?<![\w$])\$\s?\d[\d,.]*[^$.;\n]{0,30}?(?:\b(?:for|per|each)[ \t]+(?:an?[ \t]+|each[ \t]+)?|/[ \t]*|\([ \t]*)dogs?\b", work)
+    if _kc and _kd:
+        cats = dogs = True  # cycle 34: "Pets: $25 per cat, $50 per dog" prices both kinds, so both are taken; one priced kind alone says nothing about the other
     if re.search(r"\bcats?\s+(?:up to|max(?:imum)?(?: of)?|limit(?: of)?)\s+(?:\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch))", work):
         cats = True  # "Cats up to 2"
     if re.search(r"\bdogs?\s+(?:up to|max(?:imum)?(?: of)?|limit(?: of)?)\s+(?:\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch))", work):
@@ -4736,8 +4736,8 @@ def _kinded_pet_charges(text: str, unlabeled: bool = False) -> list[tuple[str, s
             if not kind:
                 continue
             if not typ:
-                if _KC_MONTHLY.match(sent[am.end():]):
-                    typ = "rent"
+                if _KC_MONTHLY.match(sent[am.end():]) or _KC_MONTHLY.match(text[end:hi]):
+                    typ = "rent"  # "$35 per cat monthly"
                 else:
                     labels = list(_KC_LABEL.finditer(sent[:am.start()]))
                     typ = labels[-1].group(1).lower() if labels else ""
@@ -5320,7 +5320,7 @@ def _pet_limits(text: str) -> list[str]:
         clause = re.split(r"[\u2714\u2713\u2705\u2611]\ufe0f?\s*(?:\([^)]*\)\s*)?", clause)[-1].strip(" -:,")  # cycle 23: "Heated garage ✔ ($135/mo) Pet friendly (dogs up to 40 lbs)": the pet rule is the part after the last tick, not the whole feature line
         if not re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", clause, re.I):
             continue
-        if _NO_BREED_RULE_ONLY.match(clause):
+        if _NO_BREED_RULE_ONLY.match(clause) and re.search(r"\bcats?\b", clause, re.I):
             continue  # cycle 34: "No breed restrictions apply to cats" restricts nothing, so it is not a limit to quote
         # cycle 31: "SPACIOUS 3/2 HOME - NO PETS OVER 40LBS!!!": a headline that ends in the pet rule gives the rule, not the whole headline
         bits = [b for b in re.split(r"[ \t]+[-\u2013\u2014|][ \t]+", clause) if b.strip()]
