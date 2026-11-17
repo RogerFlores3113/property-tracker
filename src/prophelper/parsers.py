@@ -7431,7 +7431,7 @@ def _billed_back_unnamed(low: str) -> tuple[str, float] | None:
             continue  # "Water/sewer billed back by usage. Trash $15/mo.": the $15 is the trash fee, not the utilities bill
         return ("", float(m.group(1)))
     bb = _BILLED_BACK_UNNAMED.search(low)  # cycle 33: "Utilities billed back by Conservice about $60" (no "/mo"): the same billed-back average
-    if bb and not _NOT_UTILITY_LINE.search(low[max(low.rfind("\n", 0, bb.start()), low.rfind(". ", 0, bb.start()), low.rfind(";", 0, bb.start()), 0):bb.end()]):
+    if bb and bb.group("who") and not _NOT_UTILITY_LINE.search(low[max(low.rfind("\n", 0, bb.start()), low.rfind(". ", 0, bb.start()), low.rfind(";", 0, bb.start()), 0):bb.end()]):
         return ("", float(bb.group("amt").replace(",", "")))
     return None
 
