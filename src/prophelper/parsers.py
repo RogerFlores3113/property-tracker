@@ -5887,6 +5887,8 @@ def _seller_credit(text: str, offers: list[str] | None = None) -> float | None:
             r"\bseller(?:'s)?[ \t]+(?:closing(?:[ \t]+costs?)?[ \t]+)?(?:help|assistance|aid|support|allowance)\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt,
             r"\bseller(?:'s)?[ \t]+(?:help|assistance|aid|support)(?:[ \t]+(?:with|toward|towards|for))?[ \t]+closing(?:[ \t]+costs?)?\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt,
             r"\bseller[- ]paid[ \t]+closing(?:[ \t]+costs?)?\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt,
+            # cycle 34: "Seller pays $5,000 in concessions", "Seller will give $4,000 as a closing credit", "Seller to contribute $3,000 in credits"
+            r"\bseller(?:'s)?[ \t]+(?:will[ \t]+|to[ \t]+)?(?:pays?|gives?|contribut\w*|offers?|provid\w*)[ \t]+(?:the[ \t]+buyer[ \t]+)?(?:about[ \t]+|approx\.?[ \t]+)?" + amt + r"[ \t]+(?:in|as|of|for)[ \t]+(?:an?[ \t]+)?(?:seller[ \t]+|closing[ \t]+(?:cost[ \t]+)?)?(?:concessions?|credits?|contributions?)\b",
             # cycle 23: "Seller to provide a $4,000 closing credit", "$4,000 closing credit from the seller", "Closing credit of $4,000 from seller"
             r"\bseller(?:'s)?[ \t]+(?:to|will|shall)[ \t]+(?:provide|give|offer|grant|issue|extend)[ \t]+(?:an?[ \t]+|the[ \t]+)?" + amt,
             amt + r"[ \t]+(?:closing[ \t]+(?:cost[ \t]+)?)?(?:credits?|concessions?)\b(?=[^\n.]{0,60}\bseller\b)",
@@ -6004,7 +6006,14 @@ def _seller_credit_detail(text: str, price: float | None) -> tuple[float | None,
         if pm:
             words += f" (${_num(pm.group(1)):,.0f})"
         return None, [f"The listing offers seller concessions of {words}. Ask what the seller will really give."]
-    if re.search(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:pays?|paid|covers?|contribut\w*|concessions?|credits?)\b[^.\n]{0,40}\bclosing[ \t]+costs?\b|\bclosing[ \t]+costs?\b[^.\n]{0,30}\b(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?seller\b", text, re.I):
+    full_m = re.search(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+|to[ \t]+|shall[ \t]+|agrees[ \t]+to[ \t]+)?(?:pays?|paid|covers?|contribut\w*)\b[^.\n$]{0,40}\bclosing[ \t]+costs?\b[^.\n$]{0,20}\b(?:in[ \t]+full|completely|fully|entirely|100[ \t]*%)"
+                       r"|\bseller(?:'s)?[ \t]+(?:will[ \t]+|to[ \t]+|shall[ \t]+|agrees[ \t]+to[ \t]+)?(?:pays?|paid|covers?)\b[ \t]+(?:for[ \t]+)?(?:all|every|the[ \t]+full|full)\b[^.\n$]{0,30}\bclosing[ \t]+costs?\b"
+                       r"|\b(?:buyer'?s?[ \t]+)?closing[ \t]+costs?\b[^.\n$]{0,30}\b(?:paid|covered)[ \t]+(?:in[ \t]+full[ \t]+)?by[ \t]+(?:the[ \t]+)?seller\b"
+                       r"|\bclosing[ \t]+costs?\b[ \t]*[:\-][ \t]*(?:the[ \t]+)?seller[ \t]+(?:to[ \t]+|will[ \t]+)?(?:pays?|covers?)\b[^.\n$]{0,15}\b(?:in[ \t]+full|all)\b", text, re.I)
+    if full_m:  # cycle 34: "Seller to pay buyer's closing costs in full" gives no amount: no credit is saved, and the note says what the cash to close does
+        return None, ["The listing says the seller pays the buyer's closing costs in full but gives no amount, so no seller credit is saved and the cash to close keeps its own estimate of the closing costs. "
+                      "Ask the seller's agent for the amount in writing, then enter it as the seller credit."]
+    if re.search(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+|to[ \t]+|shall[ \t]+)?(?:pays?|paid|covers?|contribut\w*|concessions?|credits?)\b[^.\n]{0,40}\bclosing[ \t]+costs?\b|\bclosing[ \t]+costs?\b[^.\n]{0,30}\b(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?seller\b", text, re.I):
         return None, ["The listing says the seller helps with closing costs but gives no amount, so the seller credit is blank. Ask how much."]
     return None, []
 
@@ -6390,13 +6399,15 @@ _BUYER_FEE_NAME = (r"home[ \t]+warrant(?:y|ies)(?:[ \t]+(?:plan|fee|policy))?|"
                    r"(?:the[ \t]+)?first[ \t]+(?:year|month)(?:'?s)?(?:[ \t]+of)?[ \t]+(?:hoa|association|condo)[ \t]+(?:dues|fees?)(?:[ \t]+(?:up[ \t-]?front|prepaid|at[ \t]+closing))?|"
                    r"(?:prepaid|pre-paid)[ \t]+(?:hoa|association|condo)(?:[ \t]+(?:dues|fees?|assessments?))?|(?:hoa|association|condo)[ \t]+(?:dues|fees?)[ \t]+(?:up[ \t-]?front|prepaid|pre-paid)|"
                    r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contribution|charge))?|reserve(?:s)?(?:[ \t]+fund)?(?:[ \t]+(?:contribution|fee|deposit|payment))|"
+                   # cycle 34: a capitalization fee and an escrow set-up or escrow deposit are one-time buyer items at closing
+                   r"capitali[sz]ation[ \t]+(?:fee|charge|contribution)|(?:initial[ \t]+)?escrow[ \t]+(?:set[- ]?up|deposit|account|reserves?|prepaids?|funding)(?:[ \t]+(?:fee|charge))?(?:[ \t]+for[ \t]+(?:(?:property|real[ \t]+estate)[ \t]+)?(?:taxes|insurance|hoi)(?:[ \t]*(?:,|and|&)[ \t]*(?:(?:property|homeowners'?|home)[ \t]+)?(?:taxes|insurance|hoi))*)?|"
                    r"reserve[ \t]+fund|move[- ]in[ \t]+fee|initiation[ \t]+fee|working[ \t]+capital(?:[ \t]+(?:contribution|fee))?|capital[ \t]+contribution|"
                    # cycle 30: one-time buyer items at closing: a condo document fee, prepaid taxes and insurance, a move-in deposit to the association
                    r"(?:(?:condo|hoa|association)[ \t]+)?(?:document|documents|docs?)[ \t]+fees?|"
                    r"prepaids?[ \t]+(?:property[ \t]+)?(?:taxes|insurance|interest|items|escrow|homeowners'?[ \t]+insurance)(?:[ \t]*(?:,|and|&)[ \t]*(?:property[ \t]+)?(?:taxes|insurance|interest|homeowners'?[ \t]+insurance))*|"
                    r"(?:(?:association|hoa|condo)[ \t]+)?move[- ]in[ \t]+deposit(?:[ \t]+(?:to|with|for)[ \t]+(?:the[ \t]+)?(?:association|hoa|condo[ \t]+association|building))?")
 _BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+(?:(?:an?|the)[ \t]+)?)?(?:one[- ]time[ \t]+|new[ \t]+)?(?:(?:hoa|association|condo)[ \t]+(?=(?:working[ \t]+)?capital))?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
-                        r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
+                        r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(,]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
 
 def _nice_fee_label(label: str) -> str:
@@ -6657,9 +6668,13 @@ def _price_cut(text: str) -> float | None:
     return _num(m.group(1))
 
 
+_ESCROW_ONE_TIME = re.compile(r"\b(?:initial[ \t]+)?escrow[ \t]+(?:set[- ]?up|deposit|account|reserves?|prepaids?|funding|cushion)\b[^.\n;]*|\b(?:taxes[ \t]+and[ \t]+insurance|insurance[ \t]+and[ \t]+taxes)[ \t]+escrow[ \t]+(?:deposit|set[- ]?up)\b[^.\n;]*", re.I)
+
+
 def _insurance(text: str) -> float | None:
     """Home insurance as a yearly amount (the field is per year). "est $1,100/yr" -> 1100; "$90/mo" -> 1080."""
-    m = re.search(r"\b(?:(?:ho-?[36](?:\s+(?:insurance|policy|coverage|premium))?|(?:condo(?:minium)?|unit[- ]owner'?s?)\s+(?:insurance|policy|coverage|premium))|(?:home(?:owner'?s?)?|hazard|property|dwelling)\s+(?:policy|coverage|premium)|(?:home(?:owner'?s?)?\s+|hazard\s+)?insurance)(?:\s+(?:est\w*\.?|estimate[d]?|quote[d]?|premium|policy|cost))*(?:[ \t]+(?:at|of|is))?[ \t:\-=]{0,6}(?:about |around |approx\.? |~)?"
+    text = re.sub(r"[ \t]*\((?:hoi|ho-?[36])\)", "", _ESCROW_ONE_TIME.sub(" ", text or ""), flags=re.I)  # "Insurance (HOI): $700/yr"  # cycle 34: "Escrow deposit for taxes and insurance $1,900 due at closing" is a one-time amount, never the insurance premium
+    m = re.search(r"\b(?:(?:hoi|ho-?[36](?:\s+(?:insurance|policy|coverage|premium))?|(?:condo(?:minium)?|unit[- ]owner'?s?)\s+(?:insurance|policy|coverage|premium))|(?:home(?:owner'?s?)?|hazard|property|dwelling)\s+(?:policy|coverage|premium)|(?:home(?:owner'?s?)?\s+|hazard\s+)?insurance)(?:\s+(?:est\w*\.?|estimate[d]?|quote[d]?|premium|policy|cost))*(?:[ \t]+(?:at|of|is))?[ \t:\-=]{0,6}(?:about |around |approx\.? |~)?"
                   r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly)?", text, re.I)
     if not m:  # "$55/mo HO6 insurance", "$660 a year condo insurance"
         m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*\w+|per\s+\w+|a\s+(?:year|month)|annual\w*|monthly)?[ \t]+(?:for[ \t]+)?(?:ho-?[36]|condo|home(?:owner'?s?)?)[ \t]+insurance\b", text, re.I)
@@ -6695,6 +6710,9 @@ def listing_pmi_monthly(text: str) -> tuple[float, str] | None:
         first = m.group(1) is not None
         raw, cents, per = (m.group(1), m.group(2), m.group(3)) if first else (m.group(4), m.group(5), m.group(6))
         per = (per or "").lower()
+        if raw == "0" and not cents and not re.match(r"[ \t]*%", (text or "")[m.end():m.end() + 3]) and not re.search(r"\bif\b|\bwith[ \t]+(?:20|25)\b|\b(?:20|25)[ \t]*%[ \t]+down", (text or "")[max(0, m.start() - 25):m.end() + 40], re.I):
+            tail = re.match(r"[ \t]*(?:\(|with\b|for\b|on\b|when\b)[^.\n;]{0,30}", (text or "")[m.end():])
+            return 0.0, " ".join((m.group(0) + (tail.group(0) if tail else "")).split())  # cycle 34: "Mortgage insurance: $0 with VA loan" is a stated zero
         if not per:
             continue
         around = text[max(0, m.start() - 25):m.end() + 40]
@@ -13432,7 +13450,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if either:
             dep_src = either[2]
             facts.append(either[3])
-        dep = _money_after(dep_src, r"(?:security |refundable |damage |rental )?deposits?|sec\.?[ \t]*dep\.?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage|fob|remote|gate|access|mailbox|storage|bike|locker|lock|card|pool|cleaning|venmo|zelle|paypal|cash\s?app|wire|wired|crypto|bitcoin|gift)\s*$", verbs=True)
+        dep = _money_after(dep_src, r"(?:security |refundable |damage |rental )?deposits?|sec\.?[ \t]*dep\.?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage|fob|remote|gate|access|mailbox|storage|bike|locker|lock|card|pool|cleaning|escrow|venmo|zelle|paypal|cash\s?app|wire|wired|crypto|bitcoin|gift)\s*$", verbs=True)
         dep = [v for v in dep if v is not None]
         rent_now = out.get("price")
         wm = _DEP_WHICHEVER.search(dep_src) if dep else None
@@ -13882,8 +13900,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if insurance is not None:
             put("insurance", insurance)
         if (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)) and (pmi_q := _try(lambda: listing_pmi_monthly(text))):
-            facts.append(f'The listing says "{pmi_q[1]}", which is {_money_c(pmi_q[0])} a month for mortgage insurance (PMI). The monthly cost uses this quote instead of the app\'s own estimate '
-                         "when the down payment is under 20%. Ask the lender to confirm it.")
+            if pmi_q[0] == 0:
+                facts.append(f'The listing says "{pmi_q[1]}", so mortgage insurance (PMI) is set to $0 a month. The monthly cost uses $0 instead of the app\'s own estimate when the down payment is under 20%. '
+                             "That is only true for the loan the listing names, so ask the lender whether it applies to your loan.")
+            else:
+                facts.append(f'The listing says "{pmi_q[1]}", which is {_money_c(pmi_q[0])} a month for mortgage insurance (PMI). The monthly cost uses this quote instead of the app\'s own estimate '
+                             "when the down payment is under 20%. Ask the lender to confirm it.")
         assessment = _try(lambda: _special_assessment(text))
         if assessment:
             facts.append(assessment)

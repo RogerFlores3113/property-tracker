@@ -903,7 +903,7 @@ ONE_TIME_NOTE = re.compile(r"not in the monthly cost|not counted in the monthly 
 # A note about an optional extra with no price ("A carport is available but the listing gives no price. It looks optional") holds no amount.
 NOT_A_COST_NOTE = re.compile(r"not a cost on top of the rent|\bis the old price and is not used\b|\bis another lease length option, so it is not added to the cost\b|\bThe rent saved is the (?:lowest|cheapest|matching)\b[^.]*\bplan\b|\bthe rent saved is\b[^.]*,\s*not the \"?starting at\"? price", re.I)
 # Cycle 31: a buyer note that says the one-time fee IS in the cash to close, or that the old price of a price cut is not used, leaves no amount out of the cost.
-_COUNTED_OR_NOT_A_COST = re.compile(r"\bcounted in the cash to close\b|\bis added on top of the closing costs and counted\b|\bold price is not used\b|\bprice was cut from\b", re.I)
+_COUNTED_OR_NOT_A_COST = re.compile(r"\bnot a cost to you\b|\bis paid by the seller\b|\bcounted in the cash to close\b|\bis added on top of the closing costs and counted\b|\bold price is not used\b|\bprice was cut from\b", re.I)
 _NOTE_CLOSED = re.compile(r"\bcounted once\b|\bnot counted again\b|\balready counted\b|\bpaid through that flat fee\b|was a mistake or an old figure|\bthe HOA covers \w+ and also lists a \w+ charge of\b|\bIt is read as a deposit of [\d.]+ months? of rent\b", re.I)  # cycle 20 join: a figure the listing takes back is not open
 _NOTE_CONDITIONAL = re.compile(r"only applies on that condition|only if (?:credit|your credit)", re.I)
 # A note with no dollar amount names an open cost only when it names a cost word ("rent" and "free" alone are not: "Ask what the month to month terms and rent are").
@@ -1099,6 +1099,8 @@ def figure_closed(note: str, start: int, end: int, optional: set[float] | frozen
         return "superseded"
     if figure_explained(note, start, end):
         return "explained"
+    if re.match(r"\s*in all\b", note[end:end + 12]) and re.search(r"\ba month for \d+ months\b|\bpaid over \d+ months\b|\bplus\b", _figure_piece(note, start, end) + note[max(0, start - 70):start], re.I):
+        return "explained"  # cycle 34: "$500 a month for 36 months ($18,000 in all)": the total is the sum of the pieces the note already counts
     if re.match(r"\s*The listing gives the deposit as a range\b", note):
         return "deposit"  # cycle 32: the deposit range note names the low end it saved and the high end it did not; both are cash at move-in
     piece = _figure_piece(note, start, end)
