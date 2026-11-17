@@ -1713,7 +1713,7 @@ def build_server(store: Store) -> FastMCP:
                          + (f". {p['caution']}" if p.get("caution") else ""))
         more = data.get("more") or {}
         if more.get("fits"):
-            lines.append(f"  ... and {more['fits']} more. Use list_places for the rest.")
+            lines.append(f"  ... and {more['fits']} more" + (f", {data['more_fits_note']}" if data.get("more_fits_note") else "") + ". Use list_places for the rest.")
         if not fits and data.get("unconfirmed"):
             lines.append(today_view.UNCONFIRMED_TEXT)
             for c in data["unconfirmed"]:

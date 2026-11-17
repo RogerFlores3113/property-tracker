@@ -41,6 +41,8 @@
         {{ select("Your pets", "pet_kind", [("cat", "A cat"), ("dog", "A dog"), ("both", "Cats and dogs")], "", blank="No pets", id="new-pet-kind") }}
         {{ field("How heavy your dog is (lb)", "pet_weight", "", kind="number", step="any", hint="Optional. A place that only allows smaller dogs then shows as not fitting your pets.", id="new-pet-weight") }}
         {{ field("How many pets", "pet_count", "", kind="number", step="1", id="new-pet-count") }}
+        {{ field("People splitting the cost", "people", "", kind="number", step="1", hint="Leave empty for 1, or for a family or couple sharing one budget.", id="new-people") }}
+        <div data-rent-only>{{ field("Adults who will sign for it (renting)", "adults", "", kind="number", step="1", hint="Kids don't count. Leave empty when it is the same as the people above. A per-adult application fee and the 'each' cost use this number.", id="new-adults") }}</div>
         <div data-buy-only>{{ field("Down payment (percent of the price, buying)", "down_payment_pct", "", kind="number", step="any", hint="Only for buying. From 0 to 100. Leave empty to use the one in Settings.", id="new-down") }}</div>
       </div>
       {{ field("Notes", "notes", "", kind="textarea", rows=2) }}

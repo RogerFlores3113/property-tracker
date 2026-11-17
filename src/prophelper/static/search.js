@@ -38,6 +38,13 @@
       };
       setBuy();
       modeSel.addEventListener("change", setBuy);
+      // The adults on the lease box is for renting only.
+      var rentOnly = document.querySelectorAll("[data-rent-only]");
+      var setRent = function () {
+        for (var r = 0; r < rentOnly.length; r++) { rentOnly[r].hidden = modeSel.value === "buy"; }
+      };
+      setRent();
+      modeSel.addEventListener("change", setRent);
     }
     // A saved place you go often with no location starts with its coordinates folded away; one with a location too.
     var folded = document.querySelectorAll("details.coords");
