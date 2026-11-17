@@ -800,6 +800,29 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def _monthly_assessment_cell(p: dict[str, Any], who: str) -> dict[str, Any] | None:
+    """The special assessment the reader counted as a monthly figure ("$667 a month for 18 months"). None when no monthly figure was counted for this place."""
+    from .money import num
+    counted = num(p.get("other_monthly_fees"))
+    if not counted:
+        return None
+    try:
+        from .parsers import _assessment_monthly, _assessment_monthly_end
+        got = _assessment_monthly(str(p.get("listing_text") or ""))
+        end = _assessment_monthly_end(str(p.get("listing_text") or "")) if got else ""
+    except Exception:  # the listing text is only a hint
+        return None
+    if not got:
+        return None
+    amount, months = got
+    when = f" for {months} months" if months else (f" through {end}" if end else "")
+    words = f"{helpers.money(amount)} a month{when}"
+    total = float(round(amount * months)) if months else None
+    if who == "buyer":
+        return _cell(f"{words} (you pay it)", total)
+    return _cell(f"{words} (counted in your monthly cost; who pays it is not stated)", total)
+
+
 def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
     """A buyer's special assessment and who pays it. What the buyer pays is the number compared."""
     if p["cost"].get("mode") != "buy":
@@ -815,6 +838,9 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
                 who = ""
             if who == "seller":
                 return _cell("Paid by the seller (not your cost)", 0.0)
+            monthly = _monthly_assessment_cell(p, who)  # cycle 35: an assessment read as a monthly figure IS entered (in other monthly fees): show it, never "amount not entered"
+            if monthly:
+                return monthly
             cell = _cell("Mentioned in the listing, amount not entered")
             cell["incomplete"] = True
             return cell
