@@ -14815,6 +14815,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _try(lambda: _plain_named_item_notes(out, facts)) or facts  # cycle 32: a clearly named monthly item gets a plain note
     if not buying:
         facts = _try(lambda: _formula_figure_notes(text_full, facts)) or facts  # cycle 32: a figure beside formula-like text is named, never silent
+        facts = _try(lambda: _formula_amount_notes(text_full, facts)) or facts  # cycle 35: a dollar sign with a formula where the amount should be
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
@@ -14856,6 +14857,35 @@ def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
         add.append(f"The listing has {what} next to text that looks like a spreadsheet formula. The odd text was ignored. Ask the landlord what the {shown} is for, and whether it is a monthly cost.")
         have += " " + add[-1]
     return facts + add
+
+
+_FORMULA_AMOUNT = re.compile(r"\$[ \t]?(?=[=\uff1d@][ \t]?[\"']?[A-Za-z]{2,12}[|(])")
+
+
+def _formula_amount_notes(text: str, facts: list[str]) -> list[str]:
+    """Cycle 35: 'Tech package $=HYPERLINK("http://e.x") monthly' has a dollar sign where the amount should be and formula text after it. No amount can be
+    read from that and none is made up, so a plain note says which item it was and what to ask, once per item."""
+    add: list[str] = []
+    seen: set[str] = set()
+    from .redflags import ai_spans, in_ai_span
+    ai_at = _try(lambda: ai_spans(text)) or []  # rule gg: a formula inside a sentence aimed at an AI tool is quoted in the flag only
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        line_start, offset = offset, offset + len(line)
+        line = line.rstrip("\r\n")
+        for m in _FORMULA_AMOUNT.finditer(line):
+            if ai_at and in_ai_span(ai_at, line_start + m.start(), line_start + m.end()):
+                continue
+            words = re.findall(r"[A-Za-z][A-Za-z'&-]*", re.split(r"[.;,!?|]", line[:m.start()])[-1])[-3:]
+            label = " ".join(w for w in words if w.lower() not in ("and", "the", "a", "also", "plus", "is", "are", "of", "for", "pets", "ok")).lower()
+            if label in seen:
+                continue
+            seen.add(label)
+            what = f"for the {label}" if label else ""
+            ask = f"what the {label} costs" if label else "what it is for"
+            add.append(f"The listing gives an amount {what} that could not be read: it was written as a spreadsheet formula, not a number. ".replace("amount  ", "amount ")
+                       + f"Nothing is counted for it. Ask the landlord {ask} and whether it is monthly.")
+    return facts + [a for a in add if a not in facts]
 
 
 def _plain_named_item_notes(out: dict[str, Any], facts: list[str]) -> list[str]:
@@ -16100,9 +16130,13 @@ def _no_silent_drop(text: str, out: dict[str, Any], facts: list[str], skip_util:
     if not dropguard.ENABLED or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000):
         return []  # a home for sale has its own readers and notes
     notes: list[str] = []
+    from .redflags import ai_spans, in_ai_span
+    ai_at = _try(lambda: ai_spans(text)) or []  # cycle 35 rule (gg): a figure inside a sentence aimed at an AI tool is quoted in the flag only, never in a note
     for hit in dropguard.find_unplaced(text, out, "\n".join(facts)):
         if skip_util and hit["kind"] == "util":
             continue  # the estimate on the place was set by the user or Claude, so the utility figures are answered
+        if ai_at and in_ai_span(ai_at, hit["start"], hit["end"]):
+            continue
         phrase = _net_clause(text, hit["start"], hit["end"])
         item = " ".join(str(hit["item"]).replace('"', "'").split()).strip(" ,:-'")
         if len(item) <= 120 and len(item) != len(phrase) and re.search(r"[A-Za-z]{4}", item) and (phrase in item or item in phrase):
