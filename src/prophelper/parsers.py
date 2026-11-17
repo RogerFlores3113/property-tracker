@@ -8686,6 +8686,16 @@ _PRICE_IN_TITLE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?[kK]?(?:\s*(?:/\s*mo\w*|pe
 _PROMO_BANNER = re.compile(r"\*{2,}[^*\n]{0,40}\b(?:FREE|SPECIAL|OFF|DEALS?|MONTHS?|MOVE|NO FEE|LOOK|CONCESSIONS?|PRICE|WOW|NEW|HOT)\b[^*\n]{0,30}\*{2,}")
 
 
+_UNIT_LETTER_END = re.compile(r"(?<=[a-z0-9])[ \t]+[A-Z]\.?$")
+_UNIT_LETTER_BEFORE = re.compile(r"\b(?:only|in|near|and|with|for|a|an|the|of|at|to|by|or|on)[ \t]+[A-Z]\.?$", re.I)
+
+
+def _unit_letter_end(title: str) -> bool:
+    """Cycle 28: a title that ends in one capital letter after a name word ("Beechwold Duplex Side A") ends in its unit letter, not in the article "a"."""
+    t = title.rstrip()
+    return bool(_UNIT_LETTER_END.search(t)) and not _UNIT_LETTER_BEFORE.search(t) and bool(re.search(r"[a-z]{2}", t))
+
+
 def _headline_clean(line: str) -> str:
     """A listing headline as a short name: no *** banners, no price (and nothing after it), no "!!!", no dangling word."""
     line = _PROMO_BANNER.sub(" ", line)
@@ -8699,9 +8709,10 @@ def _headline_clean(line: str) -> str:
         else:
             line = line[:m.start()] + " " + line[m.end():]
     line = " ".join(line.split()).strip(" ,;:-|/\\\u2013\u2014")
-    line = re.sub(r"[ \t]*(?:[-|:,\u2013\u2014][ \t]*)?\b(?:starting(?:[ \t]+at)?|starts?[ \t]+at|from|only|just|asking(?:[ \t]+price)?|(?:monthly[ \t]+)?rent(?:al)?(?:[ \t]+(?:is|of))?[ \t]*[:=]?|priced?(?:[ \t]+at)?|price[ \t]+is|for[ \t]+only)[ \t]*$", "", line, flags=re.I)
     line = re.sub(r"\s+for\s+(?:rent|lease)$", "", line, flags=re.I)
-    line = re.sub(r"(?:\s+(?:a|an|the|and|with|of|in|at|for|to|incl|inc))+\.?$", "", line, flags=re.I)
+    line = re.sub(r"[ \t]*(?:[-|:,\u2013\u2014][ \t]*)?\b(?:starting(?:[ \t]+at)?|starts?[ \t]+at|from|only|just|asking(?:[ \t]+price)?|(?:monthly[ \t]+)?rent(?:al)?(?:[ \t]+(?:is|of))?[ \t]*[:=]?|priced?(?:[ \t]+at)?|price[ \t]+is|for[ \t]+only)[ \t]*$", "", line, flags=re.I)
+    if not _unit_letter_end(line):
+        line = re.sub(r"(?:\s+(?:a|an|the|and|with|of|in|at|for|to|incl|inc))+\.?$", "", line, flags=re.I)
     return _word_cut(line.strip(" ,;:-|/\\\u2013\u2014"), 70)
 
 
@@ -8783,6 +8794,9 @@ def _building_name(text: str) -> str:
         if m:
             name = m.group(1).strip()
             if len(name) >= 6 and not re.match(r"(?:The\s+)?(?:Apartments?|Court|Place|Park|Square)$", name):
+                tail = re.match(r"[ \t]+(#?[A-Za-z]?\d{1,4}[A-Za-z]?|[A-Z])\b(?![ \t]*(?:bed|bd|br|bath|ba)\b)", line[m.end():]) if m else None
+                if tail and re.search(r"\b(?:Apts?|Apartment|Unit|Suite|Building|Bldg|Side)$", name):
+                    name += " " + tail.group(1)  # cycle 28: "Oak Flats Apt 3B" keeps its 3B, not a dangling "Apt"
                 return name
     return ""
 
@@ -9107,6 +9121,8 @@ def _finish_title(title: str, text: str) -> str:
     if at >= 0 and at + len(title) < len(text) and text[at + len(title)].isalnum() and title[-1].isalnum() and " " in title:
         title = title[:title.rfind(" ")]  # the pasted line goes on past the last letters, so they are half a word
     for _ in range(4):
+        if _unit_letter_end(title):
+            break  # "Beechwold Duplex Side A": the A is the unit
         cut = _DANGLING_END.sub("", title).strip()
         if cut == title or len(cut) < 3:
             break
