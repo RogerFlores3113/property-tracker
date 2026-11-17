@@ -84,7 +84,7 @@ def test_email_only_place_is_check_first_and_not_new(store, client):
     "2 bed, $1,500/mo. 12 Oak St, Urbana IL 61801. Contact via WhatsApp only.",
 ])
 def test_other_check_first_wordings_not_new(store, listing):
-    s = store.add_search("R", "rent", budget_max=4000)
+    s = store.add_search("R", "rent", budget_max=1800)
     _add(store, s, listing, title="Hinted")
     out = today.build(store, store.get_search(s["id"]))
     assert "Hinted" in _titles(out["check_first"]) and "Hinted" not in _titles(out["new"])

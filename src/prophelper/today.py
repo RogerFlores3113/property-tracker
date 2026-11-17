@@ -626,9 +626,10 @@ def new_places(store: Store, search: dict[str, Any]) -> list[dict[str, Any]]:
     if not unseen:
         return []
     rows = enrich.enrich_places(store, search, unseen)
-    # cycle 30: a place that already shows under Check first because of a scam hint (not only a low rent) is not listed here too
+    # cycle 30: a place that already shows under Check first because of a scam hint is not listed here too. A very low rent stays here with its
+    # warning (that is what this list is for, see below), even when the low-price hint is its only flag.
     out = [p for p in rows if not fails_dealbreakers(p) and not possible_scam(p) and not ai_text_only(p)
-           and not redflags.scam_sign_flags(p.get("flags") or [])]
+           and (low_rent(p) or not redflags.scam_sign_flags(p.get("flags") or []))]
     for p in out:
         p["low_rent_note"] = low_rent(p)  # a very low rent stays visible here now that cost check leaves such places out
     return out
