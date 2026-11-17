@@ -170,9 +170,18 @@ def cost_unsettled(place: dict[str, Any]) -> str:
     return ""
 
 
+INSURANCE_NOT_FILLED = "insurance not filled in yet"
+
+
+def insurance_only_unknown(place: dict[str, Any]) -> bool:
+    """Cycle 28: a buy place whose only unknown cost part is home insurance. A buyer rarely has a quote at the first look, so such a
+    place may show under Best fits, marked "insurance not filled in yet", and its monthly cost stays marked not complete."""
+    return (place.get("cost") or {}).get("mode") == "buy" and unknown_cost_parts(place) == ["insurance"]
+
+
 def is_best_fit(place: dict[str, Any]) -> bool:
     return (fits(place) and place["score_total"] >= MIN_FIT_SCORE and not is_near(place) and not ai_text_only(place) and not cost_unsettled(place)
-            and not over_budget(place) and not unknown_cost_parts(place) and not compare.cash_left_out(place)
+            and not over_budget(place) and (not unknown_cost_parts(place) or insurance_only_unknown(place)) and not compare.cash_left_out(place)
             and not (place.get("score") or {}).get("lease_gap"))  # one rule: an unknown cost part is never a best fit
 
 
@@ -181,7 +190,7 @@ def best_fits(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[st
     open_rows = [p for p in rows if not p["hidden"] and p["stage"] not in OFF_THE_MARKET and is_best_fit(p)
                  and not no_price(p)]
     # a place whose cost leaves listed amounts out never ranks above a complete place (its price is only as low as what was read)
-    open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), bool(compare.cost_may_be_higher(p)), -p["score_total"], _cost_key(p), p["title"].lower()))
+    open_rows.sort(key=lambda p: ((p.get("score") or {}).get("sort_group", 0), bool(compare.cost_may_be_higher(p)), insurance_only_unknown(p), -p["score_total"], _cost_key(p), p["title"].lower()))
     if open_rows and _no_address(open_rows[0]):  # a place with no address is never the top pick when another full fit has one
         i = next((i for i, p in enumerate(open_rows) if not _no_address(p)), None)
         if i is not None:
@@ -289,6 +298,8 @@ def caution(place: dict[str, Any]) -> str:
     higher = compare.cost_may_be_higher(place)
     if higher:
         parts.append(higher)
+    if insurance_only_unknown(place):
+        parts.append("Home " + INSURANCE_NOT_FILLED + ", so the monthly cost is not complete.")
     return " ".join(parts)
 
 
@@ -381,6 +392,8 @@ def cost_check(rows: list[dict[str, Any]], also: Any = ()) -> list[dict[str, Any
         parts = unknown_cost_parts(p)
         if not why and not parts:
             continue
+        if not why and insurance_only_unknown(p) and is_best_fit(p):
+            continue  # cycle 28: shown under Best fits, marked "insurance not filled in yet"
         ask = "Ask the listing agent before you count on this cost." if (p.get("cost") or {}).get("mode") == "buy" \
             else "Ask the landlord before you count on the rent."
         if why:
