@@ -438,12 +438,13 @@ def _cost_text(e: dict[str, Any]) -> str:
         parts.append(f"fees spread {helpers.money(one['amount'])}")
     asl = compare_mod.as_listed(e)
     unknown_costs = compare_mod.cost_unknowns(e)
-    text = ("Monthly cost as listed, not checked " if asl else "Monthly cost so far, not complete " if unknown_costs else "True monthly cost ") + f"{helpers.money(cost['total'])}" + (" (" + " + ".join(parts) + ")" if len(parts) > 1 else "")
+    text = ("Monthly cost as listed, not checked " if asl else "Monthly cost so far, not complete " if unknown_costs or compare_mod.cost_incomplete(e) else "True monthly cost ") + f"{helpers.money(cost['total'])}" + (" (" + " + ".join(parts) + ")" if len(parts) > 1 else "")
     if _per_person_text(e):
         text += "; " + _per_person_text(e)
     if unknown_costs:  # the same names the Compare page and "Still unknown" use
         text += "; missing: " + ", ".join(unknown_costs)
-    return text + (". " + cost["notes"][0] if cost["notes"] and cost["mode"] == "buy" else "")
+    pets_note = compare_mod.pet_charges_not_counted(e)
+    return text + (". " + cost["notes"][0] if cost["notes"] and cost["mode"] == "buy" else "") + (". " + pets_note if pets_note else "")
 
 
 def _score_text(e: dict[str, Any]) -> str:
@@ -1663,7 +1664,7 @@ def build_server(store: Store) -> FastMCP:
         if not tail:
             lines.extend(compare_mod.skipped_unknown_sentences(lc, ref))
         priced_ = [e for e in compare_mod._live(es) if e["cost_total"] is not None]
-        if priced_ and all(e["score"].get("fit") == "check_first" or e.get("possible_scam") or compare_mod.has_ai_text(e) for e in priced_):
+        if priced_ and all(e["score"].get("fit") == "check_first" or e.get("possible_scam") or compare_mod.has_ai_text(e) or compare_mod.has_hidden_chars(e) for e in priced_):
             lines.append("Every place has something to check first, so none of them can be compared on price until you have checked them.")
         elif lc["blocked"]:
             lines.append("Cheaper, but not a place to pick: " + ", ".join(f"#{e['id']} ({why})" for e, why in lc["blocked"]) + ".")

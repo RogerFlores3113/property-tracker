@@ -742,6 +742,19 @@ def _join_and(names: list[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
+_OPEN_NOTE_COSTS = ((re.compile(r"\b(?:hoa|association (?:fees?|dues)|condo (?:fees?|dues)|monthly (?:association|maintenance) fees?)\b", re.I), "HOA"),)
+
+
+def _open_note_names(place: dict[str, Any], pattern: re.Pattern[str]) -> bool:
+    """True when a note about a monthly cost the listing gave is still open (said but not counted) and it names this cost."""
+    try:
+        from . import money
+        notes = money.open_listing_notes(place.get("reader_notes"), place)
+    except Exception:  # never let a display helper break the score
+        return False
+    return any(pattern.search(n) for n in notes)
+
+
 def _unknown_price_concerns(place: dict[str, Any], cost: dict[str, Any], mode: str) -> tuple[str, str] | None:
     """(concern, cap reason) when the place has no rent or price, or (buying) an unknown tax, insurance or HOA. The
     same "Fits, but check" wording the price rule uses for unknown rent-side costs. None when nothing is unknown."""
@@ -751,6 +764,10 @@ def _unknown_price_concerns(place: dict[str, Any], cost: dict[str, Any], mode: s
     if mode == "buy":
         names = {"property tax": "property tax", "insurance": "insurance", "hoa": "HOA"}
         unknown = [names[u.lower()] for u in cost.get("uncounted") or [] if u.lower() in names]
+        for word, label in _OPEN_NOTE_COSTS:  # cycle 29: an HOA the listing states but the cost leaves out is as unknown as one never filled in
+            if label not in unknown and _open_note_names(place, word):
+                unknown.append(label)
+        unknown = [u for u in ("property tax", "insurance", "HOA") if u in unknown]
         if unknown:
             text = _join_and(unknown)
             return f"{text} not counted yet, so the monthly cost is low", f"{text} not known yet"

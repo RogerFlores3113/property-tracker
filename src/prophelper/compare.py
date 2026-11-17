@@ -180,7 +180,14 @@ def cost_unknowns(p: dict[str, Any]) -> list[str]:
     """Every unknown cost part the cost math knows about, in plain words: unfilled costs, utilities the tenant pays or the
     listing does not include, and pet charges (a search with a pet, a place that allows pets, no fee or deposit). The one
     source for "Not counted yet", "Still unknown" and Claude's unknowns."""
-    return list(dict.fromkeys([*_missing_names(p), *pet_charges_unknown_text(p)]))
+    return list(dict.fromkeys([*_missing_names(p), *pet_charges_unknown_text(p), *_left_out_of_notes(p)]))
+
+
+def _left_out_of_notes(p: dict[str, Any]) -> list[str]:
+    """Cycle 29: a buyer's one-time amount the listing gave and the cost does not count is the one reason a cost can be "not all in" with no
+    named part. It is named here, so every surface (Today, the place page, Claude's tools, Compare) that asks "is anything unknown?" agrees."""
+    c = p.get("cost") or {}
+    return ["an amount from the listing notes"] if c.get("all_in") is False and not c.get("uncounted") and not c.get("missing") else []
 
 
 def _join_and(items: list[str]) -> str:
@@ -323,7 +330,16 @@ def as_listed(p: dict[str, Any]) -> bool:
     """True when a place's cost can only be shown "as listed, not checked": it is marked check first (a scam sign or text aimed at AI
     tools) or its rent looks wrong. One rule for every surface (the page, Claude's tools, Compare): such a place never says "true cost"."""
     s = p.get("score") or {}
-    return bool(p.get("check_first") or p.get("possible_scam") or s.get("scam") or s.get("rent_check") or s.get("fit") == "check_first")
+    return bool(p.get("check_first") or p.get("possible_scam") or s.get("scam") or s.get("rent_check") or s.get("fit") == "check_first"
+                or has_hidden_chars(p))
+
+
+def has_hidden_chars(p: dict[str, Any]) -> bool:
+    """Cycle 29: True when hidden characters were removed from the listing text. That is the only flag some places have, and it is
+    not a scam sign, but what the listing says is not what the text really held: its cost is shown as listed, never as a true cost, and
+    the place never wins "lowest cost"."""
+    from . import redflags
+    return any(redflags.is_hidden_note(f) for f in p.get("flags") or [])
 
 
 _LOWEST_UNIT = re.compile(r"lowest unit price|lowest price of any size", re.I)
@@ -335,8 +351,12 @@ def lowest_unit(p: dict[str, Any]) -> bool:
 
 
 def cost_incomplete(p: dict[str, Any]) -> bool:
+    """THE completeness check (cycle 29): Today, the Board, the place page, Claude's tools and Compare all ask this one question, so a place
+    is never "not complete" on one page and "true cost" or "nothing unknown" on another. It is incomplete when the cost math left a part out,
+    a part is unknown by the Compare page's own list (``cost_unknowns``), or the cash up front leaves an amount out."""
     c = p.get("cost") or {}
-    return bool(c.get("uncounted") or c.get("all_in") is False or (c.get("cash_to_close") or {}).get("left_out"))
+    return bool(c.get("uncounted") or c.get("all_in") is False or (c.get("cash_to_close") or {}).get("left_out")
+                or (c.get("cash_at_move_in") or {}).get("left_out") or cost_unknowns(p) or partial_utilities(p))
 
 
 AS_LISTED_WORDS = "as listed, not checked"
@@ -365,6 +385,12 @@ def cost_headline(p: dict[str, Any], each: bool = True) -> str:
         return "Cost unknown"
     people = int(c.get("people") or 1) if each else 1
     if not as_listed(p):
+        base = money_mod.headline(c, 1)
+        if cost_incomplete(p) and "not counted" not in base:  # cycle 29: a cost the page calls incomplete elsewhere says so here too
+            text = base + ", not complete"
+            if people > 1:
+                text += f" ({money_mod._dollars(c['total'] / people)} each for {people} {c.get('split_noun') or 'people'})"
+            return text
         return money_mod.headline(c, people, c.get("split_noun") or "people")
     text = f"{money_mod._dollars(c['total'])}/mo {AS_LISTED_WORDS}"
     unc = [money_mod._plain_amounts_label(u) for u in money_mod.uncounted_display(c)]
@@ -390,6 +416,21 @@ def cost_text_short(p: dict[str, Any]) -> str:
     return helpers.money(t) + w
 
 
+def pet_charges_not_counted(p: dict[str, Any]) -> str:
+    """Cycle 29: "Pet rent $35 a month is in the listing but is not counted, because this search has no pets. ..." for a rental whose listing gave
+    a pet charge the cost leaves out (the search has no pet). The place page and Claude's get_place both say it. '' when nothing was left out."""
+    c = p.get("cost") or {}
+    if c.get("mode") != "rent" or c.get("pets_counted", True):
+        return ""
+    rent, fee, dep = (money_mod.num(p.get(k)) for k in ("pet_rent", "pet_fee", "pet_deposit"))
+    parts = [x for x in (f"pet rent {money_mod.exact_dollars(rent)} a month" if rent else "", f"a pet fee of {money_mod.exact_dollars(fee)}" if fee else "",
+                         f"a pet deposit of {money_mod.exact_dollars(dep)}" if dep else "") if x]
+    if not parts:
+        return ""
+    return (parts[0][0].upper() + parts[0][1:] + (" and " + " and ".join(parts[1:]) if len(parts) > 1 else "") + " " + ("is" if len(parts) == 1 else "are")
+            + " in the listing but not counted, because this search has no pets. If you have a pet, add it to the search and the cost will change.")
+
+
 def cash_left_out(p: dict[str, Any]) -> bool:
     c = p.get("cost") or {}
     return bool((c.get("cash_to_close") or {}).get("left_out") or (c.get("cash_at_move_in") or {}).get("left_out"))
@@ -403,6 +444,8 @@ def nothing_unknown_guard(p: dict[str, Any], text: str) -> str:
             text += "; Unknown: " + ", ".join(missing)
         return text
     if as_listed(p):
+        if has_hidden_chars(p) and not (p.get("check_first") or p.get("possible_scam") or (p.get("score") or {}).get("fit") == "check_first"):
+            return "Not checked: hidden characters were removed from the listing text"
         return "Not checked: this place is marked check first"
     cash = cash_unknown_parts(p)
     if cash:  # cycle 27: a deposit or pet charge nobody filled in is an unknown, so "Nothing unknown" never sits beside "deposit not known"
@@ -557,7 +600,7 @@ def _ineligible(p: dict[str, Any], best_of: bool = False) -> bool:
     (a small overage, often from a guess) can still win, and its Fit cell says it is a near miss. In a best-of line
     (``best_of``: lowest cost, highest score) a place with text aimed at AI tools is left out too."""
     return (p["score"].get("fit", "fits") not in ("fits", "near_miss") or bool(p.get("possible_scam"))
-            or (best_of and (ai_text_only(p) or p.get("stage") == "Passed" or bool(p["score"].get("rent_check")))))  # a place the user passed on never wins a best-of line
+            or (best_of and (ai_text_only(p) or has_hidden_chars(p) or p.get("stage") == "Passed" or bool(p["score"].get("rent_check")))))  # a place the user passed on never wins a best-of line
 
 
 def _live(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -674,6 +717,8 @@ def lowest_cost(places: list[dict[str, Any]]) -> dict[str, Any]:
             out["blocked"].append((p, "check it first: possible scam"))
         elif ai_text_only(p):
             out["blocked"].append((p, "check it first: text aimed at AI tools in the listing"))
+        elif has_hidden_chars(p):
+            out["blocked"].append((p, "check it first: hidden characters were removed from the listing text"))
         elif p["score"].get("rent_check"):
             out["blocked"].append((p, "check the rent first: the saved rent looks too low to be right"))
         elif p["score"].get("fit") == "near_miss":
@@ -1150,7 +1195,7 @@ def lowest_cost_sentences(places: list[dict[str, Any]], name) -> list[str]:
     out: list[str] = []
     places = _live(places)
     priced = [p for p in places if p["cost_total"] is not None]
-    if priced and all(p["score"].get("fit") == "check_first" or p.get("possible_scam") or has_ai_text(p) for p in priced):
+    if priced and all(p["score"].get("fit") == "check_first" or p.get("possible_scam") or has_ai_text(p) or has_hidden_chars(p) for p in priced):
         # every priced place has a check-first flag: none is "cheapest", and the price is not a fair comparison yet
         out.append("Every place has something to check first, so none of them can be compared on price until you have checked them.")
         out.extend(unpriced_sentences(places, name))

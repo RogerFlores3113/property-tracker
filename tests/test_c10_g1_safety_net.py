@@ -262,7 +262,8 @@ def test_share_json_and_csv_leave_the_notes_out(client, store):
     store.add_place(search_id=s["id"], title="Keep", address="1 A St", price=1400, reader_notes="SECRETNOTE not counted anywhere")
     shared = client.get(f"/search/export.json?id={s['id']}").text
     assert "SECRETNOTE" not in shared
-    for url in ("/export/places.csv", "/export.csv"):  # /places.csv carries the notes since cycle 11 (its own column)
-        res = client.get(url)
-        if res.status_code == 200:
-            assert "SECRETNOTE" not in res.text
+    # /places.csv carries the notes since cycle 11 (its own column), and since cycle 29 /export.csv and /export/places.csv are that same
+    # download (tests/test_c29_g5_export_share.py), so the shared file and the share page are what must leave the notes out
+    res = client.get("/share?ids=1,2")
+    if res.status_code == 200:
+        assert "SECRETNOTE" not in res.text
