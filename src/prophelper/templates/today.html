@@ -51,7 +51,7 @@
       {% if p.caution %}<div class="fine flag">{{ p.caution }}</div>{% endif %}</div></li>
     {% endfor %}
   </ol>
-  {% if capped and capped.fits %}<p class="fine">and {{ capped.fits|num }} more. <a href="/board">See the whole board</a>.</p>{% endif %}
+  {% if capped and capped.fits %}<p class="fine">and {{ capped.fits|num }} more{% if more_fits_note %}, {{ more_fits_note }}{% endif %}. <a href="/board">See the whole board</a>.</p>{% endif %}
   <p class="fine">The highest scores among places that have every must have. <a href="/board">See the whole board</a>.</p>
 </section>
 {% elif unconfirmed %}

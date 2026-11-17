@@ -682,12 +682,57 @@ def _cap(items: list[Any], limit: int) -> tuple[list[Any], int]:
     return items[:limit], max(0, len(items) - limit)
 
 
+def more_incomplete_text(hidden: list[dict[str, Any]]) -> str:
+    """Cycle 32: the "and N more" under Best fits counts every further place that passes, and some of them are listed with a cost that is not complete
+    yet (a part is not filled in). Say how many, so the number matches a count of places with a complete cost: "2 of them with a cost that is not complete yet"."""
+    n = sum(1 for p in hidden if compare.cost_incomplete(p))
+    if not n:
+        return ""
+    return "1 of them has a cost that is not complete yet" if n == 1 else f"{n} of them have a cost that is not complete yet"
+
+
+def closing_target(store: Store, search: dict[str, Any], today_: date | None = None) -> dict[str, str] | None:
+    """Cycle 32: the closing countdown on Today. A closing date saved on a place still in play beats the search's target date (the place page already
+    does this); with several, the nearest one that has not passed is used and the place is named, unless it is the same day as the search's target.
+    With none in the future the search's target is used, and with no target either the most recent past one ("Closing was ...")."""
+    if not search or search.get("mode") != "buy":
+        return None
+    base = helpers.closing_info(search, today_)
+    try:
+        rows = [d for d in store.list_place_dates(search_id=search["id"]) if d.get("kind") == "closing" and d.get("stage") not in (stages.PASSED, "Closed")]
+    except Exception:  # noqa: BLE001
+        rows = []
+    rows = [d for d in rows if d.get("date")]
+    if not rows:
+        return base
+    now = (today_ or helpers.today()).isoformat()
+    future = sorted((d for d in rows if str(d["date"]) >= now), key=lambda d: (str(d["date"]), str(d.get("title") or "")))
+    if future:
+        pick = future[0]
+    elif base is not None:
+        return base
+    else:
+        pick = sorted(rows, key=lambda d: str(d["date"]))[-1]
+    info = helpers.closing_info({"mode": "buy", "target_close": str(pick["date"])[:10]}, today_)
+    if info is None:
+        return base
+    if base is not None and str(search.get("target_close") or "")[:10] == str(pick["date"])[:10]:
+        return base  # the same day as the search's own target: the plain line
+    if str(pick["date"]) < now:
+        info["today_line"] = info["today_line"].replace("Closing target was", "Closing was")
+    title = " ".join(str(pick.get("title") or "").split())
+    if title:
+        info["today_line"] += f" (for {title})"
+    return info
+
+
 def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> dict[str, Any]:
     """Everything the Today page and the MCP todays_list need for one search: the one place both read from, so every
     section holds the same places on the page and in Claude's list."""
     rows = enrich.enrich_places(store, search)
     all_top = best_fits(rows, 10 ** 6)
     top, more_fits = _cap(all_top, TOP_FITS)
+    more_fits_note = more_incomplete_text(all_top[TOP_FITS:])
     needs = needs_price(rows)
     priceless = {p["id"] for p in needs}  # a place with no price shows under "Needs a price" only
     near_closest, more_closest = _cap([] if all_top else closest(rows, 10 ** 6), TOP_FITS)
@@ -702,4 +747,4 @@ def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> d
             "near_miss": near, "near_miss_footer": near_miss_footer(near), "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
             "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late,
             "tours": store.upcoming_tours(days, search_id=search["id"]),
-            "more": {"fits": more_fits, "closest": more_closest, "unconfirmed": more_unconf, "near_miss": more_near, "late": more_late, "check_first": more_checks}}
+            "more_fits_note": more_fits_note, "more": {"fits": more_fits, "closest": more_closest, "unconfirmed": more_unconf, "near_miss": more_near, "late": more_late, "check_first": more_checks}}
