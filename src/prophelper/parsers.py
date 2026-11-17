@@ -13031,21 +13031,22 @@ _PLURAL_KIND = ((CREDIT_SENTENCE, "are credits toward your costs, not costs, so 
 
 def _only_sentence(names: str, kind: str, plural: bool) -> str:
     """Cycle 31: "Only $50 of that is not counted: it is a one-time cost, so it is not in the monthly cost." names the figures that are left out
-    first and then says why (the old "Only $50 of that is a one-time cost" read as if the other figures were not one-time costs). A kind
-    that already says "not counted anywhere" keeps the short form."""
+    first and then says why (the old "Only $50 of that is a one-time cost" read as if the other figures were not one-time costs, when a line like
+    "One-time move-in: application $45, deposit $600, key fob $50" has only the $50 left out). The other kinds keep their short form."""
+    one_time = _PLURAL_KIND[3]
     if plural:
         for single, many in _PLURAL_KIND:
             if kind == single:
-                if "not counted anywhere" in many or not many.startswith("are "):
-                    return f"Only {names} of that {many}"
-                return f"Only {names} of that are not counted: they {many}"
+                if single == one_time[0]:
+                    return f"Only {names} of that are not counted: they {many}"
+                return f"Only {names} of that {many}"
         return kind
     m = re.match(r"It (is|looks) (.*)", kind)
     if not m:
         return kind
-    if "not counted anywhere" in kind:
-        return f"Only {names} of that {m.group(1)} {m.group(2)}"
-    return f"Only {names} of that is not counted: it {m.group(1)} {m.group(2)}"
+    if kind == one_time[0]:
+        return f"Only {names} of that is not counted: it {m.group(1)} {m.group(2)}"
+    return f"Only {names} of that {m.group(1)} {m.group(2)}"
 
 
 def _with_rest_counted(sentence: str) -> str:

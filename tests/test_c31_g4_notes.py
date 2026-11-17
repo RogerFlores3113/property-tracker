@@ -261,3 +261,34 @@ class TestDepositRangeCash:
     ])
     def test_a_plain_deposit_has_no_range(self, text):
         assert "deposit_up_to" not in self._cash(text) or self._cash(text)["deposit_up_to"] is None
+
+
+# ---------------------------------------------------------------- 9. the guard: a link is never quoted, the low end of a range is not a silent drop
+
+class TestGuardLeaks:
+    def test_privacy_l5_quotes_no_link(self):
+        r = read(fixture("r30-privacy-l5.txt"))
+        n = notes_of(r)
+        assert "evil.test" not in n and "http" not in n
+        assert 'The listing mentions utilities ("Utilities estimate =HYPERLINK"), but I could not tell who pays.' in n
+
+    @pytest.mark.parametrize("text", [
+        "2 bed $1,500/mo. Laundry on site. Utilities https://evil.test/x then more text. Landlord pays water.",
+        "2 bed $1,500/mo. Parking: see www.evil.test/page for details.",
+    ])
+    def test_no_link_in_any_quote(self, text):
+        assert not re.search(r"https?:|www\.", " ".join(re.findall(r'"([^"]*)"', notes_of(read(text)))))
+
+    def test_family_l7_range_low_end(self):
+        import c20_guard as g
+        assert g.unaccounted(fixture("r30-family-l7.txt"), True) == []
+        assert g.quotes_clean(fixture("r30-privacy-l5.txt")) == []
+
+    @pytest.mark.parametrize("text,est", [
+        ("2 bed $1,500/mo. Tenant pays water ($60-$80/mo).", 80),
+        ("2 bed $1,500/mo. Tenant pays electric and water, $70 to $90 a month.", 90),
+    ])
+    def test_other_ranges(self, text, est):
+        import c20_guard as g
+        assert read(text)["utilities_estimate"] == est
+        assert g.unaccounted(text, True) == []
