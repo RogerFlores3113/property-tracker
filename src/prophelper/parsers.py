@@ -3865,7 +3865,12 @@ def _seller_credit(text: str, offers: list[str] | None = None) -> float | None:
             # cycle 23: "Seller to provide a $4,000 closing credit", "$4,000 closing credit from the seller", "Closing credit of $4,000 from seller"
             r"\bseller(?:'s)?[ \t]+(?:to|will|shall)[ \t]+(?:provide|give|offer|grant|issue|extend)[ \t]+(?:an?[ \t]+|the[ \t]+)?" + amt,
             amt + r"[ \t]+(?:closing[ \t]+(?:cost[ \t]+)?)?(?:credits?|concessions?)\b(?=[^\n.]{0,60}\bseller\b)",
-            r"\bclosing[ \t]+credits?\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt + r"(?=[^\n.]{0,40}\bseller\b)")
+            r"\bclosing[ \t]+credits?\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt + r"(?=[^\n.]{0,40}\bseller\b)",
+            # cycle 26: "Seller closing contribution $5,000", "Seller closing credit: $5,000", "Closing contribution from seller: $5,000"
+            r"\bseller(?:'s)?[ \t]+closing(?:[ \t]+costs?)?[ \t]+(?:contributions?|credits?|concessions?)\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+|approx\.?[ \t]+)?" + amt,
+            r"\bclosing(?:[ \t]+costs?)?[ \t]+(?:contributions?|credits?|concessions?)[ \t]+(?:from|by|paid[ \t]+by)[ \t]+(?:the[ \t]+)?seller\b[ \t:\-=]{0,4}(?:of[ \t]+|about[ \t]+)?" + amt,
+            r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:pays?|covers?|contributes?|credits?|gives?)[ \t]+(?:the[ \t]+buyer[ \t]+)?(?:about[ \t]+|approx\.?[ \t]+)?" + amt
+            + r"(?=[ \t]*(?:toward|towards|for|to|on|in)[ \t]+(?:the[ \t]+)?(?:buyer'?s?[ \t]+)?closing\b)")
     for pat in pats:
         for m in re.finditer(pat, text, re.I):
             if re.search(r"assessment", m.group(0), re.I):
@@ -3876,6 +3881,14 @@ def _seller_credit(text: str, offers: list[str] | None = None) -> float | None:
                 if offers is not None:
                     offers.append(" ".join(text[max(text.rfind(".", 0, m.start()), text.rfind("\n", 0, m.start())) + 1:m.end() + 20].split())[:120])
                 continue  # "Seller contribution of $9,000 available" is an offer, not a promised credit
+            value = _num(m.group(1))
+            if 100 <= value <= 5_000_000:
+                return value
+    # cycle 26: "Seller pays $6,000." with nothing after the amount, in a listing that talks about the buyer's closing costs
+    if re.search(r"\bclosing\b", text, re.I):
+        for m in re.finditer(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:pays?|contributes?|credits?|gives?)[ \t:\-=]{0,3}(?:about[ \t]+|approx\.?[ \t]+)?" + amt + r"(?!\.?\d)[ \t]*(?:[.;,\n]|$)", text, re.I):
+            if _CAP_WORDS.search(text[max(0, m.start() - 25):m.start()]):
+                continue
             value = _num(m.group(1))
             if 100 <= value <= 5_000_000:
                 return value
@@ -4195,8 +4208,16 @@ def _assessment_amount(sentence: str, *, skip_monthly: bool = False) -> float | 
     return _num(m.group(1)) if m else None
 
 
-_PAYER_SELLER = re.compile(r"\b(?:seller|owner)\b[^.\n]{0,25}\b(?:pays?|paid|to pay|responsib\w*|covers?|credit)\b|\bpaid (?:in full )?by (?:the )?(?:seller|owner)\b|\b(?:seller|owner)[- ]paid|\bpayable (?:in full )?by (?:the )?(?:seller|owner)\b|\bdue from (?:the )?(?:seller|owner)\b|\bresponsibility of (?:the )?(?:seller|owner)\b|\bowed by (?:the )?(?:seller|owner)\b|\b(?:seller|owner)[ \t]+(?:will |would |shall )?owes?\b", re.I)
-_PAYER_BUYER = re.compile(r"\bbuyer\b[^.\n]{0,25}\b(?:pays?|assumes?|to pay|responsib\w*|takes?|inherits?|covers?|(?:will |would |shall )?owes?)\b|\bowed by (?:the )?buyer\b|\bresponsibility of (?:the )?buyer\b|\bpaid by (?:the )?buyer|\bassumed by (?:the )?buyer|\bbuyer[- ]paid|\bpayable (?:in full )?by (?:the )?buyer|\bdue from (?:the )?buyer", re.I)
+# Cycle 26: payer words. Buyer: buyer, purchaser, new owner. Seller: seller, current owner (a bare "owner" that is not the "new owner").
+_PW_S = r"(?:sellers?|(?:current|present|existing|previous|prior|outgoing)[ \t]+owner|(?<!new[ \t])(?<!incoming[ \t])(?<!next[ \t])owner)"
+_PW_B = r"(?:buyers?|purchasers?|(?:new|incoming|next)[ \t]+owner)"
+_PW_THE_S, _PW_THE_B = r"(?:the[ \t]+)?" + _PW_S, r"(?:the[ \t]+)?" + _PW_B
+_PAYER_SELLER = re.compile(r"\b" + _PW_S + r"\b[^.\n]{0,25}\b(?:pays?|paid|to pay|responsib\w*|covers?|credit)\b|\bpaid (?:in full )?(?:at (?:closing|close) )?by " + _PW_THE_S + r"|\b(?:seller|owner)[- ]paid|\bpayable (?:in full )?by " + _PW_THE_S
+                           + r"|\bdue from " + _PW_THE_S + r"|\bresponsibility of " + _PW_THE_S + r"|\bowed by " + _PW_THE_S + r"|\b" + _PW_S + r"[ \t]+(?:will |would |shall )?owes?\b"
+                           + r"|\bcharged to " + _PW_THE_S + r"|\b" + _PW_S + r"'?s?[ \t]+(?:responsibility|expense)\b|\bat[ \t]+(?:closing|close|settlement)[ \t]+by[ \t]+" + _PW_THE_S, re.I)
+_PAYER_BUYER = re.compile(r"\b" + _PW_B + r"\b[^.\n]{0,25}\b(?:pays?|assumes?|to pay|responsib\w*|takes?|inherits?|covers?|(?:will |would |shall )?owes?)\b|\bowed by " + _PW_THE_B + r"|\bresponsibility of " + _PW_THE_B
+                          + r"|\bpaid (?:in full )?(?:at (?:closing|close) )?by " + _PW_THE_B + r"|\bassumed by " + _PW_THE_B + r"|\bbuyer[- ]paid|\bpayable (?:in full )?by " + _PW_THE_B + r"|\bdue from " + _PW_THE_B
+                          + r"|\bcharged to " + _PW_THE_B + r"|\b" + _PW_B + r"'?s?[ \t]+(?:responsibility|expense)\b|\bat[ \t]+(?:closing|close|settlement)[ \t]+by[ \t]+" + _PW_THE_B, re.I)
 
 
 def _buyer_closing_charges(text: str):
@@ -4213,7 +4234,7 @@ def _buyer_closing_charges(text: str):
         if contrib and re.search(r"\bat closing\b|\bone[- ]time\b|\b(?:buyer|due at|paid at)\b", sent, re.I):
             amount = _num(contrib.group(1) or contrib.group(4))
             yield amount, (contrib.group(2) or contrib.group(3)).lower(), sent
-        if re.search(r"\b(?:condo|hoa|association|building)[ \t]+assessments?\b", sent, re.I) and (_PAYER_BUYER.search(sent) or re.search(r"\bat closing\b", sent, re.I)):
+        if re.search(r"\b(?:condo|hoa|association|building)[ \t]+assessments?\b", sent, re.I) and _PAYER_BUYER.search(sent) and not _PAYER_SELLER.search(sent):
             amount = _assessment_amount(sent, skip_monthly=True)
             if amount:
                 yield amount, "condo assessment", sent
@@ -4242,16 +4263,21 @@ def _buyer_closing_note(text: str) -> str:
 _SPECIAL_SENTENCE = r"[^.\n]*\b(?:special assessments?|(?:seller|owner)[- ]paid[ \t]+(?:(?:condo|hoa|association|building)[ \t]+)?assessments?)\b[^.\n]*"
 
 
-_PAYER_NEXT = re.compile(r"^[ \t\-*\u2022]*(?:(?:it|this|that|the[ \t]+assessment)[ \t]+(?:is[ \t]+|will[ \t]+be[ \t]+)?)?(?:due|payable|owed|to[ \t]+be[ \t]+paid|paid|payment[ \t]+due)[^$]{0,30}?\b(?:from|by)[ \t]+(?:the[ \t]+)?(buyer|seller)\b"
-                         r"|^[ \t\-*\u2022]*(buyer|seller)[ \t]+(?:pays|to[ \t]+pay|will[ \t]+pay|is[ \t]+responsible|responsible)[ \t]+(?:for[ \t]+)?(?:it|this|that|the[ \t]+assessment)\b", re.I)
+_PAYER_NEXT = re.compile(r"^[ \t\-*\u2022]*(?:(?:it|this|that|the[ \t]+assessment)[ \t]+(?:is[ \t]+|will[ \t]+be[ \t]+)?)?(?:due|payable|owed|to[ \t]+be[ \t]+paid|paid|payment[ \t]+due)[^$]{0,30}?\b(?:from|by)[ \t]+(?:the[ \t]+)?(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)\b"
+                         r"|^[ \t\-*\u2022]*(buyer|purchaser|new[ \t]+owner|seller|current[ \t]+owner)[ \t]+(?:pays|to[ \t]+pay|will[ \t]+pay|is[ \t]+responsible|responsible)[ \t]+(?:for[ \t]+)?(?:it|this|that|the[ \t]+assessment)\b", re.I)
 
 
 def _assessment_payer(text: str, sentence: str) -> str:
     """"seller" / "buyer" / "" for the special assessment sentence. The sentence itself decides ("Buyer to pay special assessment of $3,000 at
     closing", "due from buyer at close"); with no payer word in it, the very next line or sentence may say it on its own ("- Due from buyer at close")."""
-    if _PAYER_SELLER.search(sentence):
+    is_seller, is_buyer = bool(_PAYER_SELLER.search(sentence)), bool(_PAYER_BUYER.search(sentence))
+    if re.search(r"\b(?:seller|buyer|purchaser)[ \t]*(?:or|and|/|&)[ \t]*(?:the[ \t]+)?(?:buyer|seller|purchaser)\b|\beither\b|\bsplit\b|\bshared?\b|\bnegotiabl\w*|\bto[ \t]+be[ \t]+(?:determined|negotiated)\b|\bTBD\b", sentence, re.I):
+        return ""  # cycle 26: "seller or buyer", "split", "negotiable": the payer is not settled
+    if is_seller and is_buyer:
+        return ""  # cycle 26: both sides named in one sentence: unknown beats a wrong payer
+    if is_seller:
         return "seller"
-    if _PAYER_BUYER.search(sentence):
+    if is_buyer:
         return "buyer"
     at = text.find(sentence) if sentence else -1
     if at >= 0:
@@ -4263,8 +4289,46 @@ def _assessment_payer(text: str, sentence: str) -> str:
             seg = nxt.group(1) if nxt else ""
         m = _PAYER_NEXT.match(seg)
         if m:
-            return (m.group(1) or m.group(2)).lower()
+            return "buyer" if re.match(r"buyer|purchaser|new", (m.group(1) or m.group(2)).lower()) else "seller"
     return ""
+
+
+_PLAIN_ASSESS_RECURRING = re.compile(r"/\s*(?:mo|month|yr|year)|\bper[ \t]+(?:month|year|quarter)|\b(?:monthly|yearly|annual\w*|quarterly|each[ \t]+(?:month|year)|a[ \t]+(?:month|year))\b|\bfor[ \t]+\d+[ \t]+(?:months?|years?|yrs?)\b", re.I)
+
+
+def _plain_assessment(text: str) -> tuple[float, str, str] | None:
+    """Cycle 26: an assessment due at closing that is not called "special": "Assessment due from buyer at closing: $2,200", "Assessment $2,200,
+    payable by purchaser at closing", "Condo assessment of $1,500 paid by seller". One sentence with the word assessment, one dollar amount, and
+    either a payer word or "at closing". Returns (amount, payer "buyer" / "seller" / "", sentence), or None. A monthly, yearly or time-limited
+    assessment, "no assessment" and a sentence with two competing amounts are left to the other readers."""
+    for sent in re.split(r"[.\n;](?!\d)", text):
+        if not re.search(r"\bassessments?\b", sent, re.I) or re.search(r"\bspecial[ \t]+assessments?\b|\bno\b[^.\n]{0,15}\bassessments?\b|\bnone\b", sent, re.I):
+            continue
+        amounts = re.findall(r"\$\s?\d", sent)
+        if len(amounts) != 1 or _PLAIN_ASSESS_RECURRING.search(sent) or re.search(r"\?\s*$", sent):
+            continue
+        payer = _assessment_payer(text, sent)
+        at_closing = re.search(r"\bat[ \t]+(?:closing|close|settlement)\b|\bdue[ \t]+(?:at|on)[ \t]+(?:closing|close|settlement)\b|\bclosing[ \t]+(?:statement|table)\b", sent, re.I)
+        if not payer and not at_closing and not re.search(r"\b(?:seller|buyer|purchaser)\b", sent, re.I):
+            continue
+        amount = _assessment_amount(sent, skip_monthly=True)
+        if amount is None:
+            m = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?!\d)(?!,\d)", sent)
+            tail = sent[m.end():] if m else ""
+            amount = _num(m.group(1)) if m and not re.match(r"\s*(?:/|per\b|a\b|each\b)", tail, re.I) else None
+        if amount:
+            return amount, payer, sent
+    return None
+
+
+def _plain_assessment_note(amount: float, payer: str) -> str:
+    if payer == "buyer":
+        return (f"The listing says an assessment of ${amount:,.0f} is paid by the buyer at closing, so it is saved as a one-time assessment paid by the buyer "
+                "and counted in the cash to close. Ask the seller's agent to confirm it.")
+    if payer == "seller":
+        return f"The listing says the seller pays an assessment of ${amount:,.0f}. It is not a cost to you, so it is not counted in the cash to close."
+    return (f"The listing has an assessment of ${amount:,.0f} due at closing but does not say who pays it, so it is not counted in the cash to close. "
+            "Ask the seller's agent who pays it, then set Who pays on this page.")
 
 
 def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | None, str, str]:
@@ -4279,7 +4343,10 @@ def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | 
             break
     if sentence is None:
         got = _buyer_closing_charge(text) if buying else None
-        return (got[0], "buyer", got[2]) if got else (None, "", "")
+        if got:
+            return got[0], "buyer", got[2]
+        plain = _plain_assessment(text) if buying else None  # cycle 26: "Assessment due from buyer at closing: $2,200" (no word "special")
+        return (plain[0], plain[1], plain[2]) if plain else (None, "", "")
     amount = _assessment_amount(sentence, skip_monthly=True)
     payer = _assessment_payer(text, sentence)
     return amount, payer, sentence
@@ -9501,6 +9568,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             closing_note = _try(lambda: _buyer_closing_note(text))
             if closing_note:
                 facts.append(closing_note)
+            elif _sentence:
+                facts.append(_plain_assessment_note(amount, payer))
         if amount:
             put("special_assessment", amount)
             if payer:
