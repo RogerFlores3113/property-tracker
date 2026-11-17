@@ -564,4 +564,15 @@ def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool 
                 continue
             seen.append(key)
         final.append(f)
-    return final
+    # cycle 28: one figure, one note. A note whose quote and figures sit inside another note's quote ("Locker $9" beside "Locker $9 ... Gym $20") is that note again
+    keys = []
+    for f in final:
+        qm = _QUOTE_NOTE.match(f)
+        keys.append((frozenset(P._dollar_values(qm.group(1))), re.sub(r"\bOnly .{1,80} of that\b", "It", qm.group(2)), re.sub(r"[^a-z0-9$.]+", " ", qm.group(1).lower()).strip()) if qm else None)
+    keep = []
+    for i, f in enumerate(final):
+        k = keys[i]
+        if k and k[0] and any(o is not None and j != i and k[0] < o[0] and k[1] == o[1] and k[2] in o[2] for j, o in enumerate(keys)):
+            continue
+        keep.append(f)
+    return keep

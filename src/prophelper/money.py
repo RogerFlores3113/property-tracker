@@ -236,7 +236,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
             missing.append("utilities estimate")
             uncounted.append(f"utilities ({names})")
             note = f"You pay {names}; not counted yet"
-            notes.append(note + ". Add a utilities estimate under Facts.")
+            # cycle 28: the cost line and the "Not counted yet because it is missing ... Fill it in under Facts" line already say this, so no third sentence
             lines.append(_line("utilities", "Utilities", None, note))
         else:
             missing.append("utilities estimate")
@@ -763,7 +763,7 @@ def note_units(text: str) -> list[str]:
     if len(lines) > 1:
         return lines
     units: list[str] = []
-    for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", " ".join(str(text or "").split())):
+    for sentence in re.split(r"(?<!\.\.)(?<=[.!?])\s+(?=[A-Z])", " ".join(str(text or "").split())):  # cycle 28: "..." inside a quoted line is not a sentence end
         if units and (_NOTE_CONTINUES.match(sentence) or _NOTE_CONTINUES_LEFT.match(sentence)):
             units[-1] += " " + sentence
         elif sentence:
