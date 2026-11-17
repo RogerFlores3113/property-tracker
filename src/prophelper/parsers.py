@@ -13072,13 +13072,13 @@ def _semantic_placed(amount: float, phrase: str, out: dict[str, Any]) -> bool:
                 if amount in vals:
                     mine_field.add(key)
                     if key == "other_monthly_fees" and re.search(r"\b(?:internet|wi-?fi|cable)\b", item, re.I) \
-                            and not re.search(r"\b(?:flat fee|amenity|valet|pest|trash fee|package|locker|storage|permit|technology)\b", item, re.I):
+                            and not re.search(r"\b(?:flat|amenity|valet|pest|trash|water|sewer|electric|gas|package|locker|storage|permit|technology)\b", item, re.I):
                         exact_only.add(key)  # cycle 32: an internet or cable price is not carried by a bigger "other fees" figure that came from another line
                 break
     for key in mine_field:  # the field must hold all the amounts of that kind in the line, or one of them was left out of it
         held = out.get(key)
         if isinstance(held, (int, float)) and not isinstance(held, bool) and held and field_sum[key] <= float(held) + 0.5 \
-                and (key not in exact_only or abs(field_sum[key] - float(held)) <= 0.5):
+                and (key not in exact_only or abs(field_sum[key] - float(held)) <= 0.5 or any(abs(v - float(held)) <= 0.5 for v in _dollar_values(phrase))):
             return True
     return bool(mine_util and est is not None and est + 0.5 >= util_sum)
 
