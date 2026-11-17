@@ -538,11 +538,20 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
             parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price)", "amount": _r(guess), "estimated": True})
     else:
         parts.append({"label": "Closing costs", "amount": _r(closing), "estimated": False})
+    left_out: list[str] = []
+    try:  # cycle 29: closing items the listing calls additional ("title and recording $1,900 additional paid by buyer") come on top of the closing costs
+        from .parsers import buyer_closing_items_additional
+        addl_paid, addl_unclear = buyer_closing_items_additional(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        addl_paid, addl_unclear = [], []
+    for name, amount in addl_paid:
+        parts.append({"label": f"Closing item on top of the closing costs ({name})", "amount": _r(amount), "estimated": False})
+    for name, amount in addl_unclear:
+        left_out.append(f"{_dollars(amount)} for {name} (called additional) isn't counted because who pays it isn't known")
     sa = num(place.get("special_assessment"))
     payer = _assessment_payer_of(place)
     if sa and payer == "buyer":
         parts.append({"label": "Special assessment (you pay it)", "amount": _r(sa), "estimated": False})
-    left_out: list[str] = []
     try:  # one-time fees the listing says the buyer pays at closing (capital improvement, reserve contribution, move-in fee)
         from .parsers import buyer_one_time_fees
         paid, unclear = buyer_one_time_fees(str(place.get("listing_text") or ""))
@@ -646,9 +655,22 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
                            f"{cfg['mortgage_rate']:g}% rate, {cfg['loan_years']:g} years"))
         if cfg["down_payment_pct"] < PMI_BELOW_PCT:
             pmi = loan * cfg["pmi_rate_pct"] / 100 / 12
-            lines.append(_line("pmi", "Mortgage insurance (PMI), an estimate", pmi,
-                               f"{cfg['pmi_rate_pct']:g}% of the loan a year, because the down payment is under {PMI_BELOW_PCT:g}%"))
-            notes.append("PMI is a rough guess. Your lender's quote decides the real number.")
+            quoted = None
+            try:  # cycle 29: a PMI figure the listing quotes is used instead of the app's own estimate
+                from .parsers import listing_pmi_monthly
+                quoted = listing_pmi_monthly(str(place.get("listing_text") or ""))
+            except Exception:  # the listing text is only a hint
+                quoted = None
+            if quoted:
+                guess = pmi
+                pmi = quoted[0]
+                lines.append(_line("pmi", "Mortgage insurance (PMI), quoted in the listing", pmi,
+                                   f"{exact_dollars(pmi)} a month, as the listing quotes it (\"{quoted[1]}\")"))
+                notes.append(f"PMI uses the {exact_dollars(pmi)} a month the listing quotes, not the app's own estimate of {_dollars(guess)}. Your lender's quote decides the real number.")
+            else:
+                lines.append(_line("pmi", "Mortgage insurance (PMI), an estimate", pmi,
+                                   f"{cfg['pmi_rate_pct']:g}% of the loan a year, because the down payment is under {PMI_BELOW_PCT:g}%"))
+                notes.append("PMI is a rough guess. Your lender's quote decides the real number.")
     tax, ins, hoa = num(place.get("property_tax")), num(place.get("insurance")), num(place.get("hoa"))
     for key, label, val, per in (("tax", "Property tax", tax, 12), ("insurance", "Insurance", ins, 12)):
         if val is None:
