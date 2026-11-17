@@ -3117,7 +3117,7 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
     if not kind and cost == 0 and _PARKING_FREE.search(low):
         kind = "lot"  # "Parking included (garage $90 optional)": the included spot, whose type the listing does not give, is a plain lot spot; the garage is the extra
     if kind == "garage" and cost is None and not prices and not any(re.search(r"\bgarage\b", n, re.I) for n in notes):
-        gtxt = next((c.strip(" ,") for c in re.split(r"[.\n;|]", low) if re.search(r"\bgarage\b", c)), "garage")
+        gtxt = next((c.strip(" ,") for c in re.split(r"[.\n;|,]", low) if re.search(r"\bgarage\b", c)), "garage")
         notes.append(f'The listing mentions a garage ("{gtxt[:60]}") but gives no price for it. Parking is saved as a garage with the cost left empty. Ask if it is included or what it costs.')
     if cost is None and kind == "lot" and not prices and re.search(r"\bdriveway\b", low) and not re.search(r"\bdriveway\b[^.\n;]{0,40}\$", low):
         notes.append("The listing mentions driveway parking but gives no price. The parking cost is left empty. Ask if it costs extra.")
