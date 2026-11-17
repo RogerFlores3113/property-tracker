@@ -7486,14 +7486,14 @@ def _bare_start_date(text: str) -> str | None:
 
 
 _MONTH_TO_MONTH = re.compile(r"\bmonth[- ]to[- ]month\b[^.\n;)\]}|<>＜＞]{0,30}", re.I)
-_M2M_PRICED = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?[^.\n;|$]{0,12}\bmonth[- ]to[- ]month\b|\bmonth[- ]to[- ]month\b[^.\n;|$]{0,12}\$\s?\d", re.I)
+_M2M_PRICED = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?[ \t]*\(?[ \t]*\bmonth[- ]to[- ]month\b", re.I)
 
 
 def _month_to_month_note(text: str, lease: Any = None) -> list[str]:
     m = _MONTH_TO_MONTH.search(text)
     if not m:
         return []
-    if _M2M_PRICED.search(text) and re.search(r"\b(?:[2-9]|1\d|2[0-4])[- ]?(?:mo\b|months?\b(?![- ]to))", text, re.I):
+    if _M2M_PRICED.search(text) and re.search(r"\$\s?\d[\d,]*[^|\n;$]{0,12}\b(?:[2-9]|1\d|2[0-4])[- ]?(?:mo\b|months?\b(?![- ]to))", text, re.I):
         return []  # cycle 27: a month-to-month rent the listing prices is quoted once, by the lease-length or "also says" note for that figure
     said = " ".join(m.group(0).split()).strip(" ,-")
     keep = "" if lease else " No lease length is saved from that."
@@ -10979,7 +10979,7 @@ def _quotes_title(phrase: str, title: Any) -> bool:
     """True when a quoted phrase is just the listing's title (or a piece of it)."""
     if not title or not isinstance(title, str):
         return False
-    if re.search(r"[$\uff04]\s?\d", phrase) and not re.search(r"[$\uff04]\s?\d", title):
+    if re.search(r"[$\uff04]\s?\d", phrase) and not re.search(r"[$\uff04]\s?\d", title) and (lambda v: bool(v) and max(v) < 500)(_dollar_values(phrase)):
         return False  # cycle 27: the title has no dollar figure, so a phrase that holds one is more than the title ("Storage unit $30" is not the title "Storage unit")
     a = " ".join(phrase.replace("...", " ").split()).lower().strip(" ()")
     b = " ".join(title.replace("...", " ").split()).lower().strip(" ()")
