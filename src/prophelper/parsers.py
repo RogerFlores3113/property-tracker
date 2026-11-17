@@ -186,6 +186,15 @@ def normalize_money(text: str) -> str:
         text = text.translate(_FULLWIDTH)
         text = re.sub(r"(?<=\d)\uFF0C(?=\d)", ",", text)
         text = re.sub(r"(?<=\d)\uFF0E(?=\d)", ".", text)
+    if "$" in text:
+        # cycle 34: a space as the thousands mark ("2 300 $ par mois", "2 300,00 $", "$2 300 par mois") is read whole, never as the small part ("300")
+        def _spaced(m: re.Match[str]) -> str:
+            return "$" + m.group(1).replace(" ", ",") + (("." + m.group(2)) if m.group(2) and m.group(2) != "00" else "")
+        text = re.sub(r"(?<![\w$.,])(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?[ \t]?\$(?![ \t]?\d)", _spaced, text)
+        text = re.sub(r"\$[ \t]?(\d{1,3}(?: \d{3})+)(?:[,.](\d{2}))?(?![\d])(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|a[ \t]+month|mensu|monat|mois|mes\b|mo\b|monthly|por\b|[.,;)]|$))", _spaced, text, flags=re.M)
+    if re.search(r"\d \d{3}", text):  # cycle 34: "Loyer 2 300 par mois", "Miete: 2 300 pro Monat": a rent label then a spaced number with no sign
+        text = re.sub(r"(?i)\b(loyer|miete|kaltmiete|warmmiete|alquiler|renta|rent)\b([ \t:=-]*(?:mensuel(?:le)?|mensual|monatlich|monthly)?[ \t:=-]*)(\d{1,3}(?: \d{3})+)(?=[ \t]*(?:/|par\b|pro\b|al\b|per\b|por\b|a[ \t]+month|mois|mes\b|monat))",
+                      lambda m: m.group(1) + m.group(2) + "$" + m.group(3).replace(" ", ","), text)
     if "$" in text or re.search(r"usd|dollar|bucks|\d\s?k\b", text, re.I):
         text = re.sub(r"\bUS\s?\$\s?(?=\d)", "$", text, flags=re.I)
         text = re.sub(r"\bUSD\s?\$?\s?(?=\d)", "$", text, flags=re.I)
@@ -1336,6 +1345,59 @@ def _real_sale_words(text: str) -> bool:
                for m in _SALE_WORDS.finditer(text))
 
 
+_BARE_OBO = re.compile(r"(?<![\w$.,#/-])(\d{1,2},\d{3}|\d{3,5})(?![\d,.]*\d)[ \t]*(?:/[ \t]*mo(?:nth)?[ \t]*)?(?:,?[ \t]*)(o\.?b\.?o\.?|obro|or[ \t]+best[ \t]+offer|or[ \t]+nearest[ \t]+offer|negotiable|neg\.?|firm|best[ \t]+offer)(?![\w])", re.I)
+
+
+def _bare_obo_rent(text: str) -> tuple[float, str] | None:
+    """Cycle 34: "nice 1bd close to campus!! 1550 obo": a number with no dollar sign and "obo", "or best offer", "firm" or "negotiable" right after it is a rent
+    when nothing else in the listing names one. A figure in a deposit, fee, pet, parking or HOA clause, or one followed by a size word, is not."""
+    if _sale_text(text):
+        return None
+    for m in _BARE_OBO.finditer(text):
+        v = _num(m.group(1))
+        if not 300 <= v <= 30000:
+            continue
+        before = text[max(text.rfind("\n", 0, m.start()), text.rfind(". ", 0, m.start()), text.rfind("|", 0, m.start())) + 1:m.start()]
+        if re.search(r"\b(?:deposit|dep\b|fees?|hoa|pets?|dogs?|cats?|parking|garage|storage|utilit\w*|tax|sq|sf|total|move[- ]?in|application|key|bills?)\b", before, re.I):
+            continue
+        if _in_open_question(text, m.end()):
+            continue
+        return v, " ".join(m.group(0).split()).rstrip(".,;:!")
+    return None
+
+
+_UNIT_WORD_NEAR = re.compile(r"(?:studio|\b\d(?:\.\d)?[ \t-]*(?:br|bd|bds|beds?|bedrooms?)\b|\b(?:one|two|three|four)[ \t-]*(?:bed|bedroom)s?\b|\bunit\b|\bplan\b|\bfloor ?plan\b|\broom\b|\bper\b)", re.I)
+_RENT_OLD_NEAR = re.compile(r"(?:\b(?:was|were|previously|formerly|originally|old|before|prior|not|from|corrected?|correction|update[d]?|now|then|special|promo\w*|reduced|starting|starts|from|as[ \t]+low|up[ \t]+to|first|months?|if|with|for)\b[^$\n]{0,24}|[-\u2013][ \t]*)$", re.I)
+
+
+def _other_rent_figures(text: str, price: float) -> list[float]:
+    """Cycle 34: two different rents in one text ("Rent $2,300/mo ... Rent is $2,450 per month", "$2,300/mo. ... Monthly rent $2,450"), neither of them a corrected,
+    old, promo, per-bed, lease-length or other-unit figure. Returns the other figures (never the saved one), so the reader can say there are two rents."""
+    out: list[float] = []
+    for a in _amounts(text):
+        v = a["value"]
+        if a["fee"] or a["range"] or a.get("conditional") or a["marker"] == "per bed" or not 300 <= v <= 30000 or abs(v - price) < 0.005:
+            continue
+        strict = bool(_STRICT_RENT_LABEL.search(text[max(0, a["start"] - 22):a["start"]]))
+        if not (strict or a["marker"] == "monthly"):
+            continue
+        before = text[max(text.rfind("\n", 0, a["start"]), text.rfind(". ", 0, a["start"]), text.rfind("|", 0, a["start"]), text.rfind(";", 0, a["start"])) + 1:a["start"]]
+        after = text[a["end"]:a["end"] + 40]
+        lab = _STRICT_RENT_LABEL.search(before)
+        pre = before[:lab.start()] if lab else before
+        if _UNIT_WORD_NEAR.search(before[-30:]) or _RENT_OLD_NEAR.search(pre[-34:]):
+            continue
+        if re.match(r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:with|for|on|if|before|previously|was|\(|plus|\+|per[ \t]+(?:bed|room|person)|each|/[ \t]*(?:bed|person|room))", after, re.I) and not re.match(r"[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:plus|\+)[ \t]*(?:all[ \t]+)?utilit", after, re.I):
+            continue
+        if _side_clause_amount(text, a["start"]) or _bills_clause_amount(text, a["start"]) or _in_open_question(text, a["end"]):
+            continue
+        if any(s0 <= a["start"] < e0 for s0, e0 in _now_if_spans(text)):
+            continue
+        if v not in out:
+            out.append(v)
+    return out
+
+
 def _price(text: str) -> float | None:
     """The monthly rent if the text gives one, else the asking price of a home for sale."""
     corrected = None if _SALE_WORDS.search(text) else _corrected_rent(text)
@@ -1398,6 +1460,10 @@ def _price(text: str) -> float | None:
     m = re.search(r"^[ \t*#]*no[ \t]+(?:pets?|smoking|dogs?|cats?|animals?)\b[^\n$]*?[-|][ \t]*\$\s?(\d{1,2},\d{3}|\d{3,5})(?:\.\d\d)?[ \t]*$", text, re.I | re.M)
     if m and not sale_text and 300 <= _num(m.group(1)) <= 20000:  # "NO PETS ALLOWED EXCEPT SERVICE ANIMALS - $2,100"
         return _num(m.group(1))
+    if not sale_text and not any(300 <= a["value"] <= 30000 for a in amounts):
+        ob = _bare_obo_rent(text)
+        if ob:  # cycle 34: "1550 obo" with no dollar sign, when no other figure in the listing is a rent
+            return ob[0]
     return None
 
 
@@ -2156,8 +2222,27 @@ def _in_open_question(text: str, pos: int) -> bool:
 
 
 _FREE_MONTH_WORDING = re.compile(
-    r"(?<![\w/.$])(?:(?:the[ \t]+)?(?:first|1st)[ \t]+(?:(?:one|two|three|\d{1,2})[ \t]+)?months?[ \t]+(?:only[ \t]+)?(?:is[ \t]+|are[ \t]+)?(?:free|half[ \t-]*price)"
-    r"|months?[ \t]+(?:one|two|three|\d{1,2})(?:[ \t]*(?:-|\u2013|to|through|thru|and|&|,)[ \t]*(?:one|two|three|\d{1,2}))?[ \t]+(?:is[ \t]+|are[ \t]+)?(?:free|half[ \t-]*price))\b", re.I)
+    r"(?<![\w/.$])(?:(?:the[ \t]+)?(?:first|1st)[ \t]+(?:(?:one|two|three|\d{1,2})[ \t]+)?months?[ \t]*[:,-]?[ \t]*(?:only[ \t]+)?(?:is[ \t]+|are[ \t]+)?(?:free|(?:half|\d{1,2}[ \t]*%)[ \t-]*(?:price|off))"
+    r"|months?[ \t]+(?:one|two|three|\d{1,2})(?:[ \t]*(?:-|\u2013|to|through|thru|and|&|,)[ \t]*(?:one|two|three|\d{1,2}))?[ \t]*[:,-]?[ \t]*(?:is[ \t]+|are[ \t]+)?(?:free|(?:half|\d{1,2}[ \t]*%)[ \t-]*(?:price|off))"
+    # cycle 34: "Half off months 1-2", "50% off the first two months", "Half price for the first 2 months": the word comes before the months
+    r"|(?:half|\d{1,2}[ \t]*%)[ \t-]*(?:price|off)[ \t]+(?:(?:for|during|on)[ \t]+)?(?:the[ \t]+)?(?:(?:first|1st)[ \t]+(?:(?:one|two|three|\d{1,2})[ \t]+)?months?|months?[ \t]+(?:one|two|three|\d{1,2})(?:[ \t]*(?:-|\u2013|to|through|thru|and|&|,)[ \t]*(?:one|two|three|\d{1,2}))?))\b", re.I)
+
+
+_EURO_AMOUNT = re.compile(r"(?<![\w$.,])(?:(?:€|EUR|euros?)[ \t]?(\d{1,3}(?:[ .,]\d{3})+|\d{3,6})(?:[,.]\d{2})?(?![\d])|(\d{1,3}(?:[ .,]\d{3})+|\d{3,6})(?:[,.]\d{2})?[ \t]?(?:€|EUR\b|euros?\b))", re.I)
+
+
+def _euro_notes(text: str) -> list[str]:
+    """Cycle 34: "Miete 2.300 EUR pro Monat", "Loyer 2 300 € par mois": an amount in euros is never saved as dollars and never read as a smaller part of itself
+    ("300"). One plain note quotes it whole."""
+    out: list[str] = []
+    for m in _EURO_AMOUNT.finditer(text):
+        raw = m.group(1) or m.group(2)
+        digits = re.sub(r"[ .,]", "", raw)
+        if not digits.isdigit():
+            continue
+        out.append(f"The listing gives {int(digits):,} EUR, which is in euros, not dollars. It is not saved. Ask for the figure in dollars.")
+        break
+    return out
 
 
 def _price_notes(text: str, price: float | None = None, buying: bool = False) -> list[str]:
@@ -12588,6 +12673,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if rent_fix[1] is not None and not any(_usd(rent_fix[1]) in f for f in facts):
                 facts.append(f"The listing corrects the rent. It first said {_usd(rent_fix[1])} and then says {_usd(rent_fix[0])}, so the {_usd(rent_fix[1])} is the old price and is not used. "
                              "Check the rent with the landlord.")
+    if not buying and not price_range and price_read is not None and not (unit_pick or two_prices or su_units or first_months or cond_now or "price" in gc_found):
+        others = _try(lambda: _other_rent_figures(text, price_read)) or []
+        if len(others) != 1 or len(text) > 4000 or re.search(r"^[ \t]*[=_*#-]{4,}[ \t]*$", text, re.M):
+            others = []  # several listings pasted together, or more than one other figure: the older readers and notes keep the call
+        if others:  # cycle 34: two different rents with nothing saying one replaces the other: the higher is saved, both are named, never "a monthly fee not counted anywhere"
+            hi = max([price_read, *others])
+            lo = [v for v in [price_read, *others] if v != hi]
+            price_read = hi
+            vals_ = [_usd(v) for v in sorted([hi, *lo])]
+            facts.append(f"The listing gives {'two' if len(vals_) == 2 else 'three' if len(vals_) == 3 else len(vals_)} different rents: {', '.join(vals_[:-1])} and {vals_[-1]}. The higher {_usd(hi)} is saved as the rent so the cost is not understated. "
+                         "Ask which rent is right.")
     if buying and isinstance(price_read, (int, float)) and price_read < 20000:
         # A monthly figure ("monthly cost about $1,988") is not the asking price of a home for sale.
         was_figure = bool(re.search(r"\b(?:was|were|previously|formerly|earlier|old|not)[ \t:]*\$[ \t]?" + re.escape(f"{price_read:,.0f}") + r"(?![\d,])", text, re.I)) \
@@ -12708,6 +12804,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         else:
             facts.append("The listing gives two different bathroom counts and corrects itself. The later count is saved, so check the bathroom count.")
     facts += _try(lambda: _price_notes(text, price_read, buying)) or []
+    facts += _try(lambda: _euro_notes(text)) or []
+    if not buying and price_read is not None:
+        ob = _try(lambda: _bare_obo_rent(text))
+        if ob and ob[0] == price_read and not any(300 <= a["value"] <= 30000 and not a["fee"] for a in _amounts(text)):
+            facts.append(f'The listing gives "{ob[1]}" with no dollar sign or period. It is read as the monthly rent, ${ob[0]:,.0f}. {"The price is called firm, so" if re.search(r"firm", ob[1], re.I) else "The owner may take a different figure, so"} ask what the rent really is.')
     put("baths", _try(lambda: _baths(text)))
     fixed_facts = {} if buying else (_try(lambda: _corrected_facts(text)) or {})
     if "baths" in fixed_facts and not bath_fix:

@@ -97,6 +97,7 @@ PLACE_REAL = ("lat", "lng", "price", "beds", "baths", "parking_cost", "pet_rent"
               "insurance", "special_assessment", "closing_costs", "seller_credit")
 PLACE_INT = ("sqft", "year_built", "lease_months", "rating", "fit_score", "pet_count_limit", "days_on_market", "months_up_front")
 TENANT_PAYS_CHOICES = ("electric", "gas", "water", "sewer", "trash", "internet", "heat")
+_CORRECTION_PASTE = re.compile(r"\b(?:corrections?|corrected|correcting|updated?|revised|amended|changed|now|new price|reduced|actually|instead)\b", re.I)
 PLACE_DATES = ("available_from", "lease_start", "lease_end")
 PLACE_FIELDS: tuple[str, ...] = (PLACE_TEXT + PLACE_REAL + PLACE_INT + ("photo_urls", "dishwasher", "fenced_yard", "hidden", "is_sample", "application_fee_per_adult"))
 # What a form or the AI may set (stage goes through move_stage).
@@ -1867,6 +1868,16 @@ class Store:
                 continue
             empty_old = old is None or old == ""
             empty_new = new is None or new == ""
+            if key == "tenant_pays" and not empty_old and not empty_new and _CORRECTION_PASTE.search(str(values.get("listing_text") or "")):
+                # cycle 34: a correction pasted onto a saved place ("Tenant pays electric about $75 and internet") adds the pay-list items it names that the place lacks;
+                # an item the place says is included is left alone (the two lines disagree, so the user decides), and nothing is ever taken off the list
+                have = [w for w in str(old).split(", ") if w]
+                included = str(existing.get("utilities_included") or "").lower()
+                add = [w for w in str(new).split(", ") if w and w not in have and not re.search(r"\b" + re.escape(w) + r"\b", included)]
+                if add:
+                    sets[key] = ", ".join(w for w in TENANT_PAYS_CHOICES if w in have or w in add)
+                    filled.append("pay list (added " + ", ".join(add) + ")")
+                continue
             if empty_old and not empty_new:
                 sets[key] = new
                 filled.append(key.replace("_", " "))

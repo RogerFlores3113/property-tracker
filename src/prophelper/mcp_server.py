@@ -1021,6 +1021,19 @@ def build_server(store: Store) -> FastMCP:
         return (f"This paste gives a rent of {_money(new)} a month, but the rent saved on this place is {_money(old)}. A repeat add never changes a filled value, so the saved rent stays "
                 f"{_money(old)}. If {_money(new)} is right, call update_place with price {new:g}.")
 
+    def _pay_list_added(dup: dict[str, Any] | None, place: dict[str, Any]) -> str:
+        """Cycle 34: the pay list grew on a repeat paste (a correction naming more utilities the tenant pays). One line names what was added and that it has no price yet."""
+        if not dup:
+            return ""
+        old = [w for w in str(dup.get("tenant_pays") or "").split(", ") if w]
+        new = [w for w in str(place.get("tenant_pays") or "").split(", ") if w]
+        add = [w for w in new if w not in old]
+        if not old or not add:
+            return ""
+        names = " and ".join(add) if len(add) < 3 else ", ".join(add[:-1]) + " and " + add[-1]
+        return (f"The paste names {names} as {'a utility' if len(add) == 1 else 'utilities'} the tenant pays, so {'it was' if len(add) == 1 else 'they were'} added to the pay list, which is now "
+                f"{', '.join(new)}. Nothing was taken off the list. {'Its' if len(add) == 1 else 'Their'} cost is not in the monthly cost yet, so ask the landlord what {'it costs' if len(add) == 1 else 'they cost'}.")
+
     def _drop_stale_rent_lines(block: str, new_rent: Any) -> str:
         """The reader notes on a repeat: a line that calls the new rent "not counted anywhere" is dropped, because the repeat note above now names it."""
         try:
@@ -1058,6 +1071,10 @@ def build_server(store: Store) -> FastMCP:
                          + " Only empty fields are filled; nothing the user wrote was changed, and its stage did not move.")
             kept = [k.replace("_", " ") for k, v in fields.items() if k in PLACE_KEYS and k not in ("ai_notes", "photo_urls", "listing_text")
                     and dup and not _is_blank(dup.get(k)) and not _same(dup.get(k), v)]
+            pay_added = _pay_list_added(dup, place)
+            if pay_added:  # cycle 34: a correction that names more utilities the tenant pays adds them to the pay list, and the reply says so
+                kept = [k for k in kept if k != "tenant pays"]
+                notes.append(pay_added)
             new_rent = _newer_rent_note(search, dup, fields)
             if new_rent:  # cycle 33: a repeat paste that gives another rent names the new figure and how to apply it, in place of a bare "values for price"
                 kept = [k for k in kept if k != "price"]
