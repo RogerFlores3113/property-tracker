@@ -345,3 +345,40 @@ def test_range_in_a_rental_or_beside_another_label_is_left_alone():
     assert out["hoa"] == 250 and out["property_tax"] == 4000 and "higher figure" not in notes(out)
     out = parse_listing("2 bed 2 bath apartment, rent $1,500/mo. HOA $300 to $350/mo is paid by the owner.", buying=False)
     assert "higher figure" not in notes(out)
+
+
+# ---- 7. an assessment over months with no payer marks the cost not complete
+@pytest.mark.parametrize("line", [
+    "Special assessment $9,000 over 36 months.",
+    "Assessment of $9,000 payable over 36 months.",
+    "Special assessment: $9,000, paid over 3 years.",
+    "$9,000 special assessment, spread over 36 monthly payments.",
+    "Special assessment (elevators) $9,000 over 36 months",
+])
+def test_assessment_over_months_with_no_payer_is_left_out_of_cash(line):
+    out, place, cash = full(BASE + "HOA $200/month. Taxes $3,000/yr. Insurance $900/yr. " + line)
+    assert any("$9,000 assessment (paid over 36 months) isn't counted because who pays it isn't known" in x for x in cash["left_out"]), cash["left_out"]
+    assert out.get("special_assessment") in (None, "") and out.get("other_monthly_fees") in (None, "")
+    assert "who pays it" in notes(out)
+
+
+@pytest.mark.parametrize("line,monthly", [
+    ("Special assessment $9,000 over 36 months, seller to pay.", None),
+    ("Special assessment $9,000 over 36 months, buyer pays it.", 250),
+])
+def test_assessment_over_months_with_a_payer_is_not_left_out(line, monthly):
+    out, place, cash = full(BASE + "HOA $200/month. " + line)
+    assert not any("assessment" in x for x in cash["left_out"])
+    assert out.get("other_monthly_fees") == monthly
+
+
+def test_tool_added_place_with_an_unpaid_assessment_is_not_complete(store):
+    from conftest import local_client  # noqa: F401
+    from mcp_util import call, server, text as mtext
+    from prophelper import compare, enrich
+    s = store.add_search("Buy", "buy", down_payment_pct=15)
+    call(server(store), "add_place", title="T", address="9 Test St", price=340000, search_id=s["id"],
+         listing_text="Condo. HOA $250/month. Taxes $3,600 per year. Insurance $900 per year. Special assessment $9,000 over 36 months.")
+    p = enrich.enrich_places(store, store.get_search(s["id"]))[0]
+    assert compare.cost_incomplete(p) and "not complete" in compare.cost_headline(p)
+    assert any("$9,000 assessment" in x for x in p["cost"]["cash_to_close"]["left_out"])

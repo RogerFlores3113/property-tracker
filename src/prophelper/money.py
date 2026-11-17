@@ -619,6 +619,14 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
         left_out.append(f"the {label} of {months:g} month{'s' if months != 1 else ''} of HOA isn't counted because who pays it isn't known")
     if sa and payer not in ("buyer", "seller"):
         left_out.append(f"a {_dollars(sa)} special assessment isn't counted because who pays it isn't known")
+    elif not sa:
+        try:  # cycle 33: "Special assessment $9,000 over 36 months" with no payer named: nothing is saved, and the cash to close says it leaves the amount out
+            from .parsers import assessment_spread_payer_unknown
+            unknown = assessment_spread_payer_unknown(str(place.get("listing_text") or ""))
+        except Exception:  # the listing text is only a hint
+            unknown = None
+        if unknown:
+            left_out.append(f"a {_dollars(unknown[2])} assessment (paid over {unknown[1]} months) isn't counted because who pays it isn't known")
     credit = num(place.get("seller_credit"))
     credits: list[tuple[str, float]] = []
     if credit and credit > 0:

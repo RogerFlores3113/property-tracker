@@ -6618,6 +6618,22 @@ def _assessment_split_note(text: str) -> str:
             "It ends after the last payment, so the monthly cost drops by that amount then. Ask whether the payments carry interest and who pays if you sell before then.")
 
 
+def assessment_spread_payer_unknown(text: str) -> tuple[float, int, float] | None:
+    """Cycle 33: "Special assessment $9,000 over 36 months" with no word on who pays it. Returns (monthly piece, number of months, the whole amount) so the cash
+    to close can say the amount is left out until the payer is known, or None when a payer is named, the buyer's half is read (_assessment_split) or there is no
+    such assessment."""
+    if _assessment_split(text):
+        return None
+    sp = _assessment_spread(text, True)
+    if not sp:
+        return None
+    total = _num(sp[2].lstrip("$"))
+    for sent in re.split(r"[.\n;](?!\d)", text):
+        if re.search(r"\bassessments?\b", sent, re.I) and sp[2] in sent.replace(" ", ""):
+            return (sp[0], sp[1], total) if _assessment_payer(text, sent) == "" else None
+    return None
+
+
 def _assessment_monthly(text: str) -> tuple[float, int | None] | None:
     """("Assessment for windows: $150/month for 24 months") -> (150, 24). Months is None when the listing gives no length."""
     m = re.search(r"\bassessments?\b[^.\n$]{0,40}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)"
@@ -13282,6 +13298,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         assessment = _try(lambda: _special_assessment(text))
         if assessment:
             facts.append(assessment)
+        elif buying and (unpaid := _try(lambda: assessment_spread_payer_unknown(text))):  # cycle 33: a plain "Assessment of $9,000 payable over 36 months" has no "special" in it
+            facts.append(f"The listing has an assessment of {_money_c(unpaid[2])} paid over {unpaid[1]} months but does not say who pays it, so it is not counted. "
+                         "Ask the seller's agent who pays it, then set Who pays on this page.")
         monthly_assessment = _try(lambda: _assessment_monthly_note(text))
         m_items = _try(lambda: _monthly_assessment_items(text)) or []
         reg_items = [i for i in m_items if i["kind"] == "regular"]
