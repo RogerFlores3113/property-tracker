@@ -7967,6 +7967,8 @@ def _standalone_estimates(text: str) -> str:
         prev = " ".join(p[0] for p in pieces[max(0, k - 2):k])
         if not _SE_PAYER.search(prev) or not re.search(_ROLE_ITEM + r"|\butilit", prev, re.I) or re.search(r"\$[ \t]?\d", pieces[k - 1][0] if k else ""):
             continue
+        if re.search(r"\butilit", prev, re.I) and not re.search(r"\bbilled[ \t-]*back\b|\bflat\b|\bpackage\b|\brubs\b", text, re.I) and _UTIL_NEXT_AMOUNT.match(re.sub(r"^[-*\u2022\u2013\u2014][ \t]+", "", seg)):
+            continue  # "Tenant pays all utilities. Approx $180/month." is read by the older step
         m = _SE_SENTENCE.match(seg)
         names = [w for w in _ordered_utilities(re.findall(_ROLE_WORD, (m.group("names") or "").lower())).split(", ") if w and w != "cable"]
         amt = m.group("amt")
@@ -8002,18 +8004,24 @@ _EXC_TENANT_LINE = re.compile(r"\bTenant pays all utilities except (?P<n>" + _RO
 _EXC_LANDLORD_LINE = re.compile(r"\ball utilities included except (?P<n>" + _ROLE_LIST_RAW + r")", re.I)
 
 
-def _except_lines_disagree(utext: str) -> dict[str, Any] | None:
+def _except_lines_disagree(utext: str, raw: str = "") -> dict[str, Any] | None:
     """Cycle 29: "Tenant responsible for everything but trash ... Resident pays all utilities except landlord covers water/sewer" is two "all except"
     lines (already written as "Tenant pays all utilities except X" / "All utilities included except X"). When they leave different utilities to
     the tenant, the utilities they disagree about are the disputed ones. {"disputed": [...], "one": "...", "two": "..."} or None."""
     lines: list[tuple[frozenset[str], str]] = []
+    asked = {frozenset(_canon_util(w) for w in re.findall(_ROLE_WORD, q.group("n").lower()))
+             for q in re.finditer(r"\b(?:all|everything)\b[^.\n;?]{0,60}?\b(?:except(?:[ \t]+for)?|other[ \t]+than|besides|but)[ \t]+(?P<n>" + _ROLE_LIST_RAW + r")[^.\n;?]{0,40}\?", raw, re.I)}  # a question sets nothing
     named = {_canon_util(w) for m in list(_EXC_TENANT_LINE.finditer(utext)) + list(_EXC_LANDLORD_LINE.finditer(utext)) for w in re.findall(_ROLE_WORD, m.group("n").lower())}
     universe = tuple(w for w in _ALL_UTILITIES if w in _STD_FIVE or w in named)  # heat is only in play when a line names it
     for m in _EXC_TENANT_LINE.finditer(utext):
         names = {_canon_util(w) for w in re.findall(_ROLE_WORD, m.group("n").lower())}
+        if frozenset(names) in asked:
+            continue
         lines.append((frozenset(w for w in universe if w not in names), f"one says you pay all the utilities except {_join_names([w for w in _ALL_UTILITIES if w in names])}"))
     for m in _EXC_LANDLORD_LINE.finditer(utext):
         names = {_canon_util(w) for w in re.findall(_ROLE_WORD, m.group("n").lower())}
+        if frozenset(names) in asked:
+            continue
         lines.append((frozenset(w for w in universe if w in names), f"one says the landlord covers all the utilities except {_join_names([w for w in _ALL_UTILITIES if w in names])}"))
     uniq: list[tuple[frozenset[str], str]] = []
     for item in lines:
@@ -8034,8 +8042,12 @@ def _except_orders(text: str) -> str:
     "Tenant responsible for everything but trash" and "Resident pays all utilities except landlord covers water/sewer" are all
     "Tenant pays all utilities except X": the tenant pays everything but X, so X is never the tenant's.
     Cycle 29: the landlord's side is the same step ("Everything but trash included in rent" = "All utilities included except trash")."""
+    def landlord_except(m: re.Match[str]) -> str:
+        if all(w in ("cable", "internet", "wifi", "wi-fi") for w in re.findall(_ROLE_WORD, m.group("n").lower())):
+            return m.group(0)  # "Everything included except cable": cable is TV, the older reader keeps it as "all utilities"
+        return "All utilities included except " + re.sub(r"[ \t]+", " ", m.group("n"))
     for pat in _EXC_LANDLORD_ORDERS:
-        text = pat.sub(lambda m: "All utilities included except " + re.sub(r"[ \t]+", " ", m.group("n")), text)
+        text = pat.sub(landlord_except, text)
     for pat in _EXC_ORDERS:
         text = pat.sub(lambda m: "Tenant pays all utilities except " + re.sub(r"[ \t]+", " ", m.group("n")), text)
     # "...except water, sewer and trash (included)": the bracket says the excepted ones are the landlord's, the same as "which are included"
@@ -10655,7 +10667,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                          "Those two lines disagree, so the utilities you pay are left with no amount beyond what the listing prices. Ask the landlord which utilities you really pay and how much.")
     if not any("disagree" in f for f in facts):
         # cycle 29: two "all except" lines (in any word order) that name different utilities: the ones they disagree about stay unknown
-        dis = _try(lambda: _except_lines_disagree(utext))
+        dis = _try(lambda: _except_lines_disagree(utext, text))
         if dis:
             pay_l = [w.strip() for w in pays.split(",") if w.strip()]
             inc_l = [w.strip() for w in included.split(",") if w.strip()] if included != "all" else list(_ALL_UTILITIES)
