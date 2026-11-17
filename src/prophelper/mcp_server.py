@@ -395,7 +395,7 @@ def _extra_facts(p: dict[str, Any]) -> list[str]:
     if p.get("days_on_market") is not None:
         buy.append(f"{p['days_on_market']} days on the market")
     if (p.get("special_assessment") or 0) != 0:  # $0 is no assessment: no line
-        who = {"buyer": "the buyer pays it", "seller": "the seller pays it"}.get(str(p.get("special_assessment_payer") or ""), "who pays it is not filled in")
+        who = {"buyer": "the buyer pays it", "seller": "the seller pays it"}.get(money_mod._assessment_payer_of(p), "who pays it is not filled in")  # cycle 36: the listing text's own payer counts, as it does in the cost
         buy.append(f"special assessment {_money(p['special_assessment'])} ({who})")
     if p.get("closing_costs") is not None:
         buy.append(f"closing costs {_money(p['closing_costs'])}")

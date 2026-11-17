@@ -135,7 +135,7 @@ def over_score(over_ratio: float) -> float:
 def _buyer_assessment(place: dict[str, Any]) -> float:
     """A special assessment the buyer pays (0 otherwise). It is in the cash to close, and the price score only says so."""
     sa = _num(place.get("special_assessment"))
-    return sa if sa and str(place.get("special_assessment_payer") or "") == "buyer" else 0.0
+    return sa if sa and money._assessment_payer_of(place) == "buyer" else 0.0
 
 
 NEAR_GUESS = 0.05  # over by this share or less, only because of a guess, is a near miss and not a fail
