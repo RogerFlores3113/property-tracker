@@ -272,7 +272,7 @@ def rent_cost(place: dict[str, Any], pets: bool = True, adults: int = 1) -> dict
         if unpriced:
             # The listing prices only part of what the tenant pays (for example trash billed back), so the rest is not counted yet.
             names = _join_words(unpriced)
-            line["note"] = f"{note}. It covers only what the listing prices; you also pay {names}, not counted yet"
+            line["note"] = f"{note}. It covers only what the listing prices"  # cycle 27: the "Not counted yet because it is missing" line names the rest once
             missing.append(names)  # name only what is really missing ("electric and gas"), not the whole estimate
             uncounted.append(f"utilities ({names})")
             # cycle 26: the "Not counted yet because it is missing: ..." line (from ``missing``) already says this, so no second sentence for the same utilities

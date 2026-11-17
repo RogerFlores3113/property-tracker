@@ -7485,13 +7485,16 @@ def _bare_start_date(text: str) -> str | None:
     return None
 
 
-_MONTH_TO_MONTH = re.compile(r"\bmonth[- ]to[- ]month\b[^.\n;]{0,30}", re.I)
+_MONTH_TO_MONTH = re.compile(r"\bmonth[- ]to[- ]month\b[^.\n;)\]}|<>＜＞]{0,30}", re.I)
+_M2M_PRICED = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?[^.\n;|$]{0,12}\bmonth[- ]to[- ]month\b|\bmonth[- ]to[- ]month\b[^.\n;|$]{0,12}\$\s?\d", re.I)
 
 
 def _month_to_month_note(text: str, lease: Any = None) -> list[str]:
     m = _MONTH_TO_MONTH.search(text)
     if not m:
         return []
+    if _M2M_PRICED.search(text):
+        return []  # cycle 27: a month-to-month rent the listing prices is quoted once, by the lease-length or "also says" note for that figure
     said = " ".join(m.group(0).split()).strip(" ,-")
     keep = "" if lease else " No lease length is saved from that."
     return [f'The listing says "{said}".{keep} Ask what the month to month terms and rent are.']

@@ -77,7 +77,7 @@ def test_electric_average_with_gas_tenant_paid_keeps_gas_missing():
     out, r = cost("Electric averages $110 a month. Gas is paid by tenant.")
     assert keys(out) == (None, "electric, gas", 110, None)
     assert (r["total"], r["missing"], r["uncounted"]) == (1610, ["gas"], ["utilities (gas)"])
-    assert "you also pay gas, not counted yet" in r["util"]["note"]
+    assert "It covers only what the listing prices" in r["util"]["note"] and "you also pay" not in r["util"]["note"]  # c27: the missing line names gas once
     assert listing_estimate_names(RENT + "Electric averages $110 a month. Gas is paid by tenant.") == ["electric"]
 
 
