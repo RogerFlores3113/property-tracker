@@ -5854,6 +5854,42 @@ def _closing_date_notes(text: str) -> list[str]:
     return []
 
 
+_RANGE_AMT = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?"
+_RANGE_UNIT = r"(?:[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly|annual\w*))?"
+_BUYER_RANGE = re.compile(r"(?P<between>\bbetween[ \t]+)?" + _RANGE_AMT + r"(?P<u1>" + _RANGE_UNIT + r")[ \t]*(?P<sep>to|-|\u2013|\u2014|through|thru|or|and)[ \t]*\$?[ \t]?(?P<hi>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?P<u2>" + _RANGE_UNIT + r")", re.I)
+_BUYER_RANGE_LABEL = re.compile(r"\b(?P<hoa>hoa|h\.o\.a\.|association|condo(?:minium)?[ \t]+(?:fees?|dues)|maintenance|(?:monthly|building)[ \t]+dues)\b|\b(?P<tax>(?:property[ \t]+|real[ \t]+estate[ \t]+)?tax(?:es)?)\b", re.I)
+
+
+def _collapse_buyer_ranges(text: str) -> tuple[str, list[str]]:
+    """Cycle 33: "HOA $300 to $350/mo depending on unit", "Taxes $5,000 - $6,000", "HOA is between $300 and $350 per month": a range for the HOA or the property tax
+    counts the higher figure (never a silent low one). Returns (the text with each such range replaced by its high figure, plain notes that say so). A range
+    with no HOA or tax word in its own clause, or whose second figure is not higher, is left alone ("and" counts as a range only after "between")."""
+    notes: list[str] = []
+    out = text
+    for m in list(_BUYER_RANGE.finditer(text))[::-1]:
+        sep = m.group("sep").lower()
+        if sep == "and" and not m.group("between"):
+            continue
+        lo, hi = _num(m.group(2)), _num(m.group("hi"))
+        if not hi > lo or hi < 20:
+            continue
+        clause_start = max(text.rfind(".", 0, m.start()) if not text[text.rfind(".", 0, m.start()) + 1:text.rfind(".", 0, m.start()) + 2].isdigit() else -1, text.rfind("\n", 0, m.start()), text.rfind(";", 0, m.start())) + 1
+        lead = text[clause_start:m.start()]
+        lab = None
+        for lm in _BUYER_RANGE_LABEL.finditer(lead):
+            lab = lm
+        if lab is None or len(lead) - lab.end() > 40:
+            continue
+        kind = "HOA" if lab.group("hoa") else "property tax"
+        unit = (m.group("u2") or m.group("u1") or "").strip()
+        repl = f"${hi:,.0f}" + (" " + unit if unit and not m.group("u2") else "")
+        out = out[:m.start()] + repl + out[m.end():]
+        per = " a month" if re.search(r"mo|month|monthly", unit, re.I) else (" a year" if re.search(r"yr|year|annual", unit, re.I) else "")
+        notes.append(f"The listing gives the {kind} as a range, {_money_c(lo)} to {_money_c(hi)}{per}. The higher figure, {_money_c(hi)}, is used so the cost is not too low. "
+                     "Ask the seller's agent for the exact amount.")
+    return out, notes[::-1]
+
+
 def _down_payment_assistance_notes(text: str, facts: list[str]) -> list[str]:
     """Cycle 33: "Down payment assistance program available" is an offer the listing gives no terms for. It never lowers the cash to close, and a plain note
     names it so the line is not silently dropped. An amount in the same sentence is quoted. "No down payment assistance" is not an offer."""
@@ -10273,7 +10309,7 @@ def _hoa(text: str) -> float | None:
         else:
             value = value / 3 if ("quarter" in w or "three" in w or w == "3") else (value / 12 if w in ("annually", "yearly") else value)
         return round(value, 2) if 0 < value < 5000 else None
-    m = _hoa_search(r"(?:\bhoa|association|\bassoc\.?(?=[ \t]*(?:fees?|dues))|homeowners'? association|\b(?:monthly|building|unit owners?)[ \t]+dues(?![ \t]+(?:to|for)\b)|\bcondo(?=\s*(?:fee|fees|dues|payment|assessment))|\bcommon (?:area )?(?:charges?|fees?))(?:\s*(?:fee|fees|dues|payment|assessments?))*(?:[ \t]+(?:is|are|was|were|run|runs|total|totals|come|comes)\b(?:[ \t]+(?:to|in[ \t]+at))?)?[ \t:\-=(]{0,6}(?:of[ \t]+)?(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:half[- ]?year|\w+)|per\s+(?:half[- ]?year|(?:six|6)[ \t]+months|\w+)|\w+ly|annual\w*)?", text)
+    m = _hoa_search(r"(?:\bhoa|association|\bassoc\.?(?=[ \t]*(?:fees?|dues))|homeowners'? association|\b(?:monthly|building|unit owners?)[ \t]+dues(?![ \t]+(?:to|for)\b)|\bcondo(?=\s*(?:fee|fees|dues|payment|assessment))|\bcommon (?:area )?(?:charges?|fees?))(?:\s*(?:fee|fees|dues|payment|assessments?))*(?:[ \t]+(?:is|are|was|were|run|runs|total|totals|come|comes|ranges?)\b(?:[ \t]+(?:to|in[ \t]+at|from))?)?[ \t:\-=(]{0,6}(?:of[ \t]+)?(?:(?:about|around|approx\.?|approximately|roughly|est\.?|estimated|~)[ \t]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:half[- ]?year|\w+)|per\s+(?:half[- ]?year|(?:six|6)[ \t]+months|\w+)|\w+ly|annual\w*)?", text)
     if not m:
         m = _hoa_search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?\s*(/\s*(?:half[- ]?year|\w+)|per\s+(?:half[- ]?year|(?:six|6)[ \t]+months|\w+)|\w+ly|annual\w*)?\s*(?:hoa|association) (?:fee|dues)?", text)
     if not m:
@@ -13326,13 +13362,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         cut = _try(lambda: _price_cut(text))
         if cut:
             facts.append(f"Price reduced ${cut:,.0f}.")
-        hoa = _try(lambda: _hoa(text))
+        rtext, range_notes = (text, [])
+        if buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000):
+            rtext, range_notes = _try(lambda: _collapse_buyer_ranges(text)) or (text, [])
+            facts.extend(range_notes)
+        hoa = _try(lambda: _hoa(rtext))
         hq = _try(lambda: _hoa_after_question(text))
         if hq:
             facts.append(f"The listing asks about the fee with a question mark and then says \"{hq[1].split('?', 1)[1].strip(' -\u2013\u2014,:')}\". The HOA is read from that stated fee, {_money_c(hq[0])} a month. "
                          "Ask the seller's agent to confirm it.")
         if hoa is None and (buying or _SALE_WORDS.search(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)):
-            plain_hoa = _try(lambda: _hoa_plain_monthly(text))
+            plain_hoa = _try(lambda: _hoa_plain_monthly(rtext))
             if plain_hoa:
                 hoa = plain_hoa
                 maint = _try(lambda: _hoa_maintenance(text))
@@ -13447,7 +13487,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         if hoa is None and (buying or _SALE_WORDS.search(text)) and (bare_fee := _try(lambda: _bare_monthly_fee(text))):
             facts.append(f'The listing says "{bare_fee[1]}" without saying what the fee is. On a condo it may be the HOA fee, but the listing does not say so, so the HOA is left empty '
                          f"and the {_money_c(bare_fee[0])} a month is not counted in the monthly cost. Ask the seller's agent what it covers, and if it is the HOA, set the HOA on this page.")
-        tax, tax_note = _try(lambda: _tax_detail(text)) or (None, "")
+        tax, tax_note = _try(lambda: _tax_detail(rtext)) or (None, "")
         if tax_note:
             facts.append(tax_note)
         if tax is not None:

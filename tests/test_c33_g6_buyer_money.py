@@ -319,3 +319,29 @@ def test_closing_date_through_the_add_page_and_the_tool(store):
     call(server(store), "add_place", title="Hilliard", address="3980 Main St", listing_text=fixture("r32-buyer-l24.txt"), search_id=s["id"])
     other = [p for p in store.list_places(search_id=s["id"]) if p["title"] == "Hilliard"][0]
     assert [(d["kind"], d["date"]) for d in store.list_place_dates(other["id"])] == [("closing", "2027-02-20")]
+
+
+# ---- 9. a range for the HOA or the tax saves the high figure and says so
+@pytest.mark.parametrize("line,hoa,tax", [
+    ("HOA $300 to $350/mo depending on unit. Taxes $5,000 to $6,000.", 350, 6000),
+    ("Taxes: $5,000 - $6,000 per year. HOA $300-$350 monthly.", 350, 6000),
+    ("HOA is between $300 and $350 per month. Property tax $5,000-6,000/yr.", 350, 6000),
+    ("HOA: $300 – $350 a month\nTaxes: $5,000 – $6,000 a year", 350, 6000),
+    ("Association dues $300/mo to $350/mo. Real estate taxes run $5,000 to $6,000 yearly.", 350, 6000),
+    ("HOA dues range from $300 to $350 monthly (depends on the unit); property taxes about $5,000 to $6,000 per year.", 350, 6000),
+    ("HOA $300 - $350 per month | Taxes $5,000 through $6,000", 350, 6000),
+])
+def test_range_saves_the_high_figure_with_a_note(line, hoa, tax):
+    out = read(BASE + line)
+    assert out["hoa"] == hoa and out["property_tax"] == tax
+    assert "higher figure" in notes(out) and "$300" in notes(out) and "$5,000" in notes(out)
+    assert "not counted anywhere" not in notes(out)
+
+
+def test_range_in_a_rental_or_beside_another_label_is_left_alone():
+    out = read(BASE + "HOA $250/month. Built between 1990 and 2005. Lot $5,000 to $6,000.")
+    assert out["hoa"] == 250 and "higher figure" not in notes(out)
+    out = read(BASE + "HOA $250/month. Taxes $4,000 per year. Parking $50 to $75 a month.")
+    assert out["hoa"] == 250 and out["property_tax"] == 4000 and "higher figure" not in notes(out)
+    out = parse_listing("2 bed 2 bath apartment, rent $1,500/mo. HOA $300 to $350/mo is paid by the owner.", buying=False)
+    assert "higher figure" not in notes(out)
