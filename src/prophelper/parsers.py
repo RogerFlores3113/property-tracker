@@ -9600,7 +9600,7 @@ def _building_name(text: str) -> str:
     return ""
 
 
-_TITLE_SUFFIX = re.compile(r"\s*[-|:,]\s*(?:\$\s?[\d,.]+[kK]?(?:\s*/\s*mo\w*)?|(?:studio|\d+(?:\.\d)?\s*(?:-\s*\d+\s*)?(?:bed(?:room)?s?|bds?|brs?|bath(?:room)?s?|bths?|ba|sq\.?\s?ft\.?|sqft|sf))\b)[^\n]*$", re.I)
+_TITLE_SUFFIX = re.compile(r"\s*(?:[-|:]|(?<!\d),|,(?!\d{3}(?!\d)))\s*(?:\$\s?[\d,.]+[kK]?(?:\s*/\s*mo\w*)?|(?:studio|\d+(?:,\d{3})*(?:\.\d)?\s*(?:-\s*\d+\s*)?(?:bed(?:room)?s?|bds?|brs?|bath(?:room)?s?|bths?|ba|sq\.?\s?ft\.?|sqft|sf))\b)[^\n]*$", re.I)
 
 
 def _clean_title(title: str) -> str:
@@ -9620,6 +9620,9 @@ def _clean_title(title: str) -> str:
     # "2 bedroom duplex 1400 dollars a month": a price written in words is a fact, not part of the name
     cut = re.sub(r"[ \t,\-|]*\$?\d[\d,]*[ \t]*(?:dollars|bucks)\b(?:[ \t]*(?:a|per|/)[ \t]*(?:month|mo)\b)?.*$", "", out, flags=re.I).strip(" -|:,")
     cut = cut if len(cut) >= 3 else out
+    sq = re.search(r"(?<![\d,])[ \t,/|]+(?:\d{1,3}(?:,\d{3})+|\d{3,5})[ \t]*(?:sq\.?[ \t]?ft\.?|sqft|sf)\.?[ \t]*$", cut, re.I)
+    if sq and _TITLE_BED_CUE.search(cut[:sq.start()]) and len(cut[:sq.start()].strip(" -|:,")) >= 3:
+        cut = cut[:sq.start()].strip(" -|:,")  # cycle 29: "West Loop 3bd 2ba 1,350 sqft": the size said at the end is a fact the name does not hold
     # cycle 24: "Hilltop 2BR Condo 2 bed 1 bath": the beds and baths said a second time at the end are facts the name already has
     again = _TITLE_BEDBATH_AGAIN.search(cut)
     if again and _TITLE_BED_CUE.search(cut[:again.start()]) and len(cut[:again.start()].strip(" -|:,")) >= 3:
@@ -11756,6 +11759,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if not buying:
         from . import dropguard as _dg
         facts = _try(lambda: _dg.finalize_notes(text, out, facts, buying)) or facts  # cycle 26: the last filter, decided from the final fields
+    else:
+        from . import dropguard as _dg
+        facts = _try(lambda: _dg.clean_quote_notes(out, facts, text)) or facts  # cycle 29: no link, spaced or huge figure and no credit called a cost in a buyer's notes either
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
@@ -12094,7 +12100,7 @@ def amounts_all_placed(amounts: set[float], used: set[float], extra: set[float] 
     return placed_amounts(amounts, used, extra, phrase, out) >= set(amounts)
 
 
-_NET_NOTE = re.compile(r"The listing also says \"[^\"]+\"\. (?:It is not counted anywhere|It is a monthly fee and it is not counted anywhere|It looks like a utility cost and it is not counted anywhere|It is a one-time cost, so it is not in the monthly cost|Only .{1,80} of that )")
+_NET_NOTE = re.compile(r"The listing also says \"[^\"]+\"\. (?:It is not counted anywhere|It is a monthly fee and it is not counted anywhere|It looks like a utility cost and it is not counted anywhere|It is a one-time cost, so it is not in the monthly cost|It is a credit toward your costs, not a cost, so it is not in the monthly cost|Only .{1,80} of that )")
 
 
 def note_amounts_placed(note: str, place: dict[str, Any]) -> bool:
@@ -12303,6 +12309,12 @@ _DEAL_WORDS = re.compile(r"\blimited[- ]time\b|\bfor a limited\b|\bconcessions?\
 _MONTHLY_WORDS = re.compile(r"/\s*(?:mo|month)\b|\bper month\b|\ba month\b|\bmonthly\b|\bmo\.", re.I)
 
 
+# "Lender credit of $1,500 available", "Rent credit $200", "$300 rebate": money the renter or buyer gets, never a cost. A credit check, credit score or approved credit is not one.
+_CREDIT_WORDS = re.compile(r"\b(?:credits?|rebates?|cash[- ]?back)\b(?![ \t]+(?:checks?|reports?|scores?|cards?|history|approval|application|screening|required|needed))", re.I)
+_CREDIT_NOT = re.compile(r"\b(?:good|bad|poor|fair|approved|excellent|your|with|if|subject to|bad|no)[ \t]+credit\b|\bcredit[ \t]+(?:checks?|reports?|scores?|cards?|history|approval|application|screening)\b", re.I)
+CREDIT_SENTENCE = "It is a credit toward your costs, not a cost, so it is not in the monthly cost."
+
+
 def _uncounted_kind_sentence(phrase: str) -> str:
     """What the safety-net note says about a quoted amount that no field holds: a one-time cost is not in the monthly cost, a
     monthly fee is not counted, and when the line does not say, the generic sentence."""
@@ -12311,6 +12323,8 @@ def _uncounted_kind_sentence(phrase: str) -> str:
         return "The seller pays it, so it is not your cost and it is not in the monthly cost."  # cycle 27: a seller-paid figure is never "who pays?"
     if re.search(r"\bdeposits?\b", phrase, re.I) and not monthly and not re.search(r"\b(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin|send|hold(?:ing)?|before|upfront|up front)\b", phrase, re.I):
         return "It is a one-time cost, so it is not in the monthly cost."  # cycle 28: a deposit (parking, key, "deposit or fee") is cash at move-in, never a monthly amount
+    if _CREDIT_WORDS.search(_CREDIT_NOT.sub(" ", phrase)) and not re.search(r"\bfees?\b|\bdeposit|\bcharge", phrase, re.I):
+        return CREDIT_SENTENCE  # cycle 29: a credit gives money back, it is never "a cost"
     pieces_ = [x for x in re.split(r"[,;\n]|\bplus\b|\band\b|\*|\s~\s", phrase) if _dollar_values(x)]
     from .money import _EXPL_SECOND
     if pieces_ and all(_EXPL_SECOND.search(x) and not re.search(r"\b(?:required|mandatory)\b", x, re.I) for x in pieces_):
@@ -12330,7 +12344,8 @@ def _uncounted_kind_sentence(phrase: str) -> str:
     return "It is not counted anywhere."
 
 
-_PLURAL_KIND = (("The seller pays it, so it is not your cost and it is not in the monthly cost.", "are paid by the seller, so they are not your cost and they are not in the monthly cost."),
+_PLURAL_KIND = ((CREDIT_SENTENCE, "are credits toward your costs, not costs, so they are not in the monthly cost."),
+                ("The seller pays it, so it is not your cost and it is not in the monthly cost.", "are paid by the seller, so they are not your cost and they are not in the monthly cost."),
                 ("It looks like an optional extra, so it is not counted in the monthly cost.", "are optional extras, so they are not counted in the monthly cost."),
                 ("It is a one-time cost, so it is not in the monthly cost.", "are one-time costs, so they are not in the monthly cost."),
                 ("It looks like a utility cost and it is not counted anywhere.", "look like utility costs and they are not counted anywhere."),
@@ -12398,6 +12413,7 @@ def _end_after(text: str, c: str, end: int) -> int:
 _FORMAT_CHARS = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\U000e0000-\U000e007f]")
 _QUOTE_WORD = re.compile(r"[A-Za-z](?:[A-Za-z'\-]*[A-Za-z])?[,:]?")
 _QUOTE_NUM = re.compile(r"[~\u2248]?\$?\d[\d,]*(?:\.\d+)?(?:/[A-Za-z]+|[A-Za-z]+\d*)?[,:)]?")
+_QUOTE_LINKISH = re.compile(r"https?:|www\.|\]\(|!\[|javascript:|data:[a-z]+/|\b[a-z0-9-]+\.(?:com|net|org|io|test|example|xyz|ru|cn)\b/?", re.I)
 _QUOTE_JUNK_PHRASE = re.compile(r"[<>\[\]{}=@\\_`^\uff1d]|<!|\|")
 
 
@@ -12414,7 +12430,7 @@ def _tidy_quote(phrase: str, text: str, start: int, end: int) -> str:
     before = re.split(r"[.!?]\s|\n", text[max(0, start - 70):start])[-1]
     around = _FORMAT_CHARS.search(before) or re.search(r"[=\uff1d+@]\s?[A-Za-z]{2,10}\||<!--|</?[A-Za-z]|-->", before)  # junk just in front of the clause
     aimed = any(pat.search(phrase) for pat in (_AI_TARGETED, _AI_EXTRA, _AI_C17))  # cycle 22: text aimed at an AI tool is never quoted whole
-    if folded == phrase and not around and not aimed and not _QUOTE_JUNK_PHRASE.search(phrase) and all(_quote_token_ok(t.rstrip(".;!?")) or not re.search(r"^[A-Za-z]{1,2}\d+$|[A-Za-z]!|!\w", t) for t in phrase.split()):
+    if folded == phrase and not around and not aimed and not _QUOTE_JUNK_PHRASE.search(phrase) and not _QUOTE_LINKISH.search(phrase) and not re.search(r"\$\s?[\d,.]+\s+\$\s?\d", phrase) and all(_quote_token_ok(t.rstrip(".;!?")) or not re.search(r"^[A-Za-z]{1,2}\d+$|[A-Za-z]!|!\w", t) for t in phrase.split()):
         return phrase
     ls = text.rfind("\n", 0, start) + 1
     le = text.find("\n", end)
@@ -12455,6 +12471,10 @@ def _tidy_quote(phrase: str, text: str, start: int, end: int) -> str:
     if not any(len(re.sub(r"[^A-Za-z]", "", w)) >= 3 for w in words):
         left = []
     amt_tok = toks[idx].rstrip(".;!?,)")
+    if _QUOTE_LINKISH.search(toks[idx]) or re.search(r"[A-Za-z=&?/]\S*\$|\]\(", toks[idx]):
+        return text[start:end].replace(" ", " ").strip().replace('"', "'")  # cycle 29: a figure inside a link or an image tag is quoted alone, never with the link
+    if left and re.fullmatch(r"[~\u2248]?\$\d[\d,]*(?:\.\d+)?[,;]?", left[-1]):
+        left = []  # cycle 29: "Bike room $8 $99": the figure in front belongs to its own words, not to this one
     right: list[str] = []
     for t in toks[idx + 1:idx + 4]:
         if "\x00" in t or not re.fullmatch(r"(?:per|a|each|month|monthly|mo|year|yearly|annually|/mo|/month|/yr|flat|extra|deposit|fees?|charge|rent|payment|holding|reservation|application)[.;!?]?", t, re.I):
@@ -12584,9 +12604,36 @@ def _net_component_numbers(text: str) -> set[float]:
     return nums
 
 
+def _sum_remainder_parts(out: dict[str, Any], text: str) -> set[float]:
+    """Cycle 29: a figure of the listing that is one part of a summed fee field even though the part readers saw another value for it (a corrected
+    "amenity fee is $45" with other monthly fees $70 = $45 + $25 valet): the field minus that figure is the sum of other figures of the listing."""
+    found: set[float] = set()
+    figs = sorted(v for v in _dollar_values(text) if 0 < v < 3000)
+    if not figs or len(figs) > 25 or not re.search(r"\b(?:correct(?:ed|ion)|updated?|revised|now|actually|new)\b", text, re.I):
+        return found
+    # only a figure that a correction sentence gives is a candidate: any other figure that happens to fit a sum is a coincidence
+    cands: set[float] = set()
+    for sent in re.split(r"(?<=[.!?])\s+|\n", text):
+        if re.search(r"\b(?:correct(?:ed|ion)|updated?|revised|now|actually|new)\b", sent, re.I):
+            cands |= _dollar_values(sent)
+    for key in ("other_monthly_fees", "move_in_fees"):
+        f = out.get(key)
+        if not isinstance(f, (int, float)) or isinstance(f, bool) or not f:
+            continue
+        for v in figs:
+            if v >= f or v not in cands:
+                continue
+            rest = [x for x in figs if x != v and x < f]
+            if any(abs(sum(c) - (float(f) - v)) < 0.01 for size in (1, 2, 3) for c in itertools.combinations(rest, size)):
+                found.add(v)
+    return found
+
+
 def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> set[float]:
     """Every number a field or a note already carries, and the parts and conversions behind a field."""
     comps: set[float] = _net_component_numbers(text) if text else set()
+    if text:
+        comps |= _sum_remainder_parts(out, text)
     used: set[float] = set(comps)
     for key in _NET_REAL_FIELDS:
         v = out.get(key)

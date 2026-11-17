@@ -356,6 +356,9 @@ def _months_count_explained(text: str, end: int, amount: float, r: dict[str, Any
                for k, v in r.items() if k in ("deposit", "move_in_fees", "pet_deposit", "broker_fee", "application_fee"))
 
 
+_STALE_UTIL_ESTIMATE = re.compile(r"\b(?:est(?:imate[ds]?|\.)?|about|approx\w*|roughly|typical)\b[^$]{0,12}\$[ \t]?[\d,.]+[ \t]+(?:for[ \t]+)?(?:all[ \t]+of[ \t]+(?:it|them)|everything|in[ \t]+total|total|combined|together|all[ \t]+(?:the[ \t]+)?utilities)\b", re.I)
+
+
 def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, Any]]:
     """Every dollar figure of a rental listing that no field holds and no note explains: [{"amount", "start", "end", "item", "kind"}]."""
     text = _P().normalize_money(text)
@@ -385,6 +388,8 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue
         if is_non_cost(text, m.start(), m.end(), amount):
             continue
+        if _STALE_UTIL_ESTIMATE.search(item) and "corrects the utilities" in notes and isinstance(est, (int, float)) and not isinstance(est, bool) and abs(amount - float(est)) >= 0.5:
+            continue  # cycle 29: "Estimate $100 for all of it" next to a correction that says the tenant now pays all utilities (est. $130): the old estimate is not used and is no missing amount
         if _CONCESSION_ITEM.search(item) and any(_CONCESSION_NOTE.search(u) for u in notes.split("\n")):
             continue  # cycle 25: "$6,000 in concessions, 1 month free on 13-month lease": the concession note already says it is a one-time deal that is not counted
         own = next((c for c in _CATS if c[1].search(item)), None)
@@ -503,6 +508,90 @@ _ALSO_GIVES = re.compile(r"^The listing also gives (\$[\d,]+(?:\.\d\d)?)\b")
 _ALSO_SAYS = re.compile(r'^(The listing (?:also says|mentions)[^"]*?\(?")([^"]*)("\)?)')
 
 
+_LONG_FIGURE = re.compile(r"(?<![\d,])(\$\s?)(\d{1,3}(?:,\d{3}){4,}|\d{13,})(?:\.\d+)?")
+_SPACED_FIGURE = re.compile(r"[$\uff04]\s?\d(?:[ \t]\d){2,}(?![\d])(?:[ \t]*(?:/[ \t]*(?:mo\w*|month)|per[ \t]+month|a[ \t]+month|monthly))?")
+_LINK_PIECE = re.compile(r"!?\[[^\]\n]*\]\([^)\s]*\)?|\]\([^)\s]*\)?|\bhttps?://\S*|\bwww\.\S*|\bjavascript:\S*", re.I)
+_QUOTE_ANY = re.compile(r'^(The listing (?:also )?(?:says|mentions)[^"]*?\(?")([^"]*)("\)?\. ?)(.*)$')
+
+
+def short_figure(raw: str) -> str:
+    """A figure of more than twelve digits as it is quoted: its first seven digits and an ellipsis, which no reader takes for a number."""
+    digits = re.sub(r"\D", "", raw)
+    return digits[:7] + "…"
+
+
+def _shorten_long_figures(q: str) -> str:
+    return _LONG_FIGURE.sub(lambda m: m.group(1) + short_figure(m.group(2)), q)
+
+
+def _quote_pieces(q: str) -> list[str]:
+    """The figures of one quoted line as plain words, one piece per figure that cannot share its words: a link or markdown image is cut out (a
+    figure inside it is quoted alone), and two figures with no words between them ("$8 $99") are two pieces."""
+    hidden = [m.group(0) for p in _LINK_PIECE.finditer(q) for m in _QUOTE_FIG.finditer(p.group(0))]
+    plain = _LINK_PIECE.sub(" ", q)
+    plain = re.sub(r"(?:\s*\.\.\.)+\s*$|^\s*(?:\.\.\.\s*)+", "", " ".join(plain.split())).strip(" ,;:-")
+    parts = [x.strip(" ,;:-") for x in re.split(r"(?<=\d)[ \t]+(?=[$\uff04]\d)", plain)] if re.search(r"[$\uff04]\s?[\d,.]+[ \t]+[$\uff04]\s?\d", plain) else [plain]
+    out = [x for x in parts if x and _QUOTE_FIG.search(x)]
+    out += [h.strip() for h in hidden if not any(h in x for x in out)]
+    return list(dict.fromkeys(out)) or [q]
+
+
+def _title_line_figure(q: str, text: str) -> str:
+    """A quote that is the whole first line of the listing (its title: "Trulia: 2 Bed Apartment at Brewery District Lofts - $1,490/mo ($1,525 now)") is
+    cut down to the item that holds the figure ("$1,490/mo ($1,525 now)"): the title is the name of the place, never a note."""
+    first = " ".join(text.split("\n", 1)[0].split()) if text else ""
+    flat = " ".join(q.split())
+    if len(flat) < 50 or not first or flat not in first or len(flat) < 0.8 * len(first):
+        return q
+    fig = _QUOTE_FIG.search(flat)
+    if not fig:
+        return q
+    seps = [m.end() for m in re.finditer(r"\s[-|\u2013\u2014]\s|\s\|\s|:\s|,\s(?!\d{3}\b)", flat) if m.end() <= fig.start()]
+    return flat[max(seps):] if seps else q
+
+
+_STALE_QUOTE = re.compile(r'^The listing also says "([^"]*)"\. ')
+
+
+def clean_quote_notes(r: dict[str, Any], facts: list[str], text: str = "") -> list[str]:
+    """Cycle 29: the last look at every quoted line. (a) No link, markdown or URL is quoted and no figure shares a quote it does not belong to. (b) A
+    figure written with spaces between its digits ("$2 9 5 0 / mo") is quoted as the whole run and no amount is read from it. (c) A figure of more
+    than twelve digits is shortened. (d) A credit is never called a cost. (e) A stale utilities estimate that a "corrects the utilities" note replaced is
+    not a note. (f) A note is said once."""
+    out: list[str] = []
+    est = r.get("utilities_estimate")
+    corrected = any("corrects the utilities" in f for f in facts)
+    for f in facts:
+        m = _QUOTE_ANY.match(f)
+        if not m:
+            out.append(f)
+            continue
+        head, q, mid, said = m.group(1), m.group(2), m.group(3), m.group(4)
+        if corrected and isinstance(est, (int, float)) and not isinstance(est, bool) and _STALE_UTIL_ESTIMATE.search(q) and all(abs(v - float(est)) >= 0.5 for v in _P()._dollar_values(q)):
+            continue
+        q = _title_line_figure(q, text)
+        sp = _SPACED_FIGURE.search(q)
+        if sp:
+            out.append(f'{head}{q}{mid}The figure is written with spaces between its digits, so no amount is read from it. Ask what it is.')
+            continue
+        pieces = _quote_pieces(q) if (_LINK_PIECE.search(q) or re.search(r"[$\uff04]\s?[\d,.]+[ \t]+[$\uff04]\s?\d", q)) else [q]
+        for piece in pieces:
+            piece = _shorten_long_figures(piece)
+            sentence = said
+            if _P()._CREDIT_WORDS.search(_P()._CREDIT_NOT.sub(" ", piece)) and re.search(r"one-time cost", said) and not re.search(r"\bfees?\b|\bdeposit|\bcharge", piece, re.I):
+                sentence = said.replace("It is a one-time cost, so it is not in the monthly cost.", _P().CREDIT_SENTENCE)
+            out.append(f"{head}{piece}{mid}{sentence}")
+    seen: set[str] = set()
+    final: list[str] = []
+    for f in out:
+        key = " ".join(f.split()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        final.append(f)
+    return final
+
+
 def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool = False) -> list[str]:
     """Cycle 26: the last filter over the notes, decided from the FINAL saved fields.
     1. A "not counted" note for a quoted line says what is true: "the other amounts in that line are counted" only when every one of them is in a
@@ -512,6 +601,7 @@ def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool 
     3. Two notes that quote the same figures for the same reason become one."""
     from . import money as M
     P = _P()
+    facts = clean_quote_notes(r, facts, text)
     out: list[str] = []
     optional_cache: dict[int, set[float]] = {}
     for i, f in enumerate(facts):
