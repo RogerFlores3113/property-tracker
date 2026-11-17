@@ -1771,6 +1771,8 @@ def build_server(store: Store) -> FastMCP:
         data = today_view.build(store, cur, days)
         fits = data["fits"]
         lines.append("Best fits right now:" + (" none yet." if not fits else ""))
+        if today_view.close_text(data):
+            lines.append(today_view.close_text(data))  # cycle 35: "none yet" with places under Needs a cost check says how close they are
         for p in fits:
             each = f", {_per_person_text(p)}" if _per_person_text(p) else ""
             lines.append(f"  - #{p['id']} {_title(p)} [{p['stage']}], score {p['score_total']}, {_money(p['cost_total'])}{_cost_word(p)}{each}"

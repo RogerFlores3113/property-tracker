@@ -69,7 +69,7 @@
 {% elif place_count and not no_criteria %}
 <section class="card" aria-labelledby="fits-h">
   <h2 id="fits-h">Best fits right now</h2>
-  <p class="fine">No place fits yet. Places that miss a must have or look risky stay on the <a href="/board">board</a>, not here.</p>
+  <p class="fine">{% if close_text %}{{ close_text }}{% else %}No place fits yet.{% endif %} Places that miss a must have or look risky stay on the <a href="/board">board</a>, not here.</p>
 </section>
 {% endif %}
 
