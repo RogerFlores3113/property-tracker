@@ -3896,7 +3896,7 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
 _PARK_SPOT_INCLUDED = re.compile(r"\b(?:(?:1|one|a|single|2|two)[ \t]+(?:(?:assigned|reserved|private|parking)[ \t]+){0,2}(?:spaces?|spots?|stalls?)[ \t]+(?:is[ \t]+|are[ \t]+|comes?[ \t]+)?(?:included|free)\b"
                                  r"|includes?[ \t]+(?:1|one|a|2|two)[ \t]+(?:parking[ \t]+)?(?:spaces?|spots?|stalls?)\b)", re.I)
 _PARKING_EXTRA_WORDS = re.compile(r"\b(?:2nd|second|additional|extra|another)\b", re.I)
-_PARK_LOT_EVIDENCE = re.compile(r"\b(?:lot|surface|driveway|off[- ]?street|outdoors?|uncovered|gravel|paved|open[- ]air)\b", re.I)
+_PARK_LOT_EVIDENCE = re.compile(r"\b(?:lot|assigned|reserved|surface|driveway|off[- ]?street|outdoors?|uncovered|gravel|paved|open[- ]air)\b", re.I)
 
 
 def _parking_spot_kind_unknown(text: str, kind: str, cost: float | None, notes: list[str]) -> tuple[str, list[str]]:
