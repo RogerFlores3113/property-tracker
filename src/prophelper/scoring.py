@@ -523,7 +523,7 @@ _LIMIT_WORDS = re.compile(r"\b(?:lbs?\.?|pounds?|weight|pets?|dogs?|animals?|bre
 _WAIVABLE = re.compile(r"\b(?:unless|without[ \t]+(?:prior[ \t]+|written[ \t]+)?(?:approv\w+|permission|consent)|except(?:ion|ions)?|case[- ]by[- ]case|waive[sd]?|waivable|negotiable|at (?:the )?(?:management|landlord|owner|property manager)(?:'s|\u2019s)? (?:discretion|option|approval)|"
                        r"(?:with|upon|subject to|pending|requires?|needs?|if|once|when)\s+(?:prior\s+|written\s+|special\s+|management\s+|landlord\s+|owner\s+)?(?:approv\w+|permission|consent)|(?:approved|permitted|allowed|cleared|okayed)\s+(?:by|on)\s+(?:the\s+)?(?:management|landlord|owner|office|property manager|case)|"
                        r"(?:may|can|might|could)\s+(?:be\s+)?(?:made|approved|allowed|considered|granted|reviewed|accepted)|ask (?:about|us|the office|management) (?:an? )?exceptions?|"
-                       r"(?:larger|bigger|heavier|big) (?:dogs?|pets?)[^.\n]{0,30}(?:considered|approved|reviewed|ask))\b", re.I)
+                       r"(?:larger|bigger|heavier|big) (?:dogs?|pets?)(?!\s+(?:are\s+|will\s+be\s+)?(?:not|never)\b)[^.\n]{0,30}(?:considered|approved|reviewed|ask))\b", re.I)  # cycle 34: "larger dogs not considered" is a no
 
 
 def _limit_can_be_waived(place: dict[str, Any]) -> bool:

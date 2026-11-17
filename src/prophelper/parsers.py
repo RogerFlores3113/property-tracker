@@ -3991,6 +3991,10 @@ def _pets(text: str, weight_rules: bool = True) -> str:
         cats = True  # "Cat fee $150": a charge for cats means cats are taken
     if re.search(_DOG_CHARGE, work):
         dogs = True
+    if re.search(r"(?<![\w$])\$\s?\d[\d,.]*[^$.;\n]{0,30}?(?:\b(?:for|per|each)[ \t]+(?:an?[ \t]+|each[ \t]+)?|/[ \t]*|\([ \t]*)cats?\b", work):
+        cats = True  # cycle 34: "Pets: $25 per cat, $50 per dog" prices both kinds, so both are taken
+    if re.search(r"(?<![\w$])\$\s?\d[\d,.]*[^$.;\n]{0,30}?(?:\b(?:for|per|each)[ \t]+(?:an?[ \t]+|each[ \t]+)?|/[ \t]*|\([ \t]*)dogs?\b", work):
+        dogs = True
     if re.search(r"\bcats?\s+(?:up to|max(?:imum)?(?: of)?|limit(?: of)?)\s+(?:\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch))", work):
         cats = True  # "Cats up to 2"
     if re.search(r"\bdogs?\s+(?:up to|max(?:imum)?(?: of)?|limit(?: of)?)\s+(?:\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch))", work):
@@ -4675,29 +4679,32 @@ def _per_animal_charges(text: str) -> tuple[str, dict[str, float], str] | None:
     return kind, {first[0]: first[1], second[0]: second[1]}, text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
 
 
-_KC_AMT = re.compile(r"(?<![\w$])\$[ \t]?(\d{1,4}(?:,\d{3})?(?:\.\d\d)?)(?![\d,])")
+_KC_AMT = re.compile(r"(?<![\w$])\$[ \t]?(\d{1,4}(?:,\d{3})?(?:\.\d\d)?)(?!\d|,\d)")  # cycle 34: "$300, dog $500" ends the amount at a comma that is followed by a space
 _KC_LEAD = r"(?:(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|one[- ]?time|non[- ]?refundable|refundable|flat|up[- ]?front)[ \t,]*)*"
 _KC_AFTER = re.compile(r"[ \t]*" + _KC_LEAD + r"(?:(?:/|per|each|for)[ \t]*(?:an?[ \t]+|each[ \t]+|one[ \t]+)?|\([ \t]*)?(cat|dog)s?\b\)?(?![ \t]+(?:park|run|wash|door|friendly|area|spa|walk|sitter|grooming)\b)(?:[ \t]*(?:pet[ \t]+)?(fee|rent|deposit)s?\b)?", re.I)
 _KC_MID = re.compile(r"[ \t]*(?:pet[ \t]+)?(fee|rent|deposit)s?[ \t]*\([ \t]*(cat|dog)s?[ \t]*\)", re.I)
+_KC_LFOR = re.compile(r"[ \t]*(?:one[- ]?time[ \t]+|non[- ]?refundable[ \t]+|refundable[ \t]+)?(?:pet[ \t]+)?(fee|rent|deposit)s?[ \t]*(?:/[ \t]*mo(?:nth)?\b[ \t]*|per[ \t]+month[ \t]*|monthly[ \t]*)?(?:for|per|each|/|-|:)?[ \t]*(?:an?[ \t]+|each[ \t]+|one[ \t]+)?(cat|dog)s?\b(?![ \t]+(?:park|run|wash|door|friendly|area|spa|walk|sitter|grooming)\b)", re.I)
 _KC_BEFORE = re.compile(r"(?<![\w-])(cat|dog)s?[ \t]*(?:pet[ \t]+)?(?:(fee|rent|deposit)s?)?[ \t]*(?:is|are|of|:|-|=|\(|\))*[ \t]*$", re.I)
 _KC_LABEL = re.compile(r"\b(?:pet[ \t]+)?(rent|fee|deposit)s?\b", re.I)
 _KC_MONTHLY = re.compile(r"[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b)", re.I)
 _KC_LEAD_LABEL = re.compile(r"(?<![\w-])(cat|dog)s?[ \t]*:", re.I)
 _KC_TYPE_AFTER = re.compile(r"[ \t]*(?:/[ \t]*mo(?:nth)?[ \t]*|per[ \t]+month[ \t]*|monthly[ \t]*|one[- ]?time[ \t]*|non[- ]?refundable[ \t]*|refundable[ \t]*)?(?:pet[ \t]+)?(fee|rent|deposit)s?\b", re.I)
 _KC_PLUS_MONTHLY = re.compile(r"[ \t]*(?:\+|plus|and|,)[ \t]*\$[ \t]?(\d{1,4}(?:,\d{3})?(?:\.\d\d)?)[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|monthly\b)", re.I)
-_KC_SENT = re.compile(r"(?<!\d)[.!?](?=\s|$)|[;\n|]")
+_KC_SENT = re.compile(r"[.!?](?=\s|$)|[;\n|]")  # cycle 34: "Rent $1,500. Pets: ..." ends its sentence after the digit too
 
 
-def _kinded_pet_charges(text: str) -> list[tuple[str, str, float, int, int]]:
+def _kinded_pet_charges(text: str, unlabeled: bool = False) -> list[tuple[str, str, float, int, int]]:
     """Cycle 33 (rule v): every amount the listing names for ONE kind of animal, in any order and layout: "Pet rent: $25 per cat, $50 per dog",
     "Pet deposit $300 (cat), $500 (dog)", "$300 pet deposit (cats) / $500 (dogs)", "cat fee $200", "$350 dog fee", "Dogs: $500". Returns
     (type "fee" / "rent" / "deposit", kind "cat" / "dog", amount, start, end) with the span of the amount and the words that tie it to the kind.
     An amount with no kind word beside it, or no charge word it can take its type from, is left out."""
     found: list[tuple[str, str, float, int, int]] = []
+    last_si, last_typ = -9, ""
     bounds = [0] + [m.end() for m in _KC_SENT.finditer(text)] + [len(text)]
     for si in range(len(bounds) - 1):
         lo, hi = bounds[si], bounds[si + 1]
         sent = text[lo:hi]
+        n0 = len(found)
         for am in _KC_AMT.finditer(sent):
             s, e = lo + am.start(), lo + am.end()
             rest = sent[am.end():am.end() + 60].split("$")[0]
@@ -4705,8 +4712,13 @@ def _kinded_pet_charges(text: str) -> list[tuple[str, str, float, int, int]]:
             end = e
             mid = _KC_MID.match(rest)
             aft = _KC_AFTER.match(rest)
+            if aft and re.match(r"[ \t]+/", rest) and _KC_BEFORE.search(sent[max(0, am.start() - 32):am.start()]):
+                aft = None  # cycle 34: "Cat $300 / dog $500": the "/" separates the items, the kind before the amount is the amount's own
+            lfor = _KC_LFOR.match(rest) if not mid else None  # cycle 34: "$300 deposit for cats", "$30 rent per dog"
             if mid:
                 kind, typ, end = mid.group(2).lower(), mid.group(1).lower(), e + mid.end()
+            elif lfor and not aft:
+                kind, typ, end = lfor.group(2).lower(), lfor.group(1).lower(), e + lfor.end()
             elif aft:
                 kind, typ, end = aft.group(1).lower(), (aft.group(2) or "").lower(), e + aft.end()
             else:
@@ -4737,27 +4749,87 @@ def _kinded_pet_charges(text: str) -> list[tuple[str, str, float, int, int]]:
                                 break
                             if text[bounds[back]:bounds[back + 1]].strip(" \t.;|\n") and not _KC_AMT.search(text[bounds[back]:bounds[back + 1]]):
                                 break
-            if typ not in ("fee", "rent", "deposit"):
+            if not typ and unlabeled and _in_pet_sentence(text, lo + am.start()):
+                typ = "?"  # cycle 34: "Pets: $25 per cat, $50 per dog" names no charge word: kept apart, so a note can ask if it is monthly
+            if not typ and si > 0 and last_si == si - 1 and last_typ and text[lo - 1:lo] in (";", "|") and not sent[:am.start()].strip(" \t-:*\u2022("):
+                typ = last_typ  # cycle 34: "$300 deposit for cats; $500 for dogs": a piece that starts with its amount takes the charge word of the piece before it
+            if typ not in ("fee", "rent", "deposit", "?"):
                 continue
             if typ == "fee" and _KC_MONTHLY.match(text[end:hi]):
                 typ = "rent"  # "Cat fee $26 monthly": a charge every month is the pet rent
             found.append((typ, kind, float(am.group(1).replace(",", "")), s, end))
+            last_si, last_typ = si, typ
             plus = _KC_PLUS_MONTHLY.match(text[end:hi])
             if plus and typ in ("fee", "deposit"):
                 found.append(("rent", kind, float(plus.group(1).replace(",", "")), end + plus.start(1) - 1, end + plus.end()))  # "Dog fee $400 + $30/mo"
+        pending = [i for i in range(n0, len(found)) if found[i][0] == "?"]
+        if pending:
+            # cycle 34: "Cats $300 (cat), $500 (dog) one-time pet fee": the charge word after the list names the charge of every amount in it
+            tm = re.match(r"[ \t,/(]*((?:(?:one[- ]?time|non[- ]?refundable|refundable|flat|up[- ]?front|monthly)[ \t-]*)*)(?:pet[ \t]+)?(fee|rent|deposit)s?\b", text[found[pending[-1]][4]:hi], re.I)
+            same = {found[i][0] for i in range(n0, len(found)) if found[i][0] != "?"}
+            if not tm and re.match(r"[ \t,/(]*(?:one[- ]?time|up[- ]?front)\b(?![ \t]+(?:per|each|/))", text[found[pending[-1]][4]:hi], re.I):
+                tm = re.match(r"[ \t,/(]*(?:one[- ]?time|up[- ]?front)\b", text[found[pending[-1]][4]:hi], re.I)
+                ttyp = "fee"  # "$300 (cat), $500 (dog) one-time": a one time pet charge is the pet fee
+            elif tm:
+                ttyp = "rent" if tm.group(2).lower() == "fee" and re.search(r"monthly", tm.group(1), re.I) else tm.group(2).lower()
+            if tm and ttyp:
+                pass
+            elif len(same) == 1:
+                ttyp, tm = next(iter(same)), None  # "Cat $25 per cat, $50 per dog pet rent": the one charge word of the sentence names every amount in it
+            else:
+                ttyp = ""
+            if ttyp:
+                for i in pending:
+                    t0, k0, a0, s0, e0 = found[i]
+                    found[i] = (ttyp, k0, a0, s0, e0 + (tm.end() if tm and i == pending[-1] else 0))
+    if unlabeled:
+        for i, (t0, k0, a0, s0, e0) in enumerate(found):
+            if t0 != "?":
+                continue
+            for j in (i + 1, i - 1):
+                if 0 <= j < len(found) and found[j][0] != "?":
+                    lo_, hi_ = (e0, found[j][3]) if j > i else (found[j][4], s0)
+                    gap = text[lo_:hi_]
+                    if len(gap) <= 60 and not re.search(r"[\n.!?]|\$", gap):
+                        found[i] = (found[j][0], k0, a0, s0, e0)  # "Cats $25 per cat; dogs $50 per dog (pet rent)": the charge word of the next or earlier piece of the same list
+                        break
     return found
 
 
-def _kinded_pet_step(pet_text: str, pet_kind: str, out: dict[str, Any]) -> tuple[str, list[str]]:
+def _kinded_pet_step(pet_text: str, pet_kind: str, out: dict[str, Any], pet_count: Any = None) -> tuple[str, list[str]]:
     """Cycle 33 (rule v): an amount named for one kind of animal belongs to that kind only. A search with one kind saves that kind's amount (cat
     or dog) and never the other kind's; a search with both or no pet saves neither when the listing gives different amounts and says so.
     Returns (the text with those phrases blanked so no other pet reader reads them again, notes)."""
-    kinded = _kinded_pet_charges(pet_text)
+    kinded = _kinded_pet_charges(pet_text, unlabeled=True)
     if not kinded:
         return pet_text, []
     want = str(pet_kind or "").strip().lower()
     notes: list[str] = []
     text = pet_text
+    unl = [r for r in kinded if r[0] == "?"]
+    if unl:
+        # cycle 34 (rule v): amounts per kind with no word for fee, rent or deposit: nothing is saved (monthly or one time is unknown), one plain note names them
+        ukinds: dict[str, set[float]] = {}
+        for _t, kind, amount, _s, _e in unl:
+            ukinds.setdefault(kind, set()).add(amount)
+        def money(v: float) -> str:
+            return f"${v:,.2f}".replace(".00", "")
+        said = " and ".join(f"{' or '.join(money(v) for v in sorted(ukinds[k]))} for a {k}" for k in ("cat", "dog") if k in ukinds)
+        note = f"The listing gives {said} for pets but does not say if it is monthly or a one time fee."
+        if want in ("cat", "dog"):
+            if want in ukinds:
+                note += f" Your search has a {want}, so {' or '.join(money(v) for v in sorted(ukinds[want]))} is the one that applies. It is not saved, because it is not clear what it is for. Ask if it is monthly pet rent or a one time fee."
+            else:
+                note += f" Your search has a {want}, so it is not counted. Ask what a {want} costs."
+        else:
+            note += " It is not saved. Ask which it is if you have a pet."
+        notes.append(note)
+        for _t, _k, _a, s0, e0 in sorted(unl, key=lambda r: -r[3]):
+            text = text[:s0] + " " * (e0 - s0) + text[e0:]
+        kinded = [r for r in kinded if r[0] != "?"]
+        if not kinded:
+            return text, notes
+
     names = {"fee": "pet fee", "rent": "pet rent", "deposit": "pet deposit"}
     keys = {"fee": "pet_fee", "rent": "pet_rent", "deposit": "pet_deposit"}
     for typ in ("deposit", "rent", "fee"):
@@ -4790,6 +4862,8 @@ def _kinded_pet_step(pet_text: str, pet_kind: str, out: dict[str, Any]) -> tuple
             val = next(iter(vals))
             if kind == want:
                 out[key] = _tidy_number(val)
+                if typ == "rent" and not _one_pet_household(want, pet_count) and any(re.search(r"(?:per|each|/)[ \t]*(?:an?[ \t]+)?" + kind + r"\b", text[s0:e0], re.I) for _t, _k, _a, s0, e0 in rows):
+                    notes.append(f"Pet rent is {amt(val)} a month for each {kind}, so with more than one {kind} it adds up.")  # cycle 34: it says per dog, so it says per dog
                 if prev is not None and float(prev) != val:
                     notes.append(f"The listing gives a {label} of {amt(float(prev))} and {amt(val)} for a {want}{per}. Your search has a {want}, so {amt(val)} is saved.")
             else:
@@ -4947,7 +5021,7 @@ _WEIGHT_WAIVER = re.compile(r"\bwithout[ \t]+(?:prior[ \t]+|written[ \t]+|specia
                            r"\b(?:approved|permitted|allowed)[ \t]+(?:by|on)[ \t]+(?:the[ \t]+)?(?:management|landlord|owner|office)\b|\bat[ \t]+(?:the[ \t]+)?(?:management|landlord|owner)(?:'s)?[ \t]+(?:discretion|option|approval)\b", re.I)
 
 
-_LARGER_WAIVER = re.compile(r"\b(?:larger|bigger|heavier|big|large|over-?sized|oversize[d]?)[ \t]+(?:dogs?|pets?|animals?|breeds?)\b[^.\n;?]{0,30}\b(?:considered|reviewed|approved|case[- ]by[- ]case|on[ \t]+approval|with[ \t]+approval|by[ \t]+approval|negotiable|possible|maybe|depends?|ask)\b", re.I)
+_LARGER_WAIVER = re.compile(r"\b(?:larger|bigger|heavier|big|large|over-?sized|oversize[d]?)[ \t]+(?:dogs?|pets?|animals?|breeds?)\b(?![ \t]+(?:are[ \t]+|will[ \t]+be[ \t]+)?(?:not|never)\b)[^.\n;?]{0,30}\b(?:considered|reviewed|approved|case[- ]by[- ]case|on[ \t]+approval|with[ \t]+approval|by[ \t]+approval|negotiable|possible|maybe|depends?|ask)\b", re.I)
 
 
 def _pet_weight_waiver_note(text: str, out: dict[str, Any]) -> str:
@@ -5019,9 +5093,10 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
     def _wmatch(t: str) -> re.Match[str] | None:
         return re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?(?:under|up to|less than|below|at most|no more than|not (?:to )?exceed(?:ing)?|max(?:imum)?(?: of)?|weigh(?:ing|s)?(?: up to| under)?|<)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", t, re.I) \
         or re.search(r"\bno\s+(?:dogs?|pets?|animals?|breeds?|cats?)?\s*(?:over|above|exceeding|larger than|heavier than|more than)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", t, re.I) \
-        or re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,30}?\b(?:over|above|exceeding|(?:larger|bigger|heavier|greater|more)[ \t]+than|weighing[ \t]+(?:over|more[ \t]+than))\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:are\s+|is\s+|will[ \t]+be\s+)?(?:not\s+(?:allowed|permitted|accepted|welcome)|prohibited|banned|forbidden)", t, re.I) \
+        or re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,30}?\b(?:over|above|exceeding|(?:larger|bigger|heavier|greater|more)[ \t]+than|weighing[ \t]+(?:over|more[ \t]+than))\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*[:\-\u2013,]?\s*(?:are\s+|is\s+|will[ \t]+be\s+)?(?:not\s+(?:allowed|permitted|accepted|welcome)|prohibited|banned|forbidden)", t, re.I) \
         or re.search(r"\b(?:not|n't)[ \t]+(?:allow|accept|permit|take)(?:ed)?[ \t]+(?:any[ \t]+)?(?:dogs?|pets?|animals?)[^.\n;]{0,15}?\b(?:over|above|exceeding|(?:larger|bigger|heavier|greater|more)[ \t]+than|weighing[ \t]+(?:over|more[ \t]+than))\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", t, re.I) \
         or re.search(r"\bno\s+(?:dogs?|pets?|animals?)?\s*weighing\s+(?:over|more[ \t]+than|above)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", t, re.I) \
+        or re.search(r"\b(?:not[ \t]+(?:allowed|permitted|accepted)|prohibited|banned)[ \t]*[:\-\u2013][ \t]*(?:any[ \t]+)?(?:dogs?|pets?|animals?)[^.\n;]{0,15}?\b(?:over|above|exceeding|(?:larger|bigger|heavier|greater|more)[ \t]+than|weighing[ \t]+(?:over|more[ \t]+than))\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", t, re.I) \
         or re.search(r"\b(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:weight\s*)?(?:limit|cap|max(?:imum)?)", t, re.I) \
         or re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?\b(\d{1,3})\s*(?:lbs?\b|pounds?\b)\s*(?:each|apiece|max(?:imum)?|per (?:pet|dog|animal))", t, re.I) \
         or re.search(r"\bweight (?:limit|cap|max(?:imum)?)\s*(?:of|is|:)?\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)?", t, re.I) \
@@ -5187,6 +5262,11 @@ def _pet_limit_is_in_fields(clause: str, out: dict[str, Any]) -> bool:
     if all(out.get(k) is None for k in ("pet_weight_limit", "pet_count_limit", "pet_rent", "pet_fee", "pet_deposit")):
         return False
     low = clause
+    try:  # cycle 34: an amount the listing names for one kind of animal ("$300 (cat), $500 (dog)") has its own note naming both, so the quoted line does not repeat it
+        for _t, _k, _a, s0, e0 in sorted(_kinded_pet_charges(low, unlabeled=True), key=lambda r: -r[3]):
+            low = low[:s0] + " " * (e0 - s0) + low[e0:]
+    except Exception:  # noqa: BLE001
+        low = clause
     pets = out.get("pets")
     if pets in ("cats", "dogs"):
         low = re.sub(r"\b" + pets[:-1] + r"s? only\b", " ", low, flags=re.I)  # "Cats only" is what the pets field says
@@ -5226,6 +5306,10 @@ def _pet_limit_is_in_fields(clause: str, out: dict[str, Any]) -> bool:
     return not re.search(r"[A-Za-z]{2,}", low)
 
 
+_NO_BREED_RULE_ONLY = re.compile(r"^(?:(?:there[ \t]+are|we[ \t]+have)[ \t]+)?(?:(?:cats?|dogs?|pets?)[ \t]+)?(?:no|without|none)[ \t]+(?:\w+[ \t]+){0,2}?(?:breed|breeds|size)(?:[ \t]+(?:or|and|&)[ \t]+(?:weight|size|breed)s?)?[ \t]*(?:restrictions?|limits?|rules?|requirements?)(?:[ \t]+(?:apply|applies|for|on|to|with)\b[^.]{0,40})?\W*$"
+                               r"|^(?:cats?|dogs?|pets?)?[ \t]*breed[ \t]+(?:restrictions?|limits?|rules?)[ \t]*[:\-][ \t]*(?:none|no)\W*$", re.I)
+
+
 def _pet_limits(text: str) -> list[str]:
     """Weight, breed and count limits on pets ("dogs under 50 lbs"), as short plain lines, since the pets field only says which pets."""
     found: list[str] = []
@@ -5236,6 +5320,8 @@ def _pet_limits(text: str) -> list[str]:
         clause = re.split(r"[\u2714\u2713\u2705\u2611]\ufe0f?\s*(?:\([^)]*\)\s*)?", clause)[-1].strip(" -:,")  # cycle 23: "Heated garage ✔ ($135/mo) Pet friendly (dogs up to 40 lbs)": the pet rule is the part after the last tick, not the whole feature line
         if not re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", clause, re.I):
             continue
+        if _NO_BREED_RULE_ONLY.match(clause):
+            continue  # cycle 34: "No breed restrictions apply to cats" restricts nothing, so it is not a limit to quote
         # cycle 31: "SPACIOUS 3/2 HOME - NO PETS OVER 40LBS!!!": a headline that ends in the pet rule gives the rule, not the whole headline
         bits = [b for b in re.split(r"[ \t]+[-\u2013\u2014|][ \t]+", clause) if b.strip()]
         pet_bits = [b for b in bits if re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", b, re.I)]
@@ -12288,13 +12374,58 @@ def _other_kind_charges(text: str, pet_kind: str, out: dict[str, Any]) -> list[s
     return notes
 
 
+def repick_pet_amounts(place: dict[str, Any], pet_kind: Any) -> dict[str, Any]:
+    """Cycle 34 (rule v): a place whose listing names pet amounts for one kind of animal ("$25 per cat, $50 per dog", "$300 (cat), $500 (dog)") keeps the
+    amount of the kind in the search it belongs to. When the search's pet changes, the amount is picked again from the saved listing text for the new kind
+    (or emptied when the new search has both or no pet and the kinds differ). Only a field that is empty or still holds one of the listing's own per-kind
+    amounts is touched: a number somebody typed is left alone. Returns {field: new value or None} for the fields that change; {} when nothing does."""
+    text = str(place.get("listing_text") or "")
+    if not text:
+        return {}
+    try:
+        rows = _kinded_pet_charges(text)
+    except Exception:  # noqa: BLE001
+        return {}
+    if not rows:
+        return {}
+    want = str(pet_kind or "").strip().lower()
+    fresh: dict[str, Any] = {}
+    try:
+        _kinded_pet_step(text, want, fresh)
+    except Exception:  # noqa: BLE001
+        return {}
+    keys = {"fee": "pet_fee", "rent": "pet_rent", "deposit": "pet_deposit"}
+    changes: dict[str, Any] = {}
+    for typ, key in keys.items():
+        amounts = {a for t, _k, a, _s, _e in rows if t == typ}
+        if not amounts:
+            continue
+        kinds = {k for t, k, _a, _s, _e in rows if t == typ}
+        if len(kinds) < 2 and want not in ("cat", "dog"):
+            continue  # one kind named and a household with both or none: the older readers' value stays
+        new = fresh.get(key)
+        cur = place.get(key)
+        cur_f = float(cur) if isinstance(cur, (int, float)) and not isinstance(cur, bool) else None
+        if cur_f is not None and cur_f not in amounts:
+            continue  # typed by hand or read from another part of the listing
+        if (cur_f if cur_f is not None else None) == (float(new) if new is not None else None):
+            continue
+        changes[key] = new
+    return changes
+
+
 def place_without_other_kind_charges(place: dict[str, Any], pet_kind: Any) -> dict[str, Any]:
     """Cycle 33 (rule v): a place saved before the search named its pet keeps whatever pet amount the listing gave, even one the listing names for the
     other kind of animal ("Cat fee $200", "pet fee $300 non-refundable (cats)"). When the search has one kind, that amount is not this search's cost,
     so the place as seen by this search has it empty (unknown, never wrong). Returns the place itself when nothing changes."""
     want = str(pet_kind or "").strip().lower()
     text = str(place.get("listing_text") or "")
-    if want not in ("cat", "dog") or not text:
+    if not text:
+        return place
+    repicked = repick_pet_amounts(place, want)  # cycle 34: the per-kind amounts follow the search's pet even for a place saved under another one
+    if repicked:
+        place = {**place, **repicked}
+    if want not in ("cat", "dog"):
         return place
     held = {k: place.get(k) for k in ("pet_fee", "pet_rent", "pet_deposit") if isinstance(place.get(k), (int, float)) and not isinstance(place.get(k), bool) and place.get(k) > 0}
     if not held:
@@ -12325,12 +12456,38 @@ def _per_animal_notes(kind: str, prices: dict[str, float], pet_kind: str, out: d
     return [f"The listing has a {label} of {both}. The {label} is left empty because it depends on the pet. Fill in the one that applies to you."]
 
 
+_ES_QUICK = re.compile(r"dep[o\u00f3]sito|estacionamiento|parqueo|aparcamiento|\bcochera|\bgaraje\b|/\s*mes\b|\bse permiten?\b|\bpermitid[oa]s\b|\bmascotas?\b", re.I)
+_ES_RULES = (
+    (re.compile(r"\bdep[o\u00f3]sito[ \t]+(?:por|de|para)[ \t]+(?:la[ \t]+)?(?:mascotas?|animal(?:es)?|perros?|gatos?)(?:[ \t]+de)?\b", re.I), "Pet deposit"),
+    (re.compile(r"\bdep[o\u00f3]sito(?:[ \t]+de[ \t]+(?:seguridad|garant[i\u00ed]a))?(?:[ \t]+(?:de|es|ser[a\u00e1]))?(?=[ \t]*[:=]?[ \t]*\$)", re.I), "Security deposit"),
+    (re.compile(r"\b(?:estacionamiento|parqueo|aparcamiento|cochera|garaje)\b(?:[ \t]+(?:de|es))?(?=[ \t]*[:=]?[ \t]*\$|[ \t]+(?:incluid[oa]|gratis|requerid[oa]|opcional))", re.I), "Parking"),
+    (re.compile(r"(?<=[\d\s])/\s*mes\b", re.I), "/mo"),
+    (re.compile(r"\brequerid[oa]\b", re.I), "required"),
+    (re.compile(r"\bopcional\b", re.I), "optional"),
+    (re.compile(r"\bno[ \t]+se[ \t]+permiten?[ \t]+(?:las[ \t]+)?mascotas\b", re.I), "No pets"),
+    (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:las[ \t]+)?mascotas\b", re.I), "Pets allowed"),
+    (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:los[ \t]+)?gatos\b|\bgatos[ \t]+permitidos\b", re.I), "Cats allowed"),
+    (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:los[ \t]+)?perros\b|\bperros[ \t]+permitidos\b", re.I), "Dogs allowed"),
+)
+
+
+def _spanish_money_words(text: str) -> str:
+    """Cycle 34: Spanish labels for the deposit, parking and pets ("Dep\u00f3sito $1,650", "Estacionamiento $200/mes requerido", "Se permiten gatos") are read as the English
+    words they stand for, so the same readers apply. Text with none of those words is returned as it is."""
+    if not _ES_QUICK.search(text):
+        return text
+    for pat, repl in _ES_RULES:
+        text = pat.sub(repl, text)
+    return text
+
+
 def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "", pet_count: Any = None) -> dict[str, Any]:
     """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
     ``buying`` is True for a buy search: the listing is then a home for sale, never a rental, and the rent-only readings
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_answered_questions(_tidy(text or "")))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
+    text = _spanish_money_words(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
     if not buying and text and not _SALE_WORDS.search(text):
@@ -12708,7 +12865,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if animals:
         pet_text = animals[2]
         facts.extend(_per_animal_notes(animals[0], animals[1], pet_kind, out))
-    kinded_step = _try(lambda: _kinded_pet_step(pet_text, pet_kind, out))
+    kinded_step = _try(lambda: _kinded_pet_step(pet_text, pet_kind, out, pet_count))
     if kinded_step:
         pet_text = kinded_step[0]
         facts.extend(kinded_step[1])
@@ -12737,6 +12894,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             out["pet_rent"] = 0  # the listing says there is no pet rent: zero, not unknown
     if out.get("pet_rent"):
         bare = re.search(r"(?<![\w-])pets?[ \t]*[:\-]?[ \t]*\$\s?" + f"{float(out['pet_rent']):.0f}" + r"(?!\d)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|mo\b)", ptext, re.I)
+        per_tail = re.match(r"[ \t]*(?:per|each|/)[ \t]*(pet|dog|cat|animal)s?\b", ptext[bare.end():bare.end() + 20], re.I) if bare else None
+        if per_tail:
+            bare = None  # cycle 34: "Pets: $40/mo per dog" already says it is for each animal, so nothing is asked about it
+            if _one_pet_household(pet_kind, pet_count):
+                facts.append(f"Pet rent is ${float(out['pet_rent']):,.0f} a month for each {per_tail.group(1).lower()}.")  # more than one pet gets the "adds up" note below
         if bare:
             facts.append(f'The listing\'s line "{" ".join(bare.group(0).split())}" is saved as monthly pet rent (${float(out["pet_rent"]):,.0f} a month). '
                          "It only matters if you have a pet. Ask if it is for each pet.")
@@ -12773,7 +12935,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     one_pet = _one_pet_household(pet_kind, pet_count)  # cycle 24: "with more than one pet it adds up" only when the search has more than one pet or the count is unknown
     if out.get("pet_rent") and re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*)?(?:per|each|/)\s*(?:pet|dog|cat|animal)\b", fee_text, re.I):
         if not one_pet:
-            facts.append(f"Pet rent is ${out['pet_rent']:,.0f} for each pet, so with more than one pet it adds up.")
+            who = re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*)?(?:per|each|/)\s*(pet|dog|cat|animal)\b", fee_text, re.I)
+            facts.append(f"Pet rent is ${out['pet_rent']:,.0f} for each {who.group(1).lower() if who else 'pet'}, so with more than one pet it adds up.")
     elif out.get("pet_rent") and re.search(r"\$\s?\d{1,4}(?:\.\d\d)?\s*(?:(?:/\s*mo(?:nth)?|per month|monthly|a month)\s*)?pet\s+rent\s+(?:per|each|for each|a|/)\s*(?:pet|animal|dog|cat)\b", fee_text, re.I):
         if not one_pet:
             facts.append(f"Pet rent is ${out['pet_rent']:,.0f} a month for each pet, so with more than one pet it adds up.")
@@ -13624,7 +13787,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             base = (sum(dict.fromkeys(mi).keys()) if len(mi) > 1 else mi[0]) if mi else 0.0
             put("move_in_fees", base + (clean_in or 0.0) + landlord_fee + extra_one_time)
         facts.extend(_try(lambda: _conditional_fee_notes(text, bool(mi) or out.get("application_fee") is not None)) or [])
-        br = _money_after(text, r"broker(?:'?s)? fee|agent(?:'?s)? fee|finder'?s fee", hi=20000)
+        br = _money_after(text, r"(?:flat[ \t]+)?(?:broker(?:'?s)? fee|agent(?:'?s)? fee|finder'?s fee)", hi=20000, verbs=True)  # cycle 34: "Broker fee is $1,500 flat", "Flat broker fee of $1,500", "$1,500 flat broker fee"
         if br:
             put("broker_fee", br[0])
         elif (broker_pct := _try(lambda: _broker_fee_percent(text))):

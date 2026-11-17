@@ -118,6 +118,7 @@ _CATS = (
     ("tax", re.compile(r"\btaxes\b|\btax\b", re.I), ("property_tax",)),
     ("parking", re.compile(r"parking|garage|carport|\bcar\b|\bspace\b|permit|valet|\bvehicle", re.I), ("parking_cost", "other_monthly_fees")),
     ("util", re.compile(r"electric|pg&e|\bpge\b|sdg&e|con ?ed\b|comed\b|duke energy|xcel|ameren|\bnicor\b|eversource|national grid|\bgas\b|water|sewer|trash|garbage|\bheat|internet|wi-?fi|cable|utilit", re.I), ("utilities_estimate", "other_monthly_fees")),
+    ("broker", re.compile(r"\bbroker(?:'?s)?\b|\bagent(?:'?s)?[ \t]+fee|\bfinder'?s?\b", re.I), ("broker_fee",)),  # cycle 34: a broker fee that is saved in broker_fee is placed by it
     ("fee", re.compile(r"\bfees?\b|admin|move-?in|lease|cleaning|processing|amenity|package|pest|locker|storage", re.I), ("move_in_fees", "other_monthly_fees", "application_fee", "deposit")),
 )
 
