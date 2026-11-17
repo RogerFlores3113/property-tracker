@@ -595,7 +595,7 @@ def normalise_text(text: str, keep_lines: bool = False) -> tuple[str, list[str]]
     """The text as a reader would see it, for matching: HTML entities decoded, zero-width characters removed, HTML comments
     taken out of the text, whitespace collapsed. Returns ``(text, comment_contents)``. The contents of comments are also
     appended to the text so they are scanned too."""
-    out = guards.bidi_visual(text or "")
+    out = str(text or "")
     if guards.has_tag_chars(out):  # invisible tag characters spell ASCII: read what they say (a long run), drop the rest (emoji flags)
         out = guards.TAG_CHARS.sub(lambda m: (". " + d + ". ") if len(d := guards.decode_tag_chars(m.group(0))) >= 8 else "", out)
     for _ in range(2):  # twice, for text like &amp;#8203;

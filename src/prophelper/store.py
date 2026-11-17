@@ -859,7 +859,9 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
         if m:
             row["hidden_chars_context"] = _hidden_sentence(v, m)
             break
-    row = {k: (_INVISIBLE.sub("", guards.bidi_visual(v)) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
+    # cycle 28: the reader's notes quote listing text; text under a right-to-left override is quoted as it shows on screen ("hidden text", not
+    # "txet neddih"). The listing text itself stays in the order a reader tool would read it, so the flags still see what it says.
+    row = {k: (_INVISIBLE.sub("", guards.bidi_visual(v) if k == "reader_notes" else v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
     if isinstance(row.get("title"), str):
         row["title"] = _BIDI.sub("", row["title"])  # a title that flips the text around it is shown plainly on every page, Today and the CSV
     if row.get("url"):
