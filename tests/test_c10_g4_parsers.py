@@ -25,7 +25,7 @@ def test_required_parking_counts(text, cost):
 
 
 @pytest.mark.parametrize("text", [
-    "Attached garage included in rent", "Attached 1-car garage", "1 garage space included"])
+    "Attached garage included in rent", "Attached 1-car garage included", "1 garage space included"])
 def test_included_garage_is_free_garage(text):
     r = parse_listing(text)
     assert r["parking"] == "garage" and r["parking_cost"] == 0
@@ -56,8 +56,8 @@ def test_optional_garage_with_free_lot_keeps_the_lot():
 
 def test_unpriced_garage_available_is_optional():
     r = parse_listing("Garage space available")
-    assert "parking" not in r and "parking_cost" not in r
-    assert "A garage is available" in notes(r)
+    assert r["parking"] == "garage" and "parking_cost" not in r  # cycle 29: an unpriced garage is a garage with the cost unknown, never $0
+    assert "A garage is available" in notes(r) and "gives no price" in notes(r)
 
 
 # ----------------------------------------------------------------------------- price and beds

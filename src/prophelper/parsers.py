@@ -2408,9 +2408,10 @@ def _parking_general_prices(low: str) -> list[tuple[float, bool, str, str]]:
 
 
 _GARAGE_INCLUDED = re.compile(r"\b(?:garage|carport)(?:[ \t]+(?:parking|spaces?|spots?|stalls?))?s?\b[^.\n;$]{0,20}\b(?:included|free|at no (?:extra )?charge)\b|"
-                              r"\b(?:free|included)\b[^.\n;$]{0,10}\b(?:garage|carport)\b|\b(?:attached|detached)\b[ \t]+(?:\d[- ]?car[ \t]+)?garage\b|\b\d[- ]car[ \t]+garage\b", re.I)
+                              r"\b(?:free|included)\b[^.\n;$]{0,10}\b(?:garage|carport)\b", re.I)  # cycle 29: a bare "attached garage" or "2 car garage" gives no price, so it is not "included"
+_GARAGE_UNPRICED = re.compile(r"\b(?:tbd|tba|to be (?:determined|announced)|price\s+(?:tbd|tba|on\s+request|not\s+(?:listed|given|stated)|unknown|varies)|ask\s+(?:for|about|the)\s+(?:price|pricing|cost|rate|office|leasing|landlord|manager)|ask\s+(?:office|us|leasing)|call\s+(?:for|the\s+office)|inquire|enquire|unpriced|no\s+price|(?:price|cost|rate)s?\s+(?:upon|on)\s+request|upon\s+request|contact\s+(?:us|the\s+office|leasing))\b", re.I)
 _GARAGE_SAYS_INCLUDED = re.compile(r"\b(?:garage|carport)(?:[ \t]+(?:parking|spaces?|spots?|stalls?))?s?\b[^.\n;$]{0,20}\b(?:included|free|at no (?:extra )?charge)\b|\b(?:free|included)\b[^.\n;$]{0,10}\b(?:garage|carport)\b", re.I)
-_OPTIONAL_GARAGE_CLAUSE = re.compile(r"[^.\n;,$]*\b(?:garage|carport)\b[^.\n;,$]*")
+_OPTIONAL_GARAGE_CLAUSE = re.compile(r"[^.\n;,$|]*\b(?:garage|carport)\b[^.\n;,$|]*")
 
 
 def _a(w: str) -> str:
@@ -3086,6 +3087,7 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
             else:
                 notes.append(f"{_a(what)} is available for ${value:,.0f} a month. It looks optional, so it is not counted in the monthly cost. Ask if it is required.")
             rest = rest.replace(clause, " ")
+    opt_garage: list[str] = []
     for m in list(_OPTIONAL_GARAGE_CLAUSE.finditer(rest)):  # "Garage space available": offered, so not the place's parking
         clause = m.group(0)
         if _PARKING_OPTIONAL.search(clause) and not _PARKING_REQUIRED.search(clause) and not _GARAGE_SAYS_INCLUDED.search(clause) \
@@ -3093,9 +3095,16 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
             what = _parking_what(clause)
             if not any(what in n for n in notes):
                 notes.append(f"{_a(what)} is available but the listing gives no price. It looks optional, so it is not counted as the place's parking. Ask if it costs extra.")
+                if re.search(r"\bgarage\b", what):
+                    opt_garage.append(what)
             rest = rest.replace(clause, " ")
     required = [v for v, o, _c, _u in prices if not o]
     kind, cost = _parking_kind_cost(rest, required[0] if required else None)
+    if opt_garage and not kind and not prices and cost is None:
+        # cycle 29: an unpriced garage that is the only parking the listing names is saved the same way every time: a garage with the cost unknown, and one note
+        kind = "garage"
+        notes = [n for n in notes if "is available but the listing gives no price" not in n or not re.search(r"\bgarage\b", n)]
+        notes.append(f"{_a(opt_garage[0])[:1].upper() + _a(opt_garage[0])[1:]} is available but the listing gives no price. Parking is saved as a garage with the cost left empty. Ask if it is included or what it costs.")
     if cost is None and required:
         cost = required[0]
     for value, optional, _clause, unit in prices:
@@ -3107,6 +3116,9 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
         cost = 0.0
     if not kind and cost == 0 and _PARKING_FREE.search(low):
         kind = "lot"  # "Parking included (garage $90 optional)": the included spot, whose type the listing does not give, is a plain lot spot; the garage is the extra
+    if kind == "garage" and cost is None and not prices and not any(re.search(r"\bgarage\b", n, re.I) for n in notes):
+        gtxt = next((c.strip(" ,") for c in re.split(r"[.\n;|]", low) if re.search(r"\bgarage\b", c)), "garage")
+        notes.append(f'The listing mentions a garage ("{gtxt[:60]}") but gives no price for it. Parking is saved as a garage with the cost left empty. Ask if it is included or what it costs.')
     if cost is None and kind == "lot" and not prices and re.search(r"\bdriveway\b", low) and not re.search(r"\bdriveway\b[^.\n;]{0,40}\$", low):
         notes.append("The listing mentions driveway parking but gives no price. The parking cost is left empty. Ask if it costs extra.")
     if kind == "none" and re.search(r"\bparking\s*(?:is\s*)?(?:not\s+available|unavailable)\b(?!\s+(?:on|along|at)\s+(?:the\s+)?(?:street|curb|road))|\bno\s+parking\s+available\b", low):
@@ -3190,7 +3202,9 @@ def _parking_kind_cost(text: str, priced: float | None) -> tuple[str, float | No
         cost = 0.0  # cycle 20: "Off-street parking, free." / "Parking: off-street, no charge"
         kind = kind or "lot"
     if cost is None and kind in ("garage", "covered") and _GARAGE_INCLUDED.search(low):
-        cost = 0.0  # "Attached garage included in rent", "Attached 1-car garage"
+        gm_clause = next((c for c in re.split(r"[.\n;|]", low) if _GARAGE_INCLUDED.search(c)), "")
+        if not _GARAGE_UNPRICED.search(gm_clause):
+            cost = 0.0  # "Attached garage included in rent"; cycle 29: "Own garage included, price TBD" gives no price, so the cost stays unknown
     return kind, cost
 
 
@@ -10115,7 +10129,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     kind_cost = _try(lambda: _parking_detail(ptext)) or ("", None, [])
     put("parking", kind_cost[0])
     put("parking_cost", kind_cost[1])
-    facts += [n for n in kind_cost[2] if not (buying and re.search(r"is counted\.|are counted\.|counted in the monthly cost\.? Check|, so .{1,40} is counted", n) and "not counted" not in n)]
+    facts += [n for n in kind_cost[2] if not (buying and re.search(r"is counted\.|are counted\.|counted in the monthly cost\.? Check|, so .{1,40} is counted", n) and "not counted" not in n) and not (buying and "Parking is saved as a garage with the cost left empty" in n)]  # cycle 29: a garage of a home for sale needs no price note
     if kind_cost[1] and not kind_cost[2] and re.search(r"\bparking\b[^.\n;$]{0,40}\$\s?" + f"{kind_cost[1]:.0f}" + r"(?!\d)(?:\.\d\d)?[^.\n;$]{0,25}\b(?:per|each|a|/)\s*(?:vehicle|car|space|spot)\b"
                                                     r"|\bparking\b[^.\n;$]{0,40}\b(?:per|each)\s+(?:vehicle|car)\b[^.\n;$]{0,15}\$\s?" + f"{kind_cost[1]:.0f}" + r"(?!\d)", ptext, re.I) \
             and not re.search(r"\b(?:optional|available)\b", ptext[max(0, ptext.lower().find("parking") - 20):ptext.lower().find("parking") + 80], re.I):
