@@ -7493,7 +7493,7 @@ def _month_to_month_note(text: str, lease: Any = None) -> list[str]:
     m = _MONTH_TO_MONTH.search(text)
     if not m:
         return []
-    if _M2M_PRICED.search(text):
+    if _M2M_PRICED.search(text) and re.search(r"\b(?:[2-9]|1\d|2[0-4])[- ]?(?:mo\b|months?\b(?![- ]to))", text, re.I):
         return []  # cycle 27: a month-to-month rent the listing prices is quoted once, by the lease-length or "also says" note for that figure
     said = " ".join(m.group(0).split()).strip(" ,-")
     keep = "" if lease else " No lease length is saved from that."
