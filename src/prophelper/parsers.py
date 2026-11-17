@@ -2162,25 +2162,6 @@ def _beds_range_starts(text: str) -> set[int]:
     return out
 
 
-def _beds_range_only_note(text: str) -> str:
-    """"1 - 2 Beds" with no single unit line anywhere: the listing does not say which size this place is. "" when there is none."""
-    ranges = _beds_range_matches(text)
-    if not ranges:
-        return ""
-    low = text.lower()
-    rs = {m.start() for m in ranges}
-    cov = [(m.start(), m.end()) for m in ranges]
-    for pat in (r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)(?:[ \t]*|-)(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b", r"\b(one|two|three|four|five|six)[- ](?:bed(?:room)?s?|bdrms?|brs?)\b",
-                r"\b(?:bed(?:room)?s?|bds?)\s*[:\-]\s*(\d{1,2}(?:\.\d)?)\b", r"\b(\d)\s*(?:bd|br|bed)\s*[/|]\s*\d(?:\.\d)?\s*(?:ba|bth|bath)"):
-        for m in re.finditer(pat, low):
-            if not any(a <= m.start() < b for a, b in cov):
-                return ""
-    if _BEDS_GLUED.search(text) or _SLASH_HOME.search(low) or _beds_x_baths(text) or _slash_beds_baths(text):
-        return ""
-    m = ranges[0]
-    return f'The listing says "{m.group(0).strip()}", which covers more than one size, and it does not name the one this place is, so the bedroom count is left empty. Ask which size you would get.'
-
-
 def _beds_conflict(text: str) -> str:
     """"1BR/2BR convertible" in the title and "3 bedrooms" in the body: the listing does not say how many bedrooms it has. Returns
     a plain note (and the bedroom count stays empty), or "" when there is no such pair."""
@@ -2261,8 +2242,6 @@ def _beds(text: str) -> float | None:
             return ex_b
     if _beds_conflict(text):
         return None
-    if _beds_range_only_note(text):
-        return None
     low = text.lower()
     hits: list[tuple[int, float]] = []
     for m in re.finditer(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)(?:[ \t]*|-)(?:-[ \t]*\d{1,2}(?:\.\d)?[ \t]*)?(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b(?!\s*(?:and breakfast|room only))", low):
@@ -2290,7 +2269,8 @@ def _beds(text: str) -> float | None:
     hits = [h for h in hits if h[1] <= 20]
     rstarts = _beds_range_starts(text)
     if rstarts:  # cycle 30: "1 - 2 Beds ... 2 Bed 2 Bath $1,495": the unit line is the count, never the low end of the range
-        hits = [h for h in hits if h[0] not in rstarts]
+        rest = [h for h in hits if h[0] not in rstarts]
+        hits = rest or hits  # a range with no unit line anywhere keeps the old reading
     return min(hits)[1] if hits else None
 
 
@@ -10664,7 +10644,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     xb_fix = None if (conv or corrected or not _XB_CORRECT.search(text)) else _try(lambda: _beds_x_corrected(text))
     if xb_fix:
         facts.append(f"The listing gives two different layouts and corrects itself. The later one ({xb_fix[0]:g} bed, {xb_fix[1]:g} bath) is saved, so check the layout.")
-    beds_conflict = _try(lambda: _beds_conflict(text)) or _try(lambda: _beds_range_only_note(text)) or ""
+    beds_conflict = _try(lambda: _beds_conflict(text)) or ""
     if beds_conflict:
         facts.append(beds_conflict)
     bath_fix = _try(lambda: _baths_corrected(text))

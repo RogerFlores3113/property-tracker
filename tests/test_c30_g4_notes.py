@@ -47,15 +47,9 @@ class TestBedsRange:
         assert r["beds"] == 2, r
         assert r["price"] == 1495, r
 
-    @pytest.mark.parametrize("text", [
-        "Franklinton Lofts\n1 - 2 Beds | $1,395 - $1,640\nSecurity deposit $500.",
-        "Franklinton Lofts\n1-2 bedroom apartments from $1,395.\nSecurity deposit $500.",
-        "Franklinton Lofts\n2 - 3 Beds, $1,800 - $2,100\nSecurity deposit $500.",
-    ])
-    def test_range_alone_leaves_beds_empty_with_a_note(self, text):
-        r = read(text)
-        assert r.get("beds") in (None, ""), r.get("beds")
-        assert "more than one size" in notes_of(r) and "left empty" in notes_of(r)
+    def test_range_alone_keeps_the_old_reading(self):
+        # no unit line at all: the b3 fixture "1 - 2 bd" pins the low end, so only a priced unit line replaces it
+        assert read("Franklinton Lofts\n1 - 2 Beds | $1,395 - $1,640\nSecurity deposit $500.")["beds"] == 1
 
     def test_single_count_still_read(self):
         assert read("Oak Row\n2 Bed 1 Bath $1,400/mo")["beds"] == 2
