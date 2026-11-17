@@ -7332,8 +7332,21 @@ _HEAT_GAS_GROUP = re.compile(r"\b(?:heat(?:ing)?[ \t]*(?:&|and|/|\+)[ \t]*gas|ga
 _TRASH_FEE_RE = re.compile(r"\b(?:valet[ \t-]*(?:trash|waste)|trash[ \t-]*valet|trash[ \t]+removal|trash[ \t]+(?:pick-?up|service|fee|charge)|garbage[ \t]+(?:removal|pick-?up|service|fee|charge)|waste[ \t]+(?:removal|service))(?:[ \t]+(?:fee|service|charge))?[ \t]*[:\-=]?[ \t]*\$[ \t]?(\d{1,4}(?:\.\d\d)?)", re.I)
 
 
+_IN_TRASH_CHECK: contextvars.ContextVar[bool] = contextvars.ContextVar("in_trash_check", default=False)
+
+
 def _trash_fee_covers_trash(text: str, out: dict[str, Any]) -> None:
     """Cycle 27: a trash, valet trash or trash removal fee that is counted in other monthly fees is the trash bill: trash is not also an unknown utility."""
+    if _IN_TRASH_CHECK.get():
+        return  # cycle 27 join: the estimate lookup below re-reads the listing; that inner read must not start this check again (it recursed to the limit)
+    token = _IN_TRASH_CHECK.set(True)
+    try:
+        _trash_fee_covers_trash_inner(text, out)
+    finally:
+        _IN_TRASH_CHECK.reset(token)
+
+
+def _trash_fee_covers_trash_inner(text: str, out: dict[str, Any]) -> None:
     pays = [w.strip() for w in str(out.get("tenant_pays") or "").split(",") if w.strip()]
     fees = out.get("other_monthly_fees")
     if "trash" not in pays or not isinstance(fees, (int, float)) or isinstance(fees, bool):
