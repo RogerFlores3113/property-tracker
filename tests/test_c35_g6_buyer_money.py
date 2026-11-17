@@ -331,3 +331,44 @@ def test_a_yearly_figure_without_a_unit_stays_a_year_and_a_monthly_word_before_t
 @pytest.mark.parametrize("line", ["HO6 insurance optional $40 monthly.", "HO6 insurance not required, $40 monthly if you want it."])
 def test_optional_ho6_is_not_the_insurance(line):
     assert read(PMI_BASE.replace("Insurance $900/yr. ", "") + line).get("insurance") in (None, "")
+
+
+# ---- item 6 (buyer l43): "$1,200 first year of HOA reserve at closing" is cash to close, in buyer words
+RES_BASE = "Condo $300,000\n2 bed 2 bath. HOA $100/mo. Taxes $3,000/yr. Insurance $900/yr. "
+
+
+@pytest.mark.parametrize("line", [
+    "Buyer pays $1,200 first year of HOA reserve at closing.",
+    "$1,200 first year of HOA reserves due at closing.",
+    "Buyer to pay first year of HOA reserve: $1,200 at closing.",
+    "First year of HOA reserve: $1,200 (buyer, at closing)",
+    "Buyer pays $1,200 for the first year of HOA reserve at closing",
+    "- Buyer pays $1,200 first year of HOA reserve\n- Close in 30 days",
+    "Buyer pays $1,200 first year of association reserve at closing | Quiet street",
+])
+def test_first_year_of_hoa_reserve_is_cash_to_close(line):
+    out, _p, cash = full(RES_BASE + line)
+    p = parts(cash)
+    key = next((k for k in p if k.startswith("One-time fee at closing (first year of")), None)
+    assert key and p[key] == 1200, p
+    assert cash["total"] == 60000 + 9000 + 1200
+    n = notes(out)
+    assert "$1,200" in n and "counted in the cash to close as a one-time fee" in n
+    assert "move-in" not in n and "taken off what you owe" not in n
+
+
+def test_l43_whole_listing_first_year_reserve():
+    text_ = fixture("r34-buyer-l43.txt")
+    out, _p, cash = full(text_)
+    assert parts(cash)["One-time fee at closing (first year of HOA reserve)"] == 1200
+    assert "move-in" not in notes(out) and "taken off what you owe" not in notes(out)
+
+
+@pytest.mark.parametrize("line", [
+    "Seller pays $1,200 first year of HOA reserve at closing.",
+    "HOA reserve $50/month.",
+    "First year of HOA reserve $1,200 paid by the seller.",
+])
+def test_first_year_of_hoa_reserve_negatives(line):
+    _o, _p, cash = full(RES_BASE + line)
+    assert not any("first year of HOA reserve" in p["label"] for p in cash["parts"])

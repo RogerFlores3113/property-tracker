@@ -6640,7 +6640,7 @@ def _buyer_only_fees(text: str, out: dict[str, Any], saved_closing: float | None
     counted_fees, unclear_fees = _try(lambda: buyer_one_time_fees(text, out.get("special_assessment"), str(out.get("special_assessment_payer") or ""))) or ([], [])
     for label, amount in counted_fees:
         sent_of = next((x for x in re.split(r"[.\n;]", text) if re.search(r"\$\s?" + re.escape(f"{amount:,.0f}") + r"(?!\d)", x)), "")
-        if label in ("prepaid HOA dues", "HOA dues paid up front", "first year of HOA dues", "first month of HOA dues") and sent_of and not _PAYER_BUYER.search(sent_of) \
+        if label in ("prepaid HOA dues", "HOA dues paid up front", "first year of HOA dues", "first month of HOA dues", "first year of HOA reserve", "first month of HOA reserve") and sent_of and not _PAYER_BUYER.search(sent_of) \
                 and not re.search(r"\bat[ \t]+(?:closing|close|settlement)\b", sent_of, re.I):
             notes.append(f"The listing mentions {_money_c(amount)} of {label} paid ahead but does not say who pays it. Dues paid ahead are normally the buyer's cost at closing, so it is counted in the cash to close "
                          "as a one-time fee, not in the monthly cost. Ask the seller's agent to confirm who pays it.")
@@ -6716,7 +6716,7 @@ def _buyer_only_fees(text: str, out: dict[str, Any], saved_closing: float | None
 
 _BUYER_FEE_NAME = (r"home[ \t]+warrant(?:y|ies)(?:[ \t]+(?:plan|fee|policy))?|"
                    # cycle 33: HOA dues the buyer pays ahead at closing: "first year of HOA dues up front", "prepaid HOA $630 (3 months)", "HOA dues up front"
-                   r"(?:the[ \t]+)?first[ \t]+(?:year|month)(?:'?s)?(?:[ \t]+of)?[ \t]+(?:hoa|association|condo)[ \t]+(?:dues|fees?)(?:[ \t]+(?:up[ \t-]?front|prepaid|at[ \t]+closing))?|"
+                   r"(?:the[ \t]+)?first[ \t]+(?:year|month)(?:'?s)?(?:[ \t]+of)?[ \t]+(?:hoa|association|condo)[ \t]+(?:dues|fees?|reserves?(?:[ \t]+(?:fund|fees?|contribution))?)(?:[ \t]+(?:up[ \t-]?front|prepaid|at[ \t]+closing))?|"
                    r"(?:prepaid|pre-paid)[ \t]+(?:hoa|association|condo)(?:[ \t]+(?:dues|fees?|assessments?))?|(?:hoa|association|condo)[ \t]+(?:dues|fees?)[ \t]+(?:up[ \t-]?front|prepaid|pre-paid)|"
                    r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contribution|charge))?|reserve(?:s)?(?:[ \t]+fund)?(?:[ \t]+(?:contribution|fee|deposit|payment))|"
                    # cycle 34: a capitalization fee and an escrow set-up or escrow deposit are one-time buyer items at closing
@@ -6734,9 +6734,9 @@ def _nice_fee_label(label: str) -> str:
     """Cycle 33: plain names for the new one-time HOA items; every other label stays as the old readers made it."""
     if re.fullmatch(r"home[ \t]+warrant(?:y|ies)(?:[ \t]+(?:plan|fee|policy))?", label):
         return "home warranty"
-    fm = re.fullmatch(r"(?:the[ \t]+)?first[ \t]+(year|month)(?:'?s)?(?:[ \t]+of)?[ \t]+(?:hoa|association|condo)[ \t]+(?:dues|fees?)(?:[ \t]+.*)?", label)
+    fm = re.fullmatch(r"(?:the[ \t]+)?first[ \t]+(year|month)(?:'?s)?(?:[ \t]+of)?[ \t]+(?:hoa|association|condo)[ \t]+(dues|fees?|reserves?)(?:[ \t]+.*)?", label)
     if fm:
-        return f"first {fm.group(1)} of HOA dues"
+        return f"first {fm.group(1)} of HOA {'reserve' if fm.group(2).startswith('reserve') else 'dues'}"
     if re.fullmatch(r"(?:prepaid|pre-paid)[ \t]+(?:hoa|association|condo)(?:[ \t]+(?:dues|fees?|assessments?))?", label):
         return "prepaid HOA dues"
     if re.fullmatch(r"(?:hoa|association|condo)[ \t]+(?:dues|fees?)[ \t]+(?:up[ \t-]?front|prepaid|pre-paid)", label):
