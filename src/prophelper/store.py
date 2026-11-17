@@ -1388,7 +1388,26 @@ class Store:
                     self._rename_opinion_people(current, self.get_search(search_id))
                 if "budget_max" in values:
                     self._sync_auto_price_rule(search_id)
+                if "pet_kind" in values and (values["pet_kind"] or "") != (current.get("pet_kind") or ""):
+                    self._repick_pet_places(search_id)
         return self.get_search(search_id)
+
+    def _repick_pet_places(self, search_id: int) -> None:
+        """Cycle 34: after the search's pet changes, a place whose listing names pet amounts per kind of animal ("$25 per cat, $50 per dog") has the amount
+        of the new kind, and its "Also in the listing" notes name the new kind (never the old one). A field somebody typed by hand is left alone."""
+        from . import parsers
+        for row in self._rows("SELECT id, listing_text, reader_notes, pet_fee, pet_rent, pet_deposit, url, search_id FROM places WHERE search_id = ? AND listing_text != ''", (search_id,)):
+            try:
+                sets: dict[str, Any] = dict(parsers.repick_pet_amounts(row, self.get_search(search_id).get("pet_kind")))
+                if str(row.get("reader_notes") or "").strip():
+                    fresh = self._fresh_reader_notes({**row, **sets})
+                    if fresh is not None and fresh != (row.get("reader_notes") or ""):
+                        sets["reader_notes"] = fresh
+                if sets:
+                    cols = ", ".join(f"{k} = ?" for k in sets)
+                    self._exec(f"UPDATE places SET {cols} WHERE id = ?", (*sets.values(), row["id"]))
+            except Exception:  # noqa: BLE001 - a reader failure must not stop a search edit
+                continue
 
     def _sync_auto_price_rule(self, search_id: int) -> None:
         """The Monthly cost / Price must-have the app made from the budget follows the budget when it is edited. A rule the
