@@ -483,8 +483,10 @@ def _rent_correction(text: str) -> tuple[float, float | None, str] | None:
 
 _FIX_CUE = re.compile(r"\b(?:corrected?|corrections?|updated?|edit(?:ed)?|revised?|actually|changed[ \t]+to|should[ \t]+(?:be|read)|(?:is|are|it'?s|now)[ \t]+now|now[ \t]+(?:is|are|it'?s)|now[ \t]*[:=])\b|\bnow[ \t]*[:=]|\b(?:is|are|it'?s)[ \t]+now\b", re.I)
 _FIX_OLD_BEFORE = re.compile(r"(?:earlier|earlier[ \t]+(?:ad|listing|post)|previous(?:ly)?|before|old|original(?:ly)?|first|was|were|said|says|showed|listed|not|instead[ \t]+of|rather[ \t]+than|from|than)[ \t:,(-]*(?:it[ \t]+)?(?:was[ \t]+|said[ \t]+|had[ \t]+)?(?:(?:a|an|the|only|just)[ \t]+)?$", re.I)
-_FIX_BATH = re.compile(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)[ \t-]*(?:full[ \t]+)?(?:ba\b|baths?\b|bathrooms?\b|bth?s?\b)", re.I)
-_FIX_BED = re.compile(r"(?<![\d.,$/])\b(\d{1,2}|studio|one|two|three|four|five)[ \t-]*(?:bed(?:room)?s?\b|br\b|bds?\b|bdrms?\b)", re.I)
+_FIX_BATH = re.compile(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)[ \t-]*(?:full[ \t]+)?(?:ba\b|baths?\b|bathrooms?\b|bth?s?\b)"
+                       r"|(?<![\w.,$/])(?:baths?|bathrooms?)[ \t]*(?:are|is|=|:|now|to)[ \t]*(?:now[ \t]+|to[ \t]+)?(\d{1,2}(?:\.\d)?)(?![\d.,]*\d)(?![ \t]*(?:sq|sf|ft|/|%))", re.I)
+_FIX_BED = re.compile(r"(?<![\d.,$/])\b(\d{1,2}|studio|one|two|three|four|five)[ \t-]*(?:bed(?:room)?s?\b|br\b|bds?\b|bdrms?\b)"
+                      r"|(?<![\w.,$/])(?:beds?|bedrooms?)[ \t]*(?:are|is|=|:|now|to)[ \t]*(?:now[ \t]+|to[ \t]+)?(\d{1,2}|studio|one|two|three|four|five)\b(?![ \t]*(?:sq|sf|ft|/|%))", re.I)
 _FIX_DEP = re.compile(r"\bdeposit[ \t]*(?:is|of|was|:|=|-|now|to)?[ \t]*(?:is[ \t]+|now[ \t]+|to[ \t]+)*\$[ \t]?(\d{1,2},\d{3}(?:\.\d\d)?|\d{2,5}(?:\.\d\d)?)(?![\d,])|\$[ \t]?(\d{1,2},\d{3}(?:\.\d\d)?|\d{2,5}(?:\.\d\d)?)(?![\d,])[ \t]*(?:security[ \t]+)?deposit\b", re.I)
 
 
@@ -562,15 +564,18 @@ def _corrected_fact_note(label: str, new_text: str, old_text: str | None) -> str
 
 # ----------------------------------------------------------------- cycle 27: one general correction step
 _GC_KW = re.compile(
-    r"(?P<named>\b(?:pet|parking|key|garage|holding|reservation|storage|fob|cleaning|move[- ]in|admin\w*|lease|late|utility|utilities|amenity|trash|internet)[ \t]+(?:rent|deposit|dep|fees?)\b)"
+    r"(?P<named>\b(?:pet|parking|key|garage|holding|reservation|storage|fob|cleaning|move[- ]in|admin\w*|lease|late|utility|utilities|amenity|trash|internet|valet|package|pest|processing|community|technology|cable|gym|pool|bike|waste|sewer|water|laundry)[ \t]+(?:rent|deposit|dep|fees?|charges?)\b)"
+    r"|(?P<credit>\b(?:seller|sellers|seller's)[ \t]+(?:credits?|concessions?|contribution|paying|pays|paid|giving|gives|offering|offers)\b|\b(?:closing[ \t]+(?:cost[ \t]+)?)?(?:credit|concessions?)\b(?![ \t]+(?:checks?|scores?|reports?|history|cards?)))"
+    r"|(?P<closing>\bclosing[ \t]+(?:costs?|fees?|expenses)\b)"
     r"|(?P<dep>\b(?:(?:security|sec\.?|refundable|damage)[ \t]+)?(?:deposit|dep)\b)"
     r"|(?P<hoa>\bhoa\b|\b(?:condo|association|assoc\.?)[ \t]+(?:fees?|dues)\b)"
     r"|(?P<tax>\b(?:property[ \t]+)?tax(?:es)?\b)"
     r"|(?P<app>\b(?:application|app)(?:[ \t]+fee)?\b)"
     r"|(?P<park>\b(?:parking|garage|carport)\b)"
     r"|(?P<rent>\b(?:monthly[ \t]+)?rent\b|\bprice\b|\basking\b)", re.I)
-_GC_FIELD = {"dep": "deposit", "hoa": "hoa", "tax": "property_tax", "app": "application_fee", "park": "parking_cost", "rent": "price"}
-_GC_LABEL = {"deposit": "deposit", "hoa": "HOA", "property_tax": "property tax", "application_fee": "application fee", "parking_cost": "parking cost", "price": "rent"}
+_GC_FIELD = {"dep": "deposit", "hoa": "hoa", "tax": "property_tax", "app": "application_fee", "park": "parking_cost", "rent": "price", "credit": "seller_credit", "closing": "closing_costs"}
+_GC_LABEL = {"deposit": "deposit", "hoa": "HOA", "property_tax": "property tax", "application_fee": "application fee", "parking_cost": "parking cost", "price": "rent",
+             "seller_credit": "seller credit", "closing_costs": "closing costs"}
 _GC_MONEY = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
 _GC_LEAD = re.compile(r"^[ \t\"'(\[*#-]*(?:(?:corrected?|corrections?|actually)\b|(?:update[ds]?|revised|edit(?:ed)?)[ \t]*[:,\-\u2013\u2014])", re.I)
 _GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)"
@@ -583,6 +588,48 @@ _GC_OLD_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|y
 _GC_NEW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*(?:is|are)?[ \t]*(?:the[ \t]+)?(?:new|correct|current|updated)[ \t]+(?:rent|price|deposit|hoa|tax)", re.I)
 _GC_SPECIAL = re.compile(r"\b(?:special|promo\w*|concession|if[ \t]+you|when[ \t]+you|sign(?:ed|ing)?[ \t]+by|move[- ]?in[ \t]+by|first[ \t]+(?:\d+|one|two|three|six|twelve)[ \t]+months?|limited[ \t]+time|discount\w*|off\b|waive[ds]?|free[ \t]+rent|reduced[ \t]+from|price[ \t]+(?:cut|drop))", re.I)
 _GC_AFTER_KW = re.compile(r"^[ \t]*(?:/[ \t]*\w+[ \t]*)?(?:" + _GC_KW.pattern + r")", re.I)
+_GC_BACKWARD = re.compile(r"^[ \t:,\-]*(?:was|were|from|not|previously|earlier|before|originally|formerly|prior|used|ignore|instead)\b", re.I)
+# "$1,410 ($1,370 now)": the figure before the bracket is the old one, the figure inside it with "now" after it is the new one
+_GC_PAREN_NOW = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b", re.I)
+_GC_NOW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b[ \t]*(?:[)\]]|$|[,;|])", re.I)
+
+
+_GC_FEE_UNIT = re.compile(r"^[ \t]*(?:/[ \t]*(?:mo|month|yr|year|unit)\w*|per[ \t]+(?:month|year|unit)|a[ \t]+(?:month|year)|monthly|yearly|annual\w*|one[- ]time|once)?", re.I)
+
+
+def _gc_record_fee(found: dict[str, dict[str, Any]], k: re.Match[str], role: str, value: float, after: str, a0: int, a1: int, kw_start: int | None) -> None:
+    """A named fee ("amenity fee", "pet rent", "move-in fee", "valet trash charge") a correction wording names. Kept under the key "fee:<name>" with its figures,
+    the span of the figure with its unit, and (for the first figure after the name) where the name starts, so the text step can put the new figure where
+    the old one was."""
+    name = re.sub(r"[ \t]+(?:rent|deposit|dep|fees?|charges?)$", "", " ".join(k.group(0).lower().split()))
+    kind = (re.search(r"(rent|deposit|dep|fee|charge)", k.group(0).lower()) or re.search("", "")).group(0)
+    ent = found.setdefault("fee:" + name, {"new": None, "olds": [], "sentence": "", "spans": [], "clauses": [], "kind": kind, "name": name})
+    um = _GC_FEE_UNIT.match(after)
+    end = a1 + (um.end() if um else 0)
+    unit = after[:um.end()] if um else ""
+    ent["spans"].append((a0, a1))
+    ent["clauses"].append((kw_start if kw_start is not None else a0, end, role, value, " ".join(unit.split())))
+    if role == "old":
+        if value not in ent["olds"]:
+            ent["olds"].append(value)
+    else:
+        if ent["new"] is not None and ent["new"] != value and ent["new"] not in ent["olds"]:
+            ent["olds"].append(ent["new"])
+        ent["new"] = value
+
+
+def _gc_special(s: str, buying: bool) -> bool:
+    """A special or promo in the sentence; for a home for sale "concession" is the seller credit, so it is no promo word there."""
+    return bool(_GC_SPECIAL.search(re.sub(r"concessions?", " ", s, flags=re.I) if buying else s))
+
+
+_GC_LEASE_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*[ \t]*)?(?:with|for|on|if)[ \t]+(?:a[ \t]+|an[ \t]+)?(?:\d{1,2}|one|two|three|six|nine|ten|eleven|twelve|thirteen|fourteen|eighteen)[- ]*(?:months?|mos?\b|year)", re.I)
+
+
+def _gc_names_other(window: str) -> bool:
+    """True when the words before an amount (after the correction words) name some other thing ("earnest money", "amenity fee"), so the amount
+    must not be given to the fact an earlier sentence was about."""
+    return not _GC_TAIL.match(_GC_CUE.sub(" ", window))
 
 
 def _gc_tail_state(window: str) -> str | None:
@@ -634,14 +681,19 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
     for _off, s in sents:
         amts = list(_GC_MONEY.finditer(s))
         lead = bool(_GC_LEAD.match(s))
-        prev_end, chain = 0, None
+        prev_end, chain, chain_k = 0, None, None
         sent_fields: set[str] = set()
         for a in amts:
             window = s[prev_end:a.start()]
             after = s[a.end():a.end() + 40]
             value = _num(a.group(1) + ("." + a.group(2) if a.group(2) else ""))
-            if _GC_OLD_AFTER.match(after):
-                role: str | None = "old"
+            mo_ = _GC_OLD_AFTER.match(after)
+            if _GC_NOW_AFTER.match(after):
+                role: str | None = "soft"  # "($1,370 now)": the figure with "now" after it
+            elif mo_ and _GC_BACKWARD.match(after[mo_.end():]):
+                role = "hard"  # "Security deposit $2,310 (corrected: was $3,000)": the figure in front is the new one, the bracket names the old
+            elif mo_ or _GC_PAREN_NOW.match(after):
+                role = "old"
             else:
                 role = _gc_tail_state(window)
                 if role is None and lead:
@@ -650,18 +702,29 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     role = "soft"
             field: str | None = None
             inherited = False
+            k_named = None
+            prev_end_before = prev_end
             kws = list(_GC_KW.finditer(window))
             if kws:
                 k = kws[-1]
+                if k.lastgroup == "closing" and len(kws) > 1 and kws[-2].lastgroup == "credit" and re.search(r"(?:toward|towards|for|against|on|of)[ \t]+(?:the[ \t]+|your[ \t]+|buyer'?s?[ \t]+)?$", window[:k.start()], re.I):
+                    k = kws[-2]  # "seller credit toward closing costs $4,000": the credit is the fact
                 field = "named" if k.lastgroup == "named" else _GC_FIELD[k.lastgroup]
+                if field == "named":
+                    k_named = k
             elif chain is not None:
                 field = chain
+                if chain == "named":
+                    k_named = chain_k
             else:
                 kk = _GC_AFTER_KW.match(after)
                 if kk and kk.lastgroup:
                     field = "named" if kk.lastgroup == "named" else _GC_FIELD[kk.lastgroup]
             hard = role == "hard" or lead
-            if field is None and role in ("hard", "soft") and hard:
+            if field is None and role == "old" and chain is None and not kws and _GC_PAREN_NOW.match(after) and 300 <= value <= 30000 \
+                    and not _GC_CUE.search(window) and not _gc_names_other(window):
+                field = "price"  # "| $1,410 ($1,370 now) |": a bare header figure with its correction beside it is the rent
+            if field is None and role in ("hard", "soft") and hard and not _gc_names_other(window):
                 for pf in reversed(prev_fields):  # "Corrected: now $1,325 per month": the fact is the one the sentence before it was about
                     if len(pf) == 1:
                         field = next(iter(pf))
@@ -669,14 +732,18 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     break
             if field is not None:
                 chain = field
+                if field == "named":
+                    chain_k = k_named
             prev_end = a.end()
             if field and field != "named":
                 sent_fields.add(field)
+            if role is not None and field == "named" and not buying and k_named is not None and not _gc_special(s, buying) and not (_COND_AFTER.match(after) and role != "old"):
+                _gc_record_fee(found, k_named, role, value, after, _off + a.start(), _off + a.end(), (_off + prev_end_before + k_named.start()) if kws and k_named is kws[-1] else None)
             if role is None or field == "named":
                 continue
-            if role == "soft" and _GC_SPECIAL.search(s):
+            if role == "soft" and _gc_special(s, buying):
                 continue  # "now $1,450 if you sign by Dec 15", "was $1,600, now $1,450 special": a special, never a correction
-            if _COND_AFTER.match(after) and role != "old":
+            if (_COND_AFTER.match(after) or _GC_LEASE_AFTER.match(after)) and role != "old":
                 continue
             if field is None:
                 if hard and role != "old" and value >= 100 and re.search(r"\b(?:now|corrected?|corrections?|updated?|revised)\b", s, re.I) \
@@ -686,6 +753,8 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                         unplaced.append(q)
                 continue
             if buying and field in ("price", "deposit"):
+                continue
+            if not buying and field in ("seller_credit", "closing_costs"):
                 continue
             if inherited and field in ("deposit", "application_fee", "property_tax") and re.match(r"[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly)", after, re.I):
                 if hard and role != "old":  # "Corrected: now $1,450 per month" after a deposit line: a monthly figure is not a deposit, so it cannot be placed
@@ -706,10 +775,12 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 ent["sentence"] = " ".join(s.split())
         if amts:
             prev_fields.append(sent_fields)
-    ranges = {"price": (300, 30000), "deposit": (0, 50000), "hoa": (1, 6000), "property_tax": (50, 200000), "application_fee": (0, 1000), "parking_cost": (0, 1000)}
+    ranges = {"price": (300, 30000), "deposit": (0, 50000), "hoa": (1, 6000), "property_tax": (50, 200000), "application_fee": (0, 1000), "parking_cost": (0, 1000),
+              "seller_credit": (0, 500000), "closing_costs": (0, 500000)}
     for fld in list(found):
         ent = found[fld]
-        if ent["new"] is None or not ranges[fld][0] <= ent["new"] <= ranges[fld][1]:
+        lo_hi = ranges.get(fld, (0, 5000))
+        if ent["new"] is None or not lo_hi[0] <= ent["new"] <= lo_hi[1]:
             del found[fld]
             continue
         ent["olds"] = [o for o in ent["olds"] if o != ent["new"]]
@@ -724,11 +795,13 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
     """Apply the corrections to the read fields. Each applied correction gets one short note that names the old value as not used; an older note about
     the old value goes. A correction that cannot be placed is quoted."""
     for fld, ent in found.items():
-        if only is not None and fld not in only:
+        if fld.startswith("fee:") or (only is not None and fld not in only):
             continue
         if fld in ("hoa", "property_tax") and not buying and out.get(fld) is None and not _SALE_WORDS.search(text):
             continue
         if fld in ("application_fee", "parking_cost") and out.get(fld) is None:
+            continue
+        if fld in ("seller_credit", "closing_costs") and not buying:
             continue
         new = ent["new"]
         before = out.get(fld)
@@ -740,7 +813,8 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
             continue
         label = _GC_LABEL[fld]
         olds_txt = [_gc_fmt(fld, o) for o in olds]
-        kw = {"price": r"\b(?:rent|price)\b", "deposit": r"\bdeposit\b", "hoa": r"\b(?:hoa|condo)\b", "property_tax": r"\btax", "application_fee": r"\bapplication\b", "parking_cost": r"\bparking\b"}[fld]
+        kw = {"price": r"\b(?:rent|price)\b", "deposit": r"\bdeposit\b", "hoa": r"\b(?:hoa|condo)\b", "property_tax": r"\btax", "application_fee": r"\bapplication\b", "parking_cost": r"\bparking\b",
+              "seller_credit": r"\b(?:seller|credit)", "closing_costs": r"\bclosing\b"}[fld]
         have = [f for f in facts if "correct" in f.lower() and re.search(kw, f, re.I) and any(re.search(re.escape(_usd(o)) + r"(?![\d,])", f) for o in olds)]
         facts[:] = [f for f in facts if f in have or "correct" in f.lower() or not re.search(kw, f, re.I) or not any(re.search(re.escape(_usd(o)) + r"(?![\d,])", f) for o in olds)]
         if have:
@@ -749,10 +823,224 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
         facts.append(f"The listing corrects the {label}: it is now {_gc_fmt(fld, new)}. The earlier {old_list} {'is' if len(olds_txt) == 1 else 'are'} not used. Ask the landlord to confirm it.")
 
 
+def _saved_vs_corrected_notes(found: dict[str, dict[str, Any]], current: dict[str, Any], buying: bool) -> list[str]:
+    """Cycle 28: the place already holds a figure (sent by Claude or typed by the user) that differs from the one the listing text corrects itself to
+    ("Corrected: rent now $2,325" while the saved rent is $2,350). The saved figure is kept, and one note says the two disagree."""
+    notes: list[str] = []
+    for fld, ent in found.items():
+        if fld.startswith("fee:") or ent.get("new") is None:
+            continue
+        saved = current.get(fld)
+        if not isinstance(saved, (int, float)) or isinstance(saved, bool) or _same_num(saved, ent["new"]):
+            continue
+        if not buying and fld in ("seller_credit", "closing_costs"):
+            continue
+        if fld in ("price", "deposit") and buying:
+            continue
+        label = _GC_LABEL[fld]
+        notes.append(f"The listing says the {label} was corrected to {_gc_fmt(fld, ent['new'])}, but the {label} saved on this place is {_gc_fmt(fld, float(saved))}. "
+                     f"Check which one is right{' with the landlord' if not buying else ''}.")
+    return notes
+
+
 def _gc_quote_unplaced(facts: list[str], unplaced: list[str]) -> None:
     for q in unplaced:
         if not any(q[:60] in f for f in facts):
             facts.append(f'The listing has a correction I could not match to one fact: "{q[:140]}". Nothing was changed from it, so the saved amounts may be out of date. Ask the landlord which amount is right.')
+
+
+# ----------------------------------------------------------------- cycle 28: corrections to named fees and to "all utilities", made in the text
+def _fmt_plain(v: float) -> str:
+    return f"{v:,.2f}" if abs(v - round(v)) > 0.001 else f"{v:,.0f}"
+
+
+def _fee_text_corrections(text: str, found: dict[str, dict[str, Any]]) -> tuple[str, list[str]]:
+    """Cycle 28: "Corrected: amenity fee is $45" (the listing said "Amenity fee $35/mo" earlier), "Pet rent was $50, now $40", "Move-in fee: $300 (now $250)".
+    The earlier statement of the same fee gets the new figure, and the correction clause is blanked, so every reader sees one fee with the corrected
+    figure and nothing is counted twice. A correction with no earlier statement stays as a plain fee line. Returns (the text, one note for each fee)."""
+    notes: list[str] = []
+    edits: list[tuple[int, int, str]] = []
+    claimed = [(a0, a1) for e in found.values() for (a0, a1) in e.get("spans", [])]
+    for key, ent in found.items():
+        if not key.startswith("fee:") or ent["new"] is None or not ent.get("clauses"):
+            continue
+        name, kind, new = ent["name"], ent.get("kind") or "fee", ent["new"]
+        words = [re.escape(w) for w in re.split(r"[ \t-]+", name) if w]
+        if not words:
+            continue
+        name_rx = re.compile(r"\b" + r"[ \t-]+".join(words) + r"[ \t]*(?:fees?|charges?|rent|deposit|dep)?[ \t:=\-(]*(?:is|are|of|at)?[ \t]*\$[ \t]?(\d[\d,]*(?:\.\d\d)?)(?![\d,])", re.I)
+        clause_spans = [(c[0], c[1]) for c in ent["clauses"]]
+        earlier = []
+        for m in name_rx.finditer(text):
+            if any(m.start() < c1 and c0 < m.end() for c0, c1 in clause_spans):
+                continue
+            earlier.append(m)
+        olds = list(ent["olds"])
+        target = None
+        for m in earlier:
+            v = _num(m.group(1))
+            if v in olds:
+                target = v
+                break
+        if target is None and earlier and not olds:
+            target = _num(earlier[0].group(1))
+        if target is None and earlier and olds:
+            target = _num(earlier[0].group(1))  # the listing's own old figure is not stated elsewhere: the earlier statement is still the one corrected
+        label = f"{name} {'deposit' if kind == 'dep' else kind}"
+        unit = next((c[4] for c in ent["clauses"] if c[4]), "")
+        monthly = bool(re.search(r"mo|month", unit, re.I))
+        keep = False
+        if target is not None:
+            for m in earlier:
+                if _num(m.group(1)) == target:
+                    edits.append((m.start(1), m.end(1), _fmt_plain(new)))
+            for c0, c1, _r, _v, _u in ent["clauses"]:
+                edits.append((c0, c1, " " * (c1 - c0)))
+            if target not in olds and target != new:
+                olds.append(target)
+        else:
+            keep = True  # no earlier statement of this fee: the correction clause becomes a plain fee line the readers can count
+            fresh = [c for c in ent["clauses"] if c[2] != "old"]
+            for c0, c1, role, _v, u in ent["clauses"]:
+                if role == "old":
+                    edits.append((c0, c1, " " * (c1 - c0)))
+            if fresh:
+                c0, c1, _r, _v, u = fresh[-1]
+                edits.append((c0, c1, f"{name.capitalize()} {kind} ${_fmt_plain(new)}{(' ' + u) if u else ''} "))
+        olds = [o for o in olds if o != new]
+        now_txt = f"${_fmt_plain(new)}" + (" a month" if monthly else "")
+        if olds:
+            ol = [f"${_fmt_plain(o)}" + (" a month" if monthly else "") for o in olds]
+            notes.append(f"The listing corrects the {label}: it is now {now_txt}. The earlier {' and '.join(ol) if len(ol) <= 2 else ', '.join(ol)} {'is' if len(ol) == 1 else 'are'} not used. Ask the landlord to confirm it.")
+        elif not keep or True:
+            notes.append(f"The listing corrects the {label}: it is now {now_txt}. Ask the landlord to confirm it.")
+    if not edits:
+        return text, notes
+    edits.sort(key=lambda e: (e[0], e[1]), reverse=True)
+    last = None
+    for a0, a1, rep in edits:
+        if last is not None and a1 > last:
+            continue  # overlapping edits: the later one in the text wins, the other is skipped
+        text = text[:a0] + rep + text[a1:]
+        last = a0
+    return text, notes
+
+
+_UT_GENERIC = re.compile(r"\butilit(?:y|ies)\b|\ball[ \t]+(?:the[ \t]+)?bills\b", re.I)
+_UT_WORDS = re.compile(r"\b(?:electric\w*|gas|water|sewer|trash|garbage|heat\w*|internet|wifi|cable)\b", re.I)
+_UT_TENANT = re.compile(r"\bpaid[ \t]+by[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?|lessees?)\b|\b(?:tenants?|residents?|renters?|lessees?)(?:'s|s')?[ \t]+(?:pays?|will[ \t]+pay|(?:is|are)[ \t]+responsible|responsib\w+)\b"
+                        r"|\b(?:tenants?|residents?|renters?)(?:'s|s')?[ \t]+(?:own[ \t]+)?(?:responsibility|expense)\b|\bnot[ \t]+included\b|\bseparate\b|\bon[ \t]+top\b|\bextra\b|\byou[ \t]+pay\b", re.I)
+_UT_INCLUDED = re.compile(r"(?<!not[ \t])\bincluded\b|\bpaid[ \t]+by[ \t]+(?:the[ \t]+)?(?:landlord|owner|management)\b|\b(?:landlord|owner|management)[ \t]+(?:pays?|covers?)\b|\bin[ \t]+(?:the[ \t]+)?rent\b|\bcovered\b", re.I)
+_UT_EXCEPT = re.compile(r"\b(?:except|excluding|besides|other[ \t]+than|but|apart[ \t]+from)\b", re.I)
+
+
+def _top_commas(sg: str) -> list[tuple[int, int]]:
+    """The (start, end) of each comma piece of a sentence, commas inside brackets are not cuts."""
+    out: list[tuple[int, int]] = []
+    depth, start = 0, 0
+    for i, ch in enumerate(sg):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0 and not re.match(r"\d", sg[i + 1:i + 2] or "x"):
+            out.append((start, i + 1 if False else i))
+            start = i + 1
+    out.append((start, len(sg)))
+    return out
+
+
+def _utility_text_correction(text: str) -> tuple[str, list[str]]:
+    """Cycle 28: "All utilities included in rent.\\nUpdate: ... All utilities now paid by tenant (about $110)." The later line about all utilities replaces the
+    earlier lines about utilities, so the earlier ones are blanked (the readers never see two answers) and the correction line loses its "now" so the
+    utilities reader reads it like any other line. Only a correction that names ALL the utilities, with one clear payer, is applied; one that names
+    a single utility is left to the utilities reader."""
+    if not text or "utilit" not in text.lower() and not _UT_WORDS.search(text):
+        return text, []
+    segs = [(m.start(), m.end(), m.group(0)) for m in re.finditer(r"(?:[^|\n.!?;]|(?<=\d)\.(?=\d))+", text) if m.group(0).strip()]
+    scope: list[bool] = []
+    line_scope = False
+    prev_end = 0
+    for st, en, sg in segs:
+        if "\n" in text[prev_end:st]:
+            line_scope = False
+        if _GC_LEAD.match(sg):
+            line_scope = True
+        scope.append(line_scope or bool(re.search(r"\b(?:now|corrected?|corrections?|updated?|revised)\b", sg, re.I)))
+        prev_end = en
+    corr = None
+    for i, (st, en, sg) in enumerate(segs):
+        if not scope[i] or not _UT_GENERIC.search(sg) or _UT_EXCEPT.search(sg) or _GC_SPECIAL.search(sg):
+            continue
+        ten, inc = bool(_UT_TENANT.search(sg)), bool(_UT_INCLUDED.search(sg))
+        if ten == inc:
+            continue
+        corr = (i, "tenant" if ten else "included")
+    if corr is None:
+        return text, []
+    ci, who = corr
+    cst, cen, csg = segs[ci]
+    blanked: list[str] = []
+    edits: list[tuple[int, int, str]] = []
+    for i, (st, en, sg) in enumerate(segs[:ci + 1]):
+        if i != ci and scope[i] and _GC_LEAD.match(sg) is None and re.search(r"\b(?:now|corrected?|updated?)\b", sg, re.I):
+            continue
+        cl = _top_commas(sg)
+        flags = []
+        for c0, c1 in cl:
+            c = sg[c0:c1]
+            if i == ci and not _UT_GENERIC.search(c):
+                flags.append(False)
+                continue
+            n_words = len({w.lower() for w in _UT_WORDS.findall(c)})
+            ut = bool(_UT_GENERIC.search(c) or n_words >= 1)
+            flags.append(ut and (n_words >= 2 or bool(_UT_GENERIC.search(c)) or bool(_UT_TENANT.search(c) or _UT_INCLUDED.search(c))) and (i != ci or bool(_UT_GENERIC.search(c))))
+        for j, (c0, c1) in enumerate(cl):  # a bare amount clause right after a utility clause ("..., about $85 total") belongs to it
+            if not flags[j] and j > 0 and flags[j - 1] and i != ci and re.search(r"\$", sg[c0:c1]) and not re.search(r"[A-Za-z]{4,}[ \t]+(?:fee|rent|deposit)", sg[c0:c1], re.I):
+                flags[j] = True
+        if i == ci:
+            for j, f in enumerate(flags):
+                if f:
+                    c0, c1 = cl[j]
+                    clause = sg[c0:c1]
+                    lead_ws = clause[:len(clause) - len(clause.lstrip())]
+                    body = clause.lstrip()
+                    if j == 0 and _GC_LEAD.match(sg) and not any(flags[k] is False and sg[cl[k][0]:cl[k][1]].strip() for k in range(1, len(cl))):
+                        body = _GC_LEAD.sub("", body, count=1).lstrip(" :,-\u2013\u2014")
+                    body = re.sub(r"\bnow[ \t]*", "", body, flags=re.I)
+                    body = re.sub(r"(?<!all )(?<!all the )\butilities\b", "all utilities", body, count=1, flags=re.I)
+                    if who == "tenant" and not re.search(r"\bpaid[ \t]+by[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?)\b", body, re.I):
+                        pm = _UT_TENANT.search(body)
+                        if pm and pm.group(0).lower() not in ("separate", "extra", "on top", "not included"):
+                            body = "All utilities paid by tenant" + re.sub(r"^[ \t]*(?:all\b[ \t]*)?", " ", body[pm.end():])  # the one wording the utilities reader reads in full
+                    if j > 0:
+                        edits.append((st + c0 - 1, st + c0, "."))  # the comma in front of the utility clause ends the sentence about the other fact
+                    edits.append((st + c0, st + c1, lead_ws + body))
+            continue
+        if any(flags) and not (scope[i] and _GC_LEAD.match(sg)):
+            blanked.append(" ".join(sg[c0:c1] for (c0, c1), f in zip(cl, flags) if f))
+            for (c0, c1), f in zip(cl, flags):
+                if f:
+                    edits.append((st + c0, st + c1, " " * (c1 - c0)))
+    if not blanked:
+        return text, []
+    for st, en, rep in sorted(edits, key=lambda e: e[0], reverse=True):
+        text = text[:st] + rep + text[en:]
+    olds = []
+    for sg in blanked:
+        for m in _GC_MONEY.finditer(sg):
+            v = f"${_fmt_plain(_num(m.group(1) + ('.' + m.group(2) if m.group(2) else '')))}"
+            if v not in olds:
+                olds.append(v)
+    if who == "tenant":
+        note = "The listing corrects the utilities: the tenant now pays all of them."
+    else:
+        note = "The listing corrects the utilities: they are now included."
+    if olds:
+        note += f" The earlier {' and '.join(olds) if len(olds) <= 2 else ', '.join(olds)} {'is' if len(olds) == 1 else 'are'} not used."
+    else:
+        note += " The earlier line about the utilities is not used."
+    return text, [note + " Ask the landlord to confirm it."]
 
 
 _BB_PRICE = re.compile(r"(?<![\w$#/.,-])\d(?:\.\d)?[ \t]*(?:br|bd|bds|bed|beds|bedrooms?)(?![A-Za-z])[ \t]*[/|,\u00b7x-]?[ \t]*\d(?:\.\d)?[ \t]*(?:ba|bath|baths|bathrooms?)\b[ \t]*[-|,:\u2013\u2014\u00b7]?[ \t]*"
@@ -916,6 +1204,8 @@ def _conditional_now_price(text: str, rent: float | None) -> tuple[float, str] |
     for m in _NOW_IF.finditer(text):
         v = _num(m.group(1))
         if 300 <= v <= 30000 and (rent is None or v != rent):
+            if re.match(r"(?:with|for)[ \t]+(?:a[ \t]+|an[ \t]+)?(?:\d{1,2}|one|two|three|six|nine|ten|eleven|twelve|thirteen|fourteen|eighteen|twenty[- ]four)[- ]*(?:months?|mos?\b)", m.group("cond"), re.I):
+                continue  # cycle 28: "Rent now $3,195 with 13-month lease" is the price of another lease length, and the lease-length note says so
             return v, " ".join(m.group("cond").split()).rstrip(" ,:-")
     return None
 
@@ -1324,6 +1614,17 @@ _REDUCED_FROM = re.compile(r"\b(?:reduced|dropped|lowered|cut|marked down|price 
 _WAS_PRICE = re.compile(r"\b(?:was|previously|formerly|originally)[ \t:]+\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?", re.I)
 
 
+def _was_is_other_fact(text: str, pos: int) -> bool:
+    """Cycle 28: a "was $X" inside the clause of another fact ("Security deposit $2,310 (corrected: was $3,000)", "Deposit was $3,000, now $2,310") or inside
+    a "Corrected:" or "Update:" sentence is an old figure of that fact or a correction, never a price cut of the rent."""
+    start = max(text.rfind("\n", 0, pos), text.rfind("|", 0, pos), text.rfind(". ", 0, pos), text.rfind("; ", 0, pos)) + 1
+    before = text[start:pos]
+    kws = list(_GC_KW.finditer(before))
+    if kws and kws[-1].lastgroup != "rent":
+        return True
+    return bool(re.search(r"\b(?:corrected?|corrections?|updated?)\b", before, re.I))
+
+
 def _discount_notes(text: str, price: float | None, buying: bool = False) -> list[str]:
     """One-time discounts ("$500 off first month's rent", "50% off first month") and a price cut ("Reduced from $2,750"). They are
     notes only: a one-time deal is not taken off the monthly rent, and an old price is never the rent."""
@@ -1341,9 +1642,10 @@ def _discount_notes(text: str, price: float | None, buying: bool = False) -> lis
             break
     m = _REDUCED_FROM.search(text)
     if not m and price is not None:
-        wm = _WAS_PRICE.search(text)  # "Rent: $3,200 (was $3,400)"
-        if wm and _num(wm.group(1)) > price:
-            m = wm
+        for wm in _WAS_PRICE.finditer(text):  # "Rent: $3,200 (was $3,400)"
+            if _num(wm.group(1)) > price and not _was_is_other_fact(text, wm.start()):
+                m = wm
+                break
     if m:
         old = f"${_num(m.group(1)):,.0f}"
         if price is not None:
@@ -9305,6 +9607,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
     text = _scope_only_brackets(_tidy(text or ""))  # cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
+    corr_notes: list[str] = []
+    if not buying and text and not _SALE_WORDS.search(text):
+        text, corr_notes = _try(lambda: _utility_text_correction(text)) or (text, [])  # cycle 28: "All utilities now paid by tenant" replaces the earlier lines about utilities
     out: dict[str, Any] = {}
     src = site_name(url)
     if not src and text:
@@ -9325,6 +9630,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
 
     price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
     gc_found, gc_unplaced = _try(lambda: _general_corrections(text, buying)) or ({}, [])  # cycle 27: one general correction step, rent here and the rest after the fee readers
+    if any(k.startswith("fee:") for k in gc_found):  # cycle 28: a corrected named fee goes into the text where the earlier one was
+        _t2, _fee_notes = _try(lambda: _fee_text_corrections(text, gc_found)) or (text, [])
+        corr_notes += _fee_notes
+        if _t2 != text:
+            text = _t2
+            gc_found, gc_unplaced = _try(lambda: _general_corrections(text, buying)) or ({}, [])
     text_all = text
     other_vals = {v for f, e in gc_found.items() if f != "price" for v in (e["new"], *e["olds"])}
     if other_vals:
@@ -9335,7 +9646,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 for a0, b0 in e["spans"]:
                     text = text[:a0] + " " * (b0 - a0) + text[b0:]
         price_read = (_try(lambda: _buy_price(text)) if buying else None) or _try(lambda: _price(text))
-    facts: list[str] = list(pair_notes)
+    facts: list[str] = list(pair_notes) + corr_notes
     price_range = _try(lambda: _rent_range(text, price_read)) if price_read and not buying else None
     saved_price = (current or {}).get("price")
     if price_range and isinstance(saved_price, (int, float)) and not isinstance(saved_price, bool) and saved_price > 0 and float(saved_price) != price_range[1]:
@@ -10840,6 +11151,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     est_replaced = False
     if current:
         facts = _drop_old_rent_notes(facts, out.get("price"), current.get("price"), buying)  # cycle 26: a rent the user changed leaves no note about the old rent
+        facts += _try(lambda: _saved_vs_corrected_notes(gc_found, current, buying)) or []  # cycle 28: the saved value is not the one the listing corrected to
         _apply_current(out, current)
         facts = _reword_replaced_estimate(facts, reader_estimate, out.get("utilities_estimate"))
         saved_est = out.get("utilities_estimate")
