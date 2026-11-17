@@ -116,12 +116,17 @@ def test_reviewer_listing_l12_title_fees():
 
 
 # ---- 3. "Fee: $185 monthly" on a condo with no HOA stays unknown, with a plain note
-@pytest.mark.parametrize("line", ["Fee: $185 monthly.", "Fee $185 monthly.", "Monthly fee: $185."])
+@pytest.mark.parametrize("line", ["Fee: $185 monthly.", "Fee $185 monthly.", "Fee: $185/month.", "- Fee: $185 per month"])
 def test_bare_monthly_fee_on_a_condo_is_not_read_as_hoa(line):
     out, place, cash = read("Condo $275,000\n3 bed 2.5 bath. " + line + " Tax $3,000 a year.")
     assert out.get("hoa") in (None, "")
     n = notes(out)
     assert "$185" in n and "HOA" in n and "Ask" in n and "not counted" in n
+
+
+def test_monthly_fee_with_a_name_is_still_the_hoa():
+    out, place, cash = read("Condo $275,000\n3 bed 2.5 bath. Monthly fee: $185. Tax $3,000 a year.")
+    assert out["hoa"] == 185  # current behavior kept
 
 
 def test_reviewer_listing_l10_fee_and_tax():

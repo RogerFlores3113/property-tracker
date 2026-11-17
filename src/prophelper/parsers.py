@@ -5278,6 +5278,20 @@ def _seller_gives_toward_closing(text: str) -> bool:
                 or re.search(r"\bseller(?:'s)?[ \t]+(?:will[ \t]+)?(?:pays?|paid|covers?|contribut\w*|concessions?|credits?)\b[^.\n]{0,40}\bclosing[ \t]+costs?\b", text, re.I))
 
 
+_BARE_FEE = re.compile(r"(?:^|[.;\n|\u2022*-])[ \t]*(?:(?:monthly|recurring)[ \t]+)?(?:fee|charge)s?[ \t]*[:=\-]?[ \t]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d\d)?(?![\d,]\d)"
+                       r"(?:[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month\b|a[ \t]+month\b|each[ \t]+month\b|monthly\b))?", re.I)
+
+
+def _bare_monthly_fee(text: str) -> tuple[float, str] | None:
+    """Cycle 31: a monthly fee with no name on a home for sale ("Fee: $185 monthly", "Monthly fee: $185"). It may be the HOA, but the listing does not say so,
+    so it is never saved as the HOA. Returns (amount, the quoted words), or None when the figure is not stated as monthly."""
+    for m in _BARE_FEE.finditer(text):
+        quote = " ".join(m.group(0).strip(" .;|\u2022*-\n\t").split())
+        if re.search(r"monthly|/\s*mo|per month|a month|each month", quote, re.I):
+            return _num(m.group(1) + (m.group(2) or "")), quote
+    return None
+
+
 _SELLER_FEE_NAMES = r"(?:title|recording|lender|appraisal|escrow|settlement|attorney|survey|transfer|origination|loan|processing|underwriting|inspection)"
 _SELLER_PAYS_FEES = re.compile(r"\b(?:pay|pays|paying|paid|cover|covers|covering|absorbs?|absorbing)\b[ \t]+(?:for[ \t]+)?(?:all[ \t]+)?(?:of[ \t]+)?(?:the[ \t]+)?(?:buyer'?s?[ \t]+)?"
                                r"(?P<names>" + _SELLER_FEE_NAMES + r"(?:(?:[ \t]*,[ \t]*|[ \t]+(?:and|&|or)[ \t]+|[ \t]*/[ \t]*)" + _SELLER_FEE_NAMES + r")*)"
@@ -12350,6 +12364,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("hoa", hoa)
         elif (buying or _SALE_WORDS.search(text)) and (hm_unknown := re.search(_HOA_NO_INFO, text, re.I)):
             facts.append(f'The listing says "{" ".join(hm_unknown.group(0).split())}", so the HOA is left empty (not $0). Ask the seller\'s agent what the monthly HOA fee is.')
+        if hoa is None and (buying or _SALE_WORDS.search(text)) and (bare_fee := _try(lambda: _bare_monthly_fee(text))):
+            facts.append(f'The listing says "{bare_fee[1]}" without saying what the fee is. On a condo it may be the HOA fee, but the listing does not say so, so the HOA is left empty '
+                         f"and the {_money_c(bare_fee[0])} a month is not counted in the monthly cost. Ask the seller's agent what it covers, and if it is the HOA, set the HOA on this page.")
         tax, tax_note = _try(lambda: _tax_detail(text)) or (None, "")
         if tax_note:
             facts.append(tax_note)
