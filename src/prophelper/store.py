@@ -700,6 +700,10 @@ HOST_PERCENT_REASON = ("That link's website name is written with percent codes (
                        "so I won't save it. Use the plain listing address.")
 
 
+HOST_SPACE_REASON = ("That link's website name has a space in it (like \"exa mple.com\"), so it isn't a real website address. I won't save it. "
+                     "Copy the link again from the listing page.")
+
+
 HOST_MIXED_SCRIPT_REASON = ("That link's website name mixes letters from different alphabets (for example Latin and Cyrillic), so it can look like a "
                             "well-known site while being another one. I won't save it. Copy the link again from the listing page.")
 
@@ -732,8 +736,10 @@ def link_host_text(link: Any) -> str:
 
 
 def link_host_problem(link: Any) -> str:
-    """A plain reason when a link's host has a control, bidi or invisible character, or percent codes. '' when it is fine."""
+    """A plain reason when a link's host has a control, bidi or invisible character, a space, or percent codes. '' when it is fine."""
     host = link_host_text(link)
+    if any(c.isspace() for c in host):
+        return HOST_SPACE_REASON  # cycle 34: "https://exa mple.com/" is refused, never saved as exa%20mple.com
     if any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp", "Co", "Cn") or c in "\u00ad\u180e\u2060" for c in host):
         return HOST_CONTROL_REASON
     if "%" in host and not host.startswith("["):

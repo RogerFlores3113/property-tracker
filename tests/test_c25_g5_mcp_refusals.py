@@ -26,10 +26,11 @@ def test_backward_move_is_a_plain_error(store):
 def test_update_with_notes_refusal_is_plain(store):
     s, p = _place(store)
     srv = server(store)
-    with pytest.raises(ToolError) as e:
-        call(srv, "update_place", place_id=p["id"], notes="x", price=-5)
-    msg = str(e.value)
-    assert "Traceback" not in msg and "could not finish" not in msg and msg.strip()
+    # cycle 34: the refusal to write the user's notes is an error result in the same process too (no exception, so no traceback in a driver)
+    res = call(srv, "update_place", place_id=p["id"], notes="x", price=-5)
+    assert res.isError is True
+    msg = res.content[0].text
+    assert "Traceback" not in msg and "could not finish" not in msg and msg.strip() and "ai_notes" in msg
 
 
 def test_refusal_over_the_protocol_is_an_error_result_not_a_crash(store):

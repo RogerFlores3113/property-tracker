@@ -2235,8 +2235,13 @@ def build_server(store: Store) -> FastMCP:
             extra = [k for k in arguments if k not in allowed]
             if extra:
                 hint = " ".join(f"{k}: {USER_ONLY[k]}." for k in extra if k in USER_ONLY and name in ("add_place", "update_place", "add_places"))
-                raise ToolError(f"{name} doesn't take {', '.join(map(str, extra))}, so nothing was done. " + (hint + " " if hint else "")
-                                + f"Allowed: {', '.join(allowed) or 'no arguments'}.")
+                refusal = (f"{name} doesn't take {', '.join(map(str, extra))}, so nothing was done. " + (hint + " " if hint else "")
+                           + f"Allowed: {', '.join(allowed) or 'no arguments'}.")
+                if hint:
+                    # cycle 34: asking to write the user's own notes, rating or hidden mark is an answer, not an exception: one plain error line (isError set),
+                    # never a traceback, whether the caller asks over the protocol or in the same process
+                    return CallToolResult(content=[TextContent(type="text", text=refusal)], isError=True)
+                raise ToolError(refusal)
         try:
             result = await run_tool(name, arguments, context=context, convert_result=convert_result)
         except ToolError as exc:
