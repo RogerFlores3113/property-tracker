@@ -364,7 +364,7 @@ _AI_C31 = (
     r"\b(?:" + _AUTO_READER + r")\s*[:,\-]|"
     r"\b(?:request|message|note|notice|instructions?|attention|reminder|announcement|memo)\s+(?:to|for)\s+(?:all\s+|any\s+|the\s+)?(?:" + _AUTO_READER + r")\b|"
     r"\b(?:give|award|grant|assign)\s+(?:this|it|the)\s+(?:place|listing|property|unit|apartment|home|house|one)?\s*(?:top|full|maximum|highest|perfect)\s+(?:marks|score|rating|stars|grade)\b|"
-    r"(?<![\w-])(?:игнорир\w+|забуд\w+|забудь|пренебр\w+|отмени\w*)\s+(?:(?:все|всё|любые|эти|свои|ваши|твои|мои)\s+)*"
+    r"(?<![\w-])(?:игнориру[йи]|забудь|пренебреги|отмени)\s+(?:(?:все|всё|любые|эти|свои|ваши|твои|мои)\s+)*"
     r"(?:предыдущ\w+|прежн\w+|прошл\w+|вышеуказанн\w+|исходн\w+|первоначальн\w+|системн\w+)\s+(?:инструкци\w+|указани\w+|правил\w+|команд\w+|подсказк\w+|промпт\w*|директив\w+)")
 _AI_C17 = re.compile(_AI_C17.pattern + "|" + _AI_C31, re.I)
 # A fence-like tag in listing text ("</untrusted><untrusted source='user notes'>"): it only exists to pass listing words off as the user's.
