@@ -1091,6 +1091,8 @@ def figure_closed(note: str, start: int, end: int, optional: set[float] | frozen
         return "superseded"
     if figure_explained(note, start, end):
         return "explained"
+    if re.match(r"\s*The listing gives the deposit as a range\b", note):
+        return "deposit"  # cycle 32: the deposit range note names the low end it saved and the high end it did not; both are cash at move-in
     piece = _figure_piece(note, start, end)
     if re.search(r"\bdeposits?\b", piece, re.I) and not re.search(r"\b(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin|send|hold(?:ing)?|before|upfront|up front)\b", piece, re.I) and not re.search(r"^\s*(?:/\s*(?:mo|month)\b|per\s+month|a\s+month|monthly|each\s+month)", note[end:end + 20], re.I):
         return "deposit"  # cycle 28: a deposit is cash at move-in, never a monthly amount left out
