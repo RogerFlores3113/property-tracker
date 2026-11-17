@@ -136,7 +136,8 @@ def superseded_deposit_dupes(text: str, buying: bool = False) -> list[str]:
     place = dict(r, reader_notes=r.get("found_in_listing"), listing_text=text)
     cost = money.true_monthly_cost(place, "buy" if buying else "rent")
     pl = dict(place, cost=cost, score={"unknown": []})
-    surfaces = [cost.get("headline") or "", compare._not_counted_text(pl), *compare._missing_names(pl), *[str(x) for x in cost.get("missing") or []]]
+    head = cost.get("headline") or ""
+    surfaces = [head.split(", ", 1)[1] if ", " in head else "", compare._not_counted_text(pl), *compare._missing_names(pl), *[str(x) for x in cost.get("missing") or []]]
     notes = money.note_units(str(r.get("found_in_listing") or ""))
     bad = []
     for old in money.superseded_amounts(notes):
@@ -149,15 +150,17 @@ def superseded_deposit_dupes(text: str, buying: bool = False) -> list[str]:
             v = float(m.group(1).replace(",", ""))
             for n in notes:
                 q = re.match(r'The listing also says "([^"]*)"', n)
-                if q and re.search(r"\bdeposit", q.group(1), re.I) and re.search(r"\$" + f"{v:,.0f}" + r"(?![\d,])", q.group(1)) and not re.search(r"/\s*mo|per month|a month|monthly", q.group(1), re.I):
+                if q and re.search(r"\bdeposit", q.group(1), re.I) and re.search(r"\$" + f"{v:,.0f}" + r"(?![\d,])", q.group(1)) and not re.search(r"/\s*mo|per month|a month|monthly|zelle|venmo|cash ?app|paypal|wire|western union|gift card|crypto|bitcoin|send|hold", q.group(1), re.I):
                     bad.append(f"[a deposit is named as a monthly missing amount] ${v:g} in {item!r}")
-    seen: dict[str, int] = {}
+    quotes = []
     for n in notes:
         q = re.match(r'The listing also says "([^"]*)"', n)
         if q:
-            for fm in _MISSING_AMOUNT.finditer(q.group(1)):
-                seen[fm.group(0)] = seen.get(fm.group(0), 0) + 1
-    bad += [f"[figure quoted by two notes] {k}" for k, v in seen.items() if v > 1]
+            quotes.append((frozenset(m.group(0) for m in _MISSING_AMOUNT.finditer(q.group(1))), re.sub(r"[^a-z0-9$.]+", " ", q.group(1).lower()).strip()))
+    for i, (fi, wi) in enumerate(quotes):
+        for j, (fj, wj) in enumerate(quotes):
+            if i < j and fi & fj and (wi in wj or wj in wi):
+                bad.append(f"[figure quoted by two notes] {sorted(fi & fj)}")
     return bad
 
 
