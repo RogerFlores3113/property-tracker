@@ -76,6 +76,13 @@ class TestFactTitle:
         assert r["title"] == "2/1 renovated near Short North"
         assert r["price"] == 1475 and r["beds"] == 2 and r["sqft"] == 1100
 
+    @pytest.mark.parametrize("text", [
+        "Newly renovated 3/2 near Hoover Elementary. Rent $2,425 (reduced from $2,500).",
+        "Newly renovated 3/2 near Hoover Elementary! Rent $2,425.",
+    ])
+    def test_sentence_after_the_place_is_not_in_the_name(self, text):
+        assert read(text + "\nSecurity deposit $500.")["title"] == "Newly renovated 3/2 near Hoover Elementary"
+
     def test_walk_time_is_not_a_place(self):
         r = read("2 bed near campus, 5 min walk, $1,200\nSecurity deposit $500.")
         assert r["title"] != "2 bed place"

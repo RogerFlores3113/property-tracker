@@ -9698,7 +9698,7 @@ _UI_WORDS = {"save", "share", "contact", "back", "home", "menu", "photos", "show
              "skip to main content", "skip to content", "skip to main", "advertisement", "sponsored", "view photos", "all photos"}
 
 
-_HEADLINE_PLACE = re.compile(r"\b(?:near|in|by|off|close[ \t]+to|next[ \t]+to)[ \t]+((?:the[ \t]+)?[A-Z][\w'&.-]*(?:[ \t]+[A-Z][\w'&.-]*){0,3})")
+_HEADLINE_PLACE = re.compile(r"\b(?:near|in|by|off|close[ \t]+to|next[ \t]+to)[ \t]+((?:the[ \t]+)?[A-Z][\w'&-]*(?:[ \t]+[A-Z][\w'&-]*){0,3})")
 
 
 def _fact_headline_name(line: str) -> str:
