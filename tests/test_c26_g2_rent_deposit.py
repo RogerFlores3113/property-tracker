@@ -197,3 +197,21 @@ def test_update_same_price_keeps_notes(store):
     srv = _place(store, open(P + "r25-family-l19.txt").read(), price=2360)
     call(srv, "update_place", place_id=1, price=2360)
     assert "price was cut" in store.get_place(1)["reader_notes"]
+
+
+@pytest.mark.parametrize("t", [
+    "Room in 3 bedroom house $650/month utilities not included deposit $650 no pets driveway parking available",
+    "Room $650/month. Deposit $650, no pets, key pickup at noon.",
+])
+def test_pet_words_after_the_deposit_do_not_blank_it(t):
+    assert read(t)["deposit"] == 650
+
+
+def test_rent_discount_is_not_a_special():
+    r = read("Wicker Park penthouse 3/2 - $3,300. Security deposit $3,300. Rent specials: $500 off first month.")
+    assert r["price"] == 3300 and "has a special" not in notes(r)
+
+
+def test_special_assessment_is_not_a_special():
+    r = read("Condo for rent $2,100 a month. A special assessment of $2,000 a month is paid by the owner.")
+    assert "has a special" not in notes(r)

@@ -3734,7 +3734,7 @@ def _blank_named_deposits(text: str) -> str:
         cs = max(text.rfind(",", a, m.start()), text.rfind("(", a, m.start()), a - 1) + 1
         ce_c = [i for i in (text.find(c, m.end(), b) for c in ",)") if i >= 0]
         clause = text[cs:min(ce_c) if ce_c else b]
-        near = text[max(cs, m.start() - 30):min(m.end() + 12, cs + len(clause))]
+        near = text[max(cs, m.start() - 14):m.end()]
         named = re.search(r"\b" + _NAMED_DEP_WORDS + r"\b", near, re.I) and not _NAMED_DEP_KEEP.search(clause)
         pet_sentence = bool(_PET_LEAD.match(sent.strip())) and not _NAMED_DEP_KEEP.search(clause) and not re.search(r"\bsecurity[ \t]+deposit|\blease\b", sent, re.I)
         if named or pet_sentence:
