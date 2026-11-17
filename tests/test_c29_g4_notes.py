@@ -203,7 +203,7 @@ class TestCreditNotACost:
 
 class TestTitleComma:
     def test_nontech_l41(self):
-        assert read(fixture("r28-nontech-l41.txt"))["title"] == "Zillow-ish: 3/2 Charming ranch duplex near OSU"
+        assert read(fixture("r28-nontech-l41.txt"))["title"] == "3/2 Charming ranch duplex near OSU"  # cycle 30: the "Zillow-ish:" site label is not part of the name
 
     @pytest.mark.parametrize("raw,want", [
         ("Charming ranch near OSU, 1,100 sqft, $1,495/mo", "Charming ranch near OSU"),
