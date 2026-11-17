@@ -12873,8 +12873,8 @@ _ES_RULES = (
     (re.compile(r"\bopcional\b", re.I), "optional"),
     (re.compile(r"\bno[ \t]+se[ \t]+permiten?[ \t]+(?:las[ \t]+)?mascotas\b", re.I), "No pets"),
     (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:las[ \t]+)?mascotas\b", re.I), "Pets allowed"),
-    (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:los[ \t]+)?gatos\b|\bgatos[ \t]+permitidos\b", re.I), "Cats allowed"),
-    (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:los[ \t]+)?perros\b|\bperros[ \t]+permitidos\b", re.I), "Dogs allowed"),
+    (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:los[ \t]+)?gatos\b|\bgatos[ \t]+permitidos\b(?![ \t]+hasta\b)", re.I), "Cats allowed"),
+    (re.compile(r"\bse[ \t]+permiten?[ \t]+(?:los[ \t]+)?perros\b|\bperros[ \t]+permitidos\b(?![ \t]+hasta\b)", re.I), "Dogs allowed"),
 )
 
 
