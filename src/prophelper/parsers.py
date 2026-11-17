@@ -2142,6 +2142,45 @@ def _explicit_beds_baths(text: str, st: re.Match[str]) -> float | None:
     return float(ex[0]) if allb == {float(ex[0])} else None
 
 
+_BEDS_RANGE = re.compile(r"(?<![\d.,$/])\b(\d{1,2})[ \t]*(?:-|\u2013|\u2014|to)[ \t]*(\d{1,2})[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b", re.I)
+
+
+_BEDS_LABEL_RANGE = re.compile(r"\b(?:bed(?:room)?s?|bds?)[ \t]*:[ \t]*(\d{1,2})[ \t]*(?:-|\u2013|\u2014|to)[ \t]*(\d{1,2})\b(?![ \t]*(?:bath|ba\b))", re.I)
+
+
+def _beds_range_matches(text: str) -> list[re.Match[str]]:
+    return [m for m in [*_BEDS_RANGE.finditer(text), *_BEDS_LABEL_RANGE.finditer(text)] if m.group(1) != m.group(2)]
+
+
+def _beds_range_starts(text: str) -> set[int]:
+    """Cycle 30: where a bedroom RANGE ("1 - 2 Beds") starts. A range is a list of plans, never one unit's bedroom count."""
+    out = set()
+    for m in _beds_range_matches(text):
+        out.add(m.start())
+        if m.re is _BEDS_LABEL_RANGE:
+            out.add(m.start(1))  # the "bed: N" label form hits at the label; the plain count form hits at the digit
+    return out
+
+
+def _beds_range_only_note(text: str) -> str:
+    """"1 - 2 Beds" with no single unit line anywhere: the listing does not say which size this place is. "" when there is none."""
+    ranges = _beds_range_matches(text)
+    if not ranges:
+        return ""
+    low = text.lower()
+    rs = {m.start() for m in ranges}
+    cov = [(m.start(), m.end()) for m in ranges]
+    for pat in (r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)(?:[ \t]*|-)(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b", r"\b(one|two|three|four|five|six)[- ](?:bed(?:room)?s?|bdrms?|brs?)\b",
+                r"\b(?:bed(?:room)?s?|bds?)\s*[:\-]\s*(\d{1,2}(?:\.\d)?)\b", r"\b(\d)\s*(?:bd|br|bed)\s*[/|]\s*\d(?:\.\d)?\s*(?:ba|bth|bath)"):
+        for m in re.finditer(pat, low):
+            if not any(a <= m.start() < b for a, b in cov):
+                return ""
+    if _BEDS_GLUED.search(text) or _SLASH_HOME.search(low) or _beds_x_baths(text) or _slash_beds_baths(text):
+        return ""
+    m = ranges[0]
+    return f'The listing says "{m.group(0).strip()}", which covers more than one size, and it does not name the one this place is, so the bedroom count is left empty. Ask which size you would get.'
+
+
 def _beds_conflict(text: str) -> str:
     """"1BR/2BR convertible" in the title and "3 bedrooms" in the body: the listing does not say how many bedrooms it has. Returns
     a plain note (and the bedroom count stays empty), or "" when there is no such pair."""
@@ -2222,6 +2261,8 @@ def _beds(text: str) -> float | None:
             return ex_b
     if _beds_conflict(text):
         return None
+    if _beds_range_only_note(text):
+        return None
     low = text.lower()
     hits: list[tuple[int, float]] = []
     for m in re.finditer(r"(?<![\d.,$/])\b(\d{1,2}(?:\.\d)?)(?:[ \t]*|-)(?:-[ \t]*\d{1,2}(?:\.\d)?[ \t]*)?(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b(?!\s*(?:and breakfast|room only))", low):
@@ -2247,6 +2288,9 @@ def _beds(text: str) -> float | None:
     if sl:
         hits.append((sl[0], sl[1]))
     hits = [h for h in hits if h[1] <= 20]
+    rstarts = _beds_range_starts(text)
+    if rstarts:  # cycle 30: "1 - 2 Beds ... 2 Bed 2 Bath $1,495": the unit line is the count, never the low end of the range
+        hits = [h for h in hits if h[0] not in rstarts]
     return min(hits)[1] if hits else None
 
 
@@ -9674,6 +9718,24 @@ _UI_WORDS = {"save", "share", "contact", "back", "home", "menu", "photos", "show
              "skip to main content", "skip to content", "skip to main", "advertisement", "sponsored", "view photos", "all photos"}
 
 
+_HEADLINE_PLACE = re.compile(r"\b(?:near|in|by|off|close[ \t]+to|next[ \t]+to)[ \t]+((?:the[ \t]+)?[A-Z][\w'&.-]*(?:[ \t]+[A-Z][\w'&.-]*){0,3})")
+
+
+def _fact_headline_name(line: str) -> str:
+    """Cycle 30: "2/1 renovated, 1,100 sqft near Short North, $1,475" is all facts, yet it is the only name the paste gives. Keep the plan and the
+    place ("2/1 renovated near Short North") and leave the size and the price to their own fields. "" when the line is not that kind of headline."""
+    if not _TITLE_BED_CUE.search(line) and not re.search(r"(?<![\d/])\b[1-6][ \t]*/[ \t]*[1-4](?:\.5)?\b(?![\d/])", line):
+        return ""
+    pm = _HEADLINE_PLACE.search(line)
+    if not pm or re.search(r"\b(?:min|minutes|blocks?|miles?|mi)\b", line[pm.start():pm.start() + 12], re.I):
+        return ""
+    out = re.sub(r"\$\s?[\d,.]+[kK]?(?:[ \t]*(?:/|per|a)[ \t]*(?:mo|month))?", " ", line)
+    out = re.sub(r"(?<![\d,.])(?:\d{1,3}(?:,\d{3})+|\d{3,5})[ \t]*(?:sq\.?[ \t]?ft\.?|sqft|sf)\b\.?", " ", out, flags=re.I)
+    out = re.sub(r"[ \t]+", " ", re.sub(r"[ \t]*,[ \t]*(?=,|$|near\b|in\b)", " ", out)).strip(" ,;-|")
+    out = re.sub(r"\s+,", ",", out)
+    return out if 8 <= len(out) <= 60 and "$" not in out and not re.search(r"\d{3}", out) else ""
+
+
 def _is_fact_line(line: str) -> bool:
     stripped = re.sub(r"\$\s?[\d,.]+[kK]?|\d+(?:\.\d)?\s*(?:-\s*\d+\s*)?(?:bed(?:room)?s?|bds?|brs?|bath(?:room)?s?|bths?|ba|sq\.?\s?ft\.?|sqft|sf|ft2|mo|month|/mo|studio)\b|"
                       r"[\d,.]+|/\s*mo|\bstudio\b|\bfor rent\b|\bfor sale\b|\bavailable\b|\bnow\b|\bacres?\b|\blot\b|\bfull\b|\bhalf\b|"
@@ -9684,7 +9746,7 @@ def _is_fact_line(line: str) -> bool:
 
 
 _LABEL_PREFIX = re.compile(r"^(?:fb marketplace|facebook marketplace|fb|facebook|marketplace|craigslist|zillow|trulia|redfin|hotpads|zumper|apartments\.com|realtor\.com|"
-                           r"rentals?|rental listing|for rent|for lease|listing|new listing|just listed)(?:[ \t]+(?:style|listing|post|ad))?[ \t]*(?::|[-|\u2013\u2014])[ \t]+(?=\S)", re.I)
+                           r"rentals?|rental listing|for rent|for lease|listing|new listing|just listed)(?:-?ish)?(?:[ \t]+(?:style|listing|post|ad))?[ \t]*(?::|[-|\u2013\u2014])[ \t]+(?=\S)", re.I)
 _SITE_LINE = re.compile(r"^(?:fb marketplace|zillow|realtor\.com|apartments\.com|trulia|redfin|craigslist|facebook(?: marketplace)?|hotpads|zumper|rent\.com|"
                         r"apartment ?list|padmapper|streeteasy|homes\.com|loopnet|forrent|apartmentguide|marketplace|mls)\b[^a-z]{0,3}(?:\w{0,12})?[^\n]{0,40}$", re.I)
 _BUILDING = re.compile(
@@ -10211,6 +10273,9 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         for _ in range(2):  # "FB Marketplace - 2 bedroom ...", "Rental: 3 Bedroom Home in Belmont": the label is not the title
             line = _LABEL_PREFIX.sub("", line, count=1)
         line = _name_segment(line)
+        fh = _fact_headline_name(line) if line else ""
+        if fh:
+            return fh
         if not line or _not_a_name(line) or _money_line_cut(line) or _date_only_line(line) or (len(line.split()) <= 8 and _policy_title_line(line)) or (_fee_or_policy_head(line) and not (found.get("address") and found["address"].lower() in line.lower())):
             continue
         shout = line
@@ -10598,7 +10663,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     xb_fix = None if (conv or corrected or not _XB_CORRECT.search(text)) else _try(lambda: _beds_x_corrected(text))
     if xb_fix:
         facts.append(f"The listing gives two different layouts and corrects itself. The later one ({xb_fix[0]:g} bed, {xb_fix[1]:g} bath) is saved, so check the layout.")
-    beds_conflict = _try(lambda: _beds_conflict(text)) or ""
+    beds_conflict = _try(lambda: _beds_conflict(text)) or _try(lambda: _beds_range_only_note(text)) or ""
     if beds_conflict:
         facts.append(beds_conflict)
     bath_fix = _try(lambda: _baths_corrected(text))

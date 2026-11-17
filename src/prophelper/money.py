@@ -1294,6 +1294,17 @@ def _open_notes_parts(reader_notes: Any, place: dict[str, Any] | None = None) ->
     return names, LISTING_NOTES_UNCOUNTED
 
 
+def _label_already_named(label: str, out: dict[str, Any]) -> bool:
+    """True when every thing a no-amount label ("the parking cost in the listing notes", "the broker fee and the parking cost in the listing
+    notes") names is already named by the cost's own missing or not-counted list."""
+    m = re.fullmatch(r"the (.+?) in the listing notes", label)
+    if not m:
+        return False
+    have = " ".join([*(str(x) for x in out.get("missing") or []), *(str(x) for x in out.get("uncounted") or [])]).lower()
+    things = [t.strip() for t in re.split(r",\s*|\s+and\s+", m.group(1)) if t.strip()]
+    return bool(things) and all(t.lower() in have for t in things)
+
+
 def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[str, Any] | None = None,
                       people: Any = 1, pets: bool = True, adults: Any = None) -> dict[str, Any]:
     """Rent or buy breakdown depending on the search's mode. ``people`` (people sharing the cost) adds
@@ -1311,8 +1322,12 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
     n = int(a) if explicit else n
     out = buy_cost(place, settings) if mode == "buy" else rent_cost(place, pets, n)
     noun = "adults" if explicit and mode != "buy" else "people"
+    names, label = ([], "")
     if listing_notes_uncounted(place.get("reader_notes"), place):
         names, label = _open_notes_parts(place.get("reader_notes"), place)
+        if not names and "$" not in label and _label_already_named(label, out):
+            label = ""  # cycle 30: "the parking cost in the listing notes" next to "parking cost": one unknown is named once
+    if label:
         out["listing_notes_label"] = label
         out["listing_notes_names"] = names  # cycle 22: the utilities (water, internet) behind the label; the headline folds them into the utilities it already names
         out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
