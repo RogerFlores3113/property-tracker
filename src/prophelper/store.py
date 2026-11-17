@@ -499,6 +499,32 @@ def _text(value: Any, limit: int = 1000) -> str:
     return ("" if value is None else str(value)).strip()[:limit]
 
 
+_TT_M = r"\$[ \t]?\d[\d,]*(?:\.\d\d)?"
+_TT_U = r"(?:[ \t]*(?:/[ \t]*(?:mo|month)\b|per[ \t]+month|a[ \t]+month|monthly))?"
+# "$1,350 ($1,420 now)", "$1,290/month (now $1,340)", "$2,950 PER MONTH (updated: $2,995)": the figure in the bracket is the current one
+_TT_NOW = re.compile(r"(?P<old>" + _TT_M + r")(?P<u0>" + _TT_U + r")[ \t]*[(\[][ \t]*(?:(?:now|currently|today|updated?|corrected|new(?:[ \t]+(?:rent|price))?)[ \t]*:?[ \t]*(?P<new1>" + _TT_M + r")(?P<u1>" + _TT_U + r")"
+                     r"|(?P<new2>" + _TT_M + r")(?P<u2>" + _TT_U + r")[ \t]*(?:now|currently|today))[ \t]*[)\]]", re.I)
+# "$284,000 (reduced from $295,000)", "$1,495 (was $1,525)", "$3,195/mo ($3,295 before)": the bracket holds the old figure
+_TT_OLD = re.compile(r"(?P<cur>" + _TT_M + r")(?P<u>" + _TT_U + r")[ \t]*[(\[][ \t]*(?:(?:reduced[ \t]+from|down[ \t]+from|was|were|previously|formerly|originally|before)[ \t]*:?[ \t]*" + _TT_M + r"[^)\]\n]{0,30}"
+                     r"|" + _TT_M + _TT_U + r"[ \t]*(?:before|previously|prior|earlier|originally|formerly))[ \t]*[)\]]", re.I)
+
+
+def trim_stale_price_title(title: str) -> str:
+    """Cycle 30: a title that still carries the replaced price ("Elm Street Commons - 1 bed, $1,350 ($1,420 now)") keeps only the current figure
+    ("... $1,420"), and a bracket that only names the old price ("$284,000 (reduced from $295,000)") is cut, so no board, Compare, Today or CSV line
+    reads cheaper than the real rent. A title without such a bracket is returned as it was."""
+    if not title or ("(" not in title and "[" not in title):
+        return title
+
+    def now(m: re.Match[str]) -> str:
+        if m.group("new1"):
+            return m.group("new1") + (m.group("u1") or m.group("u0") or "")
+        return m.group("new2") + (m.group("u2") or m.group("u0") or "")
+    out = _TT_NOW.sub(now, title)
+    out = _TT_OLD.sub(lambda m: m.group("cur") + (m.group("u") or ""), out)
+    return " ".join(out.split()) if out != title else title
+
+
 def to_number(value: Any, what: str = "number") -> float | None:
     """A number from '$1,450', 1450 or '1.5'; None for blank. Raises ValueError for text that is not a number."""
     if value is None or isinstance(value, bool):
@@ -1609,6 +1635,8 @@ class Store:
                 if text and not normalize_url(text):
                     raise ValueError("That link doesn't look like a web address (it should start with https://).")
                 out[key] = encode_link(text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text)
+            elif key == "title":
+                out[key] = trim_stale_price_title(_text(raw, TEXT_LIMITS.get(key, 500)))  # cycle 30: no replaced price left in a saved title
             else:
                 out[key] = _text(raw, TEXT_LIMITS.get(key, 500))
         for key in PLACE_REAL:

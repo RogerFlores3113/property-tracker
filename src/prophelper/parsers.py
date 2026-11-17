@@ -286,18 +286,32 @@ _BUY_PRICE_LABEL = re.compile(r"(?:\blist(?:ed|ing)?(?:[ \t]+price)?(?:[ \t]+(?:
 _BUY_PRICE_NOT = re.compile(r"closing|credit|concession|assess|down[ \t]*payment|seller|reduced[ \t]+from|\bwas\b|tax|hoa|zestimate|estimated|apprais|payment|loan|mortgage|earnest|deposit|commission|\bfee|dues|rent", re.I)
 
 
+_BUY_OLD_BEFORE = re.compile(r"(?:\b(?:reduced|dropped|lowered|cut|marked[ \t]+down|down|price[ \t]+drop(?:ped)?)[ \t]+from|\b(?:was|were|previously|formerly|originally|before|old[ \t]+price|listed[ \t]+(?:at|for)[ \t]+\$[\d,]+[ \t]*,?[ \t]*(?:and[ \t]+)?(?:then[ \t]+)?(?:was|now)))[ \t:]*$", re.I)
+_BUY_OLD_AFTER = re.compile(r"^[ \t]*[)\]]?[ \t]*(?:before|previously|prior|earlier|originally|formerly|(?:is[ \t]+)?the[ \t]+old[ \t]+price)[ \t]*(?:[)\]]|[,;.]|$)", re.I)
+_BUY_REDUCED_TO = re.compile(r"\b(?:reduced|dropped|lowered|cut|slashed|marked[ \t]+down|price[ \t]+drop(?:ped)?)[ \t]+(?:the[ \t]+)?(?:(?:price|asking(?:[ \t]+price)?)[ \t]+)?to[ \t:]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d)", re.I)
+_BUY_HIST_TAIL = re.compile(r"^[ \t]*[(\[][ \t]*(?:reduced[ \t]+from|was|were|previously|formerly|originally|down[ \t]+from|before)\b", re.I)
+
+
 def _buy_price(text: str) -> float | None:
     """The asking price of a home for sale: the largest clearly stated sale amount (in the title line, or after "listed at",
     "price", "asking"), never a fee, tax, HOA, rent or a seller credit. None when no amount is clearly a sale price."""
     first = next((ln for ln in text.split("\n") if ln.strip()), "")
     first_start = text.find(first) if first else -1
     best: float | None = None
+    for rm in _BUY_REDUCED_TO.finditer(text):  # cycle 30: "Price reduced to $284,000 (previously $295,000)", "listed at $295,000, reduced to $284,000": the figure after "reduced to" is the price
+        if _num(rm.group(1)) >= 20000:
+            return _num(rm.group(1))
     for a in _amounts(text):
         if a["value"] < 20000 or a["fee"] or a.get("conditional") or a["marker"]:
             continue
         line_start = text.rfind("\n", 0, a["start"]) + 1
         before = text[line_start:a["start"]]
         after = text[a["end"]:a["end"] + 30].split("\n")[0]
+        if _BUY_OLD_BEFORE.search(before[-40:]) or _BUY_OLD_AFTER.match(text[a["end"]:a["end"] + 30].split("\n")[0]):
+            continue  # cycle 30: the old price of a price cut ("was $295,000", "($295,000 before)") is never the asking price
+        hist = _BUY_HIST_TAIL.match(after)
+        if hist:
+            after = ""  # "$284,000 (reduced from $295,000)": the words of the old-price bracket do not make this figure a fee or a tax
         if re.match(r"\s*(?:/\s*(?:mo|month|yr|year)\b|per\s+(?:mo|month|yr|year)\b|a\s+(?:month|year)\b|monthly|annual)", after, re.I):
             continue
         near = before[-30:] + " " + after[:20]
@@ -600,7 +614,9 @@ _GC_LABEL = {"deposit": "deposit", "hoa": "HOA", "property_tax": "property tax",
              "seller_credit": "seller credit", "closing_costs": "closing costs"}
 _GC_MONEY = re.compile(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)")
 _GC_LEAD = re.compile(r"^[ \t\"'(\[*#-]*(?:(?:corrected?|corrections?|actually)\b|(?:update[ds]?|revised|edit(?:ed)?)[ \t]*[:,\-\u2013\u2014])", re.I)
-_GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)"
+_GC_MOVED = r"(?:reduced|lowered|dropped|cut|slashed|decreased|increased|raised|marked[ \t]+down|discounted)[ \t]+(?:(?:the|its)[ \t]+)?(?:(?:rent|price)[ \t]+)?to"  # cycle 30: "reduced to $2,250", "rent increased to $1,510"
+_GC_HARD = r"corrected?|corrections?|updated?|revised|edit(?:ed)?|actually|changed[ \t]+to|should[ \t]+(?:be|read)|" + _GC_MOVED
+_GC_MOVED_END = re.compile(r"\b" + _GC_MOVED + r"[ \t:]*(?:only[ \t]+)?$", re.I)
 _GC_CUE = re.compile(r"\b(?P<w>now|" + _GC_HARD + r"|new)\b", re.I)
 _GC_OLD = re.compile(r"\b(?:was|were|from|earlier|previously|before|originally|not|instead[ \t]+of|used[ \t]+to[ \t]+be|old|formerly|prior|said|listed[ \t]+as|posted[ \t]+as|ignore|disregard|than)\b", re.I)
 _GC_FILL = (r"(?:rent|price|asking|deposit|dep|security|sec|hoa|dues|fees?|tax(?:es)?|property|monthly|(?:condo|association)[ \t]+(?:fees?|dues)|application|app|parking|garage|carport|is|are|of|at|only|just|now|the|a|an|total|to|be|should|will|"
@@ -613,7 +629,9 @@ _GC_AFTER_KW = re.compile(r"^[ \t]*(?:/[ \t]*\w+[ \t]*)?(?:" + _GC_KW.pattern + 
 _GC_BACKWARD = re.compile(r"^[ \t:,\-]*(?:was|were|from|not|previously|earlier|before|originally|formerly|prior|used|ignore|instead)\b", re.I)
 # "$1,410 ($1,370 now)": the figure before the bracket is the old one, the figure inside it with "now" after it is the new one
 _GC_PAREN_NOW = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b", re.I)
-_GC_WAS_PAREN = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*(?:was|previously|formerly|used[ \t]+to[ \t]+be)[ \t:]*\$", re.I)
+# cycle 30: "($3,295 before)", "$1,460 previously)": the figure in front of the word is the old one
+_GC_BEFORE_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[)\]]?[ \t]*(?:before|previously|prior|earlier|originally|formerly)[ \t]*(?:[)\]]|[,;.]|$)", re.I)
+_GC_WAS_PAREN = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*(?:(?:was|previously|formerly|used[ \t]+to[ \t]+be)[ \t:]*\$|\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:before|previously|prior|earlier|originally|formerly)\b)", re.I)
 _GC_NOW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b[ \t]*(?:[)\]]|$|[,;|])", re.I)
 
 
@@ -646,6 +664,7 @@ def _gc_special(s: str, buying: bool) -> bool:
     return bool(_GC_SPECIAL.search(re.sub(r"concessions?", " ", s, flags=re.I) if buying else s))
 
 
+_GC_TEMP_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month)?[ \t]*[)\]]?[ \t]*,?[ \t]*(?:for|during|over)[ \t]+(?:the[ \t]+)?(?:first|next|initial|opening)\b", re.I)  # cycle 30: "reduced to $1,700 for the first 6 months" is a promo, never the rent
 _GC_LEASE_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*[ \t]*)?(?:with|for|on|if)[ \t]+(?:a[ \t]+|an[ \t]+)?(?:\d{1,2}|one|two|three|six|nine|ten|eleven|twelve|thirteen|fourteen|eighteen)[- ]*(?:months?|mos?\b|year)", re.I)
 
 
@@ -711,6 +730,8 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
         return found, unplaced
     sents = [(m.start(), m.group(0)) for m in re.finditer(r"(?:[^|\n.!?;]|(?<=\d)\.(?=\d))+", text) if m.group(0).strip()]
     prev_fields: list[set[str]] = []  # the named fields of each earlier sentence that had an amount
+    inherit_old: set[str] = set()
+    bare_last: dict[str, tuple[float, str, int, int]] = {}  # cycle 30: the last plain figure of each fact, for a later "Previously $X" line
     for _off, s in sents:
         amts = list(_GC_MONEY.finditer(s))
         lead = bool(_GC_LEAD.match(s))
@@ -725,7 +746,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 role: str | None = "soft"  # "($1,370 now)": the figure with "now" after it
             elif mo_ and _GC_BACKWARD.match(after[mo_.end():]):
                 role = "hard"  # "Security deposit $2,310 (corrected: was $3,000)": the figure in front is the new one, the bracket names the old
-            elif mo_ or _GC_PAREN_NOW.match(after):
+            elif mo_ or _GC_PAREN_NOW.match(after) or _GC_BEFORE_AFTER.match(after):
                 role = "old"
             else:
                 role = _gc_tail_state(window)
@@ -733,7 +754,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     role = "hard"
                 if role is None and _GC_NEW_AFTER.match(after):
                     role = "soft"
-            was_paren = buying and role is None and bool(_GC_WAS_PAREN.match(after))  # cycle 29: "HOA $350/mo (was $325)": the figure in front is the new one
+            was_paren = role is None and bool(_GC_WAS_PAREN.match(after))  # cycle 29: "HOA $350/mo (was $325)": the figure in front is the new one
             if was_paren:
                 role = "soft"
             field: str | None = None
@@ -756,9 +777,13 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 kk = _GC_AFTER_KW.match(after)
                 if kk and kk.lastgroup:
                     field = "named" if kk.lastgroup == "named" else _GC_FIELD[kk.lastgroup]
-            if was_paren and field not in ("hoa", "property_tax", "deposit", "application_fee", "parking_cost", "seller_credit", "closing_costs"):
+            if was_paren and field not in (("hoa", "property_tax", "deposit", "application_fee", "parking_cost", "seller_credit", "closing_costs") if buying else ("deposit", "application_fee", "parking_cost")):
                 role = None  # a rent or a named fee with "(was $X)" is price history, not a correction
             hard = role == "hard" or lead
+            if field is None and not buying and role == "hard" and 300 <= value <= 30000 and _GC_MOVED_END.search(window) \
+                    and not _gc_names_other(re.sub(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+month|monthly)", "", window)):
+                field = "price"  # cycle 30: "Reduced to $3,195/mo ($3,295 before)" in a line of its own: a move "to" a figure is the rent, never the fact of the line before it
+                chain = field
             if field is None and role == "old" and chain is None and not kws and (mo_ or _GC_PAREN_NOW.match(after)) and 300 <= value <= 30000 \
                     and not _GC_CUE.search(window) and (not _gc_names_other(window) or (not buying and _gc_title_rent(window))):
                 field = "price"  # "| $1,410 ($1,370 now) |": a bare header figure with its correction beside it is the rent
@@ -768,10 +793,16 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                         field = next(iter(pf))
                         inherited = True
                     break
+            if field is None and role == "old" and chain is None and not kws and prev_fields and len(prev_fields[-1]) == 1 \
+                    and re.match(r"^[ \t\-*#:(]*(?:previously|formerly|originally|earlier|before|prior|was|were|used[ \t]+to[ \t]+be|old(?:[ \t]+(?:value|figure|amount))?)[ \t:,\-]*(?:it[ \t]+)?(?:(?:was|were)[ \t]+)?$", window, re.I):
+                field = next(iter(prev_fields[-1]))  # cycle 30: "Closing costs: $6,000" then a line "Previously $6,500": the old figure of the fact before it
+                inherit_old.add(field)
             if field is not None:
                 chain = field
                 if field == "named":
                     chain_k = k_named
+            if role is None and field not in (None, "named", "price"):
+                bare_last[field] = (value, after, _off + a.start(), _off + a.end())
             prev_end = a.end()
             if field and field != "named":
                 sent_fields.add(field)
@@ -781,7 +812,7 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 continue
             if role == "soft" and _gc_special(s, buying):
                 continue  # "now $1,450 if you sign by Dec 15", "was $1,600, now $1,450 special": a special, never a correction
-            if (_COND_AFTER.match(after) or _GC_LEASE_AFTER.match(after)) and role != "old":
+            if (_COND_AFTER.match(after) or _GC_LEASE_AFTER.match(after) or _GC_TEMP_AFTER.match(after)) and role != "old":
                 continue
             if field is None:
                 if hard and role != "old" and value >= 100 and re.search(r"\b(?:now|corrected?|corrections?|updated?|revised)\b", s, re.I) \
@@ -813,6 +844,12 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 ent["sentence"] = " ".join(s.split())
         if amts:
             prev_fields.append(sent_fields)
+    for fld, (bv, bafter, b0, b1) in bare_last.items():  # "Closing costs $6,000" then "Previously $6,500": the plain figure is the new one
+        ent = found.get(fld)
+        if ent is not None and fld in inherit_old and ent["new"] is None and ent["olds"] and not any(_same_num(bv, o) for o in ent["olds"]) and not any(a0 <= b0 < e0 for a0, e0 in ent["spans"]):
+            ent["new"] = _gc_unit_value(fld, bv, bafter)
+            ent["spans"].append((b0, b1))
+            ent["sentence"] = "plain figure with an earlier figure named"
     ranges = {"price": (300, 30000), "deposit": (0, 50000), "hoa": (1, 6000), "property_tax": (50, 200000), "application_fee": (0, 1000), "parking_cost": (0, 1000),
               "seller_credit": (0, 500000), "closing_costs": (0, 500000)}
     for fld in list(found):
@@ -1196,6 +1233,9 @@ def _price(text: str) -> float | None:
     if corrected:
         return corrected[0]  # cycle 19: a rent the listing takes back ("1.5k a month, no sorry 2,350") never wins
     amounts = [a for a in _amounts(text) if not a["fee"] and a["marker"] != "per bed" and not a.get("conditional")]
+    cond_spans = _now_if_spans(text)
+    if cond_spans:  # cycle 30: "| $3,290 | ... | Rent now $3,250 if you sign by Dec 1": a price that depends on signing by a date is never the rent
+        amounts = [a for a in amounts if not any(s0 <= a["start"] < e0 for s0, e0 in cond_spans)]
     if not _real_sale_words(text):
         for a in amounts:  # cycle 25: "Rent: $3,200 | Garage parking optional, $200/mo": a figure labelled rent beats any other figure
             if a["labelled"] and 200 <= a["value"] < 20000 and _STRICT_RENT_LABEL.search(text[max(0, a["start"] - 22):a["start"]]) \
@@ -1284,6 +1324,16 @@ def _promo_then_rent(text: str) -> tuple[float, str, float] | None:
 
 _NOW_IF = re.compile(r"\b(?:now|just|only|special|promo(?:tional)?(?:[ \t]+(?:rent|price))?|discounted|reduced[ \t]+to)[ \t:]*" + _AMT_G + r"(?![\d,])[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month)?[ \t]*"
                      r"(?P<cond>(?:if|when|with|for[ \t]+(?:leases?|signing|new[ \t]+(?:residents?|tenants?)|(?:a|an)[ \t]+(?:\d|one|two|twelve))|by|before|through|until|provided|as[ \t]+long)\b[^.\n;]{0,60})", re.I)
+
+
+def _now_if_spans(text: str) -> list[tuple[int, int]]:
+    """The spans of "now $3,250 if you sign by Dec 1" figures (not a price for another lease length)."""
+    out: list[tuple[int, int]] = []
+    for m in _NOW_IF.finditer(text):
+        if re.match(r"(?:with|for)[ \t]+(?:a[ \t]+|an[ \t]+)?(?:\d{1,2}|one|two|three|six|nine|ten|eleven|twelve|thirteen|fourteen|eighteen|twenty[- ]four)[- ]*(?:months?|mos?\b)", m.group("cond"), re.I):
+            continue
+        out.append((m.start(), m.end()))
+    return out
 
 
 def _conditional_now_price(text: str, rent: float | None) -> tuple[float, str] | None:
@@ -1702,6 +1752,13 @@ _REDUCED_FROM = re.compile(r"\b(?:reduced|dropped|lowered|cut|marked down|price 
 _WAS_PRICE = re.compile(r"\b(?:was|previously|formerly|originally)[ \t:]+\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?", re.I)
 
 
+# cycle 30: "($3,295 before)", "$1,460 previously": a figure with the word after it is the old one
+_BEFORE_PRICE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d)[ \t]*(?:/[ \t]*mo\w*|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*[)\]]?[ \t]*(?:before|previously|prior|earlier|originally|formerly)[ \t]*(?:[)\]]|[,;.]|$)", re.I | re.M)
+
+
+_LISTED_THEN_REDUCED = re.compile(r"\b(?:listed|list(?:ing)?|asking|priced|originally)[ \t]+(?:at|for|price)?[ \t:]*\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d)[^.\n$]{0,25}?\b(?:reduced|dropped|lowered|cut|marked[ \t]+down)[ \t]+to\b", re.I)
+
+
 def _was_is_other_fact(text: str, pos: int) -> bool:
     """Cycle 28: a "was $X" inside the clause of another fact ("Security deposit $2,310 (corrected: was $3,000)", "Deposit was $3,000, now $2,310") or inside
     a "Corrected:" or "Update:" sentence is an old figure of that fact or a correction, never a price cut of the rent."""
@@ -1729,11 +1786,20 @@ def _discount_notes(text: str, price: float | None, buying: bool = False) -> lis
         if len(notes) >= 2:
             break
     m = _REDUCED_FROM.search(text)
+    lower: re.Match[str] | None = None
     if not m and price is not None:
-        for wm in _WAS_PRICE.finditer(text):  # "Rent: $3,200 (was $3,400)"
-            if _num(wm.group(1)) > price and not _was_is_other_fact(text, wm.start()):
+        for wm in [*_WAS_PRICE.finditer(text), *_BEFORE_PRICE.finditer(text), *_LISTED_THEN_REDUCED.finditer(text)]:  # "Rent: $3,200 (was $3,400)", "Reduced to $3,195/mo ($3,295 before)"
+            v = _num(wm.group(1))
+            if v == price or _was_is_other_fact(text, wm.start()):
+                continue
+            if v > price:
                 m = wm
                 break
+            if lower is None and 0.5 * price <= v and not _GC_NONRENT.search(text[max(text.rfind("\n", 0, wm.start()), text.rfind(". ", 0, wm.start())) + 1:wm.start()]):
+                lower = wm  # "Rent $1,510 (previously $1,460)": a rent that went up
+    if lower is not None and not m and not buying:
+        old = f"${_num(lower.group(1)):,.0f}"
+        notes.append(f"The listing says the rent was {old} before. The earlier {old} is not used, only the current rent that was read.")
     if m:
         old = f"${_num(m.group(1)):,.0f}"
         if price is not None:
