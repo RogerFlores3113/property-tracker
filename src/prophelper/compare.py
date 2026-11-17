@@ -187,7 +187,12 @@ def _left_out_of_notes(p: dict[str, Any]) -> list[str]:
     """Cycle 29: a buyer's one-time amount the listing gave and the cost does not count is the one reason a cost can be "not all in" with no
     named part. It is named here, so every surface (Today, the place page, Claude's tools, Compare) that asks "is anything unknown?" agrees."""
     c = p.get("cost") or {}
-    return ["an amount from the listing notes"] if c.get("all_in") is False and not c.get("uncounted") and not c.get("missing") else []
+    if c.get("all_in") is not False or c.get("uncounted") or c.get("missing"):
+        return []
+    left = [str(a).replace(" ", "") for a in c.get("one_time_left") or []]  # cycle 31: name the amounts, never "an amount from the listing notes"
+    if not left:
+        return []
+    return [f"the {left[0]} one-time amount in the listing notes" if len(left) == 1 else f"the {_join_and(left)} one-time amounts in the listing notes"]
 
 
 def _join_and(items: list[str]) -> str:
@@ -548,6 +553,9 @@ def _cash_cell(p: dict[str, Any]) -> dict[str, Any]:
     unknown = (["deposit"] if _deposit_unknown(p, c) else []) + cash_unknown_names(p)
     if unknown:
         cell["text"] = f"at least {helpers.money_exact(c['total'])} ({_join_and(unknown)} not known)"
+        cell["incomplete"] = True
+    elif c.get("deposit_up_to"):  # cycle 31: a deposit range saved at its low end
+        cell["text"] = f"at least {helpers.money_exact(c['total'])} (the deposit could be up to {helpers.money_exact(c['deposit_up_to'])})"
         cell["incomplete"] = True
     if as_listed(p):  # cycle 27: the cash of a check-first place is as listed, not checked, like its monthly cost
         cell["text"] += " " + AS_LISTED_WORDS
@@ -1175,7 +1183,10 @@ def lowest_note(r: dict[str, Any]) -> str:
 
 def _short_parts(p: dict[str, Any]) -> str:
     """'utilities' or 'parking and utilities': the cost parts of this place that are not counted."""
-    parts = [u.split(" (")[0] for u in _uncounted(p)]
+    parts = []
+    for u in _uncounted(p):
+        m = re.fullmatch(r"utilities \((.+)\)", u)  # cycle 31: "utilities (internet)" is just the internet; the electric beside it is counted
+        parts.extend(re.split(r",\s*|\s+and\s+", m.group(1)) if m else [u.split(" (")[0]])
     return _join_and(list(dict.fromkeys(parts))) if parts else "costs"
 
 

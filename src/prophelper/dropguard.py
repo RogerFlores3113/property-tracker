@@ -631,10 +631,7 @@ def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool 
                     shown = [(f"${a:,.0f}" if float(a).is_integer() else f"${a:,.2f}") for a in sorted(left)]
                     names = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
                     kind = P._uncounted_kind_sentence(q)
-                    if len(left) > 1:
-                        sentence = next((f"Only {names} of that {plural}" for single, plural in P._PLURAL_KIND if kind == single), kind)
-                    else:
-                        sentence = re.sub(r"^It (?:is|looks)", lambda m: f"Only {names} of that " + ("is" if m.group(0) == "It is" else "looks"), kind, count=1)
+                    sentence = P._only_sentence(names, kind, len(left) > 1)
                     f = f'The listing also says "{q}". {sentence} Check what it is for.'
         if _RUBS_NO_AMOUNT.search(f) and "doesn't say which utilities" in f:
             billed = any(re.search(r"billed back[^.]*\$[\d,.]+|(?:water|sewer|trash|utilit)[^.]*\$[\d,.]+[^.]*counted (?:once )?in other monthly fees", g, re.I) for g in facts if g is not f)

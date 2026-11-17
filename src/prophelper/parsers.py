@@ -4509,6 +4509,11 @@ def _pet_limits(text: str) -> list[str]:
         clause = re.split(r"[\u2714\u2713\u2705\u2611]\ufe0f?\s*(?:\([^)]*\)\s*)?", clause)[-1].strip(" -:,")  # cycle 23: "Heated garage ✔ ($135/mo) Pet friendly (dogs up to 40 lbs)": the pet rule is the part after the last tick, not the whole feature line
         if not re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", clause, re.I):
             continue
+        # cycle 31: "SPACIOUS 3/2 HOME - NO PETS OVER 40LBS!!!": a headline that ends in the pet rule gives the rule, not the whole headline
+        bits = [b for b in re.split(r"[ \t]+[-\u2013\u2014|][ \t]+", clause) if b.strip()]
+        pet_bits = [b for b in bits if re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", b, re.I)]
+        if len(bits) > 1 and len(pet_bits) == 1:
+            clause = pet_bits[0].strip(" -:,!")
         if re.search(r"\b\d{1,3}\s*(?:lbs?|pounds?)|\bbreed|\bweight|\brestrict\w*|\blimits?\b|\bmax(?:imum)?\b|\bunder \d|\bup to \d|\b(?:two|2) pets\b|\bsize\b", clause, re.I) \
                 and len(clause) <= 140 and not any(clause.lower() in f.lower() for f in found):
             found.append(clause[0].upper() + clause[1:])
@@ -9696,7 +9701,7 @@ def _address_no_suffix(text: str) -> tuple[str, int] | None:
     optional direction and a capitalised street name, followed by a city and state, a ZIP or a unit word, or follow a unit and a comma."""
     for m in _NOSUFFIX.finditer(text):
         name, end = m.group(2), m.end()
-        um = re.search(r"[ \t]+(?:apt|apartment|unit|suite|ste)\.?$", name, re.I)
+        um = re.search(r"[ \t]+(?:apt|apartment|unit|suite|ste)\b\.?", name, re.I)  # cycle 31: also in the middle ("3300 Broadway Unit C")
         if um:  # "4620 N BROADWAY APT 402": the unit word belongs to the unit, not to the street name
             name, end = name[:um.start()], m.start(2) + um.start()
         words = [w.strip(".,").lower() for w in name.split()]
@@ -9801,6 +9806,11 @@ def split_full_address(address: Any, unit: Any = None, city: Any = None, state: 
         for i in range(1, len(pieces)):
             rest = ", ".join(pieces[i:])
             mt = re.fullmatch(r"(?P<city>[A-Za-z][A-Za-z.' -]*?)(?:,[ \t]*|[ \t]+)(?P<state>[A-Za-z]{2}|" + _STATE_NAME_RE + r")\.?(?:,?[ \t]*(?P<zip>\d{5})(?:-\d{4})?)?", rest, re.I)
+            if not mt and i == 1 and len(pieces) == 2 and _TRAILING_UNIT.search(pieces[0]) and re.fullmatch(r"[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2}", rest) \
+                    and not ({w.lower().strip(".") for w in rest.split()} & (_NOT_STREET_WORDS | _CITY_STOP)) and (not c0 or c0.lower() == rest.lower()):
+                street = pieces[0]  # cycle 31: "3300 Broadway Unit C, Grove City": the unit ends the street and the city follows with no state
+                out.setdefault("city", rest)
+                break
             if not mt or not state_code(mt.group("state")) or re.match(r"(?:apt|apartment|unit|suite|ste|#)", mt.group("city"), re.I):
                 continue
             tc, ts, tz = mt.group("city").strip(), state_code(mt.group("state")), mt.group("zip") or ""
@@ -10077,7 +10087,21 @@ def _name_segment(line: str) -> str:
     """The name part of a long first line: "Riverside Lofts Unit 4B - 2 bed 2 bath ..., 123 Main St" gives "Riverside Lofts Unit 4B"."""
     if len(line) <= 90:
         return line
-    return _word_cut(re.split(r"\s+[-|\u2013\u2014]\s+|,\s+(?=\d)|\.\s+(?=[A-Z$\d])", line, maxsplit=1)[0], 90)
+    pat = re.compile(r"\s+[-|\u2013\u2014]\s+|,\s+(?=\d)|\.\s+(?=[A-Z$\d])")
+    for m in pat.finditer(line):
+        if _range_dash(line, m):
+            continue  # cycle 31: "Brand-new 1 - 2 Beds": the dash of a range of numbers is not a break
+        return _word_cut(line[:m.start()], 90)
+    return _word_cut(line, 90)
+
+
+def _range_dash(line: str, m: "re.Match[str]") -> bool:
+    """True when a dash match sits between two numbers of a range ("1 - 2 Beds", "2 - 3 BR", "$1,200 - $1,400 is a price range, not this"): a name is
+    never cut there."""
+    d = m.group(0)
+    if not re.fullmatch(r"\s+[-\u2013\u2014]\s+", d):
+        return False
+    return bool(re.search(r"\d$", line[:m.start()])) and bool(re.match(r"\d", line[m.end():]))
 
 
 _GENERIC_PLACE_WORDS = {"Park", "Square", "Place", "Heights", "Village", "Hills", "Woods", "Oaks", "Ridge", "Station", "Gardens", "Landing", "Crossing", "Pointe", "Point"}
@@ -10126,6 +10150,21 @@ def _building_name(text: str) -> str:
 _TITLE_SUFFIX = re.compile(r"\s*(?:[-|:]|(?<!\d),|,(?!\d{3}(?!\d)))\s*(?:\$\s?[\d,.]+[kK]?(?:\s*/\s*mo\w*)?|(?:studio|\d+(?:,\d{3})*(?:\.\d)?\s*(?:-\s*\d+\s*)?(?:bed(?:room)?s?|bds?|brs?|bath(?:room)?s?|bths?|ba|sq\.?\s?ft\.?|sqft|sf))\b)[^\n]*$", re.I)
 
 
+def _title_suffix_cut(out: str) -> str:
+    """``_TITLE_SUFFIX`` removed, except at the dash of a number range ("Sunny 1 - 2 Bedroom Apartments": the range is part of the name)."""
+    pos = 0
+    while True:
+        m = _TITLE_SUFFIX.search(out, pos)
+        if not m:
+            return out
+        if re.search(r"\d$", out[:m.start()].rstrip()) and re.match(r"\s*[-\u2013\u2014]\s*\d", m.group(0)):
+            pos = m.start() + 1
+            while pos < len(out) and out[pos - 1:pos].isspace():
+                pos += 1
+            continue
+        return out[:m.start()]
+
+
 def _clean_title(title: str) -> str:
     """Drop a trailing " - 2 bed 1 bath" or " | $1,500/mo" (facts, not part of the name). Never leaves it empty."""
     out = title
@@ -10136,7 +10175,7 @@ def _clean_title(title: str) -> str:
         if len(rest) >= 3 and re.search(r"[A-Za-z]{3}", rest) and not _is_fact_line(rest):
             out = rest
     for _ in range(3):
-        cut = _TITLE_SUFFIX.sub("", out).strip(" -|:,")
+        cut = _title_suffix_cut(out).strip(" -|:,")
         if cut == out or len(cut) < 3:
             break
         out = cut
@@ -10351,6 +10390,22 @@ _HYPE_LEAD = re.compile(r"^(?:wow|omg|hurry|look|must[ \t]+see|don'?t[ \t]+miss(
 _TITLE_DECOR = re.compile(r"[*#~=_\u2022\u00b7\u2605\u2606\u2726\u2727\u2756\u25cf\u25a0\u25c6\u25ba\u25b6]+")
 
 
+_SENT_SITE_LABEL = re.compile(r"^(?:fb marketplace|facebook marketplace|marketplace|craigslist|zillow|trulia|redfin|hotpads|zumper|apartments\.com|realtor\.com)"
+                              r"(?:-?ish)?(?:[ \t]+(?:style|listing|post|ad))?[ \t]*(?::|[-|\u2013\u2014])[ \t]+(?=\S)", re.I)
+
+
+def strip_site_label(title: str) -> str:
+    """Cycle 31: a title Claude (or a person) sends with the site label in front ("Zillow-ish listing - Stadium View | 1 Bed", "Craigslist: Cozy 2 bed")
+    keeps the name only. Only a site name followed by a colon or a dash is cut, and never down to nothing."""
+    t = " ".join(str(title or "").split())
+    for _ in range(2):
+        cut = _SENT_SITE_LABEL.sub("", t, count=1).strip()
+        if cut == t or len(cut) < 3:
+            break
+        t = cut
+    return t if t != " ".join(str(title or "").split()) else title
+
+
 def strip_title_decoration(title: str) -> str:
     """Cycle 23: stars, hashes, bullets and emoji around a name are decoration ("*** Edgewater 3 bed 2 bath ***"), never part of the title. Only
     the edges lose them (a "#5" unit number inside the title stays); emoji and star symbols go from anywhere."""
@@ -10386,9 +10441,12 @@ def _title(text: str, found: dict[str, Any]) -> str:
     if title and _fee_or_policy_head(title) and not _ADDRESS.match(title):
         addr = str(found.get("address") or "")
         return addr.split(",")[0] if addr else ""  # a fee or policy phrase is never the name: the street address, else no title
+    if title and _BED_RANGE_ONLY.fullmatch(title) and found.get("address"):
+        return str(found["address"]).split(",")[0]  # cycle 31: "Brand-new 1 - 2 Beds" names no place: the street address is the title
     return _chatty_title(title, found)
 
 
+_BED_RANGE_ONLY = re.compile(r"(?:[A-Za-z-]+[ \t]+){0,2}(?:studio|\d)[ \t]*[-\u2013\u2014][ \t]*\d[ \t]*(?:beds?|bedrooms?|brs?|bds?)(?:[ \t]+(?:apartments?|units?|homes?|floor ?plans?))?", re.I)
 _FEATURE_WORD = re.compile(r"\b(?:garage|carport|laundry|w/d|w&d|washer|dryer|dishwasher|renovated|remodeled|updated|stainless|hardwood|balcony|patio|a/c|central air|parking|in[- ]unit|coin|fireplace|granite|appliances?)\b|w/d|w&d", re.I)
 _PROPERTY_NOUN = re.compile(r"(?:\b|(?<=\d))(?:apartments?|apts?|house|home|condo|townhome|townhouse|duplex|studio|loft|flat|cottage|bungalow|villa|bed(?:room)?s?|br|bd|bdrm|rooms?|suite|unit [a-z0-9]+|place|lofts|residences?|community)\b", re.I)
 
@@ -10488,6 +10546,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         line = re.sub(r"^(?:actually|update|updated|correction|edit|edited|note|ps|p\.s\.)[ \t]*[:,][ \t]*(?=\S)", "", line, flags=re.I)  # "Actually: Campustown Flats 1x1"
         if _ai_aimed(raw_line) or _ai_aimed(line):
             continue
+        line = _LABEL_PREFIX.sub("", line, count=1)  # cycle 31: "Zillow-ish listing - Stadium View | 1 Bed | Rent $1,350": the site label goes before the parts are split
         if " | " in line or len(re.findall(r"[ \t]~[ \t]", line)) >= 2:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
             parts = [x.strip() for x in (re.split(r"[ \t]\|[ \t]", line) if " | " in line else re.split(r"[ \t]~[ \t]", line))]
             ok = [x for x in parts if len(x) >= 3 and not _not_a_name(x) and (not _is_fact_line(x) or _PLAN_NAME.match(x) or _NAMED_PLAN.match(x) or _BED_NOUN_PART.match(x))]
@@ -12559,7 +12618,7 @@ def _restates_field(note: str, out: dict[str, Any]) -> bool:
         return _filled(out, "special_assessment") and _filled(out, "special_assessment_payer")
     if re.match(r"The listing says renter's insurance is required", note):
         return _filled(out, "insurance") or _filled(out, "other_monthly_fees")
-    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It|Only [^"]{1,80} of that) (?:is|are|looks?) [^"]{0,80}(?:\. The rest is already counted\.|; the other amounts in that line are counted\.|\.) Check what it is for\.', note)
+    m = re.fullmatch(r'The listing also says "([^"]*)"\. (?:It|Only [^"]{1,80} of that) (?:is|are|looks?) [^"]{0,140}(?:\. The rest is already counted\.|; the other amounts in that line are counted\.|\.) Check what it is for\.', note)
     if m and re.search(r"not counted anywhere|not in the monthly cost", note):
         return amounts_all_placed(_dollar_values(m.group(1)), _net_used_numbers(out, []), _field_sums(out), m.group(1), out)
     return False
@@ -12970,6 +13029,25 @@ _PLURAL_KIND = ((CREDIT_SENTENCE, "are credits toward your costs, not costs, so 
                 ("It is not counted anywhere.", "are not counted anywhere."))
 
 
+def _only_sentence(names: str, kind: str, plural: bool) -> str:
+    """Cycle 31: "Only $50 of that is not counted: it is a one-time cost, so it is not in the monthly cost." names the figures that are left out
+    first and then says why (the old "Only $50 of that is a one-time cost" read as if the other figures were not one-time costs). A kind
+    that already says "not counted anywhere" keeps the short form."""
+    if plural:
+        for single, many in _PLURAL_KIND:
+            if kind == single:
+                if "not counted anywhere" in many or not many.startswith("are "):
+                    return f"Only {names} of that {many}"
+                return f"Only {names} of that are not counted: they {many}"
+        return kind
+    m = re.match(r"It (is|looks) (.*)", kind)
+    if not m:
+        return kind
+    if "not counted anywhere" in kind:
+        return f"Only {names} of that {m.group(1)} {m.group(2)}"
+    return f"Only {names} of that is not counted: it {m.group(1)} {m.group(2)}"
+
+
 def _with_rest_counted(sentence: str) -> str:
     """A "not counted" sentence that names only some of the amounts in a line says the rest of the line is counted."""
     return sentence[:-1] + "; the other amounts in that line are counted." if sentence.startswith("Only ") and sentence.endswith(".") else sentence
@@ -12991,11 +13069,7 @@ def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, 
     kind = _uncounted_kind_sentence(mine) if mine else "It is not counted anywhere."
     if kind == "It is not counted anywhere." and _ONE_TIME_WORDS.search(phrase) and not _MONTHLY_WORDS.search(mine):
         kind = "It is a one-time cost, so it is not in the monthly cost."
-    if len(left) > 1:
-        for single, plural in _PLURAL_KIND:
-            if kind == single:
-                return f"Only {names} of that {plural}"
-    return re.sub(r"^It (?:is|looks)", lambda m: f"Only {names} of that " + ("is" if m.group(0) == "It is" else "looks"), kind, count=1)
+    return _only_sentence(names, kind, len(left) > 1)
 
 
 _ABBREV_BEFORE = re.compile(r"(?:\b(?:est|approx|avg|incl|apt|ca|ave|inc|bldg|ste)|\b[a-z])$", re.I)
