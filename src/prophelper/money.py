@@ -920,7 +920,7 @@ _EXPL_FEE = re.compile(r"\bdeposit|\bfees?\b|\bdues\b|\btax|insurance|\bhoa\b|pa
 _EXPL_LEASE_BEFORE = re.compile(r"\b\d{1,2}[- ]?(?:months?|mos?)\b(?:[- ]?(?:lease|term|contract))?[^$\n;]{0,25}$", re.I)
 _EXPL_LEASE_AFTER = re.compile(r"^\s*(?:/\s*mo\w*\s*)?(?:for|on|with|if you sign)\s+(?:a\s+|an\s+)?\d{1,2}[- ]?(?:months?|mos?)\b", re.I)
 _EXPL_LEASE_WORDS = re.compile(r"\bmonth[- ]to[- ]month\b|\bmtm\b|\blease (?:length|term)s?\b|\bother lease\b|\banother lease\b|\bdifferent lease\b|\blease options?\b|\bmonth lease options?\b", re.I)
-_EXPL_PLAN = re.compile(r"\b(?:another|other|different) (?:floor ?)?plans?\b|\bfloor[- ]?plans?\b|\b(?:\d[- ]?)?(?:bed(?:room)?s?|br|bd|studio)[- ]plans?\b|\bplans? (?:at|from)\b|\bstarting (?:at|from)\b|\bplan options?\b|\bother (?:unit|size)s?\b", re.I)
+_EXPL_PLAN = re.compile(r"\b(?:another|other|different) (?:floor ?)?plans?\b|\bfloor[- ]?plans?\b|\b(?:\d[- ]?)?(?:bed(?:room)?s?|br|bd|studio)[- ]plans?\b|\bplans? (?:at|from)\b|\bstarting (?:at|from)\b|\bplan options?\b|\bother (?:unit|size)s?\b|\bthat(?:'s| is)[ \t]+(?:the|for the)[ \t]+(?:\d|one|two|three|four|studio)[- ]?(?:bed(?:room)?s?|br|bd)\b", re.I)
 _EXPL_SPECIAL = re.compile(r"\bmove-?in specials?\b|\bspecial offers?\b|\bpromo\w*|\bbest-case\b|\bwith approved credit\b|\bspecials?\b(?!\s+assessment)|\blimited[- ]time\b|\blimited (?:offer|availability)\b|\bfor a limited\b|\b(?:if|when) you (?:sign|move in|lease|apply)\b|\bsign(?:ing)? (?:by|before|within)\b|\boffer (?:ends|expires)\b|\bexpires?\b", re.I)
 _EXPL_ONE_TIME = re.compile(r"\bseller(?:'s)?\s+(?:pays?|paid|will pay|credits?|contribut\w*|concessions?|covers?|help\w*)\b|\bone[- ]time\b|\bpending\b|\bspecial assessments?\b|\bassessments?\b|\bvote\b|\bto be split\b|\bsplit (?:among|between)\b|\bpaid by (?:the )?seller\b|\bseller[- ]paid\b|\bby the seller\b|\b(?:transfer|working capital|capital contribution|initiation|move-?out|closing|escrow|title|recording|origination)\s+(?:fees?|costs?)\b|\bholding (?:deposit|fee)\b|\bcapital contribution\b", re.I)
 # A figure inside a sentence that tries to direct an AI tool or asks for a payment by a wire-like service is never a monthly cost of the place.
@@ -1122,6 +1122,20 @@ def _note_is_stale(note: str, place: dict[str, Any] | None) -> bool:
         return False
 
 
+_ESTIMATE_LINE = re.compile(r"\b(?:typical|average|avg\.?|usual|normal|estimated|est\.?|approx\w*)[ \t]+(?:monthly[ \t]+)?(?:bills?|utilit\w+|utility[ \t]+(?:bills?|costs?))\b"
+                            r"|\butilit\w+[ \t]+(?:typically[ \t]+)?(?:run|average|are|about|around|approx\w*)\b|\bbills?[ \t]+(?:for[ \t]+the[ \t]+unit[ \t]+)?(?:about|around|approx\w*|run)\b", re.I)
+
+
+def _estimate_only_note(note: str) -> bool:
+    """Cycle 32: a quoted "not counted" note whose only dollar figure sits in a typical-bills, average-utilities or "utilities about" item."""
+    figs = list(_FIG.finditer(note))
+    if not figs or len({_amount_of(f) for f in figs}) != 1:
+        return False
+    q = re.search(r'"([^"]*)"', note)
+    line = q.group(1) if q else note
+    return bool(_ESTIMATE_LINE.search(line)) and len({_amount_of(f) for f in _FIG.finditer(line)}) == 1
+
+
 def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -> list[str]:
     """The saved reader notes that still hold a money note that is open: an amount, fee or cost the reader saw and did
     not count or could not place. ``place`` (its saved fields) lets a note whose amounts are all counted in a field count as closed."""
@@ -1138,6 +1152,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
             continue
         if re.match(r"The listing corrects the (?:utilities|beds?|baths?|bedrooms?|bathrooms?|laundry|parking|pets?)\b", note) and not _FIG.search(note):
             continue  # cycle 29: a correction that names a fact and no figure ("the tenant now pays all of them. The earlier line is not used") leaves no amount open
+        if place is not None and num(place.get("utilities_estimate")) is not None and _estimate_only_note(note):
+            continue  # cycle 32: "Typical bills for the unit about $140" is the utilities estimate; once the place holds an estimate it is settled, never "missing"
         if NOT_A_COST_NOTE.search(note):
             continue  # cycle 24: the note says the figure is another plan's price, an older rent, a deposit alternative or another lease length: it stays a note, never "missing"
         if _NOTE_BUY_PARKING.search(note):
