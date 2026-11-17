@@ -493,3 +493,71 @@ def test_seller_paid_note_negatives(line):
     out = read(SP_BASE + line)
     assert "the seller pays the" not in notes(out) or "toward" in line
     assert "$1,500 title policy. It is paid by the seller" not in notes(out)
+
+
+# ---- item 10 (buyer): Today's closing target uses the search target until a place is in Closing
+def _iso(n):
+    from datetime import date, timedelta
+    return (date.today() + timedelta(days=n)).isoformat()
+
+
+def _buy_with_target(store, target):
+    s = store.add_search("C", "buy", budget_max=400000, target_close=target)
+    store.set_current_search(s["id"])
+    return s
+
+
+def _line_for(days):
+    from prophelper import helpers
+    return helpers.closing_info({"mode": "buy", "target_close": _iso(days)})["today_line"]
+
+
+def _today_line(store):
+    import re
+    from conftest import local_client
+    html = local_client(store).get("/today").text
+    m = re.search(r'<p class="fine" id="closing-target">(.*?)</p>', html, re.S)
+    return m.group(1) if m else None
+
+
+@pytest.mark.parametrize("stage", ["Saved", "Toured", "Offer drafted", "Offer made", "Under contract", "Inspection"])
+def test_a_place_before_closing_never_drives_the_countdown(store, stage):
+    s = _buy_with_target(store, _iso(90))
+    p, _ = store.add_place(title="Grandview", address="5 Oak St", price=300000, beds=2, search_id=s["id"])
+    store.add_place_date(p["id"], "closing", _iso(87))
+    for st_ in ("Toured", "Offer drafted", "Offer made", "Under contract", "Inspection"):
+        if stage == "Saved":
+            break
+        store.move_stage(p["id"], st_)
+        if st_ == stage:
+            break
+    line = _today_line(store)
+    assert line == _line_for(90) and "(for" not in line and "in 87 days" not in line
+
+
+def test_reviewer_case_saved_place_listing_date_vs_search_target(store):
+    """Buyer: Saved place Grandview with a listing date of Feb 12 (87 days) beat the search target Feb 15."""
+    s = _buy_with_target(store, _iso(90))
+    p, _ = store.add_place(title="Grandview", address="5 Oak St", price=300000, beds=2, search_id=s["id"],
+                           listing_text="Condo $300,000. 2 bed. Closing on or before February 12, 2027.")
+    store.add_place_date(p["id"], "closing", _iso(87))
+    assert _today_line(store) == _line_for(90)
+
+
+def test_a_place_in_closing_still_wins_and_is_named(store):
+    s = _buy_with_target(store, _iso(90))
+    saved, _ = store.add_place(title="Grandview", address="5 Oak St", price=300000, beds=2, search_id=s["id"])
+    store.add_place_date(saved["id"], "closing", _iso(87))
+    p, _ = store.add_place(title="Victorian Village Condo", address="6 Oak St", price=300000, beds=2, search_id=s["id"])
+    store.add_place_date(p["id"], "closing", _iso(104))
+    for st_ in ("Toured", "Offer drafted", "Offer made", "Under contract", "Inspection", "Closing"):
+        store.move_stage(p["id"], st_)
+    assert _today_line(store) == _line_for(104) + " (for Victorian Village Condo)"
+
+
+def test_no_target_and_no_place_in_closing_shows_no_line(store):
+    s = store.add_search("C", "buy", budget_max=400000)
+    store.set_current_search(s["id"])
+    p, _ = store.add_place(title="Grandview", address="5 Oak St", price=300000, beds=2, search_id=s["id"])
+    store.add_place_date(p["id"], "closing", _iso(87))
+    assert _today_line(store) is None
