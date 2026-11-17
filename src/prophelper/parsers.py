@@ -1837,6 +1837,10 @@ def _rent_two_prices(text: str) -> tuple[float, float, str] | None:
             if 300 <= new < old <= 30000:
                 return new, old, kind
     m = _NET_EFFECTIVE.search(text) or _NET_EFFECTIVE_AFTER.search(text)
+    kind = "net"
+    if not m:
+        m = _CONCESSION_PRICE.search(text)  # cycle 35: "$3,600 a month, $3,300 with concession"
+        kind = "concession"
     if m:
         net = _num(m.group(1))
         rest = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
@@ -1844,14 +1848,21 @@ def _rent_two_prices(text: str) -> tuple[float, float, str] | None:
         if base is None:
             base = _bare_starting_rent(rest)
         if base is not None and base > net and 300 <= base <= 30000:
-            return base, net, "net"
+            return base, net, kind
     return None
+
+
+_CONCESSION_PRICE = re.compile(r"(?:\bor[ \t]+|\([ \t]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d{3,5})(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*"
+                               r"(?:with|after|w/|if[ \t]+you[ \t]+take)[ \t]+(?:the[ \t]+|a[ \t]+|our[ \t]+|any[ \t]+)?(?:rent[ \t]+)?(?:concessions?|specials?|promo(?:tion)?s?|discounts?)(?:[ \t]+applied)?\)?", re.I)
 
 
 def _rent_two_prices_note(price: float, other: float, kind: str) -> str:
     if kind == "net":
         return (f"The listing gives ${price:,.0f} a month as the rent and a net effective rent of ${other:,.0f}. The net effective figure only spreads a free-rent deal over the lease, "
                 f"so ${price:,.0f} is saved as the rent. Ask what you pay each month.")
+    if kind == "concession":
+        return (f"The listing gives ${price:,.0f} a month as the rent and ${other:,.0f} with a concession. The concession is a one-time deal, so ${price:,.0f} is saved as the rent "
+                "and the lower figure is not used. Ask what you have to do to get it.")
     return f"The listing says the rent dropped from ${other:,.0f} to ${price:,.0f}. The current ${price:,.0f} is saved as the rent and the old ${other:,.0f} is not used."
 
 
@@ -2519,7 +2530,26 @@ def _periodic_fee_notes(text: str) -> list[str]:
         seen.add(n)
         notes.append(f"The listing has a {m.group(1).lower() if m.group(1).lower() == 'quarterly' else 'yearly'} {label + ' ' if label else ''}fee of ${n:,.0f} (about ${n / divisor:,.0f} a month). "
                      f"It is not counted in the monthly cost. Ask if you have to pay it.")
+    # cycle 35: the same quarterly or yearly fee written with the amount first or the period after it: "Assessment $90 per quarter", "$90 quarterly fee", "Quarterly dues $90"
+    for rx, kinds in _PERIODIC_FEE_FORMS:
+        for m in rx.finditer(text):
+            n = _num(m.group("amt"))
+            word = (m.groupdict().get("per") or m.groupdict().get("q") or "").lower()
+            yearly = bool(re.match(r"y|an|year", word))
+            if n in seen or not 1 <= n <= 5000 or re.search(r"hoa|association|condo|co-?op|tax|insurance|\brent\b", text[max(0, m.start() - 20):m.end() + 5], re.I):
+                continue
+            seen.add(n)
+            div = 12 if yearly else 3
+            notes.append(f"The listing has a {'yearly' if yearly else 'quarterly'} fee of ${n:,.0f} (about ${n / div:,.0f} a month). It is not counted in the monthly cost. Ask if you have to pay it.")
     return notes
+
+
+_PERIOD_WORDS = r"(?P<per>quarterly|quarter|annual(?:ly)?|yearly|year)"
+_PERIODIC_FEE_FORMS = (
+    (re.compile(r"\b(?:fees?|charges?|assessments?|dues)\b[ \t:\-=]*(?:of[ \t]+)?\$\s?(?P<amt>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])[ \t]*(?:(?:/|per|a|each|every)[ \t]*" + _PERIOD_WORDS + r"|(?P<q>quarterly|annually|yearly)\b)", re.I), ()),
+    (re.compile(r"\$\s?(?P<amt>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])[ \t]*(?P<per>quarterly|annual|yearly)[ \t]+(?:[A-Za-z-]+[ \t]+){0,2}?(?:fees?|charges?|assessments?|dues)\b", re.I), ()),
+    (re.compile(r"\b(?P<per>quarterly)[ \t]+(?:[A-Za-z-]+[ \t]+){0,2}?dues\b[ \t:\-=]*\$\s?(?P<amt>\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?![\d,])", re.I), ()),
+)
 
 
 def _holding_fee_amount_notes(text: str) -> list[str]:
@@ -3863,6 +3893,53 @@ def _parking_free_with_priced(text: str) -> tuple[str, float, list[str]] | None:
     return None
 
 
+_PARK_SPOT_INCLUDED = re.compile(r"\b(?:(?:1|one|a|single|2|two)[ \t]+(?:(?:assigned|reserved|private|parking)[ \t]+){0,2}(?:spaces?|spots?|stalls?)[ \t]+(?:is[ \t]+|are[ \t]+|comes?[ \t]+)?(?:included|free)\b"
+                                 r"|includes?[ \t]+(?:1|one|a|2|two)[ \t]+(?:parking[ \t]+)?(?:spaces?|spots?|stalls?)\b)", re.I)
+_PARK_LOT_EVIDENCE = re.compile(r"\b(?:lot|surface|driveway|off[- ]?street|outdoors?|uncovered|gravel|paved|open[- ]air)\b", re.I)
+
+
+def _parking_spot_kind_unknown(text: str, kind: str, cost: float | None, notes: list[str]) -> tuple[str, list[str]]:
+    """Cycle 35 (roommates l12): "Parking: 1 spot included in rent" says the spot costs nothing and never says what kind it is, so the kind is left empty (never a guessed
+    lot). A kind word anywhere in the listing's parking words ("surface lot", "off-street", "driveway") keeps the lot."""
+    if kind != "lot" or cost != 0 or not _PARK_SPOT_INCLUDED.search(text) or _PARK_LOT_EVIDENCE.search(text) or re.search(r"\bstreet\b", text, re.I):
+        return kind, notes
+    return "", notes + ["The listing says a parking spot is included in the rent, so the parking costs $0. It does not say what kind of parking it is (lot, covered or garage), "
+                        "so the kind is left empty. Ask which kind it is."]
+
+
+_PARK_EITHER_KIND = r"(?:(?:attached|detached|private|heated|reserved|underground)[ \t]+)?(?:garages?|covered|carports?)(?:[ \t]+parking)?"
+_PARK_EITHER_PRICE = r"\$[ \t]?(\d{1,4}(?:\.\d\d)?)(?![\d,])[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?"
+_PARK_EITHER_LIST = rf"{_PARK_EITHER_KIND}(?:[ \t]*(?:,|/|\bor\b|\band/or\b)[ \t]*{_PARK_EITHER_KIND})+"
+_PARK_EITHER = (
+    re.compile(rf"^(?:parking[ \t]*(?:options?|types?)?[ \t]*[:\-][ \t]*)?{_PARK_EITHER_LIST}[ \t]*(?:[,:\-\u2013\u2014(][ \t]*|[ \t]+)?(?:for[ \t]+)?{_PARK_EITHER_PRICE}[ \t]*\)?[ \t]*$"),
+    re.compile(rf"^(?:parking[ \t]*[:\-][ \t]*)?{_PARK_EITHER_PRICE}[ \t]*(?:for[ \t]+|[,:\-\u2013\u2014(][ \t]*)?{_PARK_EITHER_LIST}[ \t]*\)?[ \t]*$"),
+)
+
+
+def _parking_either_priced(low: str) -> tuple[str, float | None, list[str]] | None:
+    """Cycle 35 (nontech l6): "Parking: garage or covered, $60/mo" is one list of kinds with the one price after it. It is covered parking at $60 a month (a garage is covered
+    too), with a note that the listing named both. A price after a list of two priced kinds ("garage $120, covered $60") is not this."""
+    for sent in re.split(r"\.(?:\s|$)(?![^(]*\))|\n|;|\s\|\s", low):
+        sent = sent.strip()
+        if not sent or re.search(r"\b(?:optional|available|extra|additional|upgrade|each|per[ \t]+(?:car|vehicle|space|spot)|waitlist|wait[- ]list|on[ \t]+request)\b", sent):
+            continue
+        for rx in _PARK_EITHER:
+            m = rx.match(sent)
+            if m:
+                price = float(m.group(1))
+                return "covered", price, [f"The listing says the parking is a garage or covered at ${price:,.0f} a month. It is saved as covered parking at ${price:,.0f}. Ask which one you would get."]
+    return None
+
+
+_PARK_ADDITIONAL_GARAGE = re.compile(r"(\b(?:garages?|carports?)\b[^.\n;|$]{0,40}?\bavailable\b[^.\n;|$]{0,25}?)\b(?:an[ \t]+)?(?:additional|extra)[ \t]+(?=(?:charge[ \t]+of[ \t]+|cost[ \t]+of[ \t]+|fee[ \t]+of[ \t]+)?\$)", re.I)
+
+
+def _parking_additional_garage(text: str) -> str:
+    """Cycle 35: "Garage parking is available for an additional $85/month" offers a garage for a price: the word "additional" is dropped so the optional-garage reader
+    reads it, the same as "Garage available $85/mo"."""
+    return _PARK_ADDITIONAL_GARAGE.sub(lambda m: m.group(1), text)
+
+
 def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
     text = _PARKING_NO_DOLLAR.sub(lambda m: m.group(1) + "$" + m.group(2), text)  # cycle 26: "Parking 85/mo" has no dollar sign but is a price a month
     text = _PARKING_PROMO.sub(" ", text)  # cycle 22: a short free offer ("free for first 6 months") never makes the parking free
@@ -3876,7 +3953,9 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
     if second_only:
         text = second_only[0]
         zero_notes.append(second_only[1])
+    text = _parking_additional_garage(text)  # cycle 35: "Garage available for an additional $85" is an optional garage, not an extra space beside an included one
     kind, cost, notes = _parking_detail_inner(text)
+    kind, notes = _parking_spot_kind_unknown(text, kind, cost, notes)
     if kind == "lot" and re.search(r"\bdeeded\b", text, re.I) and not _parking_kind_words(re.sub(r"\bdeeded\b", " ", text.lower())) \
             and not re.search(r"\b(?:driveway|off[- ]?street|lot|surface|street)\b", text, re.I):
         kind = ""  # cycle 24: "1 deeded parking space" is its own thing: the schema has no deeded kind, so the kind is left empty and named in a note
@@ -3954,6 +4033,9 @@ def _parking_detail_inner(text: str) -> tuple[str, float | None, list[str]]:
 
 
 def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[str]]:
+    either = _parking_either_priced(low)
+    if either:
+        return either
     opts = _parking_options(low)
     if opts:
         return opts
@@ -13133,7 +13215,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     two_prices = None if buying or price_range or unit_pick else _try(lambda: _rent_two_prices(text))
     if two_prices:  # cycle 18: two rents in one listing: the quoted or current one is saved, the other is named in a note
         price_read = two_prices[0]
-        if two_prices[2] == "net" or not (_REDUCED_FROM.search(text) or _WAS_PRICE.search(text)):  # those two already get a "price was cut" note
+        if two_prices[2] in ("net", "concession") or not (_REDUCED_FROM.search(text) or _WAS_PRICE.search(text)):  # those two already get a "price was cut" note
             facts.append(_rent_two_prices_note(*two_prices))
     promo = None if buying or price_range or unit_pick else _try(lambda: _promo_then_rent(text, price_read))
     if su_units:  # cycle 32: step-ups for more than one size: one note, and an unclear size leaves the rent empty
@@ -14671,6 +14753,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             monthly_assessment = ""  # cycle 23: a regular monthly assessment is the HOA and has its own note below
         if monthly_assessment and _try(lambda: _hoa(text)) is None and _try(lambda: _hoa_plain_monthly(text)) == (_try(lambda: _assessment_monthly(text)) or (0,))[0]:
             monthly_assessment = ""  # these monthly dues were saved as the HOA, so no note says they are left out
+        if monthly_assessment and not buying and any(f.startswith("The listing has a quarterly fee of ") for f in facts):
+            monthly_assessment = ""  # cycle 35: a quarterly assessment already has its one note (the quarterly figure and its monthly share); a second note about the same $30 is noise
         if monthly_assessment:
             facts.append(monthly_assessment)
         yearly_assessment = _try(lambda: _assessment_yearly_note(text))
