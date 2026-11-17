@@ -203,16 +203,18 @@ def _noted(amount: float, item: str, notes: str) -> bool:
     return False
 
 
-def _util_placed(text: str, est: float | None) -> set[float]:
+def _util_placed(text: str, est: float | None, loose: bool = False) -> set[float]:
     """Utility figures (of the listing's utility items) that some reading of them adds up to the saved estimate."""
     if est is None:
         return set()
     amts: list[tuple[float, tuple[float, ...]]] = []
     util_starts: set[int] = set()
+    total_figs: set[float] = set()
     for m in _P()._NET_DOLLARS.finditer(text):
         item, line = _item(text, m.start(), m.end(), back=True)
         first = next((c for c in _CATS if c[1].search(item)), None)
-        if (first is not None and first[0] == "util") or (first is None and _CATS[7][1].search(line) and re.search(r"pays?|tenant|resident|utilit|responsible", line, re.I)):
+        if (first is not None and first[0] == "util") or (first is None and _CATS[7][1].search(line) and re.search(r"pays?|tenant|resident|utilit|responsible", line, re.I)) \
+                or (first is None and re.search(r"\b(?:typical|average|avg\.?|usual(?:ly)?)\b[^$]{0,30}\bbills?\b", item, re.I)):  # cycle 32: "Typical bills for the unit about $140" on a line of its own
             low = item.lower()
             divs = [1.0]
             if re.search(r"bi-?monthly|two months|2 months|every other month", low):
@@ -223,6 +225,8 @@ def _util_placed(text: str, est: float | None) -> set[float]:
                 divs += [12.0]
             amts.extend((a, tuple(divs)) for a in _P()._dollar_values(m.group(0)))
             util_starts.add(m.start())
+            if re.search(r"\b(?:typical|average|avg\.?|usual(?:ly)?)\b[^$]{0,30}\b(?:bills?|total|utilit\w*)\b|\btotal\b|\bfor[ \t]+the[ \t]+unit\b|\ball[ \t]+(?:the[ \t]+)?utilit", line, re.I):
+                total_figs.update(_P()._dollar_values(m.group(0)))  # cycle 32: a figure the listing calls the whole bill
     try:
         for b in _P()._internet_bills(_P()._tidy(text)):  # cycle 24: "Internet: Comcast, you set up (about $55)": the figure is the internet's bill, a part of the estimate, whatever the item cut says
             if not any(abs(b["amount_at"][0] - st) <= 2 for st in util_starts):
@@ -242,6 +246,12 @@ def _util_placed(text: str, est: float | None) -> set[float]:
         for o in opts[i]:
             rec(i + 1, total + o, chosen + [i])
     rec(0, 0.0, [])
+    # cycle 32: "tenant pays electric ($65); typical bills for the unit about $140": the saved $140 is the whole bill, so the $65 is a part of it
+    for i, a in enumerate(amts):
+        if loose and abs(a - est) < 0.01 and a in total_figs:
+            parts = [b for j, b in enumerate(amts) if j != i and b < est]
+            if parts and sum(parts) <= est + 0.7:
+                ok.update(parts)
     return ok
 
 
@@ -366,7 +376,7 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
     text = _P().normalize_money(text)
     price = r.get("price")
     est = r.get("utilities_estimate")
-    util_ok = _util_placed(text, float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None)
+    util_ok = _util_placed(text, float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None, loose=True)
     bad: list[dict[str, Any]] = []
     seen: set[tuple[float, str]] = set()
     members = {k: sum_members(text, float(r[k]), _num_or_none(r.get("price"))) for k in _SUMMED if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)}
