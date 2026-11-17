@@ -837,7 +837,7 @@ RENT_RANGE_LABEL = "the rent (the listing gives a range)"
 # Cycle 25: a figure that a note explains as another lease length, another plan, a move-in special, a one-time or pending amount or an old price is never a
 # missing monthly amount. Decided by meaning, from the words around the figure (inside the quoted listing line when the note quotes one), so the wording of
 # the note that holds it does not matter.
-_FIG = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
+_FIG = re.compile(r"\$\s?(\d[\d,]*+(?:\.\d+)?+)(?!…)(?!(?:[ \t]\d\b){2,})")  # cycle 29: "$9999999…" (a shortened huge figure) and "$2 9 5 0" (digits with spaces) are no figure
 _EXPL_FEE = re.compile(r"\bdeposit|\bfees?\b|\bdues\b|\btax|insurance|\bhoa\b|parking|garage|\bpets?\b|utilit|electric|\bwater\b|trash|internet|"
                        r"\bdrops?\b|\bdropped\b|reduc|discount|\boff\b|\bfree\b|concession|credit|rebate|waive|bonus", re.I)
 _EXPL_LEASE_BEFORE = re.compile(r"\b\d{1,2}[- ]?(?:months?|mos?)\b(?:[- ]?(?:lease|term|contract))?[^$\n;]{0,25}$", re.I)
@@ -935,7 +935,7 @@ def _note_figures(note: str) -> list[re.Match[str]]:
 
 def _note_figures_loose(note: str) -> list[re.Match[str]]:
     """Like ``_note_figures`` for the looser figure pattern the missing-list code uses ("$ 35", "$1,200.")."""
-    loose = list(re.finditer(r"\$\s?\d[\d,]*(?:\.\d+)?", note))
+    loose = list(re.finditer(r"\$\s?\d[\d,]*+(?:\.\d+)?+(?!…)(?!(?:[ \t]\d\b){2,})", note))
     qs = list(re.finditer(r'"([^"]*)"', note))
     if not qs:
         return loose
@@ -1059,6 +1059,8 @@ def open_listing_notes(reader_notes: Any, place: dict[str, Any] | None = None) -
     for note in note_units(reader_notes):
         if ONE_TIME_NOTE.search(note):
             continue
+        if re.match(r"The listing corrects the (?:utilities|beds?|baths?|bedrooms?|bathrooms?|laundry|parking|pets?)\b", note) and not _FIG.search(note):
+            continue  # cycle 29: a correction that names a fact and no figure ("the tenant now pays all of them. The earlier line is not used") leaves no amount open
         if NOT_A_COST_NOTE.search(note):
             continue  # cycle 24: the note says the figure is another plan's price, an older rent, a deposit alternative or another lease length: it stays a note, never "missing"
         if _NOTE_BUY_PARKING.search(note):

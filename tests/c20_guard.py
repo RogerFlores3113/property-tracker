@@ -9,6 +9,7 @@ placed nor quoted (the dollar check already sees it, the hostile text no longer 
 whose value no combination of the listing's figures adds up to (a figure read twice)."""
 from __future__ import annotations
 
+import itertools
 import os
 import re
 
@@ -164,6 +165,87 @@ def superseded_deposit_dupes(text: str, buying: bool = False) -> list[str]:
     return bad
 
 
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "panel")
+
+
+def fixture_listings() -> list[tuple[str, str]]:
+    """Every saved reviewer listing in tests/fixtures/panel (the copy that ships with the tests), one paste of several places left out."""
+    out = []
+    for f in sorted(os.listdir(FIXTURES)):
+        if not f.endswith(".txt"):
+            continue
+        try:
+            text = open(os.path.join(FIXTURES, f), encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "\n====" not in text:
+            out.append((f, text))
+    return out
+
+
+_COUNTED_FIELDS = ("price", "deposit", "parking_cost", "pet_rent", "pet_fee", "pet_deposit", "utilities_estimate", "other_monthly_fees", "move_in_fees", "application_fee", "hoa")
+_MONEY_FIG = re.compile(r"\$\s?(\d[\d,]*+(?:\.\d+)?+)(?!\u2026)(?!(?:[ \t]\d\b){2,})")
+
+
+def counted_vs_missing(text: str, buying: bool = False) -> list[str]:
+    """Cycle 29 (rule c): a figure that was counted into a field, or that a correction replaced, is never in the missing text (the headline's missing
+    part, the cost's missing list, Compare's "Still unknown" and Unknowns). A figure counts as placed when a saved money field holds it or it is one
+    part of a summed field (other monthly fees, move-in fees); the listing's own text decides which figures exist. Checked from the final saved fields."""
+    from prophelper import compare, money
+    r = P.parse_listing(text, "", buying=buying)
+    place = dict(r, reader_notes=r.get("found_in_listing"), listing_text=text)
+    cost = money.true_monthly_cost(place, "buy" if buying else "rent")
+    pl = dict(place, cost=cost, score={"unknown": []})
+    head = cost.get("headline") or ""
+    surfaces = [head.split(", ", 1)[1] if ", " in head else "", compare._not_counted_text(pl), *compare._missing_names(pl), *[str(x) for x in cost.get("missing") or []]]
+    placed = {round(float(r[k]), 2) for k in _COUNTED_FIELDS if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)}
+    figs = sorted({round(float(m.group(1).replace(",", "")), 2) for m in _MONEY_FIG.finditer(text)})
+    for key in ("other_monthly_fees", "move_in_fees"):  # a figure that is one part of a summed fee field (a corrected $45 beside $25 in fees of $70)
+        total = r.get(key)
+        if isinstance(total, (int, float)) and not isinstance(total, bool) and total:
+            for v in figs:
+                rest = [x for x in figs if x != v and x < total]
+                if v < total and any(abs(sum(c) - (float(total) - v)) < 0.01 for k in (1, 2, 3) for c in itertools.combinations(rest, k)):
+                    placed.add(v)
+    if "corrects the utilities" in str(r.get("found_in_listing") or ""):  # a utilities estimate the correction replaced
+        from prophelper import dropguard
+        for m in dropguard._STALE_UTIL_ESTIMATE.finditer(text):
+            placed |= {round(float(x.group(1).replace(",", "")), 2) for x in _MONEY_FIG.finditer(m.group(0))}
+    placed |= {round(v, 2) for v in money.superseded_amounts(money.note_units(str(r.get("found_in_listing") or "")))}
+    bad = []
+    for item in surfaces:
+        for m in _MONEY_FIG.finditer(item):
+            v = round(float(m.group(1).replace(",", "")), 2)
+            if v in placed:
+                bad.append(f"[counted or replaced figure in the missing text] ${v:g} in {item!r}")
+    return bad
+
+
+def quotes_clean(text: str, buying: bool = False) -> list[str]:
+    """Cycle 29: no note quotes a link, markdown or a figure of more than twelve digits, a figure is never quoted by two notes of different words, a
+    spaced figure is never called a monthly fee, and a credit is never called a cost."""
+    r = P.parse_listing(text, "", buying=buying)
+    notes = [n for n in str(r.get("found_in_listing") or "").splitlines() if n.strip()]
+    bad = []
+    seen: dict[str, str] = {}
+    for n in notes:
+        if n in seen:
+            bad.append(f"[identical note twice] {n[:80]}")
+        seen[n] = n
+        for q in re.findall(r'"([^"]*)"', n):
+            if re.search(r"https?:|www\.|\]\(|!\[|javascript:", q, re.I):
+                bad.append(f"[a link or markdown is quoted] {q[:80]}")
+            if re.search(r"\d[\d,]{12,}", q):
+                bad.append(f"[a very long figure is quoted whole] {q[:80]}")
+            if re.search(r"\$\s?[\d,.]+[ \t]+\$\s?\d", q):
+                bad.append(f"[two figures with no words between them] {q[:80]}")
+            if re.search(r"[$\uff04]\s?\d(?:[ \t]\d){2,}", q) and re.search(r"monthly fee|\$\s?\d\"", n):
+                bad.append(f"[a spaced figure is called a fee] {n[:100]}")
+        if re.search(r'"[^"]*\b(?:credits?|rebates?)\b[^"]*"\. It is a (?:one-time|monthly) (?:cost|fee)', n) and not re.search(r'credit (?:check|report|score|card)|approved credit|\bfee\b|deposit', n, re.I):
+            bad.append(f"[a credit is called a cost] {n[:100]}")
+    return bad
+
+
 def run_all(guard: bool) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for f, text in listings(include_buyer=True):
@@ -173,6 +255,7 @@ def run_all(guard: bool) -> dict[str, list[str]]:
             if guard and "buyer" not in f:
                 bad += missing_vs_fields(text)
             if guard:
+                bad += counted_vs_missing(text, buying="buyer" in f) + quotes_clean(text, buying="buyer" in f)
                 bad += headline_vs_notes(text, buying="buyer" in f)
                 bad += superseded_deposit_dupes(text, buying="buyer" in f)
         except Exception as e:  # noqa: BLE001
@@ -183,6 +266,12 @@ def run_all(guard: bool) -> dict[str, list[str]]:
 
 
 if __name__ == "__main__":
+    for f, text in fixture_listings():
+        bad = counted_vs_missing(text, "buyer" in f) + quotes_clean(text, "buyer" in f)
+        if bad:
+            print("fixtures/" + f)
+            for b in bad:
+                print("   ", b)
     for guard in (False, True):
         res = run_all(guard)
         print("== guard", "on" if guard else "off (reader drops)")
