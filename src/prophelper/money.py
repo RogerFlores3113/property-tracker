@@ -542,17 +542,36 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
     if sa and payer not in ("buyer", "seller"):
         left_out.append(f"a {_dollars(sa)} special assessment isn't counted because who pays it isn't known")
     credit = num(place.get("seller_credit"))
+    credits: list[tuple[str, float]] = []
     if credit and credit > 0:
+        credits.append(("Seller credit toward closing (comes off)", credit))
+    try:  # cycle 27: a lender credit or an unnamed "closing credit" in the listing also comes off, once (never the same amount as the seller credit)
+        from .parsers import lender_credits
+        for amount, kind in lender_credits(str(place.get("listing_text") or "")):
+            if kind == "closing" and credit and abs(credit - amount) < 0.005:
+                continue
+            credits.append(("Lender credit at closing (comes off)" if kind == "lender" else "Closing credit (comes off)", amount))
+    except Exception:  # the listing text is only a hint
+        pass
+    if credits:
         # The seller pays part of the closing costs, so it lowers the cash you bring (never below zero overall).
-        # Cycle 23: a credit only pays closing costs, so it can't lower the cash below the down payment. It is capped at the closing costs line.
+        # Cycle 23: a credit only pays closing costs, so it can't lower the cash below the down payment. All credits together are capped at the closing costs line.
         closing_amount = next((p["amount"] for p in parts if p["label"].startswith("Closing costs")), 0)
-        if credit > closing_amount:
-            extra = credit - closing_amount
-            left_out.append(f"{_dollars(extra)} of the {_dollars(credit)} seller credit isn't counted, because a credit can only pay the {_dollars(closing_amount)} closing costs "
-                            "and can't lower the cash below the down payment")
-            credit = closing_amount
-        if credit:
-            parts.append({"label": "Seller credit toward closing (comes off)", "amount": _r(-credit), "estimated": False})
+        total_credit = sum(a for _l, a in credits)
+        room = closing_amount
+        for label, amount in credits:
+            used = min(amount, room)
+            room -= used
+            if used:
+                parts.append({"label": label, "amount": _r(-used), "estimated": False})
+        if total_credit > closing_amount:
+            extra = total_credit - closing_amount
+            if len(credits) == 1:
+                left_out.append(f"{_dollars(extra)} of the {_dollars(total_credit)} seller credit isn't counted, because a credit can only pay the {_dollars(closing_amount)} closing costs "
+                                "and can't lower the cash below the down payment")
+            else:
+                left_out.append(f"{_dollars(extra)} of the {_dollars(total_credit)} in credits isn't counted, because credits can only pay the {_dollars(closing_amount)} closing costs "
+                                "and can't lower the cash below the down payment")
     return {"total": _r(sum(p["amount"] for p in parts)), "parts": parts,
             "has_estimate": any(p["estimated"] for p in parts), "left_out": left_out}
 
