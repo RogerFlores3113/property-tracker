@@ -17,7 +17,7 @@ from prophelper import parsers as P
 
 PANEL = os.environ.get("PH_PANEL", "/tmp/claude-0/-home-user-property-helper/be454331-cd61-59ba-9ebc-8cb8b7ec6a12/scratchpad/panel")
 # cycle 24: the r23 variants too (privacy-lmoney, privacy-v*, buyer-doc), not only the numbered listings
-_NAME = re.compile(r"r\d+-[a-z]+-(?:(?:l|listing|L|paste|p)\d+[a-z]?|lmoney|doc|v[a-z0-9_]+)\.txt$")
+_NAME = re.compile(r"r\d+-[a-z]+-(?:(?:l|listing|L|paste|p)\d+[a-z]?|lmoney|doc|v-?[a-z0-9_]+)\.txt$")
 
 
 # Cycle 23: money in other spellings (fullwidth dollar, USD, "30 dollars"), a fee inside a stripped fake closing tag, and a feature line with a bracketed
@@ -72,12 +72,42 @@ def percent_and_double(text: str, guard: bool) -> list[str]:
     return bad
 
 
+_MISSING_AMOUNT = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)")
+_MISSING_FIELD_WORDS = (("parking", "parking_cost"), ("pet rent", "pet_rent"), ("other monthly fees", "other_monthly_fees"), ("hoa", "hoa"), ("insurance", "insurance"))
+
+
+def missing_vs_fields(text: str) -> list[str]:
+    """Cycle 26: no "missing" item or headline names a part whose field is set, or an amount that is $0, equals a saved field, or that a note
+    explains. Also: no note says a figure is "not counted" when a field holds it (checked both ways by the notes filter)."""
+    from prophelper import compare, money
+    r = P.parse_listing(text, "")
+    place = dict(r, reader_notes=r.get("found_in_listing"), listing_text=text)
+    cost = money.true_monthly_cost(place, "rent")
+    pl = dict(place, cost=cost, score={"unknown": []})
+    bad = []
+    names = compare._missing_names(pl) + [str(x) for x in cost.get("missing") or []]
+    head = cost.get("headline") or ""
+    heads = [head.split(", ", 1)[1] if ", " in head else ""]  # the total itself ("$1,475/mo") is not a missing item
+    for item in names + heads:
+        low = item.lower()
+        for word, key in _MISSING_FIELD_WORDS:
+            if word in low and "in the listing notes" not in low and r.get(key) not in (None, 0, 0.0) and not (key == "parking_cost" and "optional" in low):
+                bad.append(f"[missing names a set field] {item!r} but {key}={r.get(key)}")
+        for m in _MISSING_AMOUNT.finditer(item):
+            v = float(m.group(1).replace(",", ""))
+            if v == 0 or any(isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and abs(float(r[k]) - v) < 0.01 for k in ("parking_cost", "utilities_estimate", "other_monthly_fees", "pet_rent", "hoa", "deposit", "application_fee")):
+                bad.append(f"[missing names a figure that is $0 or in a field] {item!r}")
+    return bad
+
+
 def run_all(guard: bool) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for f, text in listings(include_buyer=True):
         try:
             bad = [] if "buyer" in f else unaccounted(text, guard)
             bad += percent_and_double(text, guard)
+            if guard and "buyer" not in f:
+                bad += missing_vs_fields(text)
         except Exception as e:  # noqa: BLE001
             bad = [f"ERROR {e!r}"]
         if bad:

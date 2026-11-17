@@ -9668,6 +9668,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if est_replaced:
         facts = _answer_utility_notes(facts, out)
     facts = _try(lambda: _fix_quotes(facts, text, out)) or facts
+    if not buying:
+        from . import dropguard as _dg
+        facts = _try(lambda: _dg.finalize_notes(text, out, facts, buying)) or facts  # cycle 26: the last filter, decided from the final fields
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)

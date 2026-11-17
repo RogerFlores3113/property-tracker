@@ -450,3 +450,84 @@ def find_unplaced_percent(text: str, r: dict[str, Any], notes: str) -> list[dict
             continue
         out.append({"pct": pct, "start": m.start(), "end": m.end(), "item": item.strip()})
     return out
+
+
+# --------------------------------------------------------------------------- cycle 26: one final filter over the notes
+_QUOTE_NOTE = re.compile(r'^The listing also says "([^"]*)"\. (.*?) Check what it is for\.$')
+_RUBS_NO_AMOUNT = re.compile(r"billed back to you \(RUBS\), but it gives no amount")
+_FEE_WORDS = re.compile(r"\bfees?\b|valet|\bpets?\b|deposit|\bhoa\b|assessment|\bdues\b|association|parking|garage", re.I)
+
+
+def _strict_placed(q: str, amounts: set[float], r: dict[str, Any], text: str) -> set[float]:
+    """The figures of a quoted line that a saved field really holds. A utility figure is placed only by the utilities estimate (or a part of it): an
+    equal figure in another field (a $35 application fee beside "electric $35") does not place it."""
+    P = _P()
+    est = r.get("utilities_estimate")
+    if P._NET_UTIL_WORD.search(q) and not _FEE_WORDS.search(q):
+        ok = _util_placed(text, float(est)) if isinstance(est, (int, float)) and not isinstance(est, bool) and est else set()
+        return {a for a in amounts if a in ok or (isinstance(est, (int, float)) and not isinstance(est, bool) and est and abs(a - float(est)) < 0.5)}
+    return set(P.placed_amounts(amounts, P._net_used_numbers(r, []), P._field_sums(r), q, r))
+
+
+def _money_field_values(r: dict[str, Any]) -> set[float]:
+    P = _P()
+    return {round(float(r[k]), 2) for k in P._NET_REAL_FIELDS if isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and r.get(k)}
+
+
+def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool = False) -> list[str]:
+    """Cycle 26: the last filter over the notes, decided from the FINAL saved fields.
+    1. A "not counted" note for a quoted line says what is true: "the other amounts in that line are counted" only when every one of them is in a
+       field (a utility figure only when the utilities estimate holds it), and a figure that another note already explains as optional is not
+       named again.
+    2. A "gives no amount" note about billed-back utilities goes when a field holds a figure for them.
+    3. Two notes that quote the same figures for the same reason become one."""
+    from . import money as M
+    P = _P()
+    out: list[str] = []
+    optional_cache: dict[int, set[float]] = {}
+    for i, f in enumerate(facts):
+        qm = _QUOTE_NOTE.match(f)
+        if qm and re.search(r"not counted anywhere|not in the monthly cost", qm.group(2)):
+            q, said = qm.group(1), qm.group(2)
+            amounts = P._dollar_values(q)
+            others = [g for j, g in enumerate(facts) if j != i]
+            opt = M.optional_amounts(others)
+            claim = "the other amounts in that line are counted" in said
+            if claim:
+                placed = _strict_placed(q, amounts, r, text)
+                if amounts and amounts <= placed:
+                    continue  # every figure of the line is in a field: the note only repeats what was counted
+                left = amounts - placed
+                named = P._dollar_values(said)
+                if left == amounts:
+                    f = f'The listing also says "{q}". {P._uncounted_kind_sentence(q)} Check what it is for.'  # nothing in the line is counted
+                elif not (named and named <= left and (amounts - left) <= placed):
+                    # the others are not all in fields: say only what is true about the figures that are left out
+                    shown = [(f"${a:,.0f}" if float(a).is_integer() else f"${a:,.2f}") for a in sorted(left)]
+                    names = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+                    kind = P._uncounted_kind_sentence(q)
+                    if len(left) > 1:
+                        sentence = next((f"Only {names} of that {plural}" for single, plural in P._PLURAL_KIND if kind == single), kind)
+                    else:
+                        sentence = re.sub(r"^It (?:is|looks)", lambda m: f"Only {names} of that " + ("is" if m.group(0) == "It is" else "looks"), kind, count=1)
+                    f = f'The listing also says "{q}". {sentence} Check what it is for.'
+        if _RUBS_NO_AMOUNT.search(f) and "doesn't say which utilities" in f:
+            billed = any(re.search(r"billed back[^.]*\$[\d,.]+|(?:water|sewer|trash|utilit)[^.]*\$[\d,.]+[^.]*counted (?:once )?in other monthly fees", g, re.I) for g in facts if g is not f)
+            est = r.get("utilities_estimate")
+            if billed or (isinstance(est, (int, float)) and not isinstance(est, bool) and est and re.search(r"\bbilled[- ]back\b|\bRUBS\b|submeter", text, re.I) and re.search(r"billed[- ]back[^.\n]*\$\s?\d|\bRUBS\b[^.\n]*\$\s?\d", text, re.I)):
+                continue  # a field now holds a figure for those items: "gives no amount" is no longer true
+        out.append(f)
+    # two notes that quote the same figures for the same reason are one note
+    seen: list[tuple[frozenset[float], str, str]] = []
+    final: list[str] = []
+    for f in out:
+        qm = _QUOTE_NOTE.match(f)
+        if qm:
+            words = re.sub(r"[^a-z0-9$.]+", " ", qm.group(1).lower()).strip()
+            key = (frozenset(P._dollar_values(qm.group(1))), re.sub(r"\bOnly .{1,80} of that\b", "It", qm.group(2)), words)
+            # the same figure for the same reason AND the same listing words (one quote contained in the other): "Pet rent $35" and "Applicants: $35" stay two notes
+            if key[0] and any(k[0] == key[0] and k[1] == key[1] and (k[2] in words or words in k[2]) for k in seen):
+                continue
+            seen.append(key)
+        final.append(f)
+    return final
