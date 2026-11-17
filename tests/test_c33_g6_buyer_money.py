@@ -246,3 +246,76 @@ def test_down_payment_assistance_gets_a_note_and_no_cash_change(line):
 
 def test_no_down_payment_assistance_is_not_an_offer():
     assert "assistance" not in notes(read(BASE + "HOA $200/month. No down payment assistance."))
+
+
+# ---- 6. a closing date in the listing is the place's closing date
+from prophelper.parsers import listing_closing_date  # noqa: E402
+
+
+@pytest.mark.parametrize("line,day", [
+    ("Closing date Feb 20, 2027.", "2027-02-20"),
+    ("Close by March 1, 2027.", "2027-03-01"),
+    ("Closing date: February 20th, 2027", "2027-02-20"),
+    ("closing on 3/15/2027", "2027-03-15"),
+    ("Closing: 2027-02-20 (flexible)", "2027-02-20"),
+    ("Seller wants to close no later than Nov 3rd, 2026!", "2026-11-03"),
+    ("Closing is set for 20 Feb 2027, with a quick close possible.", "2027-02-20"),
+    ("Expected closing date - Sept 9, 2027", "2027-09-09"),
+])
+def test_closing_date_is_read(line, day):
+    assert listing_closing_date(BASE + line)[0] == day
+    assert "closing date" in notes(read(BASE + line)).lower()
+
+
+@pytest.mark.parametrize("line", [
+    "Closing in 45 days.",
+    "Closing costs Feb 20, 2027 estimate.",
+    "Can you close by March 1, 2027?",
+    "Closing cost help available through March 1, 2027.",
+    "Closing attorney will call Feb 20, 2027.",
+])
+def test_closing_date_negatives(line):
+    assert listing_closing_date(BASE + line)[0] == ""
+
+
+def test_closing_date_without_a_year_or_with_two_dates_saves_none():
+    assert listing_closing_date(BASE + "Close by March 1.")[0] == ""
+    assert "no year" in notes(read(BASE + "Close by March 1."))
+    assert listing_closing_date(BASE + "Closing date Feb 20, 2027. Closing date Feb 27, 2027.")[0] == ""
+    assert "two different closing dates" in notes(read(BASE + "Closing date Feb 20, 2027. Closing date Feb 27, 2027."))
+
+
+@pytest.mark.parametrize("name,day", [("r32-buyer-l24.txt", "2027-02-20"), ("r32-buyer-l27.txt", "2027-03-01")])
+def test_closing_date_whole_listings(name, day):
+    assert listing_closing_date(fixture(name))[0] == day
+
+
+def test_new_place_gets_the_closing_date_from_the_listing(store):
+    s = store.add_search("Buy", "buy", target_close="2027-04-30")
+    p, created = store.add_place(search_id=s["id"], title="Hilliard", address="3980 Main St", price=265000, listing_text=fixture("r32-buyer-l24.txt"))
+    assert created
+    dates = [(d["kind"], d["date"]) for d in store.list_place_dates(p["id"])]
+    assert dates == [("closing", "2027-02-20")]
+
+
+def test_closing_date_not_saved_for_a_rental_or_without_a_date(store):
+    r = store.add_search("Rent", "rent")
+    p, _ = store.add_place(search_id=r["id"], title="A", address="1 A St", price=1200, listing_text="Closing date Feb 20, 2027.")
+    assert store.list_place_dates(p["id"]) == []
+    b = store.add_search("Buy", "buy")
+    p2, _ = store.add_place(search_id=b["id"], title="B", address="2 A St", price=250000, listing_text="Closing in 45 days.")
+    assert store.list_place_dates(p2["id"]) == []
+
+
+def test_closing_date_through_the_add_page_and_the_tool(store):
+    from conftest import local_client
+    from mcp_util import call, server
+    s = store.add_search("Buy", "buy", target_close="2027-04-30")
+    client = local_client(store)
+    r = client.post("/add/save", data={"title": "Bexley", "address": "2100 E Main St", "price": "312000", "search_id": str(s["id"]), "listing_text": fixture("r32-buyer-l27.txt")}, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    pid = [p for p in store.list_places(search_id=s["id"])][0]["id"]
+    assert [(d["kind"], d["date"]) for d in store.list_place_dates(pid)] == [("closing", "2027-03-01")]
+    call(server(store), "add_place", title="Hilliard", address="3980 Main St", listing_text=fixture("r32-buyer-l24.txt"), search_id=s["id"])
+    other = [p for p in store.list_places(search_id=s["id"]) if p["title"] == "Hilliard"][0]
+    assert [(d["kind"], d["date"]) for d in store.list_place_dates(other["id"])] == [("closing", "2027-02-20")]

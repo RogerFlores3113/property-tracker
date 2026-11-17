@@ -5793,6 +5793,67 @@ def _closing_help_offer(text: str) -> list[str]:
     return notes[:1]
 
 
+_MONTH_ABBR = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12}
+_MONTH_WORD = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_CLOSE_LEAD = (r"\b(?:closing(?:[ \t]+date)?|close(?:s)?(?:[ \t]+date)?|settlement(?:[ \t]+date)?)(?![ \t]+(?:costs?|fees?|credits?|help|assistance|attorney|agent|table|statement|disclosure|documents?))"
+               r"[ \t]*(?:(?:is|will[ \t]+be|are)[ \t]+)?(?:(?:set|scheduled|targeted|planned|expected)[ \t]+(?:for|on|to)[ \t]+|:|=|-|\u2013)?[ \t]*(?:on|by|before|no[ \t]+later[ \t]+than|around|about|approximately)?[ \t]*")
+_CLOSE_DATE = re.compile(_CLOSE_LEAD + r"(?:(?P<mon>" + _MONTH_WORD + r")\.?[ \t]+(?P<day>\d{1,2})(?:st|nd|rd|th)?(?:,?[ \t]+(?P<year>20\d\d))?(?!\d)"
+                         r"|(?P<day2>\d{1,2})(?:st|nd|rd|th)?[ \t]+(?:of[ \t]+)?(?P<mon2>" + _MONTH_WORD + r")\.?(?:,?[ \t]+(?P<year2>20\d\d))?(?!\d)"
+                         r"|(?P<m3>\d{1,2})/(?P<d3>\d{1,2})/(?P<y3>(?:20)?\d\d)(?!\d)|(?P<iso>20\d\d-\d\d-\d\d))", re.I)
+
+
+def listing_closing_date(text: str) -> tuple[str, str]:
+    """Cycle 33: the closing date a sale listing gives ("Closing date Feb 20, 2027", "Close by March 1, 2027", "closing on 3/15/2027", "Closing: 2027-02-20").
+    Returns (ISO date, the quoted words) or ("", note words) when the date can not be used: no year ("Close by March 1": year = "missing"), two different dates
+    ("conflict"), or a date that does not exist. ("", "") when the listing gives no closing date. A sentence that ends in "?" sets nothing."""
+    import calendar
+    found: dict[str, str] = {}
+    noyear = ""
+    for sent in re.split(r"[\n;]|(?<!\d)\.(?!\d)|\.(?=\s)", text or ""):
+        if sent.rstrip().endswith("?"):
+            continue
+        for m in _CLOSE_DATE.finditer(sent):
+            quote = " ".join(m.group(0).split()).strip(" ,.:;-")
+            if m.group("iso"):
+                y, mo, d = (int(x) for x in m.group("iso").split("-"))
+            elif m.group("mon") or m.group("mon2"):
+                mon = (m.group("mon") or m.group("mon2")).lower().rstrip(".")
+                mo = _MONTH_ABBR[mon[:4] if mon.startswith("sept") else mon[:3]]
+                d = int(m.group("day") or m.group("day2"))
+                yr = m.group("year") or m.group("year2")
+                if not yr:
+                    noyear = noyear or quote
+                    continue
+                y = int(yr)
+            else:
+                mo, d, y = int(m.group("m3")), int(m.group("d3")), int(m.group("y3"))
+                y = y + 2000 if y < 100 else y
+            if not (1 <= mo <= 12 and 1 <= d <= calendar.monthrange(y, mo)[1]):
+                continue
+            found.setdefault(f"{y:04d}-{mo:02d}-{d:02d}", quote)
+    if len(found) > 1:
+        return "", "conflict: " + " and ".join(f'"{q}"' for q in found.values())
+    if found:
+        day, quote = next(iter(found.items()))
+        return day, quote
+    return ("", "missing: " + noyear) if noyear else ("", "")
+
+
+def _closing_date_notes(text: str) -> list[str]:
+    day, quote = listing_closing_date(text)
+    if day:
+        import datetime as _dt
+        _d = _dt.date.fromisoformat(day)
+        nice = f"{_d.strftime('%b')} {_d.day}, {_d.year}"
+        return [f'The listing gives a closing date ("{quote}"). A place saved from it gets {nice} as its closing date, which Today and the place page use instead of the search\'s target date. '
+                "Check it against the contract."]
+    if quote.startswith("conflict: "):
+        return [f"The listing gives two different closing dates ({quote[10:]}), so no closing date is saved. Ask the seller's agent which one is right."]
+    if quote.startswith("missing: "):
+        return [f'The listing says "{quote[9:]}" but gives no year, so no closing date is saved. Add the closing date on the place page.']
+    return []
+
+
 def _down_payment_assistance_notes(text: str, facts: list[str]) -> list[str]:
     """Cycle 33: "Down payment assistance program available" is an offer the listing gives no terms for. It never lowers the cash to close, and a plain note
     names it so the line is not silently dropped. An amount in the same sentence is quoted. "No down payment assistance" is not an offer."""
@@ -13175,6 +13236,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             facts.extend(_try(lambda: _closing_help_offer(text)) or [])
         if buying:
             facts.extend(_try(lambda: _down_payment_assistance_notes(text, facts)) or [])
+            facts.extend(_try(lambda: _closing_date_notes(text)) or [])
         insurance = _try(lambda: _insurance(text))
         if insurance is not None:
             put("insurance", insurance)
