@@ -10073,7 +10073,11 @@ _CITY_STOP = {"unit", "apt", "apartment", "suite", "call", "text", "email", "con
               "parking", "heat", "water", "gas", "electric", "deposit", "rent", "lease", "tour", "showing", "view", "built", "pool", "gym"}
 
 
+_RATING = re.compile(r"(?<![\w$.,/#-])\d{1,2}(?:\.\d)?[ \t]*(?:/[ \t]*10|out[ \t]+of[ \t]+10|/[ \t]*5|out[ \t]+of[ \t]+5)\b(?![ \t]*(?:bed|bd|br|ba|bath|mile|mi\b|min))", re.I)
+
+
 def _address(text: str) -> dict[str, str]:
+    text = _RATING.sub(lambda m: " " * len(m.group(0)), text)  # cycle 32: "rate this unit 10/10", "Apt 10/10 rating" is a score, never unit #10
     out = _address_raw(text)
     for key in ("address", "city"):
         if out.get(key):
@@ -10397,9 +10401,29 @@ def _title_suffix_cut(out: str) -> str:
         return out[:m.start()]
 
 
+_TITLE_RANGE_TAIL = re.compile(r"[ \t]*(?:[-|:,\u2013\u2014(\[][ \t]*)?\b(?:studio|\d)[ \t]*(?:-|\u2013|\u2014|to)[ \t]*\d[ \t]*(?:beds?|bedrooms?|brs?|bds?)\b"
+                               r"(?:[ \t]*[-|,]?[ \t]*(?:also[ \t]+|now[ \t]+)?(?:available|avail|offered))?[ \t!.)\]]*$", re.I)
+_TITLE_PROMO_TAIL = re.compile(r"[ \t]*[-|:,\u2013\u2014][ \t]*(?:now|pre)[- ]?(?:leasing|renting|open|available)\b[^\n]{0,25}$", re.I)
+
+
+def _title_tail_cut(title: str) -> str:
+    """Cycle 32: a plan range with "also available" ("Sunset Row 3BR Townhouse 1 - 2 Beds also available") and a "- Now Renting" promo are facts and offers,
+    not part of the name. The name in front stays; a title that would be left with only hype words ("Brand-new 1 - 2 Beds") is not cut here."""
+    out = title
+    for pat in (_TITLE_RANGE_TAIL, _TITLE_PROMO_TAIL):
+        m = pat.search(out)
+        if not m:
+            continue
+        head = out[:m.start()].strip(" -|:,([\u2013\u2014")
+        words = [w for w in re.findall(r"[A-Za-z]{3,}", head) if not _NAME_STOP_WORDS.fullmatch(w)]
+        if len(head) >= 3 and words:
+            out = head
+    return out
+
+
 def _clean_title(title: str) -> str:
     """Drop a trailing " - 2 bed 1 bath" or " | $1,500/mo" (facts, not part of the name). Never leaves it empty."""
-    out = title
+    out = _title_tail_cut(title)
     # "Studio-1BR Prairie Commons from $1,299 - $1,420": a plan range in front of the name and a "from" price after it are facts, not the name
     lead = re.match(r"(?:studio|\d{1,2}[ \t]*(?:br|bd|bed(?:room)?s?))[ \t]*[-/\u2013][ \t]*(?:studio|\d{1,2}[ \t]*(?:br|bd|bed(?:room)?s?))[ \t]+(?=[A-Z])", out, re.I)
     if lead:
@@ -10745,6 +10769,27 @@ def _finish_title(title: str, text: str) -> str:
     return title
 
 
+_AREA_LINE = re.compile(r",[ \t]*(?:[A-Z][A-Za-z .'-]+,[ \t]*)?[A-Z]{2}\b")
+
+
+def _headline_over_area(text: str, building: str) -> bool:
+    """Cycle 32: True when the first line is a descriptive headline (a bed count and a kind of place or an area, "Bright Two Bedroom in Grandview - Now Renting")
+    and the "building" found is only the area part of a city and state line further down ("Grandview Heights, Columbus, OH 43212")."""
+    lines = [" ".join(x.strip(" \t|\u2022\u00b7*#").split()) for x in text.splitlines()[:30]]
+    lines = [x for x in lines if x]
+    if len(lines) < 2:
+        return False
+    first = lines[0]
+    src = next((x for x in lines if building in x), "")
+    if not src or src == first or not _AREA_LINE.search(src) or _REAL_PLACE_NOUN.search(building):
+        return False
+    if _building_name(first) or not 8 <= len(first) <= 70 or not _BED_CUE.search(first) or _not_a_name(first) or _fee_or_policy_head(first) or _policy_title_line(first):
+        return False
+    if re.search(r"\$|\d{3}[- .]\d{4}|https?:", first) or _ADDRESS.match(first) or first.endswith((".", "?")):
+        return False
+    return bool(re.search(r"[A-Za-z]{4,}", _BED_CUE.sub(" ", first)))
+
+
 def _title_raw(text: str, found: dict[str, Any]) -> str:
     """A short title: the building name, else the first line of the paste that reads like a name or heading, else the street
     address. A site name (Zillow, Realtor.com) is never the title."""
@@ -10755,6 +10800,8 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
     if headline:
         return headline
     building = _building_name(text)
+    if building and _headline_over_area(text, building):
+        building = ""  # cycle 32: "Bright Two Bedroom in Grandview" is the name; the "Grandview Heights, Columbus, OH" line under it is only the area
     if building:
         return building
     lines = [" ".join(x.strip(" \t|\u2022\u00b7*#").split()) for x in text.splitlines()[:25]]
