@@ -10949,7 +10949,7 @@ def _required_monthly_fees(text: str) -> list[tuple[str, float, bool, str]]:
             marker_text = clause
             if not _REQ_FEE_MARK.search(marker_text) and i + 1 < len(clauses) and re.match(r"[ \t]*\(?[ \t]*(?:mandatory|required|compulsory)\b", clauses[i + 1], re.I):
                 marker_text = clause + " " + clauses[i + 1]  # "Technology fee $50, required"
-            if not (_REQ_FEE_MARK.search(marker_text) or _BARE_MONTHLY_FEE.match(clause)) or not _REQ_FEE_LABEL.search(clause) or _REQ_FEE_SKIP.search(re.sub(r"\bhoa\b", " ", clause, flags=re.I)) or _REQ_FEE_NOT.search(clause):
+            if not (_REQ_FEE_MARK.search(marker_text) or (_BARE_MONTHLY_FEE.match(clause) and not _is_sale_text(text))) or not _REQ_FEE_LABEL.search(clause) or _REQ_FEE_SKIP.search(re.sub(r"\bhoa\b", " ", clause, flags=re.I)) or _REQ_FEE_NOT.search(clause):
                 continue
             m = ms[0]
             if re.search(r"\b(?:rent|deposit)\b[ \t:\-=]*(?:is[ \t]+)?$", clause[:m.start()], re.I):
@@ -12410,6 +12410,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             for label, v, says_monthly, clause in _try(lambda: _required_monthly_fees(text)) or []:  # cycle 26: a required monthly fee by any name counts once
                 if round(v, 2) in known_fee_values or any(isinstance(out.get(k), (int, float)) and abs(float(out[k]) - v) < 0.01 for k in ("hoa", "utilities_estimate", "parking_cost", "pet_rent")):
                     continue  # already counted by another reader: never twice
+                if _BARE_MONTHLY_FEE.match(clause) and not _REQ_FEE_MARK.search(clause) and (_is_sale_text(text) or (isinstance(out.get("price"), (int, float)) and out["price"] >= 20000)
+                                                                                            or re.search(r"\b(?:seller|closing[ \t]+costs?|pmi|mortgage|property[ \t]+tax|tax(?:es)?[ \t]*:|special[ \t]+assessment)\b", text, re.I)):
+                    continue  # cycle 32: on a home for sale a bare "Fee: $185 monthly" is probably the HOA: the buyer reader says so, it is not a rental fee
                 if re.search(r"\bhoa\b", clause, re.I) and _try(lambda: _hoa_payer(text)) == "tenant" and abs(float(_try(lambda: _hoa(text)) or 0) - v) < 0.01:
                     continue  # the HOA reader counts this one in the HOA line
                 monthly += v; added.append(v)
@@ -13052,6 +13055,7 @@ def _semantic_placed(amount: float, phrase: str, out: dict[str, Any]) -> bool:
     util_sum, mine_util = 0.0, False
     field_sum: dict[str, float] = {}
     mine_field: set[str] = set()
+    exact_only: set[str] = set()
     for item in items:
         vals = _dollar_values(item)
         if not vals:
@@ -13067,10 +13071,14 @@ def _semantic_placed(amount: float, phrase: str, out: dict[str, Any]) -> bool:
                 field_sum[key] = field_sum.get(key, 0.0) + sum(vals)
                 if amount in vals:
                     mine_field.add(key)
+                    if key == "other_monthly_fees" and re.search(r"\b(?:internet|wi-?fi|cable)\b", item, re.I) \
+                            and not re.search(r"\b(?:flat fee|amenity|valet|pest|trash fee|package|locker|storage|permit|technology)\b", item, re.I):
+                        exact_only.add(key)  # cycle 32: an internet or cable price is not carried by a bigger "other fees" figure that came from another line
                 break
     for key in mine_field:  # the field must hold all the amounts of that kind in the line, or one of them was left out of it
         held = out.get(key)
-        if isinstance(held, (int, float)) and not isinstance(held, bool) and held and field_sum[key] <= float(held) + 0.5:
+        if isinstance(held, (int, float)) and not isinstance(held, bool) and held and field_sum[key] <= float(held) + 0.5 \
+                and (key not in exact_only or abs(field_sum[key] - float(held)) <= 0.5):
             return True
     return bool(mine_util and est is not None and est + 0.5 >= util_sum)
 

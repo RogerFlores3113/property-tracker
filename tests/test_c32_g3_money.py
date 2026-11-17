@@ -227,3 +227,19 @@ def test_uiuc_l7_whole_listing_single_parking_note():
     assert len([ln for ln in notes(r).split("\n") if "parking" in ln.lower()]) == 1
     assert r.get("parking") in (None, "") and r.get("parking_cost") is None
     assert r["application_fee"] == 30 and r["pet_deposit"] == 300
+
+
+def test_bare_monthly_fee_is_not_counted_on_a_home_for_sale():
+    for name in ("r31-buyer-l10.txt", "r30-buyer-l10.txt"):
+        r = P(F(name))
+        assert r.get("other_monthly_fees") in (None, 0), name
+    r = P("Townhome for sale $275,000. 3 bed 2.5 bath. Fee: $185 monthly. Seller credit $4,000.")
+    assert r.get("other_monthly_fees") in (None, 0)
+
+
+def test_a_filled_other_fee_does_not_hide_a_cable_price_from_the_notes():
+    r = P(F("r31-nontech-l7.txt"))
+    assert r["other_monthly_fees"] == 185
+    assert 'Cable/internet $60' in notes(r) and "not counted" in notes(r).split("Cable/internet $60")[1][:60]
+    r = P("Rent $1,325. 2BR. Fee: $185 monthly (valet trash & amenity package). Cable/internet $60.")
+    assert r["other_monthly_fees"] == 185 and "$60" in notes(r)
