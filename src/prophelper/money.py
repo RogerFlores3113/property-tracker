@@ -522,7 +522,20 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
         parts.append({"label": f"Closing costs ({from_listing[0]:g}% of the price, from the listing)", "amount": _r(from_listing[1]), "estimated": False})
     elif closing is None:
         pct = cfg.get("closing_cost_pct", DEFAULT_BUY["closing_cost_pct"])
-        parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price)", "amount": _r(price * pct / 100), "estimated": True})
+        guess = price * pct / 100
+        try:  # cycle 28: the listing names closing items the buyer pays. They are inside the guess, never added on top of it.
+            from .parsers import buyer_closing_items_stated
+            stated = buyer_closing_items_stated(str(place.get("listing_text") or ""))
+        except Exception:  # the listing text is only a hint
+            stated = []
+        stated_total = sum(a for _n, a in stated)
+        names = _join_words([f"{_dollars(a)} for {n}" for n, a in stated])
+        if stated and stated_total > guess:
+            parts.append({"label": f"Closing costs (only what the listing names: {names}; the rest is not known)", "amount": _r(stated_total), "estimated": True})
+        elif stated:
+            parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price, which includes the {names} the listing names)", "amount": _r(guess), "estimated": True})
+        else:
+            parts.append({"label": f"Closing costs (a guess: {pct:g}% of the price)", "amount": _r(guess), "estimated": True})
     else:
         parts.append({"label": "Closing costs", "amount": _r(closing), "estimated": False})
     sa = num(place.get("special_assessment"))
@@ -539,6 +552,20 @@ def cash_to_close(place: dict[str, Any], cfg: dict[str, float] | None = None) ->
         parts.append({"label": f"One-time fee at closing ({label})", "amount": _r(amount), "estimated": False})
     for label, amount in unclear:
         left_out.append(f"a {_dollars(amount)} {label} isn't counted because who pays it isn't known")
+    try:  # cycle 28: a fee stated as months of HOA ("capital improvement fee equal to two months of HOA") counts once the HOA is known
+        from .parsers import buyer_hoa_month_fees
+        hoa_paid, hoa_unclear = buyer_hoa_month_fees(str(place.get("listing_text") or ""))
+    except Exception:  # the listing text is only a hint
+        hoa_paid, hoa_unclear = [], []
+    hoa_now = num(place.get("hoa"))
+    for label, months in hoa_paid:
+        words = f"{months:g} month{'s' if months != 1 else ''} of HOA"
+        if hoa_now:
+            parts.append({"label": f"One-time fee at closing ({label}, {words})", "amount": _r(hoa_now * months), "estimated": False})
+        elif hoa_now is None:
+            left_out.append(f"the {label} of {words} isn't counted because the HOA isn't known")
+    for label, months in hoa_unclear:
+        left_out.append(f"the {label} of {months:g} month{'s' if months != 1 else ''} of HOA isn't counted because who pays it isn't known")
     if sa and payer not in ("buyer", "seller"):
         left_out.append(f"a {_dollars(sa)} special assessment isn't counted because who pays it isn't known")
     credit = num(place.get("seller_credit"))
