@@ -114,3 +114,52 @@ def test_assessment_split_parties_stay_unknown(line):
     out, cash, _ = read(line)
     assert not out.get("special_assessment_payer")
     assert cash["total"] == 68000 and cash["left_out"]
+
+
+# ---- the place's own closing date beats the search target
+from datetime import date, timedelta
+from conftest import local_client
+
+
+def _buy_place(store, target, stage=None):
+    s = store.add_search("Buy", "buy", target_close=target or "")
+    store.set_current_search(s["id"])
+    p, _ = store.add_place(search_id=s["id"], title="House", price=400000, **({"stage": stage} if stage else {}))
+    return s, p
+
+
+def _closing_lines(html):
+    return re.findall(r"Closing[^<]*?\(\w{3} \d+, \d{4}\)", html)
+
+
+def test_place_closing_date_replaces_search_target(store):
+    c = local_client(store)
+    target = date.today() + timedelta(days=90)
+    own = date.today() + timedelta(days=87)
+    _s, p = _buy_place(store, target.isoformat())
+    store.add_place_date(p["id"], "closing", own.isoformat())
+    html = c.get(f"/places/{p['id']}").text
+    assert re.search(r'<p id="closing-days"[^>]*>Closing in 87 days', html)
+    assert "Closing in 90 days" not in html
+    assert len(re.findall(r'id="closing-days"', html)) == 1
+
+
+def test_place_closing_date_without_search_target_and_past_and_prominent(store):
+    c = local_client(store)
+    _s, p = _buy_place(store, "")
+    store.add_place_date(p["id"], "closing", (date.today() + timedelta(days=12)).isoformat())
+    assert "Closing in 12 days" in c.get(f"/places/{p['id']}").text
+    _s2, q = _buy_place(store, (date.today() + timedelta(days=90)).isoformat(), stage="Offer made")
+    store.add_place_date(q["id"], "closing", (date.today() + timedelta(days=40)).isoformat())
+    html = c.get(f"/places/{q['id']}").text
+    assert re.search(r'<p id="closing-days" class="flash"><strong>Closing in 40 days', html)
+    _s3, r = _buy_place(store, (date.today() + timedelta(days=90)).isoformat())
+    store.add_place_date(r["id"], "closing", (date.today() - timedelta(days=3)).isoformat())
+    assert "Closing was 3 days ago" in c.get(f"/places/{r['id']}").text
+
+
+def test_place_without_own_closing_date_keeps_search_target(store):
+    c = local_client(store)
+    _s, p = _buy_place(store, (date.today() + timedelta(days=30)).isoformat())
+    store.add_place_date(p["id"], "inspection", (date.today() + timedelta(days=5)).isoformat())
+    assert "Closing in 30 days" in c.get(f"/places/{p['id']}").text

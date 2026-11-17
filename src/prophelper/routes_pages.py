@@ -199,14 +199,29 @@ def _place_page(request: Request, place_id: int, *, status: int = 200, form_valu
                   custom_scores=store.custom_scores(place_id), form_values=form_values or {}, form_error=error,
                   all_searches=store.list_searches(), listing_has_text=bool(place["listing_text"]),
                   show_photos=store.get_setting_bool("show_photos"),
-                  closing=_closing_for_place(full, search))
+                  closing=_closing_for_place(full, search, store))
 
 
-def _closing_for_place(place: dict[str, Any], search: dict[str, Any]) -> dict[str, Any] | None:
+def _closing_for_place(place: dict[str, Any], search: dict[str, Any], store: Any = None) -> dict[str, Any] | None:
     """The closing countdown for a place page: only for a place still in play in a buy search with a target close date.
     ``prominent`` is True from the offer stage on."""
+    if place.get("stage") in (stages.PASSED, "Closed"):
+        return None
     info = helpers.closing_info(search)
-    if info is None or place.get("stage") in (stages.PASSED, "Closed"):
+    # cycle 27: a closing date saved on the place itself beats the search's target; the page shows one countdown, the place's
+    own = None
+    try:
+        days = [d["date"] for d in (store.list_place_dates(place["id"]) if store is not None else []) if d.get("kind") == "closing"]
+    except Exception:
+        days = []
+    if days and search.get("mode") == "buy":
+        today_s = helpers.today().isoformat()
+        future = sorted(d for d in days if d >= today_s)
+        own = helpers.closing_info({"mode": "buy", "target_close": (future or sorted(days))[0 if future else -1]})
+        if own is not None and not future:
+            own["place_line"] = own["place_line"].replace("Closing target was", "Closing was")
+    info = own or info
+    if info is None:
         return None
     order = stages.stages_for("buy")
     prominent = place.get("stage") in order and order.index(place["stage"]) >= order.index("Offer drafted")
