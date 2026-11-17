@@ -28,6 +28,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
+import difflib
 import re
 
 from . import commute as commute_mod
@@ -2217,10 +2218,18 @@ def build_server(store: Store) -> FastMCP:
         """Unknown arguments are an error that names the allowed ones, never dropped silently."""
         tool = manager.get_tool(name)
         if tool is None:
+            # cycle 33: an unknown tool name is an answer, not an exception: the caller gets one plain error line (isError set), never a traceback,
+            # whether it asks over the protocol or in the same process.
+            shown = _clip(" ".join(str(name).split()), 40)
             if re.search(r"delete|remove|archive|erase|clear", str(name), re.I):
-                raise ToolError(f"There is no {name} tool. Nothing in Property Helper can be deleted or removed from here: the user does that "
-                                f"in the Property Helper window. Ask them to do it there.")
-            raise ToolError(f"There is no tool called {_clip(str(name), 40)}. The tools are: {', '.join(sorted(t.name for t in manager.list_tools()))}.")
+                msg = (f"There is no {shown} tool. Nothing in Property Helper can be deleted or removed from here: the user does that "
+                       f"in the Property Helper window. Ask them to do it there.")
+            else:
+                names = sorted(t.name for t in manager.list_tools())
+                near = difflib.get_close_matches(str(name).strip().lower().replace(" ", "_").replace("-", "_"), names, n=1, cutoff=0.75)
+                msg = (f"There is no tool called {shown}." + (f" Did you mean {near[0]}?" if near else "")
+                       + f" The tools are: {', '.join(names)}.")
+            return CallToolResult(content=[TextContent(type="text", text=msg)], isError=True)
         if isinstance(arguments, dict):
             allowed = list((tool.parameters or {}).get("properties", {}))
             extra = [k for k in arguments if k not in allowed]

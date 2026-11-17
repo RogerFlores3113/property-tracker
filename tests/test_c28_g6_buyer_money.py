@@ -126,25 +126,24 @@ def _rows(store, s):
     return enrich.enrich_places(store, store.get_search(s["id"]))
 
 
-def test_insurance_only_place_is_a_best_fit_marked_not_complete(store):
+def test_insurance_only_place_is_under_needs_a_cost_check(store):
+    # cycle 33: one group for a cost that is not complete. Cycle 28 showed this place under Best fits marked "insurance not filled in yet".
     s = _buy(store, property_tax=3000, hoa=100)
     rows = _rows(store, s)
-    top = today.best_fits(rows)
-    assert [p["title"] for p in top] == ["Condo"]
-    assert "insurance not filled in yet" in top[0]["caution"] and "not complete" in top[0]["caution"]
-    assert today.cost_check(rows) == []
+    assert today.best_fits(rows) == []
+    assert [c["place"]["title"] for c in today.cost_check(rows)] == ["Condo"]
     out = text(call(server(store), "todays_list"))
-    assert "Best fits right now:" in out and "insurance not filled in yet" in out and "Needs a cost check" not in out
+    assert "Best fits right now: none yet." in out and "Needs a cost check" in out and "Insurance is not counted yet" in out
     html = local_client(store).get("/today").text
-    assert "insurance not filled in yet" in html and "not complete" in html
+    assert "Needs a cost check" in html and "Insurance is not counted yet" in html
 
 
 def test_complete_place_ranks_before_insurance_only_place(store):
     s = _buy(store, property_tax=3000, hoa=100)
     store.add_place(title="Complete", address="2 A St", price=250000, beds=2, property_tax=3000, insurance=900, hoa=100)
-    top = today.best_fits(_rows(store, s))
-    assert [p["title"] for p in top] == ["Complete", "Condo"]
-    assert top[0]["caution"] == "" or "insurance" not in top[0]["caution"]
+    rows = _rows(store, s)
+    assert [p["title"] for p in today.best_fits(rows)] == ["Complete"]
+    assert [c["place"]["title"] for c in today.cost_check(rows)] == ["Condo"]
 
 
 @pytest.mark.parametrize("fields", [{"hoa": 100}, {"property_tax": 3000}, {}])

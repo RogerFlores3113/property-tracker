@@ -902,10 +902,15 @@ def _place_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     row = {k: (_tidy_num(v) if isinstance(v, float) else v) for k, v in row.items()}
+    orig = row
     hidden = [guards.decode_tag_chars(v) for k, v in row.items() if isinstance(v, str) and k not in ("url", "photo_urls") and guards.has_tag_chars(v)]
     if hidden:  # invisible tag characters are removed from every text; what they spelled is kept apart so the flags can still see it
         row = {k: (guards.strip_tag_chars(v) if isinstance(v, str) and k not in ("url", "photo_urls") else v) for k, v in row.items()}
         row["hidden_text"] = " ".join(h for h in hidden if h) or "(hidden characters)"
+        # cycle 33: the same text with the hidden letters read in place, so an order split by them ("Ignore" in tag characters + " all previous
+        # instructions") can still be seen; it is only a reading aid for the flags and is never saved or shown
+        spliced = [guards.read_tag_chars_in_place(v) for k, v in orig.items() if isinstance(v, str) and k not in ("url", "photo_urls") and guards.has_tag_chars(v)]
+        row["hidden_spliced"] = " \n".join(spliced)
     # zero-width and bidi controls are removed from every text on read, like tag characters (a link is left to its own cleaning).
     # What was around the first one is kept apart (not in any column) so the check-first note can quote it.
     for k in ("listing_text", "notes", "title", "ai_notes", "address"):

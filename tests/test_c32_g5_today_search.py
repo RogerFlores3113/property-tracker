@@ -23,29 +23,31 @@ def _buy(store, complete, partial, target=None):
     return s, ids
 
 
-@pytest.mark.parametrize("complete,partial,more,note", [
-    (5, 2, 4, "2 of them have a cost that is not complete yet"),
-    (4, 1, 2, "1 of them has a cost that is not complete yet"),
-    (3, 3, 3, "3 of them have a cost that is not complete yet"),
-    (6, 1, 4, "1 of them has a cost that is not complete yet"),
-    (3, 0, 0, ""),
-    (5, 0, 2, ""),
+@pytest.mark.parametrize("complete,partial,more", [
+    (5, 2, 2),
+    (4, 1, 1),
+    (3, 3, 0),
+    (6, 1, 3),
+    (3, 0, 0),
+    (5, 0, 2),
 ])
-def test_more_count_says_how_many_are_incomplete(store, complete, partial, more, note):
+def test_more_count_counts_only_complete_places(store, complete, partial, more):
+    # cycle 33: a place whose cost is not complete is under "Needs a cost check", so "and N more" under Best fits counts complete places only
     s, _ = _buy(store, complete, partial)
     d = today.build(store, store.get_search(s["id"]))
-    assert len(d["fits"]) == 3
+    assert len(d["fits"]) == min(3, complete)
     assert d["more"]["fits"] == more
-    assert d["more_fits_note"] == note
+    assert d["more_fits_note"] == ""
+    assert len(d["cost_check"]) == partial
     html = local_client(store).get("/today").text
     if more:
-        tail = f"and {more} more" + (f", {note}" if note else "") + "."
-        assert tail in html
+        assert f"and {more} more." in html
     else:
         assert " more" not in html.split("Best fits right now")[1].split("</section>")[0]
     out = text(call(server(store), "todays_list"))
     if more:
-        assert f"... and {more} more" + (f", {note}" if note else "") + ". Use list_places for the rest." in out
+        assert f"... and {more} more. Use list_places for the rest." in out
+    assert "not complete yet" not in out.split("Needs a cost check")[0]
 
 
 def test_more_count_matches_every_place_that_passes(store):
@@ -53,7 +55,8 @@ def test_more_count_matches_every_place_that_passes(store):
     rows = enrich.enrich_places(store, store.get_search(s["id"]))
     passing = [r for r in rows if today.is_best_fit(r)]
     d = today.build(store, store.get_search(s["id"]))
-    assert len(d["fits"]) + d["more"]["fits"] == len(passing) == 7
+    assert len(d["fits"]) + d["more"]["fits"] == len(passing) == 5  # cycle 33: the 2 with a cost that is not complete are under "Needs a cost check"
+    assert len(d["cost_check"]) == 2
 
 
 # ---- closing target
