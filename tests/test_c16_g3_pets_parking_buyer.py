@@ -208,7 +208,8 @@ def test_second_charge_not_added_when_seller_pays_assessment():
 
 def test_capital_contribution_alone_still_read():
     r = read("$1,000 one-time capital contribution at closing.", buying=True)
-    assert r["special_assessment"] == 1000 and r["special_assessment_payer"] == "buyer"
+    assert not r.get("special_assessment")  # cycle 31: counted as a one-time closing fee under its own name, not as a special assessment
+    assert "$1,000 capital contribution at closing" in notes(r) and "counted in the cash to close" in notes(r)
 
 
 # ---- 6. quarterly HOA leaves no "not counted" note

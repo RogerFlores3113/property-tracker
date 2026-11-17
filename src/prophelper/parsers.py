@@ -5446,7 +5446,7 @@ _BUYER_FEE_NAME = (r"capital[ \t]+improvements?(?:[ \t]+(?:fee|assessment|contri
                    r"(?:(?:condo|hoa|association)[ \t]+)?(?:document|documents|docs?)[ \t]+fees?|"
                    r"prepaids?[ \t]+(?:property[ \t]+)?(?:taxes|insurance|interest|items|escrow|homeowners'?[ \t]+insurance)(?:[ \t]*(?:,|and|&)[ \t]*(?:property[ \t]+)?(?:taxes|insurance|interest|homeowners'?[ \t]+insurance))*|"
                    r"(?:(?:association|hoa|condo)[ \t]+)?move[- ]in[ \t]+deposit(?:[ \t]+(?:to|with|for)[ \t]+(?:the[ \t]+)?(?:association|hoa|condo[ \t]+association|building))?")
-_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+)?(?:one[- ]time[ \t]+|new[ \t]+)?(?:(?:hoa|association|condo)[ \t]+)?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
+_BUYER_FEE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))[ \t]*(?:(?:in|for)[ \t]+)?(?:one[- ]time[ \t]+|new[ \t]+)?(?:(?:hoa|association|condo)[ \t]+(?=(?:working[ \t]+)?capital))?(?P<n1>" + _BUYER_FEE_NAME + r")\b"
                         r"|\b(?P<n2>" + _BUYER_FEE_NAME + r")\b[ \t:\-=(]{0,4}(?:of[ \t]+|due[ \t]+|payable[ \t]+)?(?:(?:due|payable|paid)?[ \t]*at[ \t]+closing[ \t:\-=,]*)?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d|,\d|[ \t]*(?:/|per[ \t]+(?:mo|month|yr|year)|a[ \t]+(?:month|year)|monthly|annual))", re.I)
 
 
@@ -5462,7 +5462,7 @@ def buyer_one_time_fees(text: str, sa_amount: Any = None, sa_payer: str = "") ->
         for m in _BUYER_FEE.finditer(sent):
             label = " ".join((m.group("n1") or m.group("n2")).lower().split())
             amount = _num(m.group(1) if m.group("n1") else m.group(m.lastindex))
-            if re.fullmatch(r"(?:working[ \t]+)?capital[ \t]+contributions?", label) and sa_payer == "buyer" and isinstance(sa_amount, (int, float)) and sa_amount >= amount - 0.005:
+            if re.fullmatch(r"capital[ \t]+contributions?", label) and sa_payer == "buyer" and isinstance(sa_amount, (int, float)) and sa_amount >= amount - 0.005:
                 continue  # cycle 30: read with the special assessment the buyer pays (it is already in the cash to close); on its own it is counted here
             if (label, amount) in seen or not 50 <= amount <= 100000:
                 continue
@@ -9493,7 +9493,8 @@ def _hoa(text: str) -> float | None:
                 return None  # cycle 29: "biannual" can mean twice a year or every two years: unknown beats a wrong figure
             months = _hoa_months_in_period(w)
             if months == "unknown":
-                return None  # cycle 30: "$780 per installment" says nothing about how many a year
+                n_inst = _installments_a_year(text[m.end():m.end() + 160])  # cycle 31: "$390 per installment, four installments a year"
+                return round(value * n_inst / 12, 2) if n_inst and 0 < value * n_inst < 60000 else None  # cycle 30: with no count it says nothing about how many a year
             if months == "week":
                 per = "week"
             elif months is not None and months != 1:
@@ -9517,7 +9518,8 @@ def _hoa(text: str) -> float | None:
     if re.search(r"bi-?annual|bi-?yearly", per):
         return None
     if re.search(r"installment|instalment|payment|\bbill\b", per):
-        return None  # cycle 30: "$780 per installment" says nothing about how many a year
+        n_inst = _installments_a_year(text[m.end():m.end() + 160])  # cycle 31: "$390 per installment, four installments a year"
+        return round(value * n_inst / 12, 2) if n_inst and 0 < value * n_inst < 60000 else None  # cycle 30: with no count it says nothing about how many a year
     if re.search(r"(?:two|2)[ \t]+months", per) or (re.fullmatch(r"per[ \t]+(?:two|2)", per) and re.match(r"[ \t]+months", text[m.end():m.end() + 8])):
         value /= 2  # cycle 30: "$390 per two months"
     elif re.search(r"half|semi|(?:six|6)[ \t]+months", per):
@@ -9545,6 +9547,11 @@ def _hoa_period_note(text: str, hoa: float | None) -> str:
     for sent in re.split(r"[.\n;](?!\d)", text):
         if not re.search(r"\b(?:hoa|association|condo[ \t]+(?:fee|dues)|dues)\b", sent, re.I):
             continue
+        im = re.search(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:per|each|a|/)[ \t]*(?:installment|instalment|payment)\b", sent, re.I)
+        n_inst = _installments_a_year(sent[im.end():]) if im else None
+        if im and n_inst and abs(_num(im.group(1)) * n_inst / 12 - hoa) < 0.01:  # cycle 31: "$390 per installment, four installments a year"
+            return (f"The listing gives the HOA as {_money_c(_num(im.group(1)))} per installment, {n_inst} installments a year. It is saved as {_money_c(hoa)} a month "
+                    f"({_money_c(_num(im.group(1)))} x {n_inst} divided by 12). Ask the seller's agent to confirm.")
         pm = re.search(_HOA_PERIOD_ANY + r"|per[ \t]+week|/[ \t]*week|weekly", sent, re.I)
         if not pm:
             continue
@@ -9667,6 +9674,23 @@ _TAX_PER_WORDS = (r"(?:(?:for|per|every|each|a)[ \t]+(?:the[ \t]+)?half(?:[- ]?y
                   r"(?:per|each|every|a)[ \t]+(?:installments?|instalments?|payments?|bills?|billing[ \t]+(?:cycle|period))\b)")
 
 
+_INSTALL_N = {"one": 1, "two": 2, "three": 3, "four": 4, "six": 6, "twelve": 12, "1": 1, "2": 2, "3": 3, "4": 4, "6": 6, "12": 12}
+_INSTALL_COUNT = re.compile(r"\b(one|two|three|four|six|twelve|[12346]|12)[ \t]+(?:equal[ \t]+)?(?:installments?|instalments?|payments?)[ \t]*(?:a|per|each|every|/)[ \t]*(?:year|yr)\b"
+                            r"|\b(?:in|over|across)[ \t]+(one|two|three|four|six|twelve|[12346]|12)[ \t]+(?:equal[ \t]+)?(?:installments?|instalments?|payments?)\b"
+                            r"|\b(twice|once)[ \t]+(?:a|per|each|every)[ \t]+year\b|\b(?:due|billed|paid|payable)[ \t]+(twice|annually)\b", re.I)
+
+
+def _installments_a_year(rest: str) -> int | None:
+    """Cycle 31: how many installments a year the words after a "per installment" amount give ("two installments a year", "paid in four installments",
+    "billed twice a year"). Only the same line is read. Two different counts, or none, give None (the amount then stays unread, with a note)."""
+    counts: set[int] = set()
+    for m in _INSTALL_COUNT.finditer(rest.split("\n", 1)[0][:140]):
+        w = next((g for g in m.groups() if g), "").lower()
+        counts.add({"twice": 2, "once": 1, "annually": 1}.get(w) or _INSTALL_N.get(w, 0))
+    counts.discard(0)
+    return counts.pop() if len(counts) == 1 else None
+
+
 def _period_to_year(words: str) -> tuple[float | None, str]:
     """The yearly multiplier for a period written next to a tax or fee amount, and the plain name of that period: "per half year" -> (2, "half year"),
     "quarterly" -> (4, "quarter"), "per week" -> (52, "week"). "biannual" and "bi-yearly" can mean twice a year or every two years: (None, "biannual")."""
@@ -9713,6 +9737,12 @@ def _tax_detail(text: str) -> tuple[float | None, str]:
             period_words = (lead or inside or after).group(1) if (lead or inside or after) else ""
         mult, name = _period_to_year(period_words) if period_words else (1.0, "")
         if mult is None and name == "installment":
+            n_inst = _installments_a_year(text[m.end():m.end() + 160])
+            if n_inst:
+                yearly = round(value * n_inst, 2)
+                if 100 <= yearly <= 200000:
+                    return yearly, (f"The listing gives property tax of {_money_c(value)} per installment, {n_inst} installments a year. It is saved as {_money_c(yearly)} a year "
+                                    f"({_money_c(value)} x {n_inst}). Ask the seller's agent to confirm.")
             return None, (f'The listing gives property tax of ${value:,.2f}'.replace(".00", "") + f' ("{quoted}") per installment but not how many installments there are in a year. '
                           "The property tax is left empty. Ask the seller's agent how much tax is due in a year.")
         if mult is None:

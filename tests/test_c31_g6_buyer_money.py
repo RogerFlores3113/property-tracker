@@ -72,10 +72,13 @@ def test_a_real_special_assessment_stays_a_special_assessment():
     assert amounts(cash)["Special assessment (you pay it)"] == 3000 and cash["total"] == DOWN + GUESS + 3000
 
 
-def test_assessment_plus_working_capital_still_adds_both_and_names_both():
+def test_assessment_plus_working_capital_counts_both_under_their_own_names():
     out, place, cash = read(BASE + "Special assessment $3,000, buyer pays. Buyer pays a $1,200 working capital contribution at closing.")
-    assert out["special_assessment"] == 4200 and cash["total"] == DOWN + GUESS + 4200
-    assert "$3,000" in notes(out) and "$1,200" in notes(out) and "$4,200" in notes(out)
+    assert out["special_assessment"] == 3000
+    a = amounts(cash)
+    assert a["Special assessment (you pay it)"] == 3000 and a["One-time fee at closing (working capital contribution)"] == 1200
+    assert cash["total"] == DOWN + GUESS + 4200
+    assert "$1,200" in notes(out) and "counted in the cash to close" in notes(out)
 
 
 def test_working_capital_the_seller_pays_is_not_counted():
@@ -204,3 +207,9 @@ def test_reviewer_listing_l6_installments():
 def test_hoa_per_installment_with_a_count_is_converted(line, hoa):
     out, place, cash = read("Condo $300,000\n2 bed 2 bath. " + line)
     assert out["hoa"] == hoa
+    assert "installments a year" in notes(out) and "$130 a month" in notes(out)
+
+
+def test_hoa_per_installment_without_a_count_stays_empty():
+    out, place, cash = read("Condo $300,000\n2 bed 2 bath. HOA $390 per installment.")
+    assert out.get("hoa") in (None, "")
