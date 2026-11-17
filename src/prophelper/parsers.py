@@ -1619,12 +1619,10 @@ def _was_is_other_fact(text: str, pos: int) -> bool:
     a "Corrected:" or "Update:" sentence is an old figure of that fact or a correction, never a price cut of the rent."""
     start = max(text.rfind("\n", 0, pos), text.rfind("|", 0, pos), text.rfind(". ", 0, pos), text.rfind("; ", 0, pos)) + 1
     before = text[start:pos]
-    end_m = re.search(r"[|\n]|[.;][ \t]", text[pos:])
-    sent = before + text[pos:pos + (end_m.start() if end_m else len(text))]
     kws = list(_GC_KW.finditer(before))
     if kws and kws[-1].lastgroup != "rent":
         return True
-    return bool(re.search(r"\b(?:corrected?|corrections?|updated?)\b", sent, re.I))
+    return bool(re.search(r"\b(?:corrected?|corrections?|updated?)\b", before, re.I))
 
 
 def _discount_notes(text: str, price: float | None, buying: bool = False) -> list[str]:
