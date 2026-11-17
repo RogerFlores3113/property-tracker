@@ -2425,6 +2425,8 @@ def _drop_also(text: str, hits: list[tuple[int, float]], layout_at: set[int]) ->
     keep = [h for h in hits if not _also_layout(text, h[0])]
     if keep:
         return keep
+    if any(not _also_layout(text, m.start()) for m in re.finditer(r"(?<![\d.,$/])\b\d{1,2}[ \t]*-?(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b", text, re.I)):
+        return []  # another plan names the unit's bedrooms, so the "also available" bath count is not this unit's
     return [h for h in hits if h[0] not in layout_at]
 
 
