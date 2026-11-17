@@ -10746,7 +10746,8 @@ _NET_ENDS = ".;!?\n|•"
 
 
 _ONE_TIME_WORDS = re.compile(r"move[- ]out|one[- ]time|non[- ]?refundable|\bclosing\b|\blender\b|\btitle (?:fees?|insurance|company)\b|\bescrow (?:fee|deposit)|\borigination\b|\brecording fees?\b|transfer tax", re.I)
-_DEAL_WORDS = re.compile(r"\bconcessions?\b|\bfree rent\b|\bmonths? free\b|\bweeks? free\b|\bmove-in special\b|\brent credit\b", re.I)
+_SELLER_PAID_WORDS = re.compile(r"\bpaid by (?:the )?seller\b|\bseller[- ]paid\b|\bseller (?:will )?(?:pay|cover)s?\b|\bby the seller\b", re.I)
+_DEAL_WORDS = re.compile(r"\blimited[- ]time\b|\bfor a limited\b|\bconcessions?\b|\bfree rent\b|\bmonths? free\b|\bweeks? free\b|\bmove-in special\b|\brent credit\b", re.I)
 _MONTHLY_WORDS = re.compile(r"/\s*(?:mo|month)\b|\bper month\b|\ba month\b|\bmonthly\b|\bmo\.", re.I)
 
 
@@ -10754,6 +10755,12 @@ def _uncounted_kind_sentence(phrase: str) -> str:
     """What the safety-net note says about a quoted amount that no field holds: a one-time cost is not in the monthly cost, a
     monthly fee is not counted, and when the line does not say, the generic sentence."""
     one, monthly = bool(_ONE_TIME_WORDS.search(phrase)), bool(_MONTHLY_WORDS.search(phrase))
+    if _SELLER_PAID_WORDS.search(phrase):
+        return "The seller pays it, so it is not your cost and it is not in the monthly cost."  # cycle 27: a seller-paid figure is never "who pays?"
+    pieces_ = [x for x in re.split(r"[,;\n]|\bplus\b|\band\b|\*|\s~\s", phrase) if _dollar_values(x)]
+    from .money import _EXPL_SECOND
+    if pieces_ and all(_EXPL_SECOND.search(x) and not re.search(r"\b(?:required|mandatory)\b", x, re.I) for x in pieces_):
+        return "It looks like an optional extra, so it is not counted in the monthly cost."  # cycle 27: a second item or a storage add-on
     if _DEAL_WORDS.search(phrase) and not monthly:
         return "It is a one-time deal, so it is not in the monthly cost."  # cycle 24: a concession is a deal, never a missing monthly cost
     if monthly and not one:
@@ -10769,7 +10776,9 @@ def _uncounted_kind_sentence(phrase: str) -> str:
     return "It is not counted anywhere."
 
 
-_PLURAL_KIND = (("It is a one-time cost, so it is not in the monthly cost.", "are one-time costs, so they are not in the monthly cost."),
+_PLURAL_KIND = (("The seller pays it, so it is not your cost and it is not in the monthly cost.", "are paid by the seller, so they are not your cost and they are not in the monthly cost."),
+                ("It looks like an optional extra, so it is not counted in the monthly cost.", "look like optional extras, so they are not counted in the monthly cost."),
+                ("It is a one-time cost, so it is not in the monthly cost.", "are one-time costs, so they are not in the monthly cost."),
                 ("It looks like a utility cost and it is not counted anywhere.", "look like utility costs and they are not counted anywhere."),
                 ("It is a monthly fee and it is not counted anywhere.", "are monthly fees and they are not counted anywhere."),
                 ("It is not counted anywhere.", "are not counted anywhere."))
