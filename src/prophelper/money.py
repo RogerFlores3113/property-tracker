@@ -428,8 +428,30 @@ def cash_at_move_in(place: dict[str, Any], pets: bool = True, adults: int = 1) -
         if v:
             parts.append((label, v))
     unknown = num(place.get("deposit")) is None
-    return {"total": _r(sum(v for _, v in parts)), "parts": [{"label": a, "amount": b} for a, b in parts],
-            "deposit_unknown": unknown}
+    out = {"total": _r(sum(v for _, v in parts)), "parts": [{"label": a, "amount": b} for a, b in parts],
+           "deposit_unknown": unknown}
+    up_to = _deposit_range_top(place)
+    if up_to:
+        out["deposit_up_to"] = up_to  # cycle 31: "Deposit $300 to $600": the saved low end makes the cash "at least"
+    return out
+
+
+_DEPOSIT_RANGE = re.compile(r"\bdeposit\b[^.\n$]{0,30}\$\s?(\d[\d,]*)(?:\.\d\d)?[ \t]*(?:to|-|\u2013|\u2014|through|thru|or)[ \t]*\$?[ \t]?(\d[\d,]*)(?!\d)", re.I)
+
+
+def _deposit_range_top(place: dict[str, Any]) -> float | None:
+    """The high end of a security deposit the listing gives as a range ("Security deposit: $300 to $600 based on credit") when the saved
+    deposit is the low end, else None."""
+    dep = num(place.get("deposit"))
+    if not dep:
+        return None
+    for m in _DEPOSIT_RANGE.finditer(str(place.get("listing_text") or "")):
+        if re.search(r"\b(?:pet|key|parking|garage|holding|reservation|storage|fob|cleaning)[ \t]+$", m.string[max(0, m.start() - 12):m.start()], re.I):
+            continue
+        lo, hi = float(m.group(1).replace(",", "")), float(m.group(2).replace(",", ""))
+        if abs(lo - dep) < 0.5 and hi > lo:
+            return hi
+    return None
 
 
 def _listing_cash_note(place: dict[str, Any], cash: dict[str, Any] | None) -> str:
@@ -872,6 +894,8 @@ ONE_TIME_NOTE = re.compile(r"not in the monthly cost|not counted in the monthly 
                            r"price was cut|price (?:cut|drop|reduc\w*|lowered)|(?:cut|reduced|lowered|dropped) (?:by|to|from)\s+\$|\$\s?[\d,]+\s+off\b|rent concession|\bdiscount\b", re.I)
 # A note about an optional extra with no price ("A carport is available but the listing gives no price. It looks optional") holds no amount.
 NOT_A_COST_NOTE = re.compile(r"not a cost on top of the rent|\bis the old price and is not used\b|\bis another lease length option, so it is not added to the cost\b|\bThe rent saved is the (?:lowest|cheapest|matching)\b[^.]*\bplan\b|\bthe rent saved is\b[^.]*,\s*not the \"?starting at\"? price", re.I)
+# Cycle 31: a buyer note that says the one-time fee IS in the cash to close, or that the old price of a price cut is not used, leaves no amount out of the cost.
+_COUNTED_OR_NOT_A_COST = re.compile(r"\bcounted in the cash to close\b|\bis added on top of the closing costs and counted\b|\bold price is not used\b|\bprice was cut from\b", re.I)
 _NOTE_CLOSED = re.compile(r"\bcounted once\b|\bnot counted again\b|\balready counted\b|\bpaid through that flat fee\b|was a mistake or an old figure|\bthe HOA covers \w+ and also lists a \w+ charge of\b|\bIt is read as a deposit of [\d.]+ months? of rent\b", re.I)  # cycle 20 join: a figure the listing takes back is not open
 _NOTE_CONDITIONAL = re.compile(r"only applies on that condition|only if (?:credit|your credit)", re.I)
 # A note with no dollar amount names an open cost only when it names a cost word ("rent" and "free" alone are not: "Ask what the month to month terms and rent are").
@@ -1364,8 +1388,12 @@ def true_monthly_cost(place: dict[str, Any], mode: str = "rent", settings: dict[
         out["uncounted"] = list(out.get("uncounted") or []) + [LISTING_NOTES_UNCOUNTED]  # see the place page: "From the listing when it was added"
         out["notes"] = list(out.get("notes") or []) + ["The listing had things this cost does not cover. See the listing notes on this page."]
     # "all in" is only said when nothing the listing gave is left out: a buyer's one-time fee that is not counted keeps it from reading "all in" too
-    one_time_left = mode == "buy" and any(ONE_TIME_NOTE.search(u) and re.search(r"not counted|not saved|not used|not in the monthly cost", u, re.I) and re.search(r"\$\s?\d", u)
-                                          and not _note_is_stale(u, place) for u in note_units(place.get("reader_notes")))
+    left_units = [u for u in note_units(place.get("reader_notes"))
+                  if mode == "buy" and ONE_TIME_NOTE.search(u) and re.search(r"not counted|not saved|not used|not in the monthly cost", u, re.I) and re.search(r"\$\s?\d", u)
+                  and not _note_is_stale(u, place) and not _COUNTED_OR_NOT_A_COST.search(u)]
+    one_time_left = bool(left_units)
+    if left_units:
+        out["one_time_left"] = [a for a in dict.fromkeys(re.findall(r"\$\s?\d[\d,]*(?:\.\d\d)?", " ".join(left_units)))]  # cycle 31: the amounts a buyer one-time note leaves out, so "not all in" can name them
     out["all_in"] = not out.get("uncounted") and not out.get("missing") and not one_time_left
     out["people"] = n
     out["split_noun"] = noun

@@ -127,8 +127,8 @@ class TestCheapestSaysUnknowns:
         return _enriched(store, s, **kw)
 
     @pytest.mark.parametrize("fields,expect", [
-        (dict(title="Gap", address="1 A St", price=1000, tenant_pays="electric"), "its utilities aren't counted"),
-        (dict(title="Gap2", address="1 A St", price=1000, tenant_pays="electric, gas"), "its utilities aren't counted"),
+        (dict(title="Gap", address="1 A St", price=1000, tenant_pays="electric"), "its electric isn't counted"),  # cycle 31: names only what is not counted
+        (dict(title="Gap2", address="1 A St", price=1000, tenant_pays="electric, gas"), "its electric and gas aren't counted"),  # cycle 31
         (dict(title="Gap3", address="1 A St", price=1000, utilities_included="heat, water"), "aren't counted"),
     ])
     def test_blocked_and_over_limit_sentences(self, store, monkeypatch, fields, expect):

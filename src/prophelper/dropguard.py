@@ -397,6 +397,15 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
         own = next((c for c in _CATS if c[1].search(item)), None)
         if (own is None or own[0] in ("app", "deposit")) and clause_placed(text, r, m.start(), m.end(), amount):
             continue  # only the clause of an application fee or deposit item: a utility is placed by the estimate (util_ok), a fee by the sums of its field; a bare $25 beside a $25 fee is a coincidence
+        rng = re.match(r"[ \t]*(?:-|\u2013|\u2014|to)[ \t]*\$?[ \t]?(\d[\d,]*(?:\.\d\d)?)", text[m.end():m.end() + 16])
+        if rng:  # cycle 31: "water ($70-$90/mo)": the low end of a range whose high end is placed is the range the reader counted at its higher figure
+            try:
+                hi = float(rng.group(1).replace(",", ""))
+            except ValueError:
+                hi = 0.0
+            if hi > amount and (hi in util_ok or hi == (float(est) if isinstance(est, (int, float)) and not isinstance(est, bool) else None)
+                                or any(isinstance(r.get(k), (int, float)) and not isinstance(r.get(k), bool) and abs(float(r[k]) - hi) < 0.5 for k in ("parking_cost", "pet_rent", "pet_fee", "other_monthly_fees", "hoa", "deposit", "pet_deposit", "move_in_fees", "application_fee"))):
+                continue
         if amount >= 500 and re.search(r"\$\s?[\d,]+\s*(?:-|\u2013|to)\s*$|^\s*(?:-|\u2013|to)\s*\$", text[max(0, m.start() - 12):m.start()] + "|" + text[m.end():m.end() + 8]):
             continue  # a rent range
         if amount >= 1000 and "deposit" in item.lower() and re.search(rf"(?:rent|/\s*mo|per month|\bmonth)\W{{0,4}}[^.\n]{{0,25}}\${amount:,.0f}|\${amount:,.0f}\s*(?:/\s*mo|per month|a month|monthly)", text, re.I):
@@ -513,7 +522,7 @@ _ALSO_SAYS = re.compile(r'^(The listing (?:also says|mentions)[^"]*?\(?")([^"]*)
 _LONG_FIGURE = re.compile(r"(?<![\d,])(\$\s?)(\d{1,3}(?:,\d{3}){4,}|\d{13,})(?:\.\d+)?")
 _SPACED_FIGURE = re.compile(r"[$\uff04]\s?\d(?:[ \t]\d){2,}(?![\d])(?:[ \t]*(?:/[ \t]*(?:mo\w*|month)|per[ \t]+month|a[ \t]+month|monthly))?")
 _LINK_PIECE = re.compile(r"!?\[[^\]\n]*\]\([^)\s]*\)?|\]\([^)\s]*\)?|\bhttps?://\S*|\bwww\.\S*|\bjavascript:\S*", re.I)
-_QUOTE_ANY = re.compile(r'^(The listing (?:also )?(?:says|mentions)[^"]*?\(?")([^"]*)("\)?\. ?)(.*)$')
+_QUOTE_ANY = re.compile(r'^(The listing (?:also )?(?:says|mentions)[^"]*?\(?")([^"]*)("\)?(?:\. ?|, (?=but )))(.*)$')
 
 
 def short_figure(raw: str) -> str:
@@ -535,6 +544,10 @@ def _quote_pieces(q: str) -> list[str]:
     parts = [x.strip(" ,;:-") for x in re.split(r"(?<=\d)[ \t]+(?=[$\uff04]\d)", plain)] if re.search(r"[$\uff04]\s?[\d,.]+[ \t]+[$\uff04]\s?\d", plain) else [plain]
     out = [x for x in parts if x and _QUOTE_FIG.search(x)]
     out += [h.strip() for h in hidden if not any(h in x for x in out)]
+    if not out and _LINK_PIECE.search(q):
+        bare = re.sub(r"[\s(\[{'\"=]+$", "", plain)  # cycle 31: a quote with a link and no figure keeps its words and never the link
+        if len(bare) >= 3 and not _LINK_PIECE.search(bare):
+            return [bare]
     return list(dict.fromkeys(out)) or [q]
 
 
@@ -633,10 +646,7 @@ def finalize_notes(text: str, r: dict[str, Any], facts: list[str], buying: bool 
                     shown = [(f"${a:,.0f}" if float(a).is_integer() else f"${a:,.2f}") for a in sorted(left)]
                     names = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
                     kind = P._uncounted_kind_sentence(q)
-                    if len(left) > 1:
-                        sentence = next((f"Only {names} of that {plural}" for single, plural in P._PLURAL_KIND if kind == single), kind)
-                    else:
-                        sentence = re.sub(r"^It (?:is|looks)", lambda m: f"Only {names} of that " + ("is" if m.group(0) == "It is" else "looks"), kind, count=1)
+                    sentence = P._only_sentence(names, kind, len(left) > 1)
                     f = f'The listing also says "{q}". {sentence} Check what it is for.'
         if _RUBS_NO_AMOUNT.search(f) and "doesn't say which utilities" in f:
             billed = any(re.search(r"billed back[^.]*\$[\d,.]+|(?:water|sewer|trash|utilit)[^.]*\$[\d,.]+[^.]*counted (?:once )?in other monthly fees", g, re.I) for g in facts if g is not f)

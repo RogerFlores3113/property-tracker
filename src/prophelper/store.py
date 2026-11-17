@@ -1662,7 +1662,8 @@ class Store:
                     raise ValueError("That link doesn't look like a web address (it should start with https://).")
                 out[key] = encode_link(text if not text or re.match(r"^[a-z][a-z0-9+.-]*://", text, re.I) else "https://" + text)
             elif key == "title":
-                raw_title = _text(raw, TEXT_LIMITS.get(key, 500))
+                from .parsers import strip_site_label
+                raw_title = strip_site_label(_text(raw, TEXT_LIMITS.get(key, 500)))  # cycle 31: no site label
                 out[key] = trim_stale_price_title(raw_title)  # cycle 30: no replaced price left in a saved title
                 title_trimmed = out[key] != raw_title
             else:
