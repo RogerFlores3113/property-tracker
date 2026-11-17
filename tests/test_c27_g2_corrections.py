@@ -35,8 +35,8 @@ def test_rent_correction_layouts(t):
     r = read(t)
     assert r["price"] == 1450
     n = notes(r)
-    assert "corrects the rent" in n and "$1,500" in n and "not used" in n
-    assert n.count("$1,500") == 1  # one short note names the old value
+    assert ("corrects the rent" in n and "not used" in n) or "price was cut from $1,500" in n  # a "was X, now Y" keeps its price-cut note
+    assert "$1,500" in n and n.count("$1,500") == 1  # one short note names the old value
 
 
 def test_uiuc_l15_rent_and_baths():
@@ -178,13 +178,17 @@ def test_not_a_correction(t, price):
     ("Security deposit due at signing: one month", 1.0),
     ("Deposit due at signing equal to one month", 1.0),
     ("Security deposit due at signing equal to 1.5 months", 1.5),
-    ("Deposit: two months", 2.0),
 ])
 def test_deposit_in_months(t, months):
     r = read(R + "Rent $1,400. " + t + ". Application $40.")
     assert r["price"] == 1400 and r["deposit"] == months * 1400, t
     n = notes(r)
-    assert f"${months * 1400:,.0f}" in n and "worked out" in n.lower() or "Worked out" in n
+    assert f"${months * 1400:,.0f}" in n and "Worked out" in n
+
+
+def test_older_month_wording_still_reads():
+    r = read(R + "Rent $1,400. Deposit: two months. Application $40.")
+    assert r["deposit"] == 2800
 
 
 def test_deposit_months_from_saved_listings():

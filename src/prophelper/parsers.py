@@ -679,7 +679,8 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
             if _COND_AFTER.match(after) and role != "old":
                 continue
             if field is None:
-                if hard and role != "old" and value >= 100:
+                if hard and role != "old" and value >= 100 and re.search(r"\b(?:now|corrected?|corrections?|updated?|revised)\b", s, re.I) \
+                        and not re.search(r"\d[ \t]?[xX\u00d7][ \t]?\d|\b(?:bed(?:room)?s?|br|bd|bds)\b", s, re.I):
                     q = " ".join(s.split())
                     if q not in unplaced:
                         unplaced.append(q)
@@ -9888,9 +9889,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if hm:  # cycle 25: "$1.5 months rent deposit hold": the dollar sign is a typo for the months, so the figure is explained here and no note repeats it
                 facts.append(f'The listing says "{" ".join(hm.group(0).split())}". It is read as a deposit of {by_months:g} months of rent, '
                              f"{_usd(by_months * float(rent_now))} from the {_usd(float(rent_now))} rent. Ask what the deposit is and whether it is a hold.")
-            elif not (_SALE_WORDS.search(re.sub(r"\bnew[ \t]+construction\b", " ", text, flags=re.I))):  # cycle 27: months turned into dollars from the rent, with one note that says so
-                said = f'"{by_phrase}", ' if by_phrase else ""
-                facts.append(f"The listing gives the deposit as {said}{_months_words(by_months)} of rent. Worked out from the {_usd(float(rent_now))} rent that is "
+            elif by_phrase:  # cycle 27: months in a new wording turned into dollars from the rent, with one note that says so (the older readings keep their old behavior)
+                facts.append(f'The listing gives the deposit as "{by_phrase}", {_months_words(by_months)} of rent. Worked out from the {_usd(float(rent_now))} rent that is '
                              f"{_usd(by_months * float(rent_now))}. Ask the landlord to confirm the deposit.")
         elif by_months and not _is_sale_text(text):
             facts.append(f"The listing says the security deposit is {_months_words(by_months)} of rent, but the rent was not read, so the deposit is left empty. Fill it in once you know the rent.")
@@ -10434,9 +10434,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     _try(fees)
     _try(lambda: _gc_apply(text, out, facts, gc_found, gc_unplaced, buying, only=set(gc_found) - {"price"}))
     _try(lambda: _gc_quote_unplaced(facts, gc_unplaced))
-    if "price" in gc_found and any(f.startswith("The listing corrects the rent:") for f in facts):  # one note for the old rent, not a price-cut note beside it
+    if "price" in gc_found:  # one note for the old rent: a price-cut or old-figure note that already names it stays, and ours goes
         _olds = [_usd(o) for o in gc_found["price"]["olds"]]
-        facts[:] = [f for f in facts if not (re.search(r"price was cut from|rent dropped from", f) and any(o in f for o in _olds))]
+        _mine = [f for f in facts if f.startswith("The listing corrects the rent:")]
+        _legacy = [f for f in facts if f not in _mine and re.search(r"price was cut from|rent dropped from|was a mistake or an old figure|is the old price|old price is not used|first said", f)
+                   and any(o in f for o in _olds)]
+        if _mine and _legacy and all(any(o in f for f in _legacy) for o in _olds):
+            facts[:] = [f for f in facts if f not in _mine]
     facts += _try(lambda: _internet_choice_notes(text, facts)) or [] if not buying else []  # cycle 22: optional internet is named, never counted
     for key, value in (_try(lambda: _address(text)) or {}).items():
         put(key, value)
