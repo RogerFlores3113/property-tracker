@@ -12401,8 +12401,37 @@ def strip_title_decoration(title: str) -> str:
     return " ".join(t.split()).strip(" ,;:-|\u2013\u2014")
 
 
+_TITLE_PRICE_TAIL = re.compile(
+    r"[ \t,;:|\-\u2013\u2014!]*\b(?:(?:only|just|asking|for|at|now)[ \t]+)?(?:\$[ \t]?\d[\d,.]*[kK]?(?:[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly))?|\d[\d,.]*)[ \t]*"
+    r"(?:obo|o\.b\.o\.?|or[ \t]+best[ \t]+offer|or[ \t]+nearest[ \t]+offer|firm|negotiable|nego)\b[^\n]*$"
+    r"|[ \t,;:|\-\u2013\u2014!]*\b(?:only|just|asking(?:[ \t]+price)?)[ \t]+(?:\$[ \t]?)?\d[\d,.]*[kK]?(?:[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly))?[ \t]*$", re.I)
+_PROMO_TITLE_PHRASE = re.compile(
+    r"\b(?:half[ \t-]+off|\d{1,2}%[ \t]*off|(?:first|1st|last|\d+|one|two|three)[ \t]+months?[ \t]+(?:free|off)|free[ \t]+(?:rent|months?)|move[- ]in[ \t]+specials?|rent[ \t]+specials?|"
+    r"(?:limited[ \t-]+time|special)[ \t]+(?:offer|deal|price)|look[ \t]*(?:&|and)[ \t]*lease|waived|concessions?)\b", re.I)
+_BARE_KIND_TITLE = re.compile(
+    r"^(?:(?:a|the|nice|beautiful|new|lovely|great|cozy|charming|spacious|large|modern|updated|renovated)[ \t]+)*(?:apartments?|apts?|house|home|condo|condominium|townhomes?|townhouses?|duplex|triplex|unit|flat|loft|room|place|rental|property|cottage|bungalow)"
+    r"(?:[ \t]+(?:for[ \t]+(?:rent|lease)|(?:for[ \t]+)?rental|available|to[ \t]+rent))?(?:[ \t]+in[ \t]+(?P<city>[A-Za-z .'-]{2,30}))?$", re.I)
+
+
+def _promo_title(title: str) -> bool:
+    """Cycle 35: "Half off first month!" is an offer, never the name of a place (a name has a plan or a kind of place in it)."""
+    return bool(_PROMO_TITLE_PHRASE.search(title)) and not _PLAN_CUE.search(title) and not _PROPERTY_NOUN.search(title) and len(title.split()) <= 9
+
+
+def _bare_kind_title(title: str, found: dict[str, Any]) -> bool:
+    """Cycle 35: "Townhome" or "Apartment for rent" alone names no place; the street address does. "Condo in San Carlos" is the same when San Carlos is the city."""
+    m = _BARE_KIND_TITLE.match(title.strip(" .!"))
+    if not m:
+        return False
+    city = (m.group("city") or "").strip().lower()
+    return not city or city == str(found.get("city") or "").strip().lower()
+
+
 def _title(text: str, found: dict[str, Any]) -> str:
     title = _clean_title(_title_raw(text, found)).strip(" ,;:-|\u2013\u2014")
+    tail = _TITLE_PRICE_TAIL.sub("", title).strip(" ,;:-|!\u2013\u2014")
+    if tail != title and len(re.findall(r"[A-Za-z]", tail)) >= 4:
+        title = tail  # cycle 35: "BEAUTIFUL 2 BEDROOM DUPLEX!!! Only 1450 obo": the asking price is a fact, not part of the name
     lead = _HYPE_LEAD.sub("", title)
     if lead != title and len(lead) >= 8:
         title = lead[:1].upper() + lead[1:]  # "Wow Newly renovated 2 bedroom": the shout is not part of the name
@@ -12419,6 +12448,12 @@ def _title(text: str, found: dict[str, Any]) -> str:
         title = re.sub(r"^The\b", "The", title)
     title = re.sub(r"[ \t]*[-\u2013\u2014][ \t]*(?:was|now|reduced|asking|from|starting)$", "", title, flags=re.I)  # "Pilsen 3/2 - was $3,600": the price words are not part of the name
     title = _finish_title(title, text)
+    if title and (_promo_title(title) or _bare_kind_title(title, found)) and not _ADDRESS.match(title):
+        addr = str(found.get("address") or "")
+        if _promo_title(title):
+            return addr.split(",")[0] if addr else ""  # cycle 35: an offer is never the name: the street address, else no title
+        if addr:
+            return addr.split(",")[0]  # cycle 35: "Townhome for rent - 88 Birch Lane" names no place: the street address does
     if title and _policy_title_line(title) and not _ADDRESS.match(title):
         addr = str(found.get("address") or "")
         return addr.split(",")[0] if addr else ""  # a policy, amenity or parking phrase is never the name
