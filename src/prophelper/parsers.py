@@ -9106,9 +9106,51 @@ _ES_NAMES_ONLY = re.compile(r"[ \t\u2022*\-]*(?:(?:luz|agua|gas|basura|electrici
 _ES_EN_PAYER = re.compile(r"\b(?:tenants?|residents?|renters?|you|landlord|owner|included|pays?|paid)\b", re.I)
 
 
+_ES_NAME = r"(?:luz|electricidad|gas|agua|basura|calefacci[\u00f3o]n|alcantarillado|drenaje)"
+_ES_SEP = r"(?:[ \t]*(?:,|/|&|\by\b|\bni\b|\be\b)[ \t]*|[ \t]*\n[ \t]*[-*\u2022]?[ \t]*)"
+_ES_NAMES = _ES_NAME + r"(?:" + _ES_SEP + _ES_NAME + r"(?![ \t]+(?:incluid|incluy|no[ \t]+incluid)))*"  # "paga luz y gas, agua incluida": the last name has its own word
+_ES_TENANT_W = r"(?:(?:los|las|el|la)[ \t]+)?(?:inquilinos?|arrendatarios?)"
+_ES_LANDLORD_W = r"(?:(?:los|las|el|la)[ \t]+)?(?:propietarios?|due[\u00f1n]os?|arrendadores?|caseros?)"
+_ES_PAY_V = r"(?:pagan?|pagar[\u00e1a]n?)"
+_ES_NO_INCLUYE = re.compile(r"\bno[ \t]+incluyen?[ \t]*:?[ \t]*(?:\n[ \t]*[-*\u2022]?[ \t]*)?(?P<names>" + _ES_NAMES + r")\b", re.I)
+_ES_INCLUYE = re.compile(r"(?<!\bno )\bincluyen?[ \t]*:?[ \t]*(?P<names>" + _ES_NAMES + r")\b", re.I)
+_ES_PAY_A = re.compile(r"\b" + _ES_PAY_V + r"[ \t]+" + _ES_TENANT_W + r"[ \t]+(?P<names>" + _ES_NAMES + r")\b", re.I)
+_ES_PAY_B = re.compile(r"\b" + _ES_PAY_V + r"[ \t]+(?P<names>" + _ES_NAMES + r")[ \t]+" + _ES_TENANT_W + r"\b", re.I)
+_ES_PAY_C = re.compile(r"\b(?P<names>" + _ES_NAMES + r")[ \t]*:?[ \t]*(?:(?:son|es)[ \t]+)?(?:pagad[oa]s?[ \t]+por|" + _ES_PAY_V + r"|por[ \t]+cuenta[ \t]+de(?:l)?|a[ \t]+cargo[ \t]+de(?:l)?|corre(?:n)?[ \t]+por[ \t]+cuenta[ \t]+de(?:l)?)[ \t]+" + _ES_TENANT_W + r"\b", re.I)
+_ES_PAY_D = re.compile(r"\b(?:(?:los|las|el|la)[ \t]+)?(?:inquilinos?|arrendatarios?)[ \t]+(?:paga|pagan)[ \t]+(?P<names>" + _ES_NAMES + r")\b", re.I)
+_ES_LL_A = re.compile(r"\b(?:pagan?|cubren?|incluyen?)[ \t]+(?P<names>" + _ES_NAMES + r")[ \t]+" + _ES_LANDLORD_W + r"\b", re.I)
+_ES_LL_B = re.compile(r"\b(?:pagan?|cubren?|incluyen?)[ \t]+" + _ES_LANDLORD_W + r"[ \t]+(?P<names>" + _ES_NAMES + r")\b", re.I)
+
+
+def _es_names_english(names: str) -> str:
+    """"luz ni gas" -> "electric and gas": the Spanish utility names of a list, joined with "and"."""
+    out = [{"luz": "electric", "electricidad": "electric", "gas": "gas", "agua": "water", "basura": "trash", "alcantarillado": "sewer", "drenaje": "sewer"}.get(w.lower(), "heat")
+           for w in re.findall(_ES_NAME, names, re.I)]
+    return " and ".join(dict.fromkeys(out))
+
+
+def _es_pay_phrases(text: str) -> str:
+    """Cycle 36 (rule ii, roommates l9, uiuc l3): a Spanish sentence that names several utilities gives every one of them its place. "No incluye luz ni gas" and
+    "Pagan luz y gas los inquilinos" (in any order) are "Tenant pays electric and gas"; "Incluye luz y gas" is "Includes electric and gas"; the landlord
+    forms ("Pagan luz y gas los propietarios") are "Landlord pays ...". Only a list of utility names right next to the pay word is changed."""
+    if not re.search(r"\b(?:incluyen?|pagan?|pagar[\u00e1a]n?|pagad[oa]s?|cuenta[ \t]+de|a[ \t]+cargo|inquilinos?|arrendatarios?)\b", text, re.I):
+        return text
+    def tenant(m: re.Match[str]) -> str:
+        return "Tenant pays " + _es_names_english(m.group("names"))
+    def landlord(m: re.Match[str]) -> str:
+        return "Landlord pays " + _es_names_english(m.group("names"))
+    text = _ES_NO_INCLUYE.sub(tenant, text)
+    for rx in (_ES_PAY_A, _ES_PAY_B, _ES_PAY_C, _ES_PAY_D):
+        text = rx.sub(tenant, text)
+    for rx in (_ES_LL_A, _ES_LL_B):
+        text = rx.sub(landlord, text)
+    return _ES_INCLUYE.sub(lambda m: "Includes " + _es_names_english(m.group("names")), text)
+
+
 def _spanish_utilities(text: str) -> str:
     """Cycle 34: "Servicios no incluidos, el inquilino paga luz y gas" and "agua incluida" are read like their English words. Only a sentence that holds a Spanish
     utility cue (inquilino, servicios, incluido, propietario) is changed, and only for the pay words and the utility names, never the rest of the listing."""
+    text = _es_pay_phrases(text)
     if not (_ES_UTIL_CUE.search(text) or re.search(r"\bluz[ \t]*(?:y|,|/|&)|(?:y|,|/|&)[ \t]*luz\b|\b(?:pays?|paid|included)[ \t:]+(?:luz|agua|basura)\b|^[ \t\u2022*\-]*luz[ \t]*$", text, re.I | re.M)) \
             or not re.search(r"\b(?:luz|agua|gas|basura|electricidad|servicios|calefacci[\u00f3o]n|alcantarillado|drenaje)\b", text, re.I):
         return text
