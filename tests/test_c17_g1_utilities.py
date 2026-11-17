@@ -115,7 +115,10 @@ def test_quarterly_water_per_quarter_grove():
 def test_quarterly_water_passed_through_logan():
     out = read(ROOM_L7)
     assert out["utilities_estimate"] == 50
-    assert out["tenant_pays"] == "electric, water"
+    # cycle 28: "Tenant pays everything but water" is read as written (the tenant pays all but water), and the clash with
+    # "Landlord pays everything but electric" is a plain note, so the unpriced utilities stay unknown instead of vanishing
+    assert out["tenant_pays"] == "electric, gas, water, sewer, trash"
+    assert "disagree" in note(out)
     assert "not counted anywhere" not in note(out)
 
 

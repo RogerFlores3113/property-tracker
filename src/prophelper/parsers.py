@@ -7377,7 +7377,7 @@ _MONEY_U = r"\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+m
 _EXCEPT_W = r"(?:except(?:[ \t]+for)?|other[ \t]+than|besides)"
 _ALL_EXCEPT_EST = re.compile(
     r"(?P<head>\b(?:all|everything)[ \t]+(?:(?:the[ \t]+)?utilit(?:y|ies)[ \t]+)?" + _EXCEPT_W + r"[ \t]+(?P<names>" + _ROLE_LIST_RAW + r"))"
-    r"(?P<sep>[ \t]*[,;(\-\u2013:]?[ \t]*)(?P<est>" + _EST_WORDS + r"?" + _MONEY_U + r")(?P<close>[ \t]*\))?(?![ \t]*(?:for|covering|covers)\b)", re.I)
+    r"(?P<sep>[ \t]*[,;(\-\u2013:]?[ \t]*)(?P<est>" + _EST_WORDS + r"?" + _MONEY_U + r")(?![\d,])(?P<close>[ \t]*\))?(?![ \t]*(?:for|covering|covers)\b)", re.I)
 _EST_FOR_ALL_EXCEPT = re.compile(
     r"(?P<est>" + _EST_WORDS + r"?" + _MONEY_U + r")[ \t]*(?:for|covering|on)[ \t]+(?P<head>(?:all|everything)[ \t]+(?:(?:the[ \t]+)?utilit(?:y|ies)[ \t]+)?" + _EXCEPT_W + r"[ \t]+(?P<names>" + _ROLE_LIST_RAW + r"))", re.I)
 
@@ -7456,8 +7456,14 @@ def _except_orders(text: str) -> str:
     "Tenant pays all utilities except X": the tenant pays everything but X, so X is never the tenant's."""
     for pat in _EXC_ORDERS:
         text = pat.sub(lambda m: "Tenant pays all utilities except " + re.sub(r"[ \t]+", " ", m.group("n")), text)
+    # "...except water, sewer and trash (included)": the bracket says the excepted ones are the landlord's, the same as "which are included"
+    text = re.sub(r"(\bTenant pays all utilities except (?:" + _ROLE_LIST_RAW + r"))[ \t]*(?:\([ \t]*(?:are[ \t]+|is[ \t]+)?(?:all[ \t]+)?(?:included|covered)[ \t]*\)|[-,][ \t]*(?:are[ \t]+|is[ \t]+)?(?:all[ \t]+)?(?:included|covered))", r"\1 which are included", text, flags=re.I)
     # "...except water/sewer. Est $180": the estimate in the next sentence is for what the tenant pays
-    return re.sub(r"(\bTenant pays all utilities except [a-z/ ,&+]+?)[ \t]*\.[ \t]+(?=(?:est(?:imated|imate)?|approx(?:imately|imate)?|about|around|roughly|avg|average)\.?[ \t]*:?[ \t]*\$[ \t]?\d)", r"\1, ", text, flags=re.I)
+    def join_est(m: re.Match[str]) -> str:
+        if re.match(r"[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|total|combined|[ \t])*(?:for|on|covering|covers)\b", m.string[m.end("amt"):m.end("amt") + 40], re.I):
+            return m.group(0)  # "...except water. Estimated $110 for electric and gas": the figure names what it covers
+        return m.group("head") + ", "
+    return re.sub(r"(?P<head>\bTenant pays all utilities except [a-z/ ,&+]+?)[ \t]*\.[ \t]+(?=(?:est(?:imated|imate)?|approx(?:imately|imate)?|about|around|roughly|avg|average)\.?[ \t]*:?[ \t]*(?P<amt>\$[ \t]?\d[\d,]*(?:\.\d\d)?))", join_est, text, flags=re.I)
 
 
 def _say_all_utilities(text: str) -> str:
@@ -9770,6 +9776,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if left_out:
         roles["landlord"] = roles["landlord"] + [w.strip() for w in left_out.split(",") if w.strip() and w.strip() not in roles["landlord"]]
         pays = _ordered_utilities([w for w in list(_ALL_UTILITIES) if w not in left_out.split(", ")] + [w.strip() for w in pays.split(",") if w.strip() and w.strip() not in left_out.split(", ")])
+    if left_out and included and included != "all" and re.search(r"\b(?:tenants?|residents?|renters?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for|is[ \t]+responsible[ \t]+for|will[ \t]+pay)[ \t]+all[ \t]+utilit(?:y|ies)[ \t]+" + _EXCEPT_W, utext, re.I):
+        # cycle 28: "Heat and water included. Tenant pays all utilities except water.": the two lines disagree about the heat. One plain note, and the heat is
+        # left as something the renter pays with no amount, never shown as included
+        clash_all = [w.strip() for w in included.split(",") if w.strip() in _ALL_UTILITIES and w.strip() not in left_out.split(", ")]
+        if clash_all:
+            facts.append(f"The listing says {_join_names(clash_all)} {'is' if len(clash_all) == 1 else 'are'} included, and also that you pay all the utilities except {_join_names(left_out.split(', '))}. "
+                         f"Those two lines disagree about {_join_names(clash_all)}. {'It is' if len(clash_all) == 1 else 'They are'} left as something you pay with no amount, so the cost is not complete. Ask the landlord what the rent really covers.")
+            pays = _ordered_utilities([w.strip() for w in (pays + ", " + ", ".join(clash_all)).split(",") if w.strip()])
+            included = _ordered_utilities([w.strip() for w in included.split(",") if w.strip() and w.strip() not in clash_all])
+            roles["landlord"] = [w for w in roles["landlord"] if w not in clash_all]
     if roles["tenant"] or roles["landlord"]:
         # The clause reading wins where the older sentence-wide reading put a tenant's utility in the included list.
         mine = _ordered_utilities(list(roles["tenant"]))
@@ -9968,6 +9984,14 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         facts.append(f"The listing says you pay all the utilities, but it also says the landlord pays all{(' ' + tail) if tail else ''}. "
                      "Those two lines don't agree, so none are counted as included and no amount is counted. Ask the landlord which utilities you really pay and how much.")
         included = ""
+    tex = re.search(r"\b(?:tenants?|residents?|renters?|you)\s+(?:pays?|are\s+responsible\s+for|is\s+responsible\s+for|will\s+pay|must\s+pay)\s+all\s+(?:the\s+)?utilit\w*\s+" + _EXCEPT_W + r"\s+(?P<n>" + _ROLE_LIST_RAW + r")", utext, re.I)
+    if tex and lpa and lpa.group("exc") and not any(("landlord pays" in f or "unclear about" in f or "(RUBS)" in f or "disagree" in f) for f in facts):
+        # cycle 28: "Tenant pays everything but water. Landlord pays everything but electric.": two "all except" lines that name different utilities
+        lex = {_canon_util(w) for w in re.findall(_ROLE_WORD, lpa.group("exc").lower())}
+        tx = {_canon_util(w) for w in re.findall(_ROLE_WORD, tex.group("n").lower())}
+        if lex != tx:
+            facts.append(f"The listing says you pay all the utilities except {_join_names(sorted(tx))}, and also that the landlord pays all except {_join_names(sorted(lex))}. "
+                         "Those two lines disagree, so the utilities you pay are left with no amount beyond what the listing prices. Ask the landlord which utilities you really pay and how much.")
     fee_conflict = _try(lambda: _util_fee_conflict(utext)) if included == "all" and not out.get("utilities_estimate") else None
     if fee_conflict:
         # "All utilities included ... $180 per month paid by tenant to landlord": two readings, so nothing is counted and nothing is called included
