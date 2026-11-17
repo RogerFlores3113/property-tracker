@@ -8147,7 +8147,7 @@ def _all_except_estimate(text: str) -> str:
 
 
 _SE_EST = r"(?:typical(?:ly)?|usually|budget(?:ed)?|est(?:imated?)?\.?|approx(?:imate(?:ly)?)?\.?|about|around|roughly|~|avg\.?|averag(?:e|es|ing))"
-_SE_FILL = r"(?:total|combined|overall|monthly|bills?|costs?|run|runs|come|comes|to|for|all|the|utilit(?:y|ies)|everyone|everybody|here|each|month|is|are|of|:|-|\u2013)"
+_SE_FILL = r"(?:total|combined|overall|monthly|bills?|costs?|run|runs|come|comes|to|for|all|the|utilit(?:y|ies)|everyone|everybody|here|each|month|is|are|of|unit|apartment|apt|home|place|building|:|-|\u2013)"
 _SE_SENTENCE = re.compile(
     r"^[ \t\-*\u2022]*(?:(?:" + _SE_EST + r"|" + _SE_FILL + r")[ \t:,\-\u2013]*)*?(?:" + _SE_EST + r")[ \t:,\-\u2013]*(?:" + _SE_FILL + r"[ \t:,\-\u2013]*)*"
     r"(?P<names>(?:" + _ROLE_ITEM + r"[ \t]*(?:,|/|&|\+|\band\b)?[ \t]*){1,5})?[ \t:,\-\u2013]*(?:" + _SE_FILL + r"[ \t:,\-\u2013]*)*"
@@ -8188,8 +8188,13 @@ def _standalone_estimates(text: str) -> str:
         if "$" not in seg or len(seg) > 90 or not _SE_SENTENCE.match(seg) or _SE_NOT.search(seg):
             continue
         prev = " ".join(p[0] for p in pieces[max(0, k - 2):k])
+        if not _SE_PAYER.search(prev) and re.search(r"\ball utilities included except\b", prev, re.I):
+            prev = "Tenant pays " + prev  # cycle 30: "Everything but electric included. Typical total bills for the unit about $140/mo." the figure is for what the tenant pays
         if not _SE_PAYER.search(prev) or not re.search(_ROLE_ITEM + r"|\butilit", prev, re.I) or re.search(r"\$[ \t]?\d", pieces[k - 1][0] if k else ""):
-            continue
+            # cycle 30: the estimate may come first ("Typical bills for the unit run about $140/mo. Tenant pays electric and gas.")
+            nxt = pieces[k + 1][0] if k + 1 < len(pieces) else ""
+            if not (re.match(r"[ \t]*Tenant pays\b", nxt) and "$" not in nxt and re.search(r"\b(?:bills?|total|utilit)", seg, re.I)):
+                continue
         if re.search(r"\butilit", prev, re.I) and not re.search(r"\bbilled[ \t-]*back\b|\bflat\b|\bpackage\b|\brubs\b", text, re.I) and _UTIL_NEXT_AMOUNT.match(re.sub(r"^[-*\u2022\u2013\u2014][ \t]+", "", seg)):
             continue  # "Tenant pays all utilities. Approx $180/month." is read by the older step
         m = _SE_SENTENCE.match(seg)
@@ -8199,6 +8204,31 @@ def _standalone_estimates(text: str) -> str:
         pieces[k] = (new, sep)
         changed = True
     return "".join(a + b for a, b in pieces) if changed else text
+
+
+_TWO_FIG_SKIP = re.compile(r"\b(?:was|now|before|previously|formerly|reduced|corrected?|update[ds]?|winter|summer|spring|fall|peak|high|low|cold|hot|if|when|over|cap|capped|up[ \t]+to|between|from|plus|and|or)\b|[-\u2013]|\bto\b", re.I)
+_TWO_FIG = re.compile(r"(?<![\w$])(?:(?:est(?:imated?)?\.?|approx(?:imately|\.)?|about|around|roughly|~|avg\.?|average|typically|typical)[ \t:]*)*(?P<n>electric(?:ity)?|gas|water|sewer|trash)[ \t:]*(?:(?:est(?:imated?)?\.?|approx(?:imately|\.)?|about|around|roughly|~|avg\.?|average|typically|typical|is|are|runs?|costs?)[ \t:]*)*\$[ \t]?(?P<a>\d{1,4}(?:\.\d\d)?)(?![\d,])[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*$", re.I)
+
+
+def _two_figures_one_utility(text: str) -> dict[str, list[float]]:
+    """Cycle 30: "Estimated electric $90. Estimated electric $110." two plain figures for the same single utility, in two sentences, with no word that says they
+    are seasons, a range or a correction. {"electric": [90.0, 110.0]}. The listing does not say which is right, so neither one is a safe estimate."""
+    found: dict[str, list[float]] = {}
+    for clause in re.split(r"\n|[.;|](?=\s|$)|(?<=[a-z\)])\.(?=\s)", text):
+        c = clause.strip(" \t-*\u2022")
+        if not c or _TWO_FIG_SKIP.search(c):
+            continue
+        m = _TWO_FIG.search(c)
+        if not m or c[:m.start()].strip(" \t:") not in ("",):
+            continue
+        n = "electric" if m.group("n").lower().startswith("electric") else m.group("n").lower()
+        v = float(m.group("a"))
+        if v not in found.setdefault(n, []):
+            found[n].append(v)
+    return {n: v for n, v in found.items() if len(v) >= 2}
+
+
+_LL_ALL_PLAIN = re.compile(r"\b(?:landlord|owner|management|property[ \t]+manager)[ \t]+(?:pays?|covers?|provides?)[ \t]+(?:for[ \t]+)?all[ \t]+(?:the[ \t]+)?utilit(?:y|ies)\b(?![ \t]*(?:,|;|-|\u2013|\()?[ \t]*(?:except|other[ \t]+than|besides|but|and[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?)))", re.I)
 
 
 _EXC_ANY = r"(?:except(?:[ \t]+for)?|excluding|other[ \t]+than|besides|but(?![ \t]+not))"
@@ -8266,7 +8296,7 @@ def _except_orders(text: str) -> str:
     "Tenant pays all utilities except X": the tenant pays everything but X, so X is never the tenant's.
     Cycle 29: the landlord's side is the same step ("Everything but trash included in rent" = "All utilities included except trash")."""
     def landlord_except(m: re.Match[str]) -> str:
-        if all(w in ("cable", "internet", "wifi", "wi-fi") for w in re.findall(_ROLE_WORD, m.group("n").lower())):
+        if all(w == "cable" for w in re.findall(_ROLE_WORD, m.group("n").lower())):
             return m.group(0)  # "Everything included except cable": cable is TV, the older reader keeps it as "all utilities"
         return "All utilities included except " + re.sub(r"[ \t]+", " ", m.group("n"))
     for pat in _EXC_LANDLORD_ORDERS:
@@ -11052,9 +11082,16 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             inc_l = [w.strip() for w in included.split(",") if w.strip()] if included != "all" else list(_ALL_UTILITIES)
             pays = _ordered_utilities(pay_l + [w for w in dis["disputed"] if w not in pay_l])
             included = _ordered_utilities([w for w in inc_l if w not in dis["disputed"]]) if inc_l else ""
-            facts.append(f"The listing has two lines about the utilities that do not match: {dis['one']} and {dis['two']}. "
-                         f"They disagree about {_join_names(dis['disputed'])}, which {'is' if len(dis['disputed']) == 1 else 'are'} left as something you pay with no amount, so the cost is not complete. "
-                         "Ask the landlord what the rent really covers.")
+            est_dis = out.get("utilities_estimate")
+            if isinstance(est_dis, (int, float)) and not isinstance(est_dis, bool):
+                # cycle 30: the figure the listing gives is counted as it was written, so the note never says the same utilities have "no amount" while a figure is counted
+                facts.append(f"The listing has two lines about the utilities that do not match: {dis['one']} and {dis['two']}. "
+                             f"They disagree about {_join_names(dis['disputed'])}. The {_money_cents(float(est_dis))} a month the listing gives is counted as your utilities estimate as it was written, and no other amount is added for them. "
+                             "The cost may be lower if the landlord covers some of these, and trash has no amount of its own. Ask the landlord what the rent really covers and what the figure covers.")
+            else:
+                facts.append(f"The listing has two lines about the utilities that do not match: {dis['one']} and {dis['two']}. "
+                             f"They disagree about {_join_names(dis['disputed'])}, which {'is' if len(dis['disputed']) == 1 else 'are'} left as something you pay with no amount, so the cost is not complete. "
+                             "Ask the landlord what the rent really covers.")
     fee_conflict = _try(lambda: _util_fee_conflict(utext)) if included == "all" and not out.get("utilities_estimate") else None
     if fee_conflict:
         # "All utilities included ... $180 per month paid by tenant to landlord": two readings, so nothing is counted and nothing is called included
@@ -11249,6 +11286,45 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts[:] = _try(lambda: _heat_is_gas_words(facts, text)) or facts
     if except_priced and included and included != "all":
         included = _ordered_utilities([w.strip() for w in included.split(",") if w.strip() and w.strip() not in except_priced])  # "all except trash" never made a priced trash free
+    if not buying and not any(("disagree" in f or "don't agree" in f or "unclear about" in f) for f in facts[n_facts_pre:]):
+        # cycle 30: "Landlord pays sewer and trash, tenant pays electric, gas, water ... Utilities: Landlord pays all utilities." is a conflict, whichever line comes first
+        ll_all = _LL_ALL_PLAIN.search(utext)
+        clash_pay = [w.strip() for w in pays.split(",") if w.strip() and w.strip() not in ("internet", "cable")]
+        # "Landlord pays all utilities. Tenant electric only total $110" is "all except electric": a plain exception, not a conflict. It is a conflict only when
+        # a tenant-pays line comes before the "all" line, or the listing also names a smaller list the landlord pays next to a tenant-pays line.
+        before_all = bool(ll_all and re.search(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n;]{0,15}\b(?:pays?|responsible|will pay|must pay)\b", utext[:ll_all.start()], re.I))
+        small_list = bool(ll_all and re.search(r"\b(?:landlord|owner|management)[ \t]+(?:pays?|covers?|provides?)[ \t]+(?:for[ \t]+)?(?!all\b)(?:the[ \t]+)?" + _ROLE_LIST_RAW, utext, re.I)
+                          and re.search(r"\b(?:tenants?|residents?|renters?|you)\b[^.\n;]{0,15}\b(?:pays?|responsible)\b", utext, re.I))
+        if ll_all and (before_all or small_list) and clash_pay and included != "all" and not _try(lambda: _everything_except(utext)) and not any(("it also says you pay" in f or "landlord pays" in f or "(RUBS)" in f or "billed back to you" in f) for f in facts):
+            est_c = out.get("utilities_estimate")
+            if isinstance(est_c, (int, float)) and not isinstance(est_c, bool):
+                out.pop("utilities_estimate", None)  # two lines that disagree: nothing is counted, as with every other utilities conflict
+                facts[:] = [f for f in facts if "counted as your utilities estimate" not in f]
+                tail_c = f" The {_money_cents(float(est_c))} a month figure in the listing is not counted, because it is not clear whether you pay these bills at all."
+            else:
+                tail_c = f" {_join_names(clash_pay).capitalize()} {'is' if len(clash_pay) == 1 else 'are'} left as something you pay with no amount, so the cost is not complete."
+            facts.append(f"The listing says you pay {_join_names(clash_pay)}, but it also says the landlord pays all the utilities. The two lines disagree, so {_join_names(clash_pay)} {'is' if len(clash_pay) == 1 else 'are'} not counted as included."
+                         + tail_c + " Ask the landlord which utilities you really pay and how much.")
+    if not buying:
+        two_fig = _try(lambda: _two_figures_one_utility(text_full)) or {}
+        est_t = out.get("utilities_estimate")
+        for tn, tv in two_fig.items():
+            if tn not in (set(_ALL_UTILITIES) if included_pre == "all" else {w.strip() for w in included_pre.split(",") if w.strip()}):
+                continue  # only when the listing also calls it included: two prices for a utility the tenant pays keep the older rule (the higher one is counted)
+            if isinstance(est_t, (int, float)) and not isinstance(est_t, bool) and any(abs(float(est_t) - x) < 0.01 for x in tv) and ({w.strip() for w in pays.split(",") if w.strip() and w.strip() not in ("internet", "cable")} | counted) == {tn}:
+                out.pop("utilities_estimate", None)  # the only figure counted was one of the two, picked by position: nothing safe to count
+                facts[:] = [f for f in facts if not (re.search(r"counted as your utilities estimate", f) and any(_money_cents(x) in f for x in tv))]
+                counted.discard(tn)
+            elif tn in counted or (isinstance(est_t, (int, float)) and any(abs(float(est_t) - x) < 0.01 for x in tv)):
+                continue  # counted along with other figures: the older readers already named it
+            facts[:] = [f for f in facts if not (re.search(r"\bthe listing also says \"?(?:estimated )?" + tn, f, re.I) and "not counted anywhere" in f)]
+            have_i = [w.strip() for w in included.split(",") if w.strip()] if included != "all" else list(_ALL_UTILITIES)
+            included = _ordered_utilities([w for w in have_i if w != tn]) if have_i else ""
+            pays = _ordered_utilities([w.strip() for w in (pays + ", " + tn).split(",") if w.strip()])
+            facts[:] = [f for f in facts if not re.search(r"\b" + tn + r" (?:is|are) included, but it gives you", f, re.I)]
+            facts[:] = [f for f in facts if not (tn in f.lower() and any(_money_cents(x) in f for x in tv) and "two different figures" not in f)]  # no note may still say one of the two is counted
+            facts.append(f"The listing gives two different figures for {tn}, {' and '.join(_money_cents(x) for x in tv)}, and does not say which one is right. "
+                         f"Neither is counted, and {tn} is left as something you pay with no amount. Ask the landlord what {tn} costs.")
     put("utilities_included", included)
     if pays:
         # Nothing is included for these, so the monthly cost keeps its own estimate line (a guess), and the listing's words are kept.
@@ -11664,9 +11740,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             else:
                 monthly += v
                 if (label, v) not in svc_repeated:
-                    facts.append(f"{label[:1].upper() + label[1:]} is ${v:,.0f}/month, counted in other monthly fees. If it is optional, take it out.")
+                    facts.append(f"{label[:1].upper() + label[1:]} is {_money_cents(v)}/month, counted in other monthly fees. If it is optional, take it out.")
         for rl, ra, rn in svc_repeats:  # cycle 29: an identical fee line repeated is one fee, with one note
-            facts.append(f"{rl[:1].upper() + rl[1:]} is ${ra:,.0f}/month, counted once in other monthly fees. The listing repeats that same line {rn} times, so it is not added again. If it is optional, take it out.")
+            facts.append(f"{rl[:1].upper() + rl[1:]} is {_money_cents(ra)}/month, counted once in other monthly fees. The listing repeats that same line {rn} times, so it is not added again. If it is optional, take it out.")
         if monthly:
             put("other_monthly_fees", monthly)
             est = out.get("utilities_estimate")
@@ -13453,7 +13529,7 @@ def _service_fee_items_all(text: str) -> list[tuple[str, float]]:
     found: list[tuple[str, float]] = []
     strong, weak = _SVC_STRONG, _SVC_WEAK
     more = r"(?:[ \t]*(?:,|/|&|\band\b)[ \t]*(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?)*"
-    amt = r"\$\s?(?P<a>\d{1,3})(?:\.\d\d)?(?!,?\d)"
+    amt = r"\$\s?(?P<a>\d{1,3}(?:\.\d\d)?)(?!,?\d)"  # cycle 30: cents stay ("Utility admin fee $9.95/mo")
     lead = r"(?:(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?[ \t]*(?:,|/|&|\band\b)[ \t]*)*"
     p_name = re.compile(r"(?<![\w$])(?P<n>" + lead + r"(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?|(?:" + weak + r")" + _SVC_FEE_WORD + r")(?:[ \t]*\([^)\n$]{1,25}\))?[ \t:\-=]{0,4}(?:of[ \t]+)?" + amt + r"(?P<p>" + _SVC_PERIOD + r")?", re.I)
     p_amt = re.compile(amt + r"(?P<p>" + _SVC_PERIOD + r")?[ \t]*(?:flat[ \t]+)?(?:for[ \t]+)?(?:the[ \t]+)?(?:flat[ \t]+)?(?P<m>monthly[ \t]+)?(?P<n>(?:" + strong + r")(?:" + _SVC_FEE_WORD + r")?" + more + r"|(?:" + weak + r")" + _SVC_FEE_WORD + r")(?P<q>[ \t]*monthly\b|[ \t]+per[ \t]+month|/[ \t]*mo\b)?", re.I)
