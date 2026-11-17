@@ -72,3 +72,8 @@ def test_an_unreadable_broker_fee_is_named(t):
 def test_negatives_no_fee_means_no_note(t):
     r = P(t)
     assert "broker_fee" not in r and "could not read an amount" not in N(r)
+
+
+def test_a_bare_broker_fee_heading_is_not_a_note():
+    r = P("Rent $2,300\nBroker fee\nPets ok\n")
+    assert "could not read an amount" not in N(r) and "broker_fee" not in r

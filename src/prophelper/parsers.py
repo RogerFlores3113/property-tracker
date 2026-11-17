@@ -14360,6 +14360,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             elif not _is_sale_text(text):  # cycle 35 (rule hh): a broker fee the reader could not read ("Broker fee: two weeks") is named, never silently dropped
                 for bm in re.finditer(r"\b(?:broker|agent|finder)(?:'?s)?[ \t]+fee\b[^.\n;|]{0,50}", text, re.I):
                     seg = text[max(0, text.rfind("\n", 0, bm.start()) + 1):bm.end()]
+                    if not re.search(r"[A-Za-z0-9]", re.sub(r"^.*?\bfee\b", "", bm.group(0), flags=re.I | re.S)):
+                        continue  # a bare label with nothing after it ("Broker fee" as a heading) says nothing to read
                     if re.search(r"\b(?:no|zero|none|waived|free|nothing)\b|\$\s?0\b|(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?(?:owner|landlord|seller)|(?:landlord|owner)[ \t]+pays?|\?", seg, re.I):
                         continue
                     facts.append(f"The listing mentions a broker fee (\"{' '.join(bm.group(0).split()).rstrip(' ,:-')}\"), but I could not read an amount from it, so no broker fee is saved. Ask what it comes to.")
