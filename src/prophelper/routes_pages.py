@@ -18,6 +18,7 @@ Other pages (map, calendar, compare, contacts, documents, checklist, AI, CSV) li
 """
 from __future__ import annotations
 
+import re
 import shutil
 from urllib.parse import quote
 from typing import Any
@@ -691,7 +692,9 @@ def _not_found_names(values: dict[str, Any], mode: str) -> list[str]:
     def has(key: str) -> bool:
         v = values.get(key)
         return v is not None and v != ""
-    return [label for label, keys in (_PREVIEW_BUY if mode == "buy" else _PREVIEW_RENT) if not any(has(k) for k in keys)]
+    notes = str(values.get("found_in_listing") or "")
+    quoted = {lab for lab, pat in (("rent", r"rent|renta|alquiler|loyer|miete|price"), ("deposit", r"deposit|dep[o\u00f3]sito|dep")) if re.search(r'"(?:' + pat + r')\b[^"]*"\. [\d. ]+ looks like \$', notes, re.I)}  # cycle 35: a figure quoted in a note is not "not found"
+    return [label for label, keys in (_PREVIEW_BUY if mode == "buy" else _PREVIEW_RENT) if not any(has(k) for k in keys) and label not in quoted]
 
 
 def _add_page(request: Request, *, values: dict[str, Any] | None = None, parsed: bool = False, text: str = "", url: str = "",
