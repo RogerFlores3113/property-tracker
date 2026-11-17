@@ -12748,11 +12748,49 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     else:
         from . import dropguard as _dg
         facts = _try(lambda: _dg.clean_quote_notes(out, facts, text)) or facts  # cycle 29: no link, spaced or huge figure and no credit called a cost in a buyer's notes either
+    facts = _try(lambda: _plain_named_item_notes(out, facts)) or facts  # cycle 32: a clearly named monthly item gets a plain note
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
             out["found_in_listing"] = re.sub(r"\b([Aa]sk|[Cc]heck with) the landlord\b", r"\1 the seller or listing agent", out["found_in_listing"])
     return out
+
+
+_NAMED_MONTHLY_ITEM = re.compile(r"\b(?:carport|covered[ \t]+parking|garage|parking[ \t]+(?:space|spot|pass|permit)|reserved[ \t]+(?:spot|space|parking)|storage(?:[ \t]+unit)?|locker|bike[ \t]+(?:room|storage)|pest[ \t]+control|package[ \t]+(?:locker|service))\b", re.I)
+_NAMED_PARKING_ITEM = re.compile(r"\b(?:carport|covered[ \t]+parking|garage|parking|reserved[ \t]+(?:spot|space))\b", re.I)
+_PLAIN_NAMED_QUOTE = re.compile(r'^The listing also says "([^"]*)"\. (?:It is a monthly fee and it is not counted anywhere|It is not counted anywhere)\. Check what it is for\.$')
+
+
+def _plain_named_item_notes(out: dict[str, Any], facts: list[str]) -> list[str]:
+    """Cycle 32: 'The listing also says "Covered carport: $40/mo". It is a monthly fee and it is not counted anywhere. Check what it is for.' is accurate but
+    vague. A single monthly figure for an item that has a clear name (a carport, a locker, storage, a package locker) says what it is and why it is not
+    counted: another parking choice beside the parking cost that is counted, or an item that is not said to be required."""
+    new: list[str] = []
+    for f in facts:
+        m = _PLAIN_NAMED_QUOTE.match(f)
+        q = m.group(1) if m else ""
+        vals = sorted(_dollar_values(q)) if m else []
+        if not m or len(vals) != 1 or not _NOTE_MONTHLY_WORDS.search(q) or not _NAMED_MONTHLY_ITEM.search(q):
+            new.append(f)
+            continue
+        fm = _NET_DOLLARS.search(q)
+        if not fm:
+            new.append(f)
+            continue
+        label = re.sub(r"^(?:also|optional|extra)[ \t:,-]+", "", q[:fm.start()].strip(" :=-\u2013\u2014,;"), flags=re.I).strip()
+        if not label:
+            label = re.sub(r"\b(?:per[ \t]+month|a[ \t]+month|monthly|/[ \t]*(?:mo|month)|mo)\b|[\s:=\-,;]+", " ", q[fm.end():], flags=re.I).strip()
+        if not label or len(label) > 40 or re.search(r"\d", label):
+            new.append(f)
+            continue
+        amt = _money_words(vals[0])
+        label = label[:1].lower() + label[1:] if not re.match(r"[A-Z]{2}", label) else label
+        pk = out.get("parking_cost")
+        if _NAMED_PARKING_ITEM.search(label) and isinstance(pk, (int, float)) and not isinstance(pk, bool) and pk and abs(float(pk) - vals[0]) > 0.005:
+            new.append(f"The {label} is {amt} a month. It is another parking choice, so it is not counted; the parking cost counted is {_money_words(float(pk))} a month. Ask which one you would use.")
+        else:
+            new.append(f"The {label} is {amt} a month. It is not counted because the listing does not say it is required. Ask if you need it, and add it to other monthly fees if you do.")
+    return new
 
 
 def _pet_quote_placed(note: str, out: dict[str, Any]) -> bool:
