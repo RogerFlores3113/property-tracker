@@ -8783,7 +8783,7 @@ _BGB_VIA = r"(?:(?:billed(?:[ \t]+back)?[ \t]+)?(?:via|through|thru|by|using)[ \
 _BGB_FIG = r"\(?[ \t]*(?:(?:about|approx\w*|around|roughly|est\w*|~|avg\.?|average|typically|usually)[ \t]*)*~?\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly|total|combined))*[ \t]*\)?"
 _BILLED_GROUP_BREAK = re.compile(
     r"(?<![\w/])(?P<grp>" + _LLT_NAMES + r")[ \t]+(?:(?:is|are)[ \t]+)?(?P<via>" + _BGB_VIA + r")[ \t,:-]*(?P<fig>" + _BGB_FIG + r")(?P<cut>[ \t]*[,;][ \t]*)"
-    r"(?=(?:and[ \t]+)?(?:(?:tenants?|residents?|renters?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for)[ \t]+)?" + _ROLE_LIST_RAW + r")", re.I)
+    r"(?=(?:and[ \t]+)?(?:(?:tenants?|residents?|renters?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for)[ \t]+)?" + _ROLE_LIST_RAW + r"(?![ \t]*(?:[:(=-]|is|are|runs?|about|approx\w*|around|roughly|est\w*|avg\.?|~)?[ \t]*(?:[:(=-]|is|are|about|approx\w*|around|roughly|est\w*|~)?[ \t]*[$\uff04]))", re.I)
 
 
 _BILLED_GROUP_LEAD = re.compile(r"(?P<m>\$[ \t]?\d[\d,]*(?:\.\d\d)?(?:[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly))?)[ \t]*,[ \t]*(?=" + _LLT_NAMES + r"[ \t]+(?:(?:is|are)[ \t]+)?" + _BGB_VIA + r")", re.I)
