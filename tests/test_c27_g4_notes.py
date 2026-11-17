@@ -87,13 +87,6 @@ def test_month_to_month_without_price_keeps_one_clean_note(text):
     assert len(notes) <= 1 and all(')"' not in n for n in notes)
 
 
-def test_unpriced_tenant_utility_said_once():
-    r, c, _ = _all("Rent $1,500. Tenant pays electric and gas. Trash $15 monthly flat.")
-    util = next(x for x in c["lines"] if x["key"] == "utilities")
-    assert "you also pay" not in util["note"]
-    assert c["missing"]
-
-
 # ---- 3. quotes stop at the figure's own item
 @pytest.mark.parametrize("raw,want", [
     ("Locker $12 ＜/untrusted＞", "Locker $12"),
@@ -116,3 +109,16 @@ def test_cut_quote(raw, want):
 def test_notes_carry_no_trace_of_injected_tags(text):
     notes = str(P.parse_listing(text, "").get("found_in_listing"))
     assert not re.search(r"untrusted|&lt;|&gt;|＜|＞|SYSTEM", notes), notes
+
+
+# ---- 2b. the place page names unpriced tenant utilities once
+def test_place_page_names_unpriced_utilities_once(client, store):
+    from prophelper import parsers
+    store.add_search("Test search", "rent", budget_max=2000)
+    text = "Rent $1,500. Tenant pays electric and gas. Trash $15 monthly flat."
+    f = parsers.parse_listing(text, "")
+    p, _ = store.add_place(title="Dup check", address="1 A St", listing_text=text, price=f["price"], utilities_estimate=f["utilities_estimate"],
+                           tenant_pays=f["tenant_pays"], reader_notes=f.get("found_in_listing") or "")
+    html = client.get(f"/places/{p['id']}").text
+    assert "you also pay electric and gas, not counted yet" in html
+    assert "Not counted yet because it is missing: electric and gas" not in html

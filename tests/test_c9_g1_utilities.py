@@ -97,6 +97,5 @@ def test_rubs_plus_tenant_pays_electric_gas_stays_uncounted():
     assert out["tenant_pays"] == "electric, gas"
     cost = rent_cost(dict(out, listing_text=text))
     line = [l for l in cost["lines"] if l["key"] == "utilities"][0]
-    assert "It covers only what the listing prices" in line["note"] and "you also pay" not in line["note"]  # c27: the "Not counted yet because it is missing" line names electric and gas once
-    assert cost["missing"] == ["electric and gas"]
+    assert "electric" in line["note"] and "gas" in line["note"] and "not counted yet" in line["note"]
     assert "utilities estimate" not in cost["missing"] and cost["missing"] == ["electric and gas"]  # c10: names only what is missing
