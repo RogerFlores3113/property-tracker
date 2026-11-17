@@ -6899,7 +6899,7 @@ _UTIL_NEXT_AMOUNT = re.compile(r"^[ \t]*(?:about|approx\.?|approximately|around|
 
 _TENANT_WORD_U = r"(?:tenants?|residents?|renters?|lessees?|you)"
 _ALL_UTIL_PAID_BY = re.compile(
-    r"\b(?:all|every)[ \t]+(?:the[ \t]+)?utilit(?:y|ies)(?:[ \t]+(?:are[ \t]+|is[ \t]+|to[ \t]+be[ \t]+|will[ \t]+be[ \t]+)?(?:paid|covered|billed|handled|arranged|set[ \t]+up|provided|the[ \t]+responsibility|responsibility|expense|cost)(?:[ \t]+(?:of|by|to|for|on))?[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
+    r"\b(?:all|every)[ \t]+(?:the[ \t]+)?utilit(?:y|ies)(?P<br>[ \t]*\([^()\n]{0,50}\))?(?:[ \t]+(?:are[ \t]+|is[ \t]+|to[ \t]+be[ \t]+|will[ \t]+be[ \t]+)?(?:paid|covered|billed|handled|arranged|set[ \t]+up|provided|the[ \t]+responsibility|responsibility|expense|cost)(?:[ \t]+(?:of|by|to|for|on))?[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
     r"|[ \t]+(?:are|is)[ \t]+(?:the[ \t]+)?(?:tenants?|residents?|renters?|lessees?)(?:'s|s')?[ \t]+(?:responsibility|expense|cost|bill|account)\b"
     r"|[ \t]+on[ \t]+(?:the[ \t]+)?" + _TENANT_WORD_U + r"\b"
     r"|[ \t]*[:\-\u2013][ \t]*(?:the[ \t]+)?(?:tenants?|residents?|renters?|lessees?)\b(?![ \t]+(?:pays?|paid)\b[^.\n;]{0,12}\b(?:none|nothing)\b))"
@@ -7024,7 +7024,18 @@ def _all_except_estimate(text: str) -> str:
 def _say_all_utilities(text: str) -> str:
     """"Resident pays all except trash" -> "Resident pays all utilities except trash" so every reader sees the same words.
     Cycle 27: "all utilities paid by tenant", "all utilities: tenant", "tenant-paid all utilities" are "Tenant pays all utilities" in every word order."""
-    text = _ALL_UTIL_PAID_BY.sub("Tenant pays all utilities", text)
+    def keep_net(listed: str) -> str:
+        net = [w for w in re.findall(_ROLE_WORD, listed.lower()) if w in ("internet", "wifi", "wi-fi", "cable")]
+        return (" and " + ", ".join(dict.fromkeys(net))) if net else ""
+
+    def paid_by(m: re.Match[str]) -> str:
+        br = m.groupdict().get("br") or ""
+        if re.search(r"\b(?:including|incl\.?|inc\.|such as|like)\b", br, re.I) or not br:
+            return "Tenant pays all utilities" + keep_net(br)
+        return "Tenant pays all utilities" + br  # "All utilities (electric, gas, water) paid by tenant": a plain list is what is meant
+    text = _ALL_UTIL_PAID_BY.sub(paid_by, text)
+    # "Tenant pays all utilities including heat and trash, about $200": the names are examples inside "all", never the only ones the figure covers
+    text = re.sub(r"(\b(?:tenants?|residents?|renters?|lessees?|you)[ \t]+(?:pays?|(?:is|are)[ \t]+responsible[ \t]+for|responsible[ \t]+for|will[ \t]+pay)[ \t]+(?:for[ \t]+)?all[ \t]+(?:the[ \t]+)?utilit(?:y|ies))[ \t]*,?[ \t]*\(?[ \t]*(?:including|incl\.?|inc\.)[ \t]+(" + _ROLE_LIST_RAW + r")[ \t]*\)?", lambda m: m.group(1) + keep_net(m.group(2)), text, flags=re.I)
     text = _all_except_estimate(text)
     return re.sub(r"\b((?:tenants?|residents?|renters?|lessees?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for|is[ \t]+responsible[ \t]+for|responsible[ \t]+for|will[ \t]+pay|must[ \t]+pay)[ \t]+(?:for[ \t]+)?)(?:everything|all)(?=[ \t]+(?:except(?:[ \t]+for)?|other[ \t]+than|besides)\b)", r"\1all utilities", text, flags=re.I)
 
