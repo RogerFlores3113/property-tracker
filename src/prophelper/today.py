@@ -321,6 +321,35 @@ def near_miss_text(place: dict[str, Any]) -> str:
     return text
 
 
+def _price_only(place: dict[str, Any]) -> bool:
+    misses = [i for i in (place.get("score") or {}).get("items") or [] if i.get("dealbreaker_status") in ("fail", "near")]
+    return all(i.get("kind") == "price" for i in misses)
+
+
+def near_miss_footer(near: list[dict[str, Any]]) -> str:
+    """The line under the Near miss card. It says only what the cards show: "under 3 percent" only when every place is a price-only miss by
+    under 3 percent, else the real biggest overage (a guess in the cost can make a near miss bigger than 3 percent), or no percent at all."""
+    if not near:
+        return ""
+    pcts = [price_over_pct(n["place"]) for n in near]
+    known = [x for x in pcts if x is not None]
+    if known and len(known) == len(near) and all(_price_only(n["place"]) for n in near) and max(known) < NEAR_MISS_PCT:
+        return "These miss your budget by under 3 percent and nothing else. They are not in Best fits."
+    if known:
+        top = max(known) * 100
+        shown = "under 1 percent" if top < 1 else f"about {top:.0f} percent"
+        return f"These miss a must-have by a little. The biggest is {shown} over your budget. They are not in Best fits."
+    return "These miss a must-have by a little. They are not in Best fits."
+
+
+def price_over_pct(place: dict[str, Any]) -> float | None:
+    """How far over the price limit the place is, as a share of the limit (0.06 is 6 percent); None when it is not over or can't tell."""
+    for item in (place.get("score") or {}).get("items") or []:
+        if item.get("kind") == "price" and (item.get("over_amount") or 0) > 0 and item.get("over_pct"):
+            return float(item["over_pct"])
+    return None
+
+
 def near_misses(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str, Any]]:
     """Open places that fail only on cost, by under 3 percent: [{"place", "text"}], best score first."""
     out = []
@@ -670,7 +699,7 @@ def build(store: Store, search: dict[str, Any], days: int = COMING_UP_DAYS) -> d
     checks, more_checks = _cap(all_checks, CHECK_FIRST_SHOWN)
     shared = (CHECK_FIRST_BUY_TEXT if search.get("mode") == "buy" else CHECK_FIRST_TEXT) if any(c["scam"] for c in all_checks) else ""
     return {"fits": top, "unconfirmed": unconf, "needs_price": needs, "cost_check": cost_check(rows, shown_closest), "closest": near_closest, "check_first": checks, "check_first_total": len(all_checks), "check_first_shared": shared,
-            "near_miss": near, "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
+            "near_miss": near, "near_miss_footer": near_miss_footer(near), "coming": coming_up(store, search, rows, days), "waiting": waiting_rows(store, search),
             "new": [p for p in new_places(store, search) if p["id"] not in priceless], "late": late,
             "tours": store.upcoming_tours(days, search_id=search["id"]),
             "more": {"fits": more_fits, "closest": more_closest, "unconfirmed": more_unconf, "near_miss": more_near, "late": more_late, "check_first": more_checks}}
