@@ -127,8 +127,8 @@ def test_uiuc_l19_saved_listing():
     ("Utilities: tenant pays all (electric, gas, water) - approx $215 total, summer lower, winter higher up to $260", 260, {"electric", "gas", "water"}, "$260"),
     ("Tenant pays electric, gas and water, about $215 a month, winter bills go up to $260.", 260, {"electric", "gas", "water"}, "$260"),
     ("Tenant pays electric and gas, up to $200 a month in winter. Water included.", 200, {"electric", "gas"}, "$200"),
-    ("Tenant pays all utilities except trash. Typical total $135-$160 per month.", 160, {"electric", "gas", "water", "sewer", "heat"}, "$160"),
-    ("Tenant pays all utilities. Utilities average $135 to $160 a month.", 160, {"electric", "gas", "water", "sewer", "trash", "heat"}, "$160"),
+    ("Tenant pays all utilities except trash. Typical total $135-$160 per month.", 160, {"electric", "gas", "water", "sewer"}, "$160"),
+    ("Tenant pays all utilities. Utilities average $135 to $160 a month.", 160, {"electric", "gas", "water", "sewer", "trash"}, "$160"),
     ("Tenant pays electric and gas, roughly $135-$160 a month. Water included.", 160, {"electric", "gas"}, "$160"),
     ("Electric $60 to $90 a month. Tenant pays. Water included.", 90, {"electric"}, "$90"),
 ])

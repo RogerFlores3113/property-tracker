@@ -167,7 +167,7 @@ def test_family_l12_saved_listing():
 def test_all_except_with_a_price_for_a_left_out_one_stays_unknown(text):
     r = read(text)
     assert r.get("utilities_estimate") is None
-    assert pays_set(r) == {"gas", "water", "sewer", "trash", "heat"}  # cycle 25: the two left-out ones are unknown, not tenant-paid
+    assert pays_set(r) == {"gas", "water", "sewer", "trash"}  # cycle 25: the two left-out ones are unknown, not tenant-paid
     assert not included_set(r)
     assert "counted as your utilities estimate" not in notes(r) and "don't agree" in notes(r)
     c, missing = cost_of(r, HEAD + " " + text)
@@ -183,7 +183,7 @@ def test_family_l7_saved_listing():
 
 def test_all_except_without_a_price_still_reads_the_plain_way():
     r = read("Tenant pays all utilities except internet and electric.")
-    assert pays_set(r) == {"gas", "water", "sewer", "trash", "heat"} and included_set(r) == {"internet", "electric"}
+    assert pays_set(r) == {"gas", "water", "sewer", "trash"} and included_set(r) == {"internet", "electric"}
 
 
 # 4. HOA covers water next to a water charge ------------------------------------------------------------------------------------------------

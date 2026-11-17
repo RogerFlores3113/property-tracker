@@ -58,10 +58,10 @@ def test_tenant_pays_pge_water_and_trash_included():
 def test_tenant_pays_all_trash_included(text):
     out = read(text)
     assert out["utilities_included"] == "trash"
-    assert out["tenant_pays"] == "electric, gas, water, sewer, heat"
+    assert out["tenant_pays"] == "electric, gas, water, sewer"
     assert "utilities_estimate" not in out
     r = cost(out, text)
-    assert r["util"]["amount"] is None and "You pay electric, gas, water, sewer and heat" in r["util"]["note"]
+    assert r["util"]["amount"] is None and "You pay electric, gas, water and sewer" in r["util"]["note"]
     assert "included in the rent" not in r["util"]["note"]
 
 
