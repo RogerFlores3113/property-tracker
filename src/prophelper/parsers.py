@@ -311,7 +311,29 @@ def _buy_price(text: str) -> float | None:
             continue
         if best is None or a["value"] > best:
             best = a["value"]
+    if best is None:
+        best = _bare_k_price(text, first, first_start)
     return best
+
+
+_BARE_K = re.compile(r"(?:(?<=[-|:,(\u2013\u2014])|(?<=\s))(?P<n>\d{2,3}(?:\.\d)?|\d,\d{3})[ \t]?[kK](?![\w$/.%])(?![ \t]*(?:/|sq|sf|ft|per\b|a[ \t]+(?:month|year)|mo\b|hoa|tax|rent))")
+_BARE_K_BEFORE_OK = re.compile(r"(?:[-|:\u2013\u2014(]|\b(?:listed|list|price|asking|offered|for[ \t]+sale|now|reduced)(?:[ \t]+(?:at|for|to|price))*)[ \t]*$", re.I)
+
+
+def _bare_k_price(text: str, first: str, first_start: int) -> float | None:
+    """Cycle 29: a home-for-sale title that gives its price as "299k" with no dollar sign ("Victorian Village Condo - 299k", "Listed at 450K"). Only the title line
+    counts, and only when a dash, bar, colon or a price word stands right before it, so "960k views" or "2 bed 1 bath 12k sqft" are never read. 100k to 20,000k."""
+    if not first or first_start < 0:
+        return None
+    found: list[float] = []
+    for m in _BARE_K.finditer(first):
+        if not _BARE_K_BEFORE_OK.search(first[:m.start()]):
+            continue
+        n = m.group("n")
+        v = _num(n) * 1000
+        if 100000 <= v <= 20000000 and v not in found:
+            found.append(v)
+    return found[0] if len(found) == 1 else None
 
 
 _DASH_PRICE_LINE = re.compile(r"^[ \t*#|]*(?P<head>[^\n$]*?\b(?:studio|\d\s*(?:br|bd|bed(?:room)?s?)|(?:one|two|three|four)[- ]bed(?:room)?s?|starting[ \t]+at|starts[ \t]+at)\b[^\n$]*?)"
@@ -591,6 +613,7 @@ _GC_AFTER_KW = re.compile(r"^[ \t]*(?:/[ \t]*\w+[ \t]*)?(?:" + _GC_KW.pattern + 
 _GC_BACKWARD = re.compile(r"^[ \t:,\-]*(?:was|were|from|not|previously|earlier|before|originally|formerly|prior|used|ignore|instead)\b", re.I)
 # "$1,410 ($1,370 now)": the figure before the bracket is the old one, the figure inside it with "now" after it is the new one
 _GC_PAREN_NOW = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b", re.I)
+_GC_WAS_PAREN = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*(?:was|previously|formerly|used[ \t]+to[ \t]+be)[ \t:]*\$", re.I)
 _GC_NOW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b[ \t]*(?:[)\]]|$|[,;|])", re.I)
 
 
@@ -667,6 +690,16 @@ def _gc_unit_value(field: str, value: float, after: str) -> float:
     return value
 
 
+_GC_NONRENT = re.compile(r"\b(?:utilit\w*|electric\w*|gas|water|sewer|trash|garbage|internet|cable|wi-?fi|fees?|deposits?|pets?|dogs?|cats?|parking|garage|carport|storage|insurance|cleaning|tax(?:es)?|hoa|dues|bond|credit|closing|application|admin\w*|move[- ]?in|laundry|amenit\w*|per[ \t]+(?:bed|room|person|unit)|each|surcharge|assessment|special|promo\w*|concession|earnest)\b|/[ \t]*(?:bed|room)", re.I)
+
+
+def _gc_title_rent(window: str) -> bool:
+    """"Elm Street Commons - bright 1 bedroom, 1 bath, $1,350 ($1,420 now)": a bare figure in a title or description line, with a bracket that gives
+    its new figure, is the rent unless the words just before it (back to the last comma, dash or colon) name some other cost."""
+    clause = re.split(r"[,;:|\u2013\u2014]|[ \t]-[ \t]", window)[-1]
+    return not _GC_NONRENT.search(clause)
+
+
 def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """Cycle 27: one step for every named fact a "Corrected:", "Update:", "now" or "updated:" wording replaces: rent, deposit, HOA, property tax,
     application fee and parking cost. Layouts: "Corrected: rent is now $1,360", "Rent $1,275. Corrected: now $1,325 per month.", "HOA was $340/mo, now $385/mo",
@@ -700,6 +733,9 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                     role = "hard"
                 if role is None and _GC_NEW_AFTER.match(after):
                     role = "soft"
+            was_paren = buying and role is None and bool(_GC_WAS_PAREN.match(after))  # cycle 29: "HOA $350/mo (was $325)": the figure in front is the new one
+            if was_paren:
+                role = "soft"
             field: str | None = None
             inherited = False
             k_named = None
@@ -720,9 +756,11 @@ def _general_corrections(text: str, buying: bool = False) -> tuple[dict[str, dic
                 kk = _GC_AFTER_KW.match(after)
                 if kk and kk.lastgroup:
                     field = "named" if kk.lastgroup == "named" else _GC_FIELD[kk.lastgroup]
+            if was_paren and field not in ("hoa", "property_tax", "deposit", "application_fee", "parking_cost", "seller_credit", "closing_costs"):
+                role = None  # a rent or a named fee with "(was $X)" is price history, not a correction
             hard = role == "hard" or lead
-            if field is None and role == "old" and chain is None and not kws and _GC_PAREN_NOW.match(after) and 300 <= value <= 30000 \
-                    and not _GC_CUE.search(window) and not _gc_names_other(window):
+            if field is None and role == "old" and chain is None and not kws and (mo_ or _GC_PAREN_NOW.match(after)) and 300 <= value <= 30000 \
+                    and not _GC_CUE.search(window) and (not _gc_names_other(window) or (not buying and _gc_title_rent(window))):
                 field = "price"  # "| $1,410 ($1,370 now) |": a bare header figure with its correction beside it is the rent
             if field is None and role in ("hard", "soft") and hard and not _gc_names_other(window):
                 for pf in reversed(prev_fields):  # "Corrected: now $1,325 per month": the fact is the one the sentence before it was about
@@ -791,6 +829,26 @@ def _gc_fmt(field: str, v: float) -> str:
     return _usd(v) + (" a month" if field == "hoa" else " a year" if field == "property_tax" else "")
 
 
+def _gc_earlier_rents(text: str, ent: dict[str, Any], new: float) -> list[float]:
+    """The rent-sized figures that stand before a rent correction and differ from the new rent ("$3,250/mo. Update: rent is $3,225." gives [3250.0]),
+    skipping any figure in a clause that names another cost."""
+    spans = ent.get("spans") or []
+    first = min((a for a, _b in spans), default=len(text))
+    found: list[float] = []
+    for m in re.finditer(r"\$[ \t]?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d|,\d)", text[:first]):
+        v = _num(m.group(1) + ("." + m.group(2) if m.group(2) else ""))
+        if not 300 <= v <= 30000 or _same_num(v, new):
+            continue
+        clause = re.split(r"[.!?\n]", text[max(0, m.start() - 30):m.start()])[-1]
+        if _GC_NONRENT.search(clause) or _GC_CUE.search(clause):
+            continue
+        if re.match(r"[ \t]*(?:/[ \t]*(?:yr|year|week|wk|day|night|bed|room)|per[ \t]+(?:year|week|night|bed|room|person)|deposit|fee|application)", text[m.end():m.end() + 20], re.I):
+            continue
+        if v not in found:
+            found.append(v)
+    return found
+
+
 def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str, dict[str, Any]], unplaced: list[str], buying: bool, only: set[str] | None = None) -> None:
     """Apply the corrections to the read fields. Each applied correction gets one short note that names the old value as not used; an older note about
     the old value goes. A correction that cannot be placed is quoted."""
@@ -808,6 +866,14 @@ def _gc_apply(text: str, out: dict[str, Any], facts: list[str], found: dict[str,
         olds = list(ent["olds"])
         if not olds and isinstance(before, (int, float)) and not isinstance(before, bool) and not _same_num(before, new):
             olds.append(float(before))
+        if not olds and fld == "price" and not buying:
+            olds_found = _gc_earlier_rents(text, ent, new)
+            if len(olds_found) == 1:
+                olds.append(olds_found[0])
+            elif olds_found or ent.get("sentence"):
+                # the earlier figure is unclear (or the saved rent already holds the new one): one short note, without an old figure, so the correction never goes unmentioned
+                if not any("corrects the rent" in f for f in facts):
+                    facts.append(f"The listing corrects the rent: it is now {_usd(new)}. Ask the landlord to confirm it.")
         out[fld] = _tidy_number(new)
         if not olds:
             continue
@@ -906,6 +972,12 @@ def _fee_text_corrections(text: str, found: dict[str, dict[str, Any]]) -> tuple[
                     edits.append((c0, c1, " " * (c1 - c0)))
             if fresh:
                 c0, c1, _r, _v, u = fresh[-1]
+                if text[c0:c0 + 1] == "$":  # cycle 29: "Amenity fee: $35 per month (now $45)": the bracket and its "now" go with the figure
+                    bm = re.search(r"[ \t]*[(\[][ \t]*(?:now|currently|updated?|corrected?|new)?[ \t:]*$", text[:c0], re.I)
+                    cm = re.match(r"[ \t]*[)\]]", text[c1:])
+                    if bm and cm:
+                        c0, c1 = bm.start(), c1 + cm.end()
+                u = u or unit  # "(now $45)" has no unit of its own: it is the unit of the figure it replaces
                 edits.append((c0, c1, f"{name.capitalize()} {kind} ${_fmt_plain(new)}{(' ' + u) if u else ''} "))
         olds = [o for o in olds if o != new]
         now_txt = f"${_fmt_plain(new)}" + (" a month" if monthly else "")
@@ -10115,7 +10187,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                              "Check the rent with the landlord.")
     if buying and isinstance(price_read, (int, float)) and price_read < 20000:
         # A monthly figure ("monthly cost about $1,988") is not the asking price of a home for sale.
-        if not (current or {}).get("price"):  # a price the caller already has needs no "check the asking price" note
+        was_figure = bool(re.search(r"\b(?:was|were|previously|formerly|earlier|old|not)[ \t:]*\$[ \t]?" + re.escape(f"{price_read:,.0f}") + r"(?![\d,])", text, re.I)) \
+            or any(price_read in (e.get("olds") or []) for e in gc_found.values())
+        if was_figure and not (current or {}).get("price"):  # cycle 29: "HOA $350/mo (was $325)": the old figure of a correction is never a candidate price
+            facts.append("The listing does not give a clear asking price. Check the asking price.")
+        elif not (current or {}).get("price"):  # a price the caller already has needs no "check the asking price" note
             facts.append(
                 f'The listing has ${price_read:,.0f} that looks like a monthly amount, not an asking price, so it is not used as the asking price. Check the asking price.')
         price_read = None
@@ -11855,6 +11931,7 @@ def _semantic_placed(amount: float, phrase: str, out: dict[str, Any]) -> bool:
     """True when ``amount`` sits in an item of ``phrase`` that names a cost a field already carries: a utility the place says the tenant
     pays (with a utilities estimate that holds at least the utility amounts of the line), or a fee, dues, parking or pet rent item
     with its own field that holds at least that amount. The field is what is counted, so the amount is not "not counted"."""
+    phrase = re.sub(r"\bThe earlier [^.]*?\b(?:is|are) not used\.", " ", phrase)  # cycle 29: the old figure of a correction is not part of the fee line the new one sits in
     items = [x for x in _ITEM_SPLIT.split(phrase) if x and x.strip()]
     tenant = _tenant_names(out)
     est = out.get("utilities_estimate")
