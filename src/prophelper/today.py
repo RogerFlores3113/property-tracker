@@ -126,6 +126,16 @@ def low_rent(place: dict[str, Any], mode: str | None = None) -> str:
     return str((place.get("score") or {}).get("rent_check") or "") or scoring.rent_looks_low(place, place.get("cost"), None, mode)
 
 
+def _unread_amounts(place: dict[str, Any]) -> str:
+    """Cycle 32: what the listing gives that the cost leaves out, by name ("the $96 amount in the listing notes is not counted yet"). The old
+    "the listing gives amounts that were not read" stays only when the cost has no name for them."""
+    label = str((place.get("cost") or {}).get("listing_notes_label") or "")
+    if label and label != "some amounts in the listing notes":
+        plural = bool(re.search(r"\bamounts\b", label)) or bool(re.match(r"the .+ and .+ in the listing notes$", label))
+        return f"{label} {'are' if plural else 'is'} not counted yet"
+    return "the listing gives amounts that were not read"
+
+
 def cost_unsettled(place: dict[str, Any]) -> str:
     """Why a place's monthly cost can't be trusted for a ranking, in plain words ('' when it can). Rent: the listing's utilities
     lines disagree (so none are counted), a utility the tenant pays has no amount, or two or more parts of the monthly cost
@@ -152,11 +162,11 @@ def cost_unsettled(place: dict[str, Any]) -> str:
     gives_amounts = bool(compare.cost_may_be_higher(place))  # the listing states amounts that the reader did not place
     if named:
         if gives_amounts:
-            return f"you pay {_join(named)} and the listing gives amounts that were not read"
+            return f"you pay {_join(named)} and {_unread_amounts(place)}"
         return f"you pay {_join(named)} but no amount is counted yet"
     if utilities and _TENANT_PAYS_UTILITIES.search(" ".join(str(place.get(k) or "") for k in ("listing_text", "reader_notes", "ai_notes", "notes"))):
         if gives_amounts:
-            return "you pay the utilities and the listing gives amounts that were not read"
+            return f"you pay the utilities and {_unread_amounts(place)}"
         return "you pay the utilities but no amount is counted yet"  # the whole utilities bill is unknown
     parts = []
     if utilities:

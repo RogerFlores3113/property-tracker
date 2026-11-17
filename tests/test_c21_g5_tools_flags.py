@@ -97,7 +97,9 @@ def test_cost_unsettled_says_amounts_not_read(store):
     assert "no amount is counted yet" in today.cost_unsettled(row)
     row = {**row, "cost": {**row["cost"], "uncounted": list(row["cost"]["uncounted"]) + ["some amounts in the listing notes"], "listing_notes_label": "the $96 amount in the listing notes"}}
     why = today.cost_unsettled(row)
-    assert "the listing gives amounts that were not read" in why and "no amount is counted" not in why
+    assert "the $96 amount in the listing notes is not counted yet" in why and "no amount is counted" not in why  # cycle 32: Today names the amount
+    row = {**row, "cost": {**row["cost"], "listing_notes_label": "some amounts in the listing notes"}}
+    assert "the listing gives amounts that were not read" in today.cost_unsettled(row)
 
 
 # ---------------------------------------------------------------- 4 buyer insurance

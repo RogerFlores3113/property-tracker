@@ -2569,11 +2569,41 @@ def _beds(text: str) -> float | None:
     if sl:
         hits.append((sl[0], sl[1]))
     hits = [h for h in hits if h[1] <= 20]
+    hits = _drop_also(text, hits, _layout_starts(text, xb, sl))
     rstarts = _beds_range_starts(text)
     if rstarts:  # cycle 30: "1 - 2 Beds ... 2 Bed 2 Bath $1,495": the unit line is the count, never the low end of the range
         rest = [h for h in hits if h[0] not in rstarts]
         hits = rest or hits  # a range with no unit line anywhere keeps the old reading
     return min(hits)[1] if hits else None
+
+
+_ALSO_LAY = (r"(?:\d{1,2}(?:\.\d)?[ \t]*(?:/|[xX\u00d7])[ \t]*\d(?:\.\d)?|\d{1,2}(?:\.\d)?[ \t]*-?[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)"
+             r"(?:[ \t,/|&-]*(?:and[ \t]+)?\d(?:\.\d)?[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)?"
+             r"|\d(?:\.\d)?[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)")
+_ALSO_AFTER = re.compile(_ALSO_LAY + r"[ \t]*(?:units?|floor[ \t]?plans?|plans?|layouts?|apartments?|apts?|townhomes?|homes?)?[ \t]*[,(\-]*[ \t]*(?:are[ \t]+|is[ \t]+)?"
+                         r"(?:also[ \t]+(?:available|offered|avail)|(?:available|offered)[ \t]+too|as[ \t]+well)\b", re.I)
+_ALSO_BEFORE = re.compile(r"\balso[ \t]+(?:available|offered)[ \t]*[:,\-]?[ \t]*(?:in[ \t]+)?$", re.I)
+
+
+def _also_layout(text: str, start: int) -> bool:
+    """Cycle 32: "2/2 also available", "(2x2 also available)", "Also available: 2/2 units" name ANOTHER plan, never this unit's bedrooms or baths."""
+    return bool(_ALSO_AFTER.match(text, start)) or bool(_ALSO_BEFORE.search(text[max(0, start - 30):start]))
+
+
+def _layout_starts(text: str, xb: Any, sl: Any) -> set[int]:
+    fx = _first_x_match(text) if xb else None
+    return ({fx.start()} if fx else set()) | ({sl[0]} if sl else set())
+
+
+def _drop_also(text: str, hits: list[tuple[int, float]], layout_at: set[int]) -> list[tuple[int, float]]:
+    """Take out the readings that name another plan. When nothing else is left, a slash or 'x' layout (positions in layout_at) still goes
+    (unknown beats wrong), but a plain count stays."""
+    keep = [h for h in hits if not _also_layout(text, h[0])]
+    if keep:
+        return keep
+    if any(not _also_layout(text, m.start()) for m in re.finditer(r"(?<![\d.,$/])\b\d{1,2}[ \t]*-?(?:bed(?:room)?s?|bds?|brs?|bdrms?)\b", text, re.I)):
+        return []  # another plan names the unit's bedrooms, so the "also available" bath count is not this unit's
+    return [h for h in hits if h[0] not in layout_at]
 
 
 _BATH_NUM = r"(\d{1,2}(?:\.\d)?|one|two|three|four|five)"
@@ -2634,6 +2664,7 @@ def _baths(text: str) -> float | None:
     if sl:
         hits.append((sl[0], sl[2]))
     hits = [h for h in hits if h[1] <= 15]
+    hits = _drop_also(text, hits, _layout_starts(text, xb, sl))
     return min(hits)[1] if hits else None
 
 
@@ -10338,8 +10369,15 @@ _CITY_STOP = {"unit", "apt", "apartment", "suite", "call", "text", "email", "con
               "parking", "heat", "water", "gas", "electric", "deposit", "rent", "lease", "tour", "showing", "view", "built", "pool", "gym"}
 
 
+_RATING = re.compile(r"(?<![\w$.,/#-])\d{1,2}(?:\.\d)?[ \t]*(?:/[ \t]*10|out[ \t]+of[ \t]+10|/[ \t]*5|out[ \t]+of[ \t]+5)\b(?![ \t]*(?:bed|bd|br|ba|bath|mile|mi\b|min))", re.I)
+
+
 def _address(text: str) -> dict[str, str]:
+    text = _RATING.sub(lambda m: " " * len(m.group(0)), text)  # cycle 32: "rate this unit 10/10", "Apt 10/10 rating" is a score, never unit #10
     out = _address_raw(text)
+    if out.get("unit") and out.get("address") and re.search(r"\b(?:unit|apt\.?|apartment|suite|ste\.?)[ \t]*#?[ \t]*" + re.escape(out["address"]) + r"\b", text, re.I) \
+            and not re.search(r"\b(?:unit|apt\.?|apartment|suite|ste\.?)[ \t]*#?[ \t]*" + re.escape(str(out["unit"])) + r"[ \t]*(?:,|\n|$)", text, re.I | re.M):
+        out.pop("unit")  # cycle 32: "Corner unit 800 Maple Dr": the 800 is the street number, not unit 800
     for key in ("address", "city"):
         if out.get(key):
             out[key] = _normal_case(out[key])
@@ -10662,9 +10700,29 @@ def _title_suffix_cut(out: str) -> str:
         return out[:m.start()]
 
 
+_TITLE_RANGE_TAIL = re.compile(r"[ \t]*(?:[-|:,\u2013\u2014(\[][ \t]*)?\b(?:studio|\d)[ \t]*(?:-|\u2013|\u2014|to)[ \t]*\d[ \t]*(?:beds?|bedrooms?|brs?|bds?)\b"
+                               r"(?:[ \t]*[-|,]?[ \t]*(?:also[ \t]+|now[ \t]+)?(?:available|avail|offered))?[ \t!.)\]]*$", re.I)
+_TITLE_PROMO_TAIL = re.compile(r"[ \t]*[-|:,\u2013\u2014][ \t]*(?:now|pre)[- ]?(?:leasing|renting|open|available)\b[^\n]{0,25}$", re.I)
+
+
+def _title_tail_cut(title: str) -> str:
+    """Cycle 32: a plan range with "also available" ("Sunset Row 3BR Townhouse 1 - 2 Beds also available") and a "- Now Renting" promo are facts and offers,
+    not part of the name. The name in front stays; a title that would be left with only hype words ("Brand-new 1 - 2 Beds") is not cut here."""
+    out = title
+    for pat in (_TITLE_RANGE_TAIL, _TITLE_PROMO_TAIL):
+        m = pat.search(out)
+        if not m:
+            continue
+        head = out[:m.start()].strip(" -|:,([\u2013\u2014")
+        words = [w for w in re.findall(r"[A-Za-z]{3,}", head) if not _NAME_STOP_WORDS.fullmatch(w)]
+        if len(head) >= 3 and words:
+            out = head
+    return out
+
+
 def _clean_title(title: str) -> str:
     """Drop a trailing " - 2 bed 1 bath" or " | $1,500/mo" (facts, not part of the name). Never leaves it empty."""
-    out = title
+    out = _title_tail_cut(title)
     # "Studio-1BR Prairie Commons from $1,299 - $1,420": a plan range in front of the name and a "from" price after it are facts, not the name
     lead = re.match(r"(?:studio|\d{1,2}[ \t]*(?:br|bd|bed(?:room)?s?))[ \t]*[-/\u2013][ \t]*(?:studio|\d{1,2}[ \t]*(?:br|bd|bed(?:room)?s?))[ \t]+(?=[A-Z])", out, re.I)
     if lead:
@@ -10900,6 +10958,14 @@ def strip_site_label(title: str) -> str:
         if cut == t or len(cut) < 3:
             break
         t = cut
+    # cycle 32: the label can come after a name and a bar ("Hartwell Place | Zillow-ish listing - 1 Bed Rent $1,425")
+    mid = re.sub(r"(?<=[|\u2013\u2014]) (?:fb marketplace|facebook marketplace|marketplace|craigslist|zillow|trulia|redfin|hotpads|zumper|apartments\.com|realtor\.com)(?:-?ish)?(?:[ \t]+(?:style|listing|post|ad))?[ \t]*[-:|\u2013\u2014][ \t]+(?=\S)", " ", t, count=1, flags=re.I)
+    if len(mid) >= 3:
+        t = mid
+    # a bracket that was never closed and holds a price or an old-price word ("... (previously $1,490") is cut off the end
+    dang = re.search(r"[ \t]*[(\[][^)\]]*$", t)
+    if dang and re.search(r"\$|\b(?:previously|formerly|was|reduced|originally|now)\b", dang.group(0), re.I) and len(t[:dang.start()].strip(" ,;:-|")) >= 3:
+        t = t[:dang.start()].strip(" ,;:-|")
     return t if t != " ".join(str(title or "").split()) else title
 
 
@@ -11010,6 +11076,27 @@ def _finish_title(title: str, text: str) -> str:
     return title
 
 
+_AREA_LINE = re.compile(r",[ \t]*(?:[A-Z][A-Za-z .'-]+,[ \t]*)?[A-Z]{2}\b")
+
+
+def _headline_over_area(text: str, building: str) -> bool:
+    """Cycle 32: True when the first line is a descriptive headline (a bed count and a kind of place or an area, "Bright Two Bedroom in Grandview - Now Renting")
+    and the "building" found is only the area part of a city and state line further down ("Grandview Heights, Columbus, OH 43212")."""
+    lines = [" ".join(x.strip(" \t|\u2022\u00b7*#").split()) for x in text.splitlines()[:30]]
+    lines = [x for x in lines if x]
+    if len(lines) < 2:
+        return False
+    first = lines[0]
+    src = next((x for x in lines if building in x), "")
+    if not src or src == first or not _AREA_LINE.search(src) or _REAL_PLACE_NOUN.search(building):
+        return False
+    if _building_name(first) or not 8 <= len(first) <= 70 or not _BED_CUE.search(first) or _not_a_name(first) or _fee_or_policy_head(first) or _policy_title_line(first):
+        return False
+    if re.search(r"\$|\d{3}[- .]\d{4}|https?:", first) or _ADDRESS.match(first) or first.endswith((".", "?")):
+        return False
+    return bool(re.search(r"[A-Za-z]{4,}", _BED_CUE.sub(" ", first)))
+
+
 def _title_raw(text: str, found: dict[str, Any]) -> str:
     """A short title: the building name, else the first line of the paste that reads like a name or heading, else the street
     address. A site name (Zillow, Realtor.com) is never the title."""
@@ -11020,6 +11107,8 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
     if headline:
         return headline
     building = _building_name(text)
+    if building and _headline_over_area(text, building):
+        building = ""  # cycle 32: "Bright Two Bedroom in Grandview" is the name; the "Grandview Heights, Columbus, OH" line under it is only the area
     if building:
         return building
     lines = [" ".join(x.strip(" \t|\u2022\u00b7*#").split()) for x in text.splitlines()[:25]]
@@ -13051,6 +13140,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     mm_figs = {_num(m.group(1)) for f in facts for m in [re.match(r"The listing gives a rent of \$([\d,]+) a month, but the rent saved on this place is ", f)] if m}
     if mm_figs and not buying:  # cycle 32: the rent mismatch note names the listed rent, so no second note calls the same figure a floor plan, an old price or a fee
         facts = [f for f in facts if not (_QUOTE_ONLY.match(f) and _dollar_values(_QUOTE_ONLY.match(f).group(1)) <= mm_figs)]
+    facts = _try(lambda: _plain_named_item_notes(out, facts)) or facts  # cycle 32: a clearly named monthly item gets a plain note
+    if not buying:
+        facts = _try(lambda: _formula_figure_notes(text_full, facts)) or facts  # cycle 32: a figure beside formula-like text is named, never silent
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
         if buying:  # a note for a home for sale says seller or listing agent, never landlord (the quoted listing words are left alone)
@@ -13059,6 +13151,71 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
 
 
 _QUOTE_ONLY = re.compile(r'The listing also says "([^"]+)"\. It (?:looks like|is a monthly fee|is not counted)[^\n]*$')
+_NAMED_MONTHLY_ITEM = re.compile(r"\b(?:carport|covered[ \t]+parking|garage|parking[ \t]+(?:space|spot|pass|permit)|reserved[ \t]+(?:spot|space|parking)|storage(?:[ \t]+unit)?|locker|bike[ \t]+(?:room|storage)|pest[ \t]+control|package[ \t]+(?:locker|service))\b", re.I)
+_NAMED_PARKING_ITEM = re.compile(r"\b(?:carport|covered[ \t]+parking|garage|parking|reserved[ \t]+(?:spot|space))\b", re.I)
+_PLAIN_NAMED_QUOTE = re.compile(r'^The listing also says "([^"]*)"\. (?:It is a monthly fee and it is not counted anywhere|It is not counted anywhere)\. Check what it is for\.$')
+
+
+_FORMULA_BIT = re.compile(r"[=\uff1d@][ \t]?[\"']?[A-Za-z]{2,12}[|(]|\+[ \t]?[A-Za-z]{2,12}\|")
+
+
+def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
+    """Cycle 32: 'Valet trash $35 ="cmd|' /C calc'!A0" per month.' The odd text is ignored, but the figure in front of it is never left out of the notes
+    in silence: when no note names it, a short note says what it sat next to and to check it. A figure a note already quotes or names is left alone."""
+    add: list[str] = []
+    have = " ".join(facts)
+    for line in text.splitlines():
+        fm = _FORMULA_BIT.search(line)
+        if not fm:
+            continue
+        figs = [m for m in _NET_DOLLARS.finditer(line[:fm.start()]) if fm.start() - m.end() <= 25 and not re.search(r"[.!?;](?:\s|$)", line[m.end():fm.start()])]
+        if not figs:
+            continue
+        m = figs[-1]
+        vals = sorted(_dollar_values(m.group(0)))
+        if not vals:
+            continue
+        shown = _money_words(vals[0])
+        if re.search(re.escape(shown) + r"(?![\d,])", have):
+            continue
+        words = re.findall(r"[A-Za-z][A-Za-z'&-]*", re.split(r"[.;,!?:|]", line[:m.start()])[-1])[-3:]
+        label = " ".join(w for w in words if w.lower() not in ("and", "the", "a", "also", "plus", "is", "are", "of", "for"))
+        what = f"{shown} for {label.lower()}" if label else shown
+        add.append(f"The listing has {what} next to text that looks like a spreadsheet formula. The odd text was ignored. Ask the landlord what the {shown} is for, and whether it is a monthly cost.")
+        have += " " + add[-1]
+    return facts + add
+
+
+def _plain_named_item_notes(out: dict[str, Any], facts: list[str]) -> list[str]:
+    """Cycle 32: 'The listing also says "Covered carport: $40/mo". It is a monthly fee and it is not counted anywhere. Check what it is for.' is accurate but
+    vague. A single monthly figure for an item that has a clear name (a carport, a locker, storage, a package locker) says what it is and why it is not
+    counted: another parking choice beside the parking cost that is counted, or an item that is not said to be required."""
+    new: list[str] = []
+    for f in facts:
+        m = _PLAIN_NAMED_QUOTE.match(f)
+        q = m.group(1) if m else ""
+        vals = sorted(_dollar_values(q)) if m else []
+        if not m or len(vals) != 1 or not _NOTE_MONTHLY_WORDS.search(q) or not _NAMED_MONTHLY_ITEM.search(q):
+            new.append(f)
+            continue
+        fm = _NET_DOLLARS.search(q)
+        if not fm:
+            new.append(f)
+            continue
+        label = re.sub(r"^(?:also|optional|extra)[ \t:,-]+", "", q[:fm.start()].strip(" :=-\u2013\u2014,;"), flags=re.I).strip()
+        if not label:
+            label = re.sub(r"\b(?:per[ \t]+month|a[ \t]+month|monthly|/[ \t]*(?:mo|month)|mo)\b|[\s:=\-,;]+", " ", q[fm.end():], flags=re.I).strip()
+        if not label or len(label) > 40 or re.search(r"\d", label):
+            new.append(f)
+            continue
+        amt = _money_words(vals[0])
+        label = label[:1].lower() + label[1:] if not re.match(r"[A-Z]{2}", label) else label
+        pk = out.get("parking_cost")
+        if _NAMED_PARKING_ITEM.search(label) and isinstance(pk, (int, float)) and not isinstance(pk, bool) and pk and abs(float(pk) - vals[0]) > 0.005:
+            new.append(f"The {label} is {amt} a month. It is another parking choice, so it is not counted; the parking cost counted is {_money_words(float(pk))} a month. Ask which one you would use.")
+        else:
+            new.append(f"The {label} is {amt} a month. It is not counted because the listing does not say it is required. Ask if you need it, and add it to other monthly fees if you do.")
+    return new
 
 
 def _pet_quote_placed(note: str, out: dict[str, Any]) -> bool:
