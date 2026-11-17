@@ -15114,6 +15114,9 @@ def _net_clause(text: str, start: int, end: int, limit: int = 160) -> str:
         if at >= 0:
             left = max(left, at + len(sep))
     rights = [i for i in (_end_after(text, c, end) for c in (*_NET_ENDS, *_NET_SEGMENT_SEPS)) if i >= 0]
+    nxt_word = text[end:].lstrip(" \t")[:1]
+    if end >= 1 and text[end - 1] == "." and end - 1 > start and _real_end(text, end - 1) and not nxt_word.islower():
+        rights.append(end - 1)  # cycle 34: the match itself ends in the sentence's full stop ("hasta 70 lb."): the quote ends there, not at the next sentence's stop
     right = min(rights) if rights else len(text)
     lo, hi = left, right
     if hi - lo > limit:
