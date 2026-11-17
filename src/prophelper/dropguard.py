@@ -452,6 +452,8 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue
         if _total_lists_its_items(text, m.start(), m.end(), amount, r):
             continue  # cycle 33: "Move-in: $2,300 total ($1,150 + $1,150)": a total whose own items add up to it is no amount left out
+        if _P()._total_of_counted(text, m.start(), m.end(), amount, r):
+            continue  # cycle 33: "= total $4,800" is the sum of the rent, deposit and fees that are counted, not an amount left out
         if _STALE_UTIL_ESTIMATE.search(item) and "corrects the utilities" in notes and isinstance(est, (int, float)) and not isinstance(est, bool) and abs(amount - float(est)) >= 0.5:
             continue  # cycle 29: "Estimate $100 for all of it" next to a correction that says the tenant now pays all utilities (est. $130): the old estimate is not used and is no missing amount
         if _CONCESSION_ITEM.search(item) and any(_CONCESSION_NOTE.search(u) for u in notes.split("\n")):

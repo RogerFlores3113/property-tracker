@@ -34,7 +34,7 @@ from . import commute as commute_mod
 from . import compare as compare_mod
 from . import guards, helpers, redflags, scoring
 from . import stages as st
-from .parsers import fallback_title, split_address_unit, split_full_address, street_with_unit
+from .parsers import clean_city, fallback_title, split_address_unit, split_full_address, street_with_unit
 from . import money as money_mod
 from . import movein
 from . import today as today_view
@@ -971,6 +971,8 @@ def build_server(store: Store) -> FastMCP:
             for k in ("unit", "city", "state", "zip"):
                 if parts.get(k):
                     fields[k] = parts[k]
+        if isinstance(fields.get("city"), str) and fields["city"].strip():
+            fields["city"] = clean_city(fields["city"])  # cycle 33: "Champaign." is "Champaign"
         return {k: v for k, v in fields.items() if v is not None}
 
     def set_commutes(place: dict[str, Any], commutes: list[dict[str, Any]] | None) -> list[str]:

@@ -456,6 +456,8 @@ def _closing_help_only(place: dict[str, Any]) -> bool:
 
 def _verb(parts: list[str]) -> str:
     """" is" for one thing ("parking"), " are" for several or for a plural name ("some amounts in the listing notes", "utilities")."""
+    if len(parts) == 1 and re.match(r"the .+ in the listing notes$", parts[0]):  # cycle 33: "the $96 amount in the listing notes" is one thing, "the $96 and $40 amounts in ..." are two
+        return " are" if re.search(r"\bamounts\b", parts[0]) or re.match(r"the .+ and .+ in the listing notes$", parts[0]) else " is"
     return " is" if len(parts) == 1 and not re.search(r"\bamounts\b|(?:ies|charges|costs|fees|notes)$| and ", parts[0]) else " are"
 
 
@@ -469,7 +471,8 @@ def unknown_cost_parts(place: dict[str, Any]) -> list[str]:
         if u == money_mod.LISTING_NOTES_UNCOUNTED:
             if cost.get("mode") == "buy" and _closing_help_only(place):
                 continue  # a closing-help offer is about cash to close, not a monthly cost part
-            out.append("some amounts in the listing notes")
+            label = str(cost.get("listing_notes_label") or "")
+            out.append(label if label and label != money_mod.LISTING_NOTES_UNCOUNTED else "some amounts in the listing notes")  # cycle 33: name the amounts ("the $250 and $400 amounts in the listing notes")
             continue
         name = re.sub(r"\s*\(.*\)\s*$", "", u).strip()
         if cost.get("mode") == "buy" and name.lower().startswith("parking"):

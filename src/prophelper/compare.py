@@ -475,9 +475,53 @@ def nothing_unknown_guard(p: dict[str, Any], text: str) -> str:
     cash = cash_unknown_parts(p)
     if cash:  # cycle 27: a deposit or pet charge nobody filled in is an unknown, so "Nothing unknown" never sits beside "deposit not known"
         return "Unknown: " + ", ".join(cash)
+    omitted = pay_list_unpriced(p)
+    if omitted:  # cycle 33: a utility the listing says the tenant pays that has no price is an unknown, never "Nothing unknown"
+        return f"Unknown: utilities you pay ({_join_and(omitted)})"
     if cash_left_out(p):
         return "Unknown: an amount left out of the cash needed up front"
     return text
+
+
+_PAY_CLAUSE = re.compile(r"\b(?:tenants?|residents?|renters?|you)[ \t]+(?:pays?|are[ \t]+responsible[ \t]+for|is[ \t]+responsible[ \t]+for)[ \t]*[:\-]?[ \t]*([^.\n]*)", re.I)
+_PAY_UTILITY = re.compile(r"\b(electric(?:ity)?|gas|water|sewer|trash|garbage|internet|wi-?fi|cable)\b", re.I)
+
+
+def pay_list_unpriced(p: dict[str, Any]) -> list[str]:
+    """Cycle 33: utilities the listing text says the tenant pays ("Tenant pays electric; internet.") that the place's pay list does not hold and that no figure sits
+    beside. The pay list can lose an item of a semicolon or run-together list, and "Nothing unknown" must not be said for a cost the listing leaves open. A clause with
+    "except", "but" or "not" is left alone (it can mean the opposite), and so is a utility the listing says is included."""
+    cost = p.get("cost") or {}
+    if cost.get("mode") != "rent":
+        return []
+    text = str(p.get("listing_text") or "")
+    if not text:
+        return []
+    have = {w.lower() for w in money_mod.tenant_pays_list(p)}
+    have |= {w.strip().lower() for w in re.split(r"[,;/]| and ", str(p.get("utilities_included") or "")) if w.strip()}
+    have |= {"internet" if w in ("wifi", "wi-fi") else w for w in have}
+    found: list[str] = []
+    for m in _PAY_CLAUSE.finditer(text):
+        clause = m.group(1)
+        if re.search(r"\b(?:except|but|not|excluding|other[ \t]+than|besides|typical|average|estimate|bills?)\b", clause, re.I):
+            clause = re.split(r"\b(?:except|but|not|excluding|other[ \t]+than|besides|typical|average|estimate|bills?)\b", clause, maxsplit=1, flags=re.I)[0]
+            if re.search(r"\b(?:except|but|not|excluding)\b", m.group(1)[:len(clause)], re.I):
+                continue
+        for item in re.split(r"[;|]|,|/|&|\band\b|\+", clause):
+            if "$" in item or re.search(r"\d", item):
+                continue  # a price sits beside it
+            um = _PAY_UTILITY.search(item)
+            if not um or re.search(r"\bfor[ \t]+cooking\b", item, re.I):
+                continue
+            w = {"electricity": "electric", "garbage": "trash", "wifi": "internet", "wi-fi": "internet"}.get(um.group(1).lower(), um.group(1).lower())
+            if w not in have and w not in found:
+                found.append(w)
+    if not found:
+        return []
+    est = money_mod.num(p.get("utilities_estimate"))
+    if est is not None and re.search(r"\b(?:typical|average|avg|total|all[ \t]+(?:the[ \t]+)?utilities|for[ \t]+the[ \t]+unit)\b[^.\n]{0,40}\$|\$[^.\n]{0,40}\b(?:total|combined|for[ \t]+the[ \t]+unit)\b", text, re.I):
+        return []  # a typical-bills figure for the whole unit covers what the tenant pays
+    return found
 
 
 def cash_unknown_parts(p: dict[str, Any]) -> list[str]:

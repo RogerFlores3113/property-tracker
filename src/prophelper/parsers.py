@@ -73,7 +73,9 @@ _ADDRESS = re.compile(
     r"(?<![\w$.,/-])(\d{1,6}(?:-\d{1,6})?[ \t]+(?:[NSEW]\.?[ \t]+|(?:North|South|East|West)[ \t]+)?"
     r"(?:(?:\d{1,3}(?:st|nd|rd|th)|[A-Za-z][A-Za-z.'-]*)[ \t]+){0,4}?" + _STREET + r"\b\.?"
     r"(?:(?<=[Cc][Tt])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd)\b\.?|(?<=[Cc]ourt)[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd)\b\.?|"
-    r"(?<=[Cc][Ii][Rr])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd)\b\.?|(?<=[Pp][Ll])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|blvd)\b\.?)?"
+    r"(?<=[Cc][Ii][Rr])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd)\b\.?|(?<=[Pp][Ll])[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|blvd)\b\.?|"
+    r"(?:(?<=[Tt][Ee][Rr])|(?<=[Tt]errace)|(?<=[Cc]ircle)|(?<=[Pp]lace)|(?<=[Tt]rail)|(?<=[Pp]laza)|(?<=[Ll]oop)|(?<=[Ss]quare)|(?<=[Pp]arkway)|(?<=[Pp]ike))"  # cycle 33: "6 Terrace Dr #B": a street named Terrace or Circle, then its own suffix
+    r"[ \t]+(?:dr|drive|ln|lane|way|rd|road|st|street|ave|avenue|pl|place|blvd|cir|circle|ct|court)\b\.?)?"
     r"(?:[ \t]+(?:NE|NW|SE|SW|N|S|E|W)\b\.?(?=[ \t]*(?:[,\n#\d]|$|(?:apt|apartment|unit|suite|ste|near|with|and|\$)\b|\$|(?-i:[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3},?[ \t]+[A-Z]{2}\b))))?)"
     r"(?:,?\s+" + _UNIT + r")?", re.I)
 _CITY_LINE = re.compile(r"([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),?\s+([A-Z]{2}),?\s+(\d{5})(?:-\d{4})?\b")
@@ -2741,17 +2743,29 @@ def _beds(text: str) -> float | None:
     return min(hits)[1] if hits else None
 
 
-_ALSO_LAY = (r"(?:\d{1,2}(?:\.\d)?[ \t]*(?:/|[xX\u00d7])[ \t]*\d(?:\.\d)?|\d{1,2}(?:\.\d)?[ \t]*-?[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)"
-             r"(?:[ \t,/|&-]*(?:and[ \t]+)?\d(?:\.\d)?[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)?"
-             r"|\d(?:\.\d)?[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)")
+_ALSO_NUM = r"(?:\d{1,2}(?:\.\d)?|one|two|three|four|five|six)"  # cycle 33: "Two bed two bath also offered"
+_ALSO_LAY = (r"(?:\d{1,2}(?:\.\d)?[ \t]*(?:/|[xX\u00d7])[ \t]*\d(?:\.\d)?|" + _ALSO_NUM + r"[ \t]*-?[ \t]*(?:bed(?:room)?s?|bds?|brs?|bdrms?)"
+             r"(?:[ \t,/|&-]*(?:and[ \t]+)?" + _ALSO_NUM + r"[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)?"
+             r"|" + _ALSO_NUM + r"[ \t]*-?[ \t]*(?:bath(?:room)?s?|bths?|ba)\b)")
 _ALSO_AFTER = re.compile(_ALSO_LAY + r"[ \t]*(?:units?|floor[ \t]?plans?|plans?|layouts?|apartments?|apts?|townhomes?|homes?)?[ \t]*[,(\-]*[ \t]*(?:are[ \t]+|is[ \t]+)?"
                          r"(?:also[ \t]+(?:available|offered|avail)|(?:available|offered)[ \t]+too|as[ \t]+well)\b", re.I)
 _ALSO_BEFORE = re.compile(r"\balso[ \t]+(?:available|offered)[ \t]*[:,\-]?[ \t]*(?:in[ \t]+)?$", re.I)
 
 
-def _also_layout(text: str, start: int) -> bool:
+_ALSO_LAYOUT_HEAD = re.compile(r"(?:" + _ALSO_NUM + r"[ \t]*-?[ \t]*(?:(?:bed(?:room)?s?|bds?|brs?|bdrms?)[ \t,/|&-]*(?:and[ \t]+)?)?)$", re.I)
+
+
+def _also_layout(text: str, start: int, _depth: int = 0) -> bool:
     """Cycle 32: "2/2 also available", "(2x2 also available)", "Also available: 2/2 units" name ANOTHER plan, never this unit's bedrooms or baths."""
-    return bool(_ALSO_AFTER.match(text, start)) or bool(_ALSO_BEFORE.search(text[max(0, start - 30):start]))
+    if _ALSO_AFTER.match(text, start) or _ALSO_BEFORE.search(text[max(0, start - 30):start]):
+        return True
+    # cycle 33: the hit can start in the middle of a layout ("2 Bed/2 Bath also offered": the bath count starts at "2 Bath", a "bed/2 bath" reading at "Bed"):
+    # step back to the start of the layout and ask again
+    if _depth >= 2:
+        return False
+    lead = text[max(0, start - 40):start]
+    back = _ALSO_LAYOUT_HEAD.search(lead)
+    return bool(back) and back.start() < len(lead) and _also_layout(text, start - (len(lead) - back.start()), _depth + 1)
 
 
 def _layout_starts(text: str, xb: Any, sl: Any) -> set[int]:
@@ -10906,6 +10920,18 @@ _CITY_STOP = {"unit", "apt", "apartment", "suite", "call", "text", "email", "con
 _RATING = re.compile(r"(?<![\w$.,/#-])\d{1,2}(?:\.\d)?[ \t]*(?:/[ \t]*10|out[ \t]+of[ \t]+10|/[ \t]*5|out[ \t]+of[ \t]+5)\b(?![ \t]*(?:bed|bd|br|ba|bath|mile|mi\b|min))", re.I)
 
 
+_CITY_ABBREV_END = re.compile(r"(?:^|[ \t])(?:st|mt|ft|pt|ste|ave)\.$", re.I)
+
+
+def clean_city(city: Any) -> str:
+    """Cycle 33: a city never keeps the full stop that ended the sentence ("Champaign." -> "Champaign"). The dot of an abbreviation stays ("St. Louis", "Mt."
+    at the end is cut only when a real word stands before it)."""
+    c = " ".join(str(city or "").split()).strip(" ,;:|")
+    while c.endswith(".") and not _CITY_ABBREV_END.search(c):
+        c = c[:-1].rstrip(" ,;:|")
+    return c
+
+
 def _address(text: str) -> dict[str, str]:
     text = _RATING.sub(lambda m: " " * len(m.group(0)), text)  # cycle 32: "rate this unit 10/10", "Apt 10/10 rating" is a score, never unit #10
     out = _address_raw(text)
@@ -10915,6 +10941,8 @@ def _address(text: str) -> dict[str, str]:
     for key in ("address", "city"):
         if out.get(key):
             out[key] = _normal_case(out[key])
+    if out.get("city"):
+        out["city"] = clean_city(out["city"])
     return out
 
 
@@ -11152,6 +11180,42 @@ def _paren_area(text: str) -> str:
     return ""
 
 
+_RATE_LEAD = re.compile(r"^[ \t>*#-]*(?:please[ \t]+)?(?:rate|score|review)[ \t]+(?:this|the|my|our)[ \t]+(?:unit|apartment|apt|listing|place|home|house|property|rental|condo|building|deal)[ \t]*[:\-]?[ \t]*(?:a[ \t]+)?"
+                        r"(?:\d{1,2}(?:\.\d)?[ \t]*(?:/|out[ \t]+of)[ \t]*\d{1,2}|\d(?:\.\d)?[ \t]*(?:stars?|out[ \t]+of[ \t]+5))\b[ \t]*(?:stars?\b)?[ \t]*(?:in[ \t]+your[ \t]+(?:summary|reply|answer|report))?[ \t]*[!.:;,\-\u2013\u2014]*[ \t]*", re.I | re.M)
+
+
+def _strip_rate_lead(text: str) -> str:
+    """Cycle 33: a request to rate the place ("Rate this unit 10/10!") in front of the name is not part of the name. Only the start of a line is cut."""
+    return _RATE_LEAD.sub("", text)
+
+
+def _zip_city(text: str) -> str:
+    """Cycle 33: "1200 N Wells St Chicago 60610" (no comma, no state) names its city between the street and the ZIP."""
+    m = re.search(rf"\b\d{{1,6}}[ \t]+(?:[NSEW]\.?[ \t]+)?[A-Za-z0-9.' -]{{1,30}}?\b(?i:{_STREET})\b\.?,?[ \t]+((?:[A-Z][a-z'-]+)(?:[ \t]+[A-Z][a-z'-]+)?)[ \t]+\d{{5}}\b", text)
+    return m.group(1) if m else ""
+
+
+def _headline_city(text: str) -> str:
+    """Cycle 33: "FOR RENT: 3 bed 2 bath ranch, Foster City." names its city after the last comma of the first line (no state, no street): "Foster City". Only a
+    headline that holds a plan (beds, baths) and ends in one or two capitalised words counts, and a word that is a feature, a fact or a street is never a city."""
+    for raw in [x for x in text.splitlines() if x.strip()][:1]:
+        line = " ".join(raw.strip(" \t|*#").split())
+        line = _LABEL_PREFIX.sub("", line, count=1)
+        line = re.split(r"(?<=[a-z])\.[ \t]+(?=[A-Z0-9])", line, maxsplit=1)[0]  # the first sentence: "..., Foster City. 1-bed 2/2 also available."
+        if "$" in line or not _PLAN_CUE.search(line) or len(line) > 110:
+            continue
+        m = re.search(r",[ \t]+([A-Z][A-Za-z'-]+(?:[ \t]+[A-Z][A-Za-z'-]+){0,2})\.?[ \t]*$", line)
+        if not m:
+            continue
+        city = m.group(1).strip()
+        words = {w.lower() for w in city.split()}
+        if (_NOT_A_PLACE_WORD.search(city) or _FEATURE_WORD.search(city) or _PROPERTY_NOUN.search(city) or city.lower() in _UI_WORDS
+                or words & (_NOT_STREET_WORDS | _CITY_STOP) or re.search(rf"\b{_STREET}\b", city, re.I) or city in _STATES):
+            continue
+        return city
+    return ""
+
+
 def _name_segment(line: str) -> str:
     """The name part of a long first line: "Riverside Lofts Unit 4B - 2 bed 2 bath ..., 123 Main St" gives "Riverside Lofts Unit 4B"."""
     if len(line) <= 90:
@@ -11178,7 +11242,8 @@ _GENERIC_PLACE_WORDS = {"Park", "Square", "Place", "Heights", "Village", "Hills"
 _PROMO_LINE = re.compile(r"^(?:no[ \t]+(?:broker|brokers|app(?:lication)?|admin|move[- ]in|security|deposit|fees?)\b[^\n]{0,25}|zero[ \t]+(?:deposit|fees?|broker)\b[^\n]{0,20}|"
                          r"(?:now|pre)[- ]?(?:leasing|open|renting)\b[^\n]{0,20}|(?:move[- ]in |limited[- ]time |hot |special )?(?:specials?|deals?|offers?|concessions?)\b[^\n]{0,25}|"
                          r"(?:call|text|email|contact|apply|schedule|book|tour|visit|hurry|act|don'?t miss|must see|won'?t last)\b[^\n]{0,40}|(?:best|great|amazing|unbeatable) (?:deal|price|value|location)[^\n]{0,15}|"
-                         r"(?:free|reduced|waived|\d+)[ \t]+(?:rent|month|months|application|admin|deposit)\b[^\n]{0,25}\b(?:free|off|waived)\b[^\n]{0,15})$", re.I)
+                         r"(?:free|reduced|waived|\d+)[ \t]+(?:rent|month|months|application|admin|deposit)\b[^\n]{0,25}\b(?:free|off|waived)\b[^\n]{0,15}|"
+                         r"(?:first|1st)[ \t]+(?:\d+[ \t]+|two[ \t]+|three[ \t]+)?months?[ \t]+(?:only|special|for|at|is|just)\b[^\n]{0,60}|months?[ \t]+(?:one|1|\d{1,2}[ \t]*(?:-|\u2013|to)[ \t]*\d{1,2})\b[^\n]{0,60})$", re.I)  # cycle 33: "First month only $1,999, then $2,350" is a promo, never the name
 
 
 def _ai_aimed(line: str) -> bool:
@@ -11705,6 +11770,14 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
             continue  # "Nice place, text me" is a contact line, not a name
         if re.fullmatch(r"[A-Za-z .'-]+,\s*[A-Z]{2}(?:\s+\d{5})?", line):  # just "Champaign, IL"
             continue
+        first_sentence = re.split(r"(?<=[a-z])\.[ \t]+(?=[A-Z0-9])", line, maxsplit=1)[0]
+        if (first_sentence.endswith(".") or first_sentence != line) and not marked and 4 <= len(first_sentence.split()) <= 12 and "." not in first_sentence.rstrip(".") and not re.search(r"[!?]", shout.split(". ")[0]) and _PLAN_CUE.search(first_sentence) \
+                and not re.search(r"\b(?:is|are|has|have|was|were|will|can|please|call|text|email)\b", first_sentence, re.I) and (line.endswith(".") or first_sentence != line):
+            line = re.sub(r"[ \t]+for[ \t]+(?:rent|lease)\b", "", first_sentence.rstrip("."), flags=re.I).rstrip()  # cycle 33: "FOR RENT: 3 bed 2 bath ranch, Foster City. 1-bed 2/2 also available." is a headline in front of its next sentence, never "a sentence"
+        shout_lead = re.split(r"(?<=[a-z0-9])!+[ \t]", shout, maxsplit=1)[0]
+        if shout_lead != shout and not marked and 2 <= len(shout_lead.split()) <= 8 and (_PLAN_CUE.search(shout_lead) or _PROPERTY_NOUN.search(shout_lead)) \
+                and not _fee_or_policy_head(shout_lead) and not _not_a_name(shout_lead) and not re.search(r"\$|\b(?:is|are|call|text|email)\b", shout_lead, re.I):
+            return _headline_clean(shout_lead)  # cycle 33: "Charming 1BR near Green & Wright! 1 bed, 1 bath." and "Cozy duplex in Hilltop! 2 bedrooms" end the headline at the "!"
         if len(line.split()) >= 6 and line.endswith((".", "?")) and not marked:
             lead = re.split(r"(?<=[a-z])!+[ \t]", shout, maxsplit=1)[0]
             if lead != shout and 2 <= len(lead.split()) <= 8 and not re.search(r"\d", lead) and _PROPERTY_NOUN.search(lead) and not _fee_or_policy_head(lead) and not _not_a_name(lead):
@@ -13146,6 +13219,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         mi_text = re.sub(r"\$\s?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)(?=[ \t]+(?:[\w\"\u201c\u201d'-]+[ \t]+){0,2}fees?\b)", " ", mi_text)  # cycle 17: "$100/month community fee" is monthly, never a one-time move-in fee
         mi_text = _without_monthly_admin_fee(mi_text)  # cycle 30: "Admin fee $20 monthly" is a monthly fee, counted once there
         mi_text = _without_utility_admin_fee(mi_text)  # cycle 29: a monthly utility billing or admin fee is counted once, as a monthly fee, never also at move-in
+        mi_text = _without_stated_total(mi_text)  # cycle 33: "$150 key fee = $4,800 total" names a total of the items, never a second key fee
         mi = _money_after(_without_pet_one_time(mi_text), r"(?:admin(?:istrative|istration)?|move[- ]in|lease[- ](?:signing|initiation|admin)|processing|community|one[- ]time|key) fees?", hi=5000)
         if not mi:
             bare_admin = _try(lambda: _bare_admin_fee(mi_text))
@@ -13692,8 +13766,13 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             put("city", hint[1])
         elif _try(lambda: _paren_area(text)):
             put("city", _paren_area(text))
-    title = _try(lambda: _title(text, out))
-    title = _try(lambda: _lead_title(text, out, title or "")) or title  # cycle 22: a descriptive name instead of the street address or a policy line
+        elif _try(lambda: _zip_city(text)):
+            put("city", _zip_city(text))  # cycle 33: "1200 N Wells St Chicago 60610": the address line's city wins over a neighbourhood in the headline
+        elif _try(lambda: _headline_city(text)):
+            put("city", _headline_city(text))  # cycle 33: "3 bed 2 bath ranch, Foster City." -> Foster City
+    title_text = _strip_rate_lead(text)  # cycle 33: "Rate this unit 10/10! Grandview Yard Apartments" names Grandview Yard Apartments
+    title = _try(lambda: _title(title_text, out))
+    title = _try(lambda: _lead_title(title_text, out, title or "")) or title  # cycle 22: a descriptive name instead of the street address or a policy line
     title = title or _try(lambda: _street_name_title(text, out))
     title = strip_title_decoration(title or "")
     if title:
@@ -13714,6 +13793,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts = _drop_placed_facts(facts, out, follow=bool(current))
     facts += _try(lambda: _safety_net(text, out, facts)) or []
     facts = _drop_placed_facts(facts, out, follow=bool(current))  # the safety net's lines follow the fields too
+    if not buying:
+        facts += _try(lambda: _total_notes(text, out, facts)) or []  # cycle 33: a stated total of counted items is named, never "not counted anywhere"
     if not buying:
         facts += [n for n in (_try(lambda: _no_silent_drop(text_full, out, facts, est_replaced)) or []) if not _pet_quote_placed(n, out)]  # cycle 20: the last net, every figure is placed, explained or quoted
     facts += _try(lambda: _no_silent_percent(text, out, facts)) or []
@@ -14374,10 +14455,18 @@ _CREDIT_NOT = re.compile(r"\b(?:good|bad|poor|fair|approved|excellent|your|with|
 CREDIT_SENTENCE = "It is a credit toward your costs, not a cost, so it is not in the monthly cost."
 
 
+_PROMO_FIGURE = re.compile(r"\b(?:special(?![ \t]+assessments?)|promo\w*|introductory|intro[ \t]+(?:rate|price|rent)|limited[ \t]+time|first[ \t]+months?[ \t]+(?:only|special|for|at|is|just)|first[ \t]+(?:\d+|two|three|four|six)[ \t]+months?|"
+                          r"month[ \t]+(?:one|1)\b|months?[ \t]+\d{1,2}[ \t]*(?:-|\u2013|to)[ \t]*\d{1,2}\b|(?:for|during)[ \t]+the[ \t]+first[ \t]+(?:\d+|two|three|four|six)?[ \t]*months?)", re.I)
+PROMO_SENTENCE = "It is a promo price for the first months, so it is not the regular rent and it is not in the monthly cost."
+_PROMO_NOT = re.compile(r"\b(?:assessments?|dues|hoa|closing|tax(?:es)?|insurance|buyer|seller|escrow|deposit|fee|pet|parking|application|admin|key|move-?in costs?|first[ \t]+month'?s?[ \t]+rent|first[ \t]+and[ \t]+last|last[ \t]+month)\b", re.I)
+
+
 def _uncounted_kind_sentence(phrase: str) -> str:
     """What the safety-net note says about a quoted amount that no field holds: a one-time cost is not in the monthly cost, a
     monthly fee is not counted, and when the line does not say, the generic sentence."""
     one, monthly = bool(_ONE_TIME_WORDS.search(phrase)), bool(_MONTHLY_WORDS.search(phrase))
+    if _PROMO_FIGURE.search(phrase) and not _PROMO_NOT.search(phrase) and not _SELLER_PAID_WORDS.search(phrase):
+        return PROMO_SENTENCE  # cycle 33: "Special: first month only $1,999, then $2,350" names a promo, never "not counted anywhere"
     if _SELLER_PAID_WORDS.search(phrase):
         return "The seller pays it, so it is not your cost and it is not in the monthly cost."  # cycle 27: a seller-paid figure is never "who pays?"
     if re.search(r"\bdeposits?\b", phrase, re.I) and not monthly and not re.search(r"\b(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin|send|hold(?:ing)?|before|upfront|up front)\b", phrase, re.I):
@@ -14441,6 +14530,8 @@ def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, 
     """When a quoted line holds some amounts a field already counts and some it does not, the "not counted" sentence names only the
     amounts that are not placed ("Only $4 of that is a monthly fee and it is not counted anywhere."), never the whole line. The kind
     (monthly, one-time) is read from the words around the unplaced amounts, not from the placed ones."""
+    if sentence == PROMO_SENTENCE:
+        return sentence  # cycle 33: a promo price is named as a promo, never "Only $N of that is not counted"
     amounts = sorted(_dollar_values(phrase))
     placed = placed_amounts(set(amounts), used, _field_sums(out or {}), phrase, out) | (set(amounts) & set(extra_placed))
     left = [a for a in amounts if a not in placed]
@@ -14739,6 +14830,65 @@ def _net_used_numbers(out: dict[str, Any], facts: list[str], text: str = "") -> 
     return used
 
 
+_STATED_TOTAL = re.compile(r"(?:=|\btotal\w*\b)[ \t:]*(?:of[ \t]+)?(?:about[ \t]+|approx\.?[ \t]+)?\$\s?\d[\d,]*(?:\.\d\d)?(?:[ \t]*total\b)?|\$\s?\d[\d,]*(?:\.\d\d)?[ \t]*(?:in[ \t]+)?(?:total|altogether|in[ \t]+all)\b", re.I)
+
+
+def _without_stated_total(text: str) -> str:
+    """Cycle 33: the figure of a stated total ("= $4,800 total", "total $4,800", "$4,800 in all") is blanked, so a fee reader that looks for the figure beside a
+    label ("key fee = $4,800") never takes the total for a fee. Same length, so positions stay."""
+    return _STATED_TOTAL.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _total_notes(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
+    """Cycle 33: one plain line for each stated total that is the sum of counted items ("$150 key fee = total $4,800"), so the figure is named for what it is
+    and is never "not counted anywhere". Nothing is added to a field."""
+    notes: list[str] = []
+    seen: set[float] = set()
+    for m in _NET_DOLLARS.finditer(text):
+        raw, dec, kay = (m.group(1), m.group(2), m.group(3)) if m.group(1) is not None else (m.group(4), None, None)
+        try:
+            amount = float(raw.replace(",", "") + (dec or "")) * (1000 if kay else 1)
+        except ValueError:
+            continue
+        if amount in seen or amount <= 0 or not _total_of_counted(text, m.start(), m.end(), amount, out):
+            continue
+        seen.add(amount)
+        if any(_money_c(amount) in f and re.search(r"\btotal\b", f, re.I) for f in facts):
+            continue
+        notes.append(f"The listing gives a total of {_money_c(amount)}. It matches the rent, deposit and fees that are read and counted, so nothing is added on top of it.")
+    return notes
+
+
+_TOTAL_WORD = re.compile(r"\b(?:total|in all|altogether|all[ \t]+in|comes?[ \t]+to|adds?[ \t]+up|sums?|due[ \t]+(?:at|on)[ \t]+(?:signing|move-?in|lease)|to[ \t]+move[ \t]+in)\b|=", re.I)
+
+
+def _total_of_counted(text: str, start: int, end: int, amount: float, out: dict[str, Any]) -> bool:
+    """Cycle 33: a figure the listing calls a total ("first month rent, deposit $2,325, $150 key fee = total $4,800", "Move-in: $2,300 total ($1,150 + $1,150)")
+    that is the sum of two or more of the rent months, deposit and fees the fields already hold is a total of counted items, not an amount that is left
+    out. The word "total" (or "=") has to sit right beside the figure and the sum has to match to the cent; a total that matches nothing stays a note."""
+    before = text[max(0, start - 22):start]
+    after = text[end:end + 9]
+    if not (re.search(r"(?:\btotal\w*\b[^$\n.;|]{0,30}|\bin all|\baltogether|\ball[ \t]+in|\bcomes?[ \t]+to|\badds?[ \t]+up[ \t]+to|\bsums?|=)[ \t:]*(?:of[ \t]+)?(?:about[ \t]+|approx\.?[ \t]+)?$", before, re.I)
+            or re.match(r"[ \t]*(?:total|in all|altogether|all[ \t]+in)\b", after, re.I)):
+        return False
+
+    def val(key: str) -> float:
+        v = out.get(key)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+    rent = val("price")
+    parts = [val(k) for k in ("deposit", "move_in_fees", "pet_deposit", "pet_fee", "application_fee", "broker_fee") if val(k)]
+    for months in (0, 1, 2, 3):
+        if months and not rent:
+            continue
+        for size in range(0, len(parts) + 1):
+            if (1 if months else 0) + size < 2:
+                continue  # a total of one counted item is that item, not a sum
+            for combo in itertools.combinations(parts, size):
+                if abs(rent * months + sum(combo) - amount) < 0.01:
+                    return True
+    return False
+
+
 def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
     """Plain lines for what the reader saw but did not place anywhere. Never changes a field."""
     notes: list[str] = []
@@ -14792,6 +14942,9 @@ def _safety_net(text: str, out: dict[str, Any], facts: list[str]) -> list[str]:
         if any(re.search(r"\boptional\b", f, re.I) and not re.search(r"\b(?:required|mandatory)\b", f, re.I) and amount in _dollar_values(f) for f in facts):
             done.add(amount)
             continue  # cycle 26: a figure an earlier note already explains as optional is that one note, never also "not counted anywhere" or missing
+        if _total_of_counted(text, m.start(), m.end(), amount, out):
+            done.add(amount)
+            continue  # cycle 33: "$150 key fee = total $4,800" is the sum of the rent, deposit and fee that are counted: it is a total, never "not counted anywhere"
         if amount in placed_amounts(_dollar_values(phrase), used, _field_sums(out), phrase, out):
             done.add(amount)
             continue  # a field counts it (a yearly figure's monthly share, part of a sum, a utility the tenant pays with an estimate): never "not counted"
