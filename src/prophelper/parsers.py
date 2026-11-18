@@ -9186,8 +9186,8 @@ def _provider_billed_names(text: str) -> list[str]:
     for clause in re.split(r"\n|;|\||\.(?=\s|$)", text):
         if "$" in clause and not _TYPICAL_TOTAL_CUE.search(clause.lower()):  # cycle 37: "Electric billed by Ameren, typical total about $130" names the provider; the figure is a typical total
             continue
-        for m in re.finditer(r"\b(electric(?:ity)?|gas|water|sewer|trash)\b[ \t]*(?:(?:is|are)[ \t]+)?(?:billed|charged)[ \t]+(?:directly[ \t]+)?(?:by|through|via|from|with)[ \t]+(?:the[ \t]+)?(?:" + _PROVIDERS + r"|utility[ \t]+company|provider)\b", clause, re.I):
-            out.append("electric" if m.group(1).lower().startswith("electric") else m.group(1).lower())
+        for m in re.finditer(r"\b((?:electric(?:ity)?|gas|water|sewer|trash)(?:[ \t]*(?:,|/|&|\band\b)[ \t]*(?:electric(?:ity)?|gas|water|sewer|trash))*)\b[ \t]*(?:(?:is|are)[ \t]+)?(?:billed|charged)[ \t]+(?:directly[ \t]+)?(?:by|through|via|from|with)[ \t]+(?:the[ \t]+)?(?:" + _PROVIDERS + r"|utility[ \t]+company|providers?)\b", clause, re.I):
+            out += ["electric" if w.startswith("electric") else w for w in re.findall(r"electric(?:ity)?|gas|water|sewer|trash", m.group(1).lower())]
     return list(dict.fromkeys(out))
 
 

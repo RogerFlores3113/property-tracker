@@ -270,3 +270,10 @@ def test_negative_typical_bills_for_other_utilities_are_still_added():
 def test_negative_total_that_leaves_something_out_stays_added():
     r = P(HEAD + "Tenant pays all utilities except trash. Typical total utilities $120. Trash billed back at $20/month.")
     assert r["utilities_estimate"] == 140
+
+
+def test_reviewer_listing_r35_roommates_l16_electric_and_gas_billed_by_provider():
+    r = P(saved("r35-roommates-l16"))
+    assert r["utilities_estimate"] == 180
+    assert _set(r["tenant_pays"]) == {"electric", "gas"}
+    assert "gives no amount" not in notes(r)
