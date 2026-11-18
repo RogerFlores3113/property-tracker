@@ -848,7 +848,8 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
         return cell
     if sa == 0:
         return _cell("None", 0.0)
-    amount, payer = helpers.money(sa), str(p.get("special_assessment_payer") or "")
+    from .money import _assessment_payer_of
+    amount, payer = helpers.money(sa), _assessment_payer_of(p)  # cycle 36: a payer the listing text says outright counts when the field was left empty
     if payer == "buyer":
         return _cell(f"{amount} (you pay it)", sa)
     if payer == "seller":

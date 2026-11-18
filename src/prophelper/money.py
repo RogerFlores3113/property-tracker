@@ -735,6 +735,14 @@ def buy_cost(place: dict[str, Any], settings: dict[str, Any] | None = None) -> d
                 lines.append(_line("pmi", "Mortgage insurance (PMI), an estimate", pmi,
                                    f"{cfg['pmi_rate_pct']:g}% of the loan a year, because the down payment is under {PMI_BELOW_PCT:g}%"))
                 notes.append("PMI is a rough guess. Your lender's quote decides the real number.")
+            try:  # cycle 36: "PMI not required with 20 percent down" does not apply to a search that puts less down: say so, keep the estimate
+                from .parsers import listing_pmi_condition
+                cond = listing_pmi_condition(str(place.get("listing_text") or ""))
+            except Exception:  # the listing text is only a hint
+                cond = None
+            if cond and (cond[1] is None or cond[1] > cfg["down_payment_pct"]):
+                notes.append(f'The listing says "{cond[0][:120]}". Your search puts {cfg["down_payment_pct"]:g}% down, so PMI may apply at {cfg["down_payment_pct"]:g}%. '
+                             "The PMI estimate stays in the cost. Ask your lender.")
     tax, ins, hoa = num(place.get("property_tax")), num(place.get("insurance")), num(place.get("hoa"))
     for key, label, val, per in (("tax", "Property tax", tax, 12), ("insurance", "Insurance", ins, 12)):
         if val is None:
