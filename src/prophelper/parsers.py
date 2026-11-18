@@ -8535,7 +8535,7 @@ def _utilities_on_us(text: str) -> str:
     return _ON_US.sub(one, text)
 
 
-_SPACE_UTIL_NAME = r"(?:water|sewer|sewage|garbage|trash|gas|electric|electricity|heat)"
+_SPACE_UTIL_NAME = r"(?:water|sewer|sewage|garbage|trash|gas|electric|electricity)"
 _SPACE_UTIL_RUN = re.compile(
     r"(?<![\w/&+,-])(?P<run>" + _SPACE_UTIL_NAME + r"(?:[ \t]+" + _SPACE_UTIL_NAME + r")+)(?![\w/&+-])"
     r"(?=[ \t]*(?:[:$(\u2013\u2014.,;]|-[ \t]|\n|$)|[ \t]+(?:included|incl\b|paid|covered|flat|billed|extra|separate|tenants?|residents?|renters?|about|approx\w*|avg|average|est\w*|is\b|are\b|via|through|rubs|total|only|and\b|plus|\+|you\b|on\b|per\b|a[ \t]+month|at\b|charged|passed|provided|metered)|[ \t]*\u00a3?\d)", re.I)
