@@ -215,7 +215,7 @@ def _grouped_thousands(text: str) -> str:
         w = _GROUP_WORD.match(text, end)
         whole, _, cents = num.partition(",") if "," in num else (num, "", "")
         digits = re.sub(r"[ .]", ",", whole)
-        out.append(text[last:m.start("n")])
+        out.append(re.sub(r"\$[ \t]*$", "", text[last:m.start("n")]))  # cycle 37: "HOA $ 2 400 yearly" has its own dollar sign: one sign, never "$ $2,400"
         out.append("$" + digits + ("." + cents if cents and cents != "00" else ""))
         last = w.end() if w else end
     if out:
@@ -439,7 +439,7 @@ def _amounts(text: str) -> list[dict[str, Any]]:
                 fee = False  # cycle 34: "$1,500 HOA none" is the rent and then an HOA of none, the figure is not the HOA
         if not fee and _NOT_RENT_EXTRA.search(clause):
             fee = True  # cycle 26: "Second space $200/mo", "extra storage $50/mo", "additional occupant $75": never a rent candidate
-        if fee and value >= 20000 and marker == "" and re.match(r"^\s*(?:hoa|assoc\w*|dues|condo fee)", tail, re.I):
+        if fee and value >= 20000 and marker == "" and re.match(r"^\s*(?:(?:hoa|assoc\w*|dues|condo fee)|(?:(?:(?:property|real[ \t]+estate)[ \t]+)?tax(?:es)?|insurance)(?:[ \t]*[:=\-][ \t]*|[ \t]+)(?:(?:about|approx\.?|around|est\.?|~)[ \t]*)?\$)", tail, re.I):  # cycle 37: and "$299,000 Tax $3,500/yr": the tax label belongs to the next amount
             fee = False  # "$250,000 HOA $310 per month": the HOA label belongs to the next amount, no HOA fee is that big
         if re.match(r"\s*(?:total\s+)?(?:(?:is\s+)?(?:due\s+)?to\s+move[- ]?in\b|(?:is\s+)?due\s+(?:at|before|on)\s+(?:lease\s+)?(?:signing|move[- ]?in)\b|total\s+move[- ]?in\b)", tail, re.I):
             fee = True  # "$2,100 total to move in" is what you pay to get in, never the rent
@@ -7585,8 +7585,13 @@ _ESCROW_ONE_TIME = re.compile(r"\b(?:initial[ \t]+)?escrow[ \t]+(?:set[- ]?up|de
                               + r"|\b(?:taxes[ \t]+and[ \t]+insurance|insurance[ \t]+and[ \t]+taxes)[ \t]+escrow[ \t]+(?:deposit|set[- ]?up)\b" + _ESCROW_TAIL, re.I)
 
 
+_TITLE_POLICY = re.compile(r"\b(?:(?:owner'?s?|lender'?s?|buyer'?s?|seller'?s?|mortgagee'?s?|loan|extended|enhanced|standard|basic|alta|simultaneous|title)[ \t]+){0,3}title[ \t]+(?:insurance|policy|policies|coverage|premium|protection|cover)\b|\b(?<!home)(?:owner'?s?|lender'?s?|mortgagee'?s?)[ \t]+(?:title[ \t]+)?(?:insurance|policy|policies|coverage|premium)\b", re.I)
+
+
 def _insurance(text: str) -> float | None:
-    """Home insurance as a yearly amount (the field is per year). "est $1,100/yr" -> 1100; "$90/mo" -> 1080."""
+    """Home insurance as a yearly amount (the field is per year). "est $1,100/yr" -> 1100; "$90/mo" -> 1080.
+    Cycle 37: a title policy (title insurance, owner's or lender's policy) is a one-time closing item, never the homeowner's insurance."""
+    text = _TITLE_POLICY.sub(" TITLEPOLICY ", text or "")
     text = re.sub(r"\b(monthly|annual|yearly)[ \t]+((?:(?:ho-?[36]|condo(?:minium)?|unit[- ]owner'?s?|home(?:owner'?s?)?|hazard|property)[ \t]+)?insurance|ho-?[36]|hoi)\b([ \t:\-=(),~]*(?:(?:about|around|approx\.?|est\.?|roughly)[ \t]*)?)(\$\s?\d[\d,]*(?:\.\d\d)?)(?![\d,])(?![ \t]*(?:/|per\b|a[ \t]+(?:month|year)|monthly|annual|yearly))",
                   lambda m: f"{m.group(2)}{m.group(3)}{m.group(4)} {m.group(1)}", text or "", flags=re.I)  # cycle 35: "Monthly HO6 insurance: $40" is $40 a month, never $40 a year
     text = re.sub(r"[ \t]*\((?:hoi|ho-?[36])\)", "", _ESCROW_ONE_TIME.sub(" ", text), flags=re.I)  # "Insurance (HOI): $700/yr"  # cycle 34: "Escrow deposit for taxes and insurance $1,900 due at closing" is a one-time amount, never the insurance premium
@@ -7875,6 +7880,8 @@ def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | 
     payer = _assessment_payer(text, sentence)
     if _assessment_seller_first(text):
         return None, "", sentence  # cycle 35: the seller pays only the first months; the buyer's monthly share is read by _assessment_monthly
+    if _assessment_total_monthly(text):
+        return None, payer, sentence  # cycle 37: the whole amount is paid in monthly pieces (read by _assessment_monthly), so it is never also cash to close
     if _assessment_seller_lump_first(text):
         return None, "buyer", sentence  # cycle 36: the seller's one amount comes first and is named in the note; the buyer's monthly figure is read by _assessment_monthly
     if payer == "seller" and _SELLER_FIRST.search(sentence):
@@ -8143,12 +8150,75 @@ def _assessment_quarterly(text: str) -> tuple[float, int | None] | None:
     return None
 
 
+_TM_AMT = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d\d))?(?!\d)(?!,\d)")
+_TM_MONTHLY_AFTER = re.compile(r"[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|each[ \t]+month|monthly|every[ \t]+month)", re.I)
+_TM_TERMS = re.compile(r"\bpayable\b|\bpayments?\b|\binstall?ments?\b|\bpays?\b|\bpaid\b|\bbilled\b|\bcollected\b|\bresponsible\b|\bbuyer\b|\bfor[ \t]+\d+[ \t]+months?\b|\bover[ \t]+\d+[ \t]+months?\b", re.I)
+_TM_OTHER = re.compile(r"\b(?:hoa|dues|association|tax(?:es)?|insurance|utilit\w*|parking|pmi|mortgage)\b", re.I)
+
+
+def _assessment_total_monthly(text: str) -> tuple[float, float, int | None, str] | None:
+    """Cycle 37 (buyer l5): "Special assessment $12,000, buyer responsible, payable $500/mo for 24 months." One sentence gives the whole assessment and the monthly
+    payment the buyer makes on it. Returns (the whole amount, the monthly payment, the months or None, the quoted sentence), or None. It needs the word assessment, exactly two
+    dollar figures (one per month, one not) in the sentence (or the sentence and the next piece, when that piece is about the payments), no seller payer, and when the months
+    are given they must add up to the whole amount (the figures are one assessment paid in pieces). Interest or a different total leaves it unread (the whole amount stays)."""
+    if _assessment_seller_first(text) or _assessment_seller_lump_first(text):
+        return None  # the seller pays part of it: those readers say so in their own notes
+    pieces = re.split(r"[.\n;](?!\d)", text or "")
+    for i, sent in enumerate(pieces):
+        if not re.search(r"\bassessments?\b", sent, re.I) or re.search(r"\?\s*$", sent) or re.search(r"\bno\b[^$]{0,25}\bassessments?\b", sent, re.I):
+            continue
+        if i + 1 < len(pieces) and _PAYER_SELLER.search(pieces[i + 1]) and not _PAYER_BUYER.search(sent):
+            continue  # "...payable $400 a month over 24 months. Seller covers the first 6 months.": the seller shares it
+        whole = sent
+        nxt = pieces[i + 1] if i + 1 < len(pieces) else ""
+        if len(list(_TM_AMT.finditer(whole))) == 1 and nxt.strip() and not re.search(r"\bassessments?\b", nxt, re.I) and _TM_AMT.search(nxt) \
+                and _TM_TERMS.search(nxt) and not _TM_OTHER.search(nxt):
+            whole = whole + "; " + nxt  # "Special assessment $12,000; buyer pays $500 a month for 24 months"
+        amts = list(_TM_AMT.finditer(whole))
+        if len(amts) != 2:
+            continue
+        monthly = [a for a in amts if _TM_MONTHLY_AFTER.match(whole, a.end())]
+        if len(monthly) != 1:
+            continue
+        total = next(a for a in amts if a is not monthly[0])
+        if _TM_MONTHLY_AFTER.match(whole, total.end()) or re.match(r"[ \t]*(?:/[ \t]*y|per[ \t]+(?:year|quarter)|a[ \t]+year|yearly|annual|quarterly)", whole[total.end():], re.I):
+            continue
+        if _TM_OTHER.search(whole[max(0, monthly[0].start() - 14):monthly[0].start()]):
+            continue
+        tv, mv = _num(total.group(1)) + (int(total.group(2)) / 100 if total.group(2) else 0), _num(monthly[0].group(1)) + (int(monthly[0].group(2)) / 100 if monthly[0].group(2) else 0)
+        if not tv > mv > 0 or _assessment_payer(text, whole) == "seller" or _PAYER_SELLER.search(whole):
+            continue
+        n = None
+        nm = re.search(r"\b(?:for|x|over|through|across|within)[ \t]+(?:the[ \t]+(?:next|first)[ \t]+)?" + _SF_N + r"[ \t]*(months?|mos?\b|years?|yrs?\b)", whole[monthly[0].end():], re.I) \
+            or re.search(r"\b" + _SF_N + r"[ \t]+monthly[ \t]+(payments?)\b", whole, re.I)
+        if nm:
+            nv = int(nm.group(1)) if nm.group(1).isdigit() else _SF_NUM.get(nm.group(1).lower())
+            if nv:
+                n = nv * (12 if nm.group(2).lower().startswith("y") else 1)
+        if n is None or abs(mv * n - tv) > max(1.0, tv * 0.02):
+            continue
+        return tv, mv, n, " ".join(whole.split())
+    return None
+
+
+def _assessment_total_monthly_note(text: str) -> str:
+    got = _assessment_total_monthly(text)
+    if not got:
+        return ""
+    total, monthly, n, quote = got
+    return (f'The listing says "{quote}". The special assessment is {_usd(total)} in all, paid by the buyer as {_usd(monthly)} a month for {n} months. '
+            f"The {_usd(monthly)} a month is counted in the monthly cost as other monthly fees, from the start, and the {_usd(total)} is not cash at closing, so it is counted once. "
+            f"It ends after {n} months, so the monthly cost drops by {_usd(monthly)} then. Ask whether the payments carry interest and who pays what is left if you sell before then.")
+
+
 def _assessment_monthly(text: str) -> tuple[float, int | None] | None:
     """("Assessment for windows: $150/month for 24 months") -> (150, 24). Months is None when the listing gives no length."""
     if (sf := _assessment_seller_first(text)):
         return sf[0], sf[1]  # cycle 35: the buyer's months after the seller's first months
     if (lf := _assessment_seller_lump_first(text)):
         return lf[1], lf[2]  # cycle 36: "Seller pays $6,000 first, then buyer pays $250 per month for 24 months": the buyer's monthly figure
+    if (tm := _assessment_total_monthly(text)):
+        return tm[1], tm[2]  # cycle 37: "Special assessment $12,000 ... payable $500/mo for 24 months": the buyer's monthly payment
     m = re.search(r"\bassessments?\b[^.\n$]{0,40}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)"
                   r"(?:[^.\n]{0,15}?\b(?:for|x|over)[ \t]+(\d{1,3})[ \t]*(?:months?|mos?\b))?", text, re.I)
     if not m:  # "Monthly special assessment of $150", "$150/mo special assessment"
@@ -8241,7 +8311,7 @@ def _assessment_none(text: str) -> bool:
 
 def _assessment_monthly_note(text: str) -> str:
     got = _assessment_monthly(text)
-    if not got or _assessment_seller_first(text) or _assessment_seller_lump_first(text):
+    if not got or _assessment_seller_first(text) or _assessment_seller_lump_first(text) or _assessment_total_monthly(text):
         return ""  # cycle 35: the seller-pays-the-first-months case has its own note (cycle 36: so has the seller's amount first, then the buyer's monthly)
     amount, months = got
     length = f" for {months} months (${amount * months:,.0f} in all)" if months else ""
@@ -8266,7 +8336,7 @@ def _special_assessment(text: str) -> str:
     if sentence is None:
         return ""
     am = _assessment_amount(sentence, skip_monthly=True)
-    if _assessment_seller_first(text) or _assessment_seller_lump_first(text):
+    if _assessment_seller_first(text) or _assessment_seller_lump_first(text) or _assessment_total_monthly(text):
         return ""  # cycle 35: the seller pays the first months only: it has its own note (_assessment_seller_first_note); cycle 36: so has the seller's amount first
     if _assessment_split(text):
         return ""  # cycle 33: an even split over months has its own note (_assessment_split_note)
@@ -14463,6 +14533,18 @@ def _mls_blank(text: str) -> str:
     return blank
 
 
+_PCT_NUMWORDS = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"}
+
+
+def _percent_words(text: str) -> str:
+    """Cycle 37 (buyer l6): "4 percent", "3.5 per cent", "2 pct" and "three percent" are written "4%", "3.5%", "2%" and "3%", so the seller credit,
+    closing cost and PMI readers see one form. "Percent" with no number before it is left alone."""
+    if not re.search(r"percent|per[ \t]?cent|pct", text, re.I):
+        return text
+    text = re.sub(r"(?<![\w.])(\d{1,3}(?:\.\d+)?)[ \t]*(?:percent|per[ \t]?cent|pct\.?)(?![a-z])", r"\1%", text, flags=re.I)
+    return re.sub(r"\b(one|two|three|four|five|six|seven|eight|nine|ten)[ \t]+(?:percent|per[ \t]?cent)(?![a-z])", lambda m: _PCT_NUMWORDS[m.group(1).lower()] + "%", text, flags=re.I)
+
+
 def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "", pet_count: Any = None) -> dict[str, Any]:
     """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
@@ -14475,6 +14557,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text = _pet_adverbs(text)  # cycle 35: "Dogs now allowed under 30 lbs"
     text = _deposit_abbreviation(text)  # cycle 35: "Dep $1,350" and "$1500 dep" are the deposit
+    text = _percent_words(text)  # cycle 37: "4 percent of the price" and "three per cent" are "4%" and "3%" for every reader
     text, es_pairs = _spanish_translate(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets; cycle 35: and laundry and yard
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
@@ -16364,7 +16447,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 split_now = _try(lambda: _assessment_split(text))
                 sf_now = _try(lambda: _assessment_seller_first(text))
                 lf_now = _try(lambda: _assessment_seller_lump_first(text))
-                if lf_now and abs(lf_now[1] - amt_m) < 0.01:
+                tm_now = _try(lambda: _assessment_total_monthly(text))
+                if tm_now and abs(tm_now[1] - amt_m) < 0.01:
+                    facts.append(_assessment_total_monthly_note(text))
+                elif lf_now and abs(lf_now[1] - amt_m) < 0.01:
                     facts.append(_assessment_seller_lump_first_note(text))
                 elif sf_now and abs(sf_now[0] - amt_m) < 0.01:
                     facts.append(_assessment_seller_first_note(text))
