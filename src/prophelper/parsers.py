@@ -5975,7 +5975,7 @@ def app_fee_note_for_people(values: dict[str, Any], people: int) -> dict[str, An
 def _move_in_months(text: str) -> tuple[int, bool]:
     """(months of rent due at move-in, deposit also due) from "first and last month" or "first, last and deposit"."""
     m = re.search(r"\b(?:first|1st)\b(?:\s+month(?:'?s)?(?:\s+rent)?)?\s*(?:,|and|&|\+|/|plus)\s*(?:and\s+)?\blast\b(?:\s+month(?:'?s)?(?:\s+rent)?)?"
-                  r"(?:\s*(?:,|and|&|\+|/|plus)\s*(?:a\s+)?(?:the\s+)?(?:security\s+)?(deposit))?", text, re.I)
+                  r"(?:\s*(?:,|and|&|\+|/|plus)\s*(?:a\s+)?(?:the\s+)?(?:security\s+)?(deposit\b|security\b))?", text, re.I)
     if not m:
         mr = re.search(r"\blast\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:the[ \t]+)?\b(?:first|1st)\b[ \t]+month", text, re.I)
         if mr:  # cycle 22: "Last month's rent plus first month required"
@@ -6019,9 +6019,11 @@ def _deposit_each(text: str) -> float | None:
     last month and deposit, $1,500 each", "$2,800 each for first, last and security deposit". The amount is what each item
     costs, so it is the security deposit. None when the line gives no per-item amount."""
     amt = r"\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d\d)?|\d+(?:\.\d\d)?)(?![\d,])"
-    items = r"(?:first|1st)\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:last)\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:a[ \t]+|the[ \t]+)?(?:security[ \t]+)?deposit\b"
+    items = r"(?:first|1st)\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:last)\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:a[ \t]+|the[ \t]+)?(?:(?:security[ \t]+)?deposit\b|security\b)"
+    items2 = r"(?:first|1st)\b(?:[ \t]+month(?:'?s)?(?:[ \t]+rent)?)?[ \t]*(?:,|and|&|\+|/|plus)[ \t]*(?:and[ \t]+)?(?:a[ \t]+|the[ \t]+)?(?:(?:security[ \t]+)?deposit\b|security\b)"  # cycle 37: "first and security ($1,395 each)"
     for pat in (items + r"[^.\n;$]{0,40}?[ \t(,:\-]*" + amt + r"[ \t]*(?:each|apiece|per[ \t]+item|for[ \t]+each)\b",
-                amt + r"[ \t]*(?:each|apiece)\b[ \t]*(?:for|toward|on)?[ \t]*(?:the[ \t]+)?" + items):
+                amt + r"[ \t]*(?:each|apiece)\b[ \t]*(?:for|toward|on)?[ \t]*(?:the[ \t]+)?" + items,
+                items2 + r"[^.\n;$]{0,40}?[ \t(,:\-]*" + amt + r"[ \t]*(?:each|apiece|per[ \t]+item|for[ \t]+each)\b"):
         m = re.search(pat, text, re.I)
         if m:
             v = _num(m.group(1))

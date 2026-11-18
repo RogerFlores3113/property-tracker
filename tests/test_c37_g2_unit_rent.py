@@ -160,3 +160,38 @@ def test_privacy_l4_and_l8():
 
 def test_a_real_sale_with_an_mls_id_is_still_a_sale():
     assert read("MLS# 4455667 3 bed 2 bath home for sale $350,000", buying=True)["price"] == 350000
+
+
+# ------------------------------------------------------------------ item 6 (rule pp): "first, last and security ($1395 each)"
+@pytest.mark.parametrize("t", [
+    "Rent: $1395 per month. First, last and security ($1395 each) due at signing.",
+    "Rent: $1395 per month. First, last and security deposit ($1,395 each) due at move-in.",
+    "Rent $1,395/mo. Move-in: first month, last month and security deposit, $1,395 each.",
+    "Rent $1,395/mo\nFirst, last & security: $1,395 each",
+    "Rent $1,395/mo. Due at signing: first, last, security - $1395 each.",
+    "Rent $1,395/mo. First month's rent, last month's rent and a security deposit of $1,395 each are due at signing.",
+    "Rent $1,395/mo. Move in costs: first + last + security at $1,395 each.",
+])
+def test_first_last_and_security_each_is_a_deposit_and_two_months(t):
+    r = read(t)
+    assert r["price"] == 1395 and r["deposit"] == 1395 and r["months_up_front"] == 2
+
+
+def test_first_and_security_each_is_a_deposit():
+    assert read("Rent $1,395/mo. First and security ($1,395 each) due at signing.")["deposit"] == 1395
+
+
+def test_first_and_last_each_alone_is_no_deposit():
+    r = read("Rent $1,395/mo. First and last month's rent ($1,395 each) due at signing.")
+    assert r.get("deposit") is None and r["months_up_front"] == 2
+
+
+def test_security_deposit_stated_apart_is_kept():
+    r = read("Rent $1,395/mo. First and last month's rent due. Security deposit $500.")
+    assert r["deposit"] == 500 and r["months_up_front"] == 2
+
+
+def test_nontech_l7_whole_listing():
+    r = read(fixture("r36-nontech-l7.txt"))
+    assert r["price"] == 1395 and r["deposit"] == 1395 and r["months_up_front"] == 2
+    assert r["pet_deposit"] == 350 and r["pet_rent"] == 40
