@@ -1,6 +1,6 @@
 # Property Helper installer for Windows 10/11 (64-bit), Windows PowerShell 5.1 or newer.
 #
-#   irm https://raw.githubusercontent.com/rogerflores3113/property-helper/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/rogerflores3113/property-tracker/main/install.ps1 | iex
 #
 # Options:  -NoOpen   install but do not open the app
 #           ($env:PROPHELPER_NO_OPEN = '1' does the same; -NoOpen cannot be passed through irm | iex)
@@ -23,7 +23,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
-$BaseUrl = 'https://github.com/rogerflores3113/property-helper/releases/latest/download'
+$BaseUrl = 'https://github.com/rogerflores3113/property-tracker/releases/latest/download'
 $Asset = 'PropertyHelper-windows.zip'
 
 function Stop-Install([string]$Message) {

@@ -65,6 +65,6 @@ if sys.platform == "darwin":
         coll,
         name="Property Helper.app",
         bundle_identifier="dev.rogerflores.propertyhelper",
-        version="0.1.0",
+        version="0.2.0",
         info_plist={"NSHighResolutionCapable": True, "LSUIElement": False},
     )

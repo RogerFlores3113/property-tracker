@@ -58,7 +58,7 @@ def test_plugin_and_marketplace_files():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
     assert plugin["name"] == "property-helper" and plugin["skills"] == "./skills/claude/"
-    assert plugin["homepage"] == "https://github.com/rogerflores3113/property-helper"
+    assert plugin["homepage"] == "https://github.com/rogerflores3113/property-tracker"
     assert market["name"] == "property-helper" and market["plugins"][0]["name"] == "property-helper"
     assert market["plugins"][0]["source"] == "./"
     assert (ROOT / plugin["skills"]).is_dir()
@@ -127,7 +127,7 @@ def test_plugin_download_is_the_real_plugin(client):
         assert names == {".claude-plugin/plugin.json", "skills/property-helper/SKILL.md"}
         assert z.read("skills/property-helper/SKILL.md") == CLAUDE.read_bytes()
         manifest = json.loads(z.read(".claude-plugin/plugin.json"))
-        assert manifest["name"] == "property-helper" and manifest["homepage"].endswith("/rogerflores3113/property-helper")
+        assert manifest["name"] == "property-helper" and manifest["homepage"].endswith("/rogerflores3113/property-tracker")
     assert skills_install.build_plugin() == skills_install.build_plugin()  # the same bytes every time
 
 

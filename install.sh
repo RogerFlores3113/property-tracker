@@ -1,7 +1,7 @@
 #!/bin/sh
 # Property Helper installer for macOS (Apple Silicon) and Linux (x86_64).
 #
-#   curl -fsSL https://raw.githubusercontent.com/rogerflores3113/property-helper/main/install.sh -o "${TMPDIR:-/tmp}/ph-install.sh" && sh "${TMPDIR:-/tmp}/ph-install.sh"
+#   curl -fsSL https://raw.githubusercontent.com/rogerflores3113/property-tracker/main/install.sh -o "${TMPDIR:-/tmp}/ph-install.sh" && sh "${TMPDIR:-/tmp}/ph-install.sh"
 #
 # (Saved to a file first, so a failed download stops loudly instead of running nothing.)
 #
@@ -15,7 +15,7 @@ set -eu
 
 install_property_helper() {
 
-  BASE_URL="https://github.com/rogerflores3113/property-helper/releases/latest/download"
+  BASE_URL="https://github.com/rogerflores3113/property-tracker/releases/latest/download"
   OPEN_APP=1
   UPGRADE=0
   for arg in "$@"; do

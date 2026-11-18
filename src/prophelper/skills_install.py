@@ -7,7 +7,7 @@ A skill is a short instruction file an AI app reads to use Property Helper well.
   The Claude app (desktop and claude.ai) has no skills folder on disk. It takes a plugin: one .plugin file (a zip
   holding .claude-plugin/plugin.json and skills/<name>/SKILL.md), added under Customize > Plugins > Add > Upload
   plugin. ``build_plugin`` makes that file. The repository carries the same plugin and a marketplace file in its
-  .claude-plugin/ folder, so ``claude plugin marketplace add rogerflores3113/property-helper`` works for people with
+  .claude-plugin/ folder, so ``claude plugin marketplace add rogerflores3113/property-tracker`` works for people with
   access to the repository.
 
 The safety rules live in ``routes_skills`` (the manifest of what we wrote): a file we did not write, or one the user
@@ -28,7 +28,7 @@ from typing import Any
 
 from . import helpers, paths, routes_skills
 
-REPO = "rogerflores3113/property-helper"
+REPO = "rogerflores3113/property-tracker"
 PLUGIN_NAME = "property-helper"
 PLUGIN_FILE = "property-helper.plugin"
 MARKETPLACE_NAME = "property-helper"
