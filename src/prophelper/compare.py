@@ -543,6 +543,9 @@ def _cost_cell(p: dict[str, Any]) -> dict[str, Any]:
     if cell["value"] is not None and as_listed(p):
         cell["text"] += " as listed, not checked"
         cell["incomplete"] = True
+    elif cell["value"] is not None and not unc and cost_incomplete(p):
+        cell["text"] += " (not complete)"  # cycle 37: a total the rest of the app calls "not complete" (a cash part left out, a cost part unknown) is never "(best)"
+        cell["incomplete"] = True
     return cell
 
 
@@ -861,7 +864,7 @@ def _assessment_cell(p: dict[str, Any]) -> dict[str, Any]:
 
 def _per_person_cell(p: dict[str, Any]) -> dict[str, Any]:
     cell = _money(p.get("per_person"))
-    if cell["value"] is not None and _uncounted(p):
+    if cell["value"] is not None and (_uncounted(p) or cost_incomplete(p)):
         cell["incomplete"] = True
     if cell["value"] is not None:
         cell["text"] += f" ({p['people']} {p.get('split_noun') or 'people'})"
@@ -1329,7 +1332,7 @@ def _leaves_out_clause(p: dict[str, Any]) -> str:
     """Cycle 30: a place called "cheapest" that leaves a cost part out says so in the same sentence (", and its electric and gas aren't counted")."""
     parts = _short_parts(p)
     if parts == "costs" and not _uncounted(p):
-        return ""
+        return ", and its cost is not complete" if cost_incomplete(p) else ""  # cycle 37: never "cheapest" with nothing said about a cost that is not complete
     return f", and {_its(parts)}{parts} {'aren' if _aren_t(parts) == 'are' else 'isn'}'t counted"
 
 
