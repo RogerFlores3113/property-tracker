@@ -1,6 +1,6 @@
 """Property Helper: a local-first helper for your own apartment or house hunt."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import re as _re
 

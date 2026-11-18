@@ -64,7 +64,7 @@ Design rules (same as Job App Tracker):
 - Start files `Start Property Helper.command` and `Start Property Helper.bat`, `install.sh`, `install.ps1`,
   PyInstaller spec and MCP smoke test, CI on ubuntu, windows and macos (copied and renamed from Job App Tracker).
 - No version bumps or tags in this repo's automation: the version stays as set in `pyproject.toml`
-  (`0.1.0`) until Roger changes it.
+  (`0.2.0`) until Roger changes it.
 
 ## 3. Data model
 
