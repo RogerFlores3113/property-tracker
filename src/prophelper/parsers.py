@@ -214,7 +214,7 @@ def _grouped_thousands(text: str) -> str:
         w = _GROUP_WORD.match(text, end)
         whole, _, cents = num.partition(",") if "," in num else (num, "", "")
         digits = re.sub(r"[ .]", ",", whole)
-        out.append(text[last:m.start("n")])
+        out.append(re.sub(r"\$[ \t]*$", "", text[last:m.start("n")]))  # cycle 37: "HOA $ 2 400 yearly" has its own dollar sign: one sign, never "$ $2,400"
         out.append("$" + digits + ("." + cents if cents and cents != "00" else ""))
         last = w.end() if w else end
     if out:
