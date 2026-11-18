@@ -205,7 +205,7 @@ def _noted(amount: float, item: str, notes: str) -> bool:
     words = {w for w in re.findall(r"[a-z0-9]{3,}", re.sub(r"\$\s?[\d,.]+", " ", item.lower())) if w not in _STOP}
     mine = next((c[0] for c in _CATS if c[1].search(item)), None)
     for unit in notes.split("\n"):
-        if amount in _P()._dollar_values(unit) and "was corrected to" in unit and "saved on this place" in unit:
+        if amount in _P()._dollar_values(unit) and re.search(r"was (?:corrected|reduced|raised) to", unit) and "saved on this place" in unit:
             return True  # cycle 31: the saved-versus-corrected note names the listing's new figure, so it is explained
         if amount in _P()._dollar_values(unit) and (not words or any(w in unit.lower() for w in words) or (mine and next((c[0] for c in _CATS if c[1].search(unit)), None) == mine)):
             return True
