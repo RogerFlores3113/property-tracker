@@ -2383,7 +2383,7 @@ def _discount_condition_lead(text: str, pos: int) -> str:
     start = max(text.rfind("\n", 0, pos), text.rfind(". ", 0, pos), text.rfind("; ", 0, pos), text.rfind("! ", 0, pos), text.rfind("|", 0, pos)) + 1
     lead = " ".join(text[start:pos].split())
     lead = re.sub(r"^(?:special|promo|offer|deal|bonus|limited[ \t]+time)[ \t]*[:\-]+[ \t]*", "", lead, flags=re.I).replace('"', "'")
-    if not lead or len(lead) > 90 or not re.search(r"\b(?:by|before|until|through|if|when|sign(?:ing)?|move[- ]?in|lease|within|on|after)\b", lead, re.I) or "$" in lead:
+    if not lead or len(lead) > 90 or not re.search(r"\b(?:by|before|until|through|if|when|within|after)\b", lead, re.I) or "$" in lead:
         return ""
     return lead + " "
 
@@ -13464,7 +13464,7 @@ def _hype_tail_cut(title: str) -> str:
     return cut if len(cut) >= 3 and re.search(r"[A-Za-z]{3}", cut) else title
 
 
-_TITLE_SIZE_PREFIX = re.compile(r"^(?:\d(?:\.\d)?[ \t]*/[ \t]*\d(?:\.\d)?|\d[ \t]*(?:br|bd|bed)s?[ \t]*/?[ \t]*\d(?:\.\d)?[ \t]*(?:ba|bath)s?)[ \t]+(?=[A-Za-z])", re.I)
+_TITLE_SIZE_PREFIX = re.compile(r"^(?:\d(?:\.\d)?[ \t]*/[ \t]*\d(?:\.\d)?|\d(?:br|bd|bed)s?/\d(?:\.\d)?(?:ba|bath)s?)[ \t]+(?=[A-Za-z])", re.I)
 _TITLE_FEATURE_TAIL = re.compile(r"[ \t]*[-|:,!\u2013\u2014][ \t]*(?:(?:huge|big|large|spacious|fenced|fully[ \t]+fenced|beautiful|gorgeous|great|amazing|nice|lovely|stunning|prime|private|giant)[ \t]+)+"
                                  r"(?:yard|backyard|yards|location|views?|space|deal|kitchen|lot|garden|deck|patio)s?[ \t!.]*$", re.I)
 _TITLE_HYPE_WORD = re.compile(r"[ \t]+(?:hurry|wow|omg|act[ \t]+fast|must[ \t]+see|won'?t[ \t]+last|don'?t[ \t]+miss)(?:[ \t]*!+)?(?=[ \t]+\S)", re.I)
@@ -13474,12 +13474,13 @@ def _title_hype_clean(t: str) -> str:
     """Cycle 37 (family l2, roommates l15): "3/2 Oak Street House - Huge Yard!!!" is the name "Oak Street House": the size before it and the feature shout after it are not the name,
     and "Hyde Park Hurry 3bd/2ba" loses the hype word in the middle. Each cut is kept only when a real name of at least two words is left."""
     out = t
+    shouted = False
     for _ in range(3):
         cut = _TITLE_FEATURE_TAIL.sub("", _HYPE_TAIL.sub("", out)).strip(" ,;:-|!\u2013\u2014")
-        if cut == out or len(cut) < 8 or not re.search(r"[A-Za-z]{3}", cut):
+        if cut == out or len(cut) < 8 or len(re.sub(r"\b\d+[ \t]*(?:bed|bath|br|ba|bd)\w*|[\W\d_]", "", cut, flags=re.I)) < 4:
             break
-        out = cut
-    m = _TITLE_SIZE_PREFIX.match(out)
+        out, shouted = cut, True
+    m = _TITLE_SIZE_PREFIX.match(out) if shouted else None  # the size is dropped only from a title that also had a shout cut off: a plain "3BR/2BA Townhouse" keeps its size
     if m:
         rest = out[m.end():].strip()
         if len(rest.split()) >= 2 and rest[:1].isupper() and not _bare_kind_title(rest, {}) and not _PLAN_NAME.match(rest):
