@@ -32,7 +32,7 @@ ADDR = "88 Oak Street, San Carlos, CA 94070"
     ("3/2 Oak Street House | Huge Yard", "Oak Street House"),
     ("3/2 Oak Street House, Big Backyard!!", "Oak Street House"),
     ("3bd/2ba Oak Street House - Spacious Yard", "Oak Street House"),
-    ("3/2 Oak Street House", "3/2 Oak Street House"),  # no shout to cut: the size stays
+    ("3/2 Oak Street House", "Oak Street House"),
     ("3BR/2BA Townhouse, Redwood City", "3BR/2BA Townhouse, Redwood City"),
     ("2 Bed 1 Bath Ranch Duplex - Whitehall", "2 Bed 1 Bath Ranch Duplex - Whitehall"),
     ("Hyde Park Hurry!! 3bd/2ba", "Hyde Park 3bd/2ba"),

@@ -13480,7 +13480,9 @@ def _title_hype_clean(t: str) -> str:
         if cut == out or len(cut) < 8 or len(re.sub(r"\b\d+[ \t]*(?:bed|bath|br|ba|bd)\w*|[\W\d_]", "", cut, flags=re.I)) < 4:
             break
         out, shouted = cut, True
-    m = _TITLE_SIZE_PREFIX.match(out) if shouted else None  # the size is dropped only from a title that also had a shout cut off: a plain "3BR/2BA Townhouse" keeps its size
+    m = _TITLE_SIZE_PREFIX.match(out)  # the size is dropped only from a title that also had a shout cut off or that goes on with a street name: a plain "3BR/2BA Townhouse" keeps its size
+    if m and not (shouted or re.search(r"\b(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|way|blvd|boulevard|place|pl|terrace|circle)\b", out[m.end():], re.I)):
+        m = None
     if m:
         rest = out[m.end():].strip()
         if len(rest.split()) >= 2 and rest[:1].isupper() and not _bare_kind_title(rest, {}) and not _PLAN_NAME.match(rest):
