@@ -7451,8 +7451,13 @@ _ESCROW_ONE_TIME = re.compile(r"\b(?:initial[ \t]+)?escrow[ \t]+(?:set[- ]?up|de
                               + r"|\b(?:taxes[ \t]+and[ \t]+insurance|insurance[ \t]+and[ \t]+taxes)[ \t]+escrow[ \t]+(?:deposit|set[- ]?up)\b" + _ESCROW_TAIL, re.I)
 
 
+_TITLE_POLICY = re.compile(r"\b(?:(?:owner'?s?|lender'?s?|buyer'?s?|seller'?s?|mortgagee'?s?|loan|extended|enhanced|standard|basic|alta|simultaneous|title)[ \t]+){0,3}title[ \t]+(?:insurance|policy|policies|coverage|premium|protection|cover)\b|\b(?<!home)(?:owner'?s?|lender'?s?|mortgagee'?s?)[ \t]+(?:title[ \t]+)?(?:insurance|policy|policies|coverage|premium)\b", re.I)
+
+
 def _insurance(text: str) -> float | None:
-    """Home insurance as a yearly amount (the field is per year). "est $1,100/yr" -> 1100; "$90/mo" -> 1080."""
+    """Home insurance as a yearly amount (the field is per year). "est $1,100/yr" -> 1100; "$90/mo" -> 1080.
+    Cycle 37: a title policy (title insurance, owner's or lender's policy) is a one-time closing item, never the homeowner's insurance."""
+    text = _TITLE_POLICY.sub(" TITLEPOLICY ", text or "")
     text = re.sub(r"\b(monthly|annual|yearly)[ \t]+((?:(?:ho-?[36]|condo(?:minium)?|unit[- ]owner'?s?|home(?:owner'?s?)?|hazard|property)[ \t]+)?insurance|ho-?[36]|hoi)\b([ \t:\-=(),~]*(?:(?:about|around|approx\.?|est\.?|roughly)[ \t]*)?)(\$\s?\d[\d,]*(?:\.\d\d)?)(?![\d,])(?![ \t]*(?:/|per\b|a[ \t]+(?:month|year)|monthly|annual|yearly))",
                   lambda m: f"{m.group(2)}{m.group(3)}{m.group(4)} {m.group(1)}", text or "", flags=re.I)  # cycle 35: "Monthly HO6 insurance: $40" is $40 a month, never $40 a year
     text = re.sub(r"[ \t]*\((?:hoi|ho-?[36])\)", "", _ESCROW_ONE_TIME.sub(" ", text), flags=re.I)  # "Insurance (HOI): $700/yr"  # cycle 34: "Escrow deposit for taxes and insurance $1,900 due at closing" is a one-time amount, never the insurance premium
