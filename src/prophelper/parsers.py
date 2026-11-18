@@ -800,11 +800,11 @@ _GC_SPECIAL = re.compile(r"\b(?:special|promo\w*|concession|if[ \t]+you|when[ \t
 _GC_AFTER_KW = re.compile(r"^[ \t]*(?:/[ \t]*\w+[ \t]*)?(?:" + _GC_KW.pattern + r")", re.I)
 _GC_BACKWARD = re.compile(r"^[ \t:,\-]*(?:was|were|from|not|previously|earlier|before|originally|formerly|prior|used|ignore|instead)\b", re.I)
 # "$1,410 ($1,370 now)": the figure before the bracket is the old one, the figure inside it with "now" after it is the new one
-_GC_PAREN_NOW = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b", re.I)
+_GC_PAREN_NOW = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently)\b", re.I)
 # cycle 30: "($3,295 before)", "$1,460 previously)": the figure in front of the word is the old one
 _GC_BEFORE_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[)\]]?[ \t]*(?:before|previously|prior|earlier|originally|formerly)[ \t]*(?:[)\]]|[,;.]|$)", re.I)
 _GC_WAS_PAREN = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly|yearly)?[ \t]*[(\[][ \t]*(?:(?:was|previously|formerly|used[ \t]+to[ \t]+be)[ \t:]*\$|\$[ \t]?\d[\d,]*(?:\.\d\d)?[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:before|previously|prior|earlier|originally|formerly)\b)", re.I)
-_GC_NOW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently|today)\b[ \t]*(?:[)\]]|$|[,;|])", re.I)
+_GC_NOW_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*\w+|per[ \t]+\w+|a[ \t]+(?:month|year)|monthly)?[ \t]*(?:now|currently)\b[ \t]*(?:[)\]]|$|[,;|])", re.I)
 
 
 # cycle 32: "HOA $340/mo -> $385/mo", "HOA went from $340 to $385 a month", "Seller credit increased from $5,000 to $8,000": the figure after the arrow or "to" is the new one
