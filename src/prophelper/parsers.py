@@ -14223,6 +14223,18 @@ def _pet_adverbs(text: str) -> str:
     return _PET_NOW_VERB.sub("", text)
 
 
+_PCT_NUMWORDS = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"}
+
+
+def _percent_words(text: str) -> str:
+    """Cycle 37 (buyer l6): "4 percent", "3.5 per cent", "2 pct" and "three percent" are written "4%", "3.5%", "2%" and "3%", so the seller credit,
+    closing cost and PMI readers see one form. "Percent" with no number before it is left alone."""
+    if not re.search(r"percent|per[ \t]?cent|pct", text, re.I):
+        return text
+    text = re.sub(r"(?<![\w.])(\d{1,3}(?:\.\d+)?)[ \t]*(?:percent|per[ \t]?cent|pct\.?)(?![a-z])", r"\1%", text, flags=re.I)
+    return re.sub(r"\b(one|two|three|four|five|six|seven|eight|nine|ten)[ \t]+(?:percent|per[ \t]?cent)(?![a-z])", lambda m: _PCT_NUMWORDS[m.group(1).lower()] + "%", text, flags=re.I)
+
+
 def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "", pet_count: Any = None) -> dict[str, Any]:
     """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
@@ -14235,6 +14247,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
     text = _pet_adverbs(text)  # cycle 35: "Dogs now allowed under 30 lbs"
     text = _deposit_abbreviation(text)  # cycle 35: "Dep $1,350" and "$1500 dep" are the deposit
+    text = _percent_words(text)  # cycle 37: "4 percent of the price" and "three per cent" are "4%" and "3%" for every reader
     text, es_pairs = _spanish_translate(text)  # cycle 34: Dep\u00f3sito, Estacionamiento and "Se permiten gatos" are read as deposit, parking and pets; cycle 35: and laundry and yard
     text, pair_notes = _pair_bracket_figures(text)  # cycle 26: "electric and water ($40 and $35 typical)" -> each figure to its own utility
     corr_notes: list[str] = []
