@@ -16213,8 +16213,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         facts = [f for f in facts if not (_QUOTE_ONLY.match(f) and _dollar_values(_QUOTE_ONLY.match(f).group(1)) <= mm_figs)]
     facts = _try(lambda: _plain_named_item_notes(out, facts)) or facts  # cycle 32: a clearly named monthly item gets a plain note
     if not buying:
-        facts = _try(lambda: _formula_figure_notes(text_full, facts)) or facts  # cycle 32: a figure beside formula-like text is named, never silent
-        facts = _try(lambda: _formula_amount_notes(text_full, facts)) or facts  # cycle 35: a dollar sign with a formula where the amount should be
+        facts = _try(lambda: _formula_figure_notes(text_full, facts, out)) or facts  # cycle 32: a figure beside formula-like text is named, never silent
+        facts = _try(lambda: _formula_amount_notes(text_full, facts, out)) or facts  # cycle 35: a dollar sign with a formula where the amount should be
     facts = _try(lambda: _restore_raw_quotes(facts, raw_text)) or facts  # cycle 36 (uiuc l8): a quote keeps the listing's own figure ("2 100 al mes", not "$2,100 al mes")
     facts = _try(lambda: _es_restore_notes(facts, es_pairs, raw_text)) or facts  # cycle 35: a quote shows the listing's own Spanish words, never the English label the reader put in
     if facts:
@@ -16233,7 +16233,7 @@ _PLAIN_NAMED_QUOTE = re.compile(r'^The listing also says "([^"]*)"\. (?:It is a 
 _FORMULA_BIT = re.compile(r"[=\uff1d@][ \t]?[\"']?[A-Za-z]{2,12}[|(]|\+[ \t]?[A-Za-z]{2,12}\|")
 
 
-def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
+def _formula_figure_notes(text: str, facts: list[str], out: dict[str, Any] | None = None) -> list[str]:
     """Cycle 32: 'Valet trash $35 ="cmd|' /C calc'!A0" per month.' The odd text is ignored, but the figure in front of it is never left out of the notes
     in silence: when no note names it, a short note says what it sat next to and to check it. A figure a note already quotes or names is left alone."""
     add: list[str] = []
@@ -16254,8 +16254,13 @@ def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
             continue
         words = re.findall(r"[A-Za-z][A-Za-z'&-]*", re.split(r"[.;,!?:|]", line[:m.start()])[-1])[-3:]
         label = " ".join(w for w in words if w.lower() not in ("and", "the", "a", "also", "plus", "is", "are", "of", "for"))
+        gap = re.findall(r"[A-Za-z][A-Za-z'&-]*", line[m.end():fm.start()])  # cycle 37: "a $50 admin fee =HYPERLINK(...)": the words between the figure and the formula name it
+        if gap and len(gap) <= 3:
+            label = " ".join(gap)
         what = f"{shown} for {label.lower()}" if label else shown
-        add.append(f"The listing has {what} next to text that looks like a spreadsheet formula. The odd text was ignored. Ask the landlord what the {shown} is for, and whether it is a monthly cost.")
+        counted = bool(out) and note_amounts_placed(shown, out)  # cycle 37: the note says what the cost lines did with the figure
+        verdict = f"The {shown} is counted in the cost." if counted else f"The {shown} is not counted."
+        add.append(f"The listing has {what} next to text that looks like a spreadsheet formula. The odd text was ignored. {verdict} Ask the landlord what the {shown} is for, and whether it is a monthly cost.")
         have += " " + add[-1]
     return facts + add
 
@@ -16263,10 +16268,12 @@ def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
 _FORMULA_AMOUNT = re.compile(r"\$[ \t]?(?=[=\uff1d@][ \t]?[\"']?[A-Za-z]{2,12}[|(])")
 # cycle 36: "Parking fee @SUM(1+1) monthly": a formula where the amount should be, with no dollar sign, after a fee word and before a monthly word
 _FORMULA_BARE = re.compile(r"(?<![\w$])[=\uff1d@][ \t]?[A-Za-z]{2,12}\((?=[^\n]{0,60}\b(?:monthly|per[ \t]+month|a[ \t]+month|/[ \t]?mo|each[ \t]+month|one[- ]time|annual|yearly|weekly)\b)", re.I)
+_FORMULA_CALL = re.compile(r"(?<![\w$])[=\uff1d@][ \t]?[A-Za-z]{2,12}\(")  # cycle 37: any spreadsheet function call, with or without a figure or a monthly word beside it
+_FORMULA_SPAN = re.compile(r"[=\uff1d@][ \t]?[A-Za-z]{2,12}\((?:[^()\n]|\([^()\n]*\))*\)")
 _FEE_WORD_BEFORE = re.compile(r"\b(?:fee|fees|charge|charges|cost|costs|rent|parking|deposit|dues|package|premium)[ \t]+$", re.I)
 
 
-def _formula_amount_notes(text: str, facts: list[str]) -> list[str]:
+def _formula_amount_notes(text: str, facts: list[str], out: dict[str, Any] | None = None) -> list[str]:
     """Cycle 35: 'Tech package $=HYPERLINK("http://e.x") monthly' has a dollar sign where the amount should be and formula text after it. No amount can be
     read from that and none is made up, so a plain note says which item it was and what to ask, once per item."""
     add: list[str] = []
@@ -16277,12 +16284,23 @@ def _formula_amount_notes(text: str, facts: list[str]) -> list[str]:
     for line in text.splitlines(keepends=True):
         line_start, offset = offset, offset + len(line)
         line = line.rstrip("\r\n")
-        for m in sorted(list(_FORMULA_AMOUNT.finditer(line)) + list(_FORMULA_BARE.finditer(line)), key=lambda x: x.start()):
+        for m in sorted(list(_FORMULA_AMOUNT.finditer(line)) + list(_FORMULA_BARE.finditer(line)) + list(_FORMULA_CALL.finditer(line)), key=lambda x: x.start()):
             if m.re is _FORMULA_BARE and not _FEE_WORD_BEFORE.search(line[:m.start()]):
                 continue
+            if m.re is not _FORMULA_AMOUNT and any(0 <= m.start() - f.end() <= 25 and not re.search(r"[.!?;|](?:\s|$)|\|", line[f.end():m.start()]) for f in _NET_DOLLARS.finditer(line[:m.start()])):
+                continue  # cycle 37: a readable figure right before the formula ("a $50 admin fee =HYPERLINK(..)") has its own note: nothing here is unreadable
+            if m.re is _FORMULA_CALL:
+                after_words = re.match(r"[^\n]*?\)[ \t]*((?:[A-Za-z'&-]+[ \t]+){0,2}(?:fees?|charges?|deposit|dues|rent))\b", line[m.start():], re.I)
+                if after_words and re.match(r"[ \t:=\-]*\$?[ \t]?\d", line[m.start() + after_words.end():]):
+                    after_words = None  # a real figure follows the fee word: that figure is the fee, the formula is something else
+                before_ok = _FEE_WORD_BEFORE.search(re.sub(r"[:\-=]+[ \t]*$", " ", line[:m.start()]).rstrip() + " ")
+                if not (before_ok or after_words):
+                    continue
             if ai_at and in_ai_span(ai_at, line_start + m.start(), line_start + m.end()):
                 continue
             words = re.findall(r"[A-Za-z][A-Za-z'&-]*", re.split(r"[.;,!?|]", line[:m.start()])[-1])[-3:]
+            if m.re is _FORMULA_CALL and not _FEE_WORD_BEFORE.search(re.sub(r"[:\-=]+[ \t]*$", " ", line[:m.start()]).rstrip() + " ") and after_words:
+                words = re.findall(r"[A-Za-z][A-Za-z'&-]*", after_words.group(1))
             label = " ".join(w for w in words if w.lower() not in ("and", "the", "a", "also", "plus", "is", "are", "of", "for", "pets", "ok")).lower()
             if label in seen:
                 continue
@@ -16291,6 +16309,15 @@ def _formula_amount_notes(text: str, facts: list[str]) -> list[str]:
             ask = f"what the {label} costs" if label else "what it is for"
             add.append(f"The listing gives an amount {what} that could not be read: it was written as a spreadsheet formula, not a number. ".replace("amount  ", "amount ")
                        + f"Nothing is counted for it. Ask the landlord {ask} and whether it is monthly.")
+    if add:  # cycle 37: a figure that sits only inside formula text ("=HYPERLINK(url,"$40")") is no amount of the listing: its own "not counted anywhere" note goes
+        spans = [m_.group(0) for m_ in _FORMULA_SPAN.finditer(text)]
+        inside = {v for sp in spans for v in _dollar_values(sp)}
+        outside = {v for v in _dollar_values(_FORMULA_SPAN.sub(" ", text))}
+        def _only_in_formula(f: str) -> bool:
+            q = re.match(r'The listing also says "([^"]*)"\. ', f)
+            vals = _dollar_values(q.group(1)) if q else set()
+            return bool(vals) and vals <= inside and not (vals & outside)
+        facts = [f for f in facts if not _only_in_formula(f)]
     if any("for the parking" in a for a in add):  # cycle 36: the vaguer "could not tell what it is" note for the same formula goes
         facts = [f for f in facts if not re.match(r'The listing mentions parking \(".*[=\uff1d@][ \t]?[A-Za-z]{2,12}\(.*"\), but I could not tell what it is', f)]
     return facts + [a for a in add if a not in facts]
