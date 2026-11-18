@@ -4504,6 +4504,11 @@ def _pets(text: str, weight_rules: bool = True) -> str:
     if re.search(r"(?<![\w$.])(?:\d|one|two|three|four)\s+(?:cats?)\s+(?:max(?:imum)?|only|limit|per\s+(?:unit|apartment|home|household))\b|\b(?:max(?:imum)?(?: of)?|limit(?: of)?|up to|no more than|at most)\s+(?:\d|one|two|three|four)\s+cats?\b", work) \
             and not re.search(r"\bno\s+cats?\b", work):
         cats = True  # "1 cat max", "max 2 cats"
+    if weight_rules and not _MAYBE_PETS.search(work):  # cycle 37: "Dogs over 50 lb $500 deposit" and "$500 deposit for dogs over 50 lb" price dogs, so dogs are taken
+        for _sm in re.finditer(r"[^.;\n|]+", work):
+            _seg = _sm.group(0)
+            if re.search(r"\$\s?\d|\b(?:deposit|dep|fee|rent)\b", _seg) and _heavy_dog_weight(_seg) is not None and not re.search(r"\bno[ \t]+dogs?\b(?![ \t]+(?:over|above|exceeding))|\bdogs?[ \t]*[:\-][ \t]*no\b|\bcats?[ \t]+only\b", _seg):
+                dogs = True
     if re.search(_CAT_CHARGE, work):
         cats = True  # "Cat fee $150": a charge for cats means cats are taken
     if re.search(_DOG_CHARGE, work):
@@ -4995,6 +5000,21 @@ _PAIR_TAG = re.compile(r"(non[- ]?)?refundable\b", re.I)
 _HEAVY_PET = re.compile(r"\b(?:(?:dogs?|pets?|animals?|canines?)[ \t]+(?:weighing[ \t]+)?(?:over|above|exceeding|more[ \t]+than|(?:larger|bigger|heavier|greater)[ \t]+than)|(?:larger|bigger|heavier|big|large)[ \t]+(?:dogs?|pets?|animals?))\b", re.I)
 
 
+_HEAVY_WT = re.compile(r"\b(?:dogs?|pets?|animals?|canines?)[ \t]+(?:weighing[ \t]+)?(?:over|above|exceeding|more[ \t]+than|(?:larger|bigger|heavier|greater)[ \t]+than)[ \t]*(\d{1,3})[ \t]*(?:lbs?\b|pounds?\b)"
+                       r"|\b(?:over|above|exceeding)[ \t]*(\d{1,3})[ \t]*(?:lbs?\b|pounds?\b)[ \t]+(?:dogs?|pets?)\b", re.I)
+
+
+def _heavy_dog_weight(piece: str) -> float | None:
+    """Cycle 37: the weight in "dogs over 50 lb" when that phrase is part of a charge, not of a ban ("No dogs over 50 lb", "dogs over 50 lb not allowed"), else None."""
+    for hm in _HEAVY_WT.finditer(piece):
+        if re.search(r"\b(?:no|not|never|without)[ \t]+(?:\w+[ \t]+)?$", piece[max(0, hm.start() - 14):hm.start()], re.I):
+            continue
+        if re.match(r"[ \t:,\-]*(?:are[ \t]+|is[ \t]+)?(?:not[ \t]+(?:allowed|permitted|accepted|welcome)|prohibited|banned|no\b)", piece[hm.end():hm.end() + 30], re.I):
+            continue
+        return float(hm.group(1) or hm.group(2))
+    return None
+
+
 def _pet_conditional_deposit(text: str) -> tuple[float, str, str, float | None] | None:
     """Cycle 23: "Dogs up to 25 lbs only; larger dogs with approval and an additional $500 deposit": the $500 is owed only by the larger dogs, so it is
     never the flat pet deposit. Cycle 36: "Dogs over 50 lbs may be considered, additional $600 deposit" says the same with the weight in the clause before the comma.
@@ -5006,7 +5026,7 @@ def _pet_conditional_deposit(text: str) -> tuple[float, str, str, float | None] 
             lead = prev if re.match(r"[ \t\-*\u2022]*(?:an?[ \t]+)?(?:additional|extra|another|plus)\b", clause, re.I) and "$" not in prev else ""  # cycle 36: "...may be considered; additional $600 deposit" and the same on two lines
             prev = clause
             base = sm.start() + part.start()
-            for m in re.finditer(r"\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?[ \t]*(?:(?:pet|extra|additional)[ \t]+)?(?:deposit|fee)s?\b|\b(?:deposit|fee)[ \t:\-]*\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?", clause, re.I):
+            for m in re.finditer(r"\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?[ \t]*(?:(?:pet|extra|additional)[ \t]+)?(?:deposit|fee|dep)s?\b|\b(?:deposit|fee|dep)[ \t:\-]*\$\s?(\d{1,4}(?:,\d{3})?)(?:\.\d\d)?", clause, re.I):
                 before = re.split(r"[,]", clause[:m.start()])[-1]
                 before = re.sub(r"\bno[ \t]+(?:\w+[ \t]+)?(?:over|above|exceeding|more than|larger|bigger|heavier)\b", " ", before, flags=re.I)  # "no pets over 25 pounds" is the weight rule
                 whole = re.sub(r"\bno[ \t]+(?:\w+[ \t]+)?(?:over|above|exceeding|more than|larger|bigger|heavier)\b", " ", lead + " " + clause[:m.start()], flags=re.I)
@@ -5014,17 +5034,22 @@ def _pet_conditional_deposit(text: str) -> tuple[float, str, str, float | None] 
                 old_form = (re.search(r"\b(?:larger|bigger|heavier|big|over|above|exceeding|more than)\b", before, re.I) and re.search(r"\b(?:dogs?|pets?|animals?|cats?)\b", before, re.I)
                             and re.search(r"\b(?:additional|extra|another|plus|approval|approved|requires?|needs?)\b", before, re.I))
                 new_form = bool(near_extra and _HEAVY_PET.search(whole))
-                if not (old_form or new_form):
+                piece = re.split(r",", clause[:m.start()])[-1] + clause[m.start():m.end()] + re.split(r",", clause[m.end():])[0]
+                heavy_w = _heavy_dog_weight(piece)  # cycle 37: "dogs over 50 lb $500 deposit", "$500 deposit for dogs over 50 lb": only a heavy dog pays it
+                if not (old_form or new_form or heavy_w):
                     continue
                 if re.search(r"\b(?:each|every|per)[ \t]+(?:pet|dog|cat)\b|\bper[ \t]+(?:pet|dog|cat)\b", clause[m.end():m.end() + 14], re.I):
                     continue  # "$300 deposit per pet" is the general one
                 amount = float((m.group(1) or m.group(2)).replace(",", ""))
-                wm = re.search(r"\b(?:up to|under|max(?:imum)?(?: of)?|less than|below|over|above|exceeding|than)[ \t]*(\d{1,3})[ \t]*(?:lbs?\b|pounds?\b)", text[max(0, base - 150):base + m.start()], re.I) \
+                wm = re.search(r"(\d{1,3})", str(int(heavy_w))) if heavy_w else None
+                wm = wm or re.search(r"\b(?:up to|under|max(?:imum)?(?: of)?|less than|below|over|above|exceeding|than)[ \t]*(\d{1,3})[ \t]*(?:lbs?\b|pounds?\b)", text[max(0, base - 150):base + m.start()], re.I) \
                     or re.search(r"\b(\d{1,3})[ \t]*(?:lbs?\b|pounds?\b)", text[max(0, base - 150):base + m.start()], re.I)
                 over = f" (over {wm.group(1)} lbs)" if wm else ""
                 a, b = base + m.start(), base + m.end()
-                note = (f"The listing gives an additional ${amount:,.0f} deposit only for larger pets{over} with approval. It only applies on that condition, "
-                        f"so it is not saved as the pet deposit. Ask what it would cost for your pet.")
+                said_extra = bool(near_extra or lead)
+                approval = " with approval" if re.search(r"\bapprov\w*|\bpermission\b|\bconsider\w*", lead + " " + clause, re.I) else ""
+                note = (f"The listing gives {'an additional' if said_extra else 'a'} ${amount:,.0f} deposit only for larger pets{over}{approval}. It only applies on that condition. "
+                        f"Ask what it would cost for your pet.")
                 if wm:
                     note += f" It is counted in the cash at move-in only when your dog is over {wm.group(1)} lb."
                 return amount, text[:a] + " " * (b - a) + text[b:], note, (float(wm.group(1)) if wm else None)
@@ -5626,7 +5651,7 @@ def _pet_weight_unclear(text: str) -> str:
     fields = _pet_limit_fields(text)
     if fields.get("pet_weight_limit") is not None or fields.get("_weight_conflict") or fields.get("_weight_combined"):
         return ""
-    for c in _weight_clauses(text):
+    for c in _weight_clauses(_blank_deposit_tiers(text)):  # cycle 37: a priced weight band is not a weight that needs asking about
         if _PET_WORD.search(c) and re.search(r"\b\d{1,3}\s*" + _UNIT_LB, c, re.I) and not re.search(r"\$", c) and not _NOT_PET_WEIGHT.search(c):
             said = " ".join(c.split())[:80]
             return (f"The listing gives a weight near the pets (\"{said}\") but it is not clear if it is a limit, so the weight limit is left empty. "
@@ -5659,9 +5684,46 @@ def _pet_weight_conflict(text: str, wmatch: Any) -> list[str]:
 _BREED_NAME = re.compile(r"\b(?:pit[ \t-]?bulls?|pitbulls?|staffordshire\w*|rottweilers?|rotties|dobermans?|doberman pinschers?|german shepherds?|huskies|huskys?|akitas?|chow(?:s| chows?)?|mastiffs?|great danes?|wolf[ \t-]?(?:hybrids?|dogs?)|presa canarios?|cane corsos?|malamutes?|bully breeds?|aggressive (?:dog )?breeds?)\b", re.I)
 
 
+_TIER_CMP = re.compile(r"\b(?:under|up to|less than|below|over|above|exceeding|more than|larger than|bigger than|heavier than)[ \t]*(\d{1,3})[ \t]*(?:lbs?\b|pounds?\b)", re.I)
+_TIER_CHARGE = re.compile(r"\$|\b(?:deposit|dep|fee|rent|free)\b", re.I)
+_TIER_LIMIT_WORDS = re.compile(r"\b(?:only|max(?:imum)?|limit\w*|cap|no[ \t]+(?:\w+[ \t]+)?(?:over|above)\b|no[ \t]+(?:dogs?|pets?)\b(?![ \t]+(?:deposit|fee|rent))|not[ \t]+(?:allowed|permitted|accepted)|prohibited|banned|must|cannot|required?)\b", re.I)
+_TIER_ZERO = re.compile(r"\bno[ \t]+(?:pet[ \t]+)?(?:deposit|fee|rent)s?\b|\bfree\b|\$\s?0(?![\d,.])", re.I)
+
+
+def _blank_deposit_tiers(text: str) -> str:
+    """Cycle 37: "Dogs under 50 lbs: no deposit. Dogs over 50 lb: additional $600 deposit." prices two weight bands, it does not limit the weight. A clause
+    with a weight and a charge word, and no limit word, is blanked for the weight reader when its other band is priced too or it says there is no charge."""
+    pieces = [(m.start(), m.end(), m.group(0)) for sm in re.finditer(r"[^\n|;]+", text) for m in [sm] ]
+    clauses: list[tuple[int, int, str]] = []
+    for s0, _e0, seg in pieces:
+        for part in re.finditer(r"(?:[^.]|\.(?=\d))+", seg):
+            clauses.append((s0 + part.start(), s0 + part.end(), part.group(0)))
+    tiers = []
+    for a, b, c in clauses:
+        cm = _TIER_CMP.search(c)
+        if cm and _TIER_CHARGE.search(c) and not _TIER_LIMIT_WORDS.search(c) and re.search(r"\b(?:dogs?|pets?|animals?)\b", c, re.I):
+            tiers.append((a, b, c, cm.group(1), bool(re.match(r"(?:over|above|exceeding|more than|larger than|bigger than|heavier than)", cm.group(0), re.I))))
+    out = text
+    for a, b, c, n, heavy in tiers:
+        paired = any(n2 == n and heavy2 != heavy for _a, _b, _c, n2, heavy2 in tiers)
+        if paired or _TIER_ZERO.search(c):
+            out = out[:a] + " " * (b - a) + out[b:]
+    return out
+
+
+def has_weight_tiers(text: str) -> bool:
+    """True when the listing prices dogs over some weight ("Dogs over 50 lb: additional $600 deposit") without limiting the weight."""
+    try:
+        return _blank_deposit_tiers(text) != text or _pet_conditional_deposit(text) is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _pet_limit_fields(text: str) -> dict[str, Any]:
     """Structured pet limits: pet_weight_limit (lb), pet_count_limit, pet_breed_note and fenced_yard (1 or 0)."""
     out: dict[str, Any] = {}
+    full_text = text
+    text = _blank_deposit_tiers(text)  # cycle 37: a weight band with a price is not a weight limit
     def _wmatch(t: str) -> re.Match[str] | None:
         return re.search(r"\b(?:dogs?|pets?|animals?)\b[^.\n;]{0,40}?(?:under|up to|less than|below|at most|no more than|not (?:to )?exceed(?:ing)?|max(?:imum)?(?: of)?|weigh(?:ing|s)?(?: up to| under)?|<)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", t, re.I) \
         or re.search(r"\bno\s+(?:dogs?|pets?|animals?|breeds?|cats?)?\s*(?:over|above|exceeding|larger than|heavier than|more than)\s*(\d{1,3})\s*(?:lbs?\b|pounds?\b)", t, re.I) \
@@ -5694,6 +5756,11 @@ def _pet_limit_fields(text: str) -> dict[str, Any]:
                 break
     n = re.search(r"\b(?:max(?:imum)?(?: of)?|limit(?: of)?|up to|no more than|at most)\s+(\d|one|two|three|four)\s+(?:pets?|animals?|cats?|dogs?)\b", text, re.I) \
         or re.search(r"\b(?<![\w$.])(\d|one|two|three|four)\s+(?:pets?|animals?|cats?|dogs?)\s+(?:max(?:imum)?|limit|only|per (?:unit|apartment|home|household))", text, re.I)
+    if not n:  # cycle 37: "Pets limited to two", "Pets are limited to 2", "Limited to two pets per home"
+        n = re.search(r"\b(?:pets?|animals?|cats?|dogs?)[ \t]*(?::[ \t]*|(?:are[ \t]+)?)limited[ \t]+to[ \t]+(\d|one|two|three|four)\b(?![ \t]*(?:\d|lbs?\b|pounds?\b|years?|yrs?|in\b|inch|%|/|per[ \t]+(?:day|week|month|hour)|hours?|cars?|vehicles?|people|persons?|small|breeds?))", text, re.I) \
+            or re.search(r"(?<![\w$.])limited[ \t]+to[ \t]+(\d|one|two|three|four)[ \t]+(?:pets?|animals?|cats?|dogs?)\b", text, re.I)
+        if n and re.match(r"[^.!?\n]*\?", text[n.end():]):
+            n = None  # a question sets nothing
     if not n:  # "Cats up to 2", "Dogs max 2"
         n = re.search(r"\b(?:pets?|animals?|cats?|dogs?)\s+(?:up to|max(?:imum)?(?: of)?|limit(?: of)?)\s+(\d|one|two|three|four)\b(?!\d|\s*(?:lbs?|pounds?|years?|yrs?|in\b|inch))", text, re.I)
     if not n:  # "Pets: 1 pet", "Pets: 2 dogs"
@@ -5899,7 +5966,7 @@ def _pet_limits(text: str) -> list[str]:
         pet_bits = [b for b in bits if re.search(r"\b(?:dogs?|cats?|pets?|animals?|breeds?)\b", b, re.I)]
         if len(bits) > 1 and len(pet_bits) == 1:
             clause = pet_bits[0].strip(" -:,!")
-        if re.search(r"\b\d{1,3}\s*(?:lbs?|pounds?)|\bbreed|\bweight|\brestrict\w*|\blimits?\b|\bmax(?:imum)?\b|\bunder \d|\bup to \d|\b(?:two|2) pets\b|\bsize\b", clause, re.I) \
+        if re.search(r"\b\d{1,3}\s*(?:lbs?|pounds?)|\bbreed|\bweight|\brestrict\w*|\blimits?\b|\blimited[ \t]+to\b|\bmax(?:imum)?\b|\bunder \d|\bup to \d|\b(?:two|2) pets\b|\bsize\b", clause, re.I) \
                 and len(clause) <= 140 and not any(clause.lower() in f.lower() for f in found):
             found.append(clause[0].upper() + clause[1:])
     return found[:2]
@@ -15395,8 +15462,17 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     facts.extend(_try(lambda: _month_to_month_note(text, lease_read)) or [])
     facts.extend(_try(lambda: _commute_claims(text)) or [])
     put("year_built", _try(lambda: _year_built(text) or _year_built_delivered(text)))
-    kept_limits = [f"{line.rstrip('.')}." for line in (_try(lambda: _pet_limits(ptext)) or [])
-                   if not _pet_limit_is_in_fields(line, out)]
+    tier_cond = _try(lambda: _pet_conditional_deposit(ptext))
+    def _said_by_tier_note(line: str) -> bool:
+        # cycle 37: the line a heavy-dog deposit note already explains is not quoted again ("Dogs over 50 lb require additional $500 deposit.", "Dogs under 50 lbs: no deposit.")
+        if not tier_cond:
+            return False
+        amt = f"{tier_cond[0]:.0f}"
+        if re.search(r"\$\s?" + r"(?:" + amt[:-3] + r"," + amt[-3:] + r"|" + amt + r")(?!\d)" if len(amt) > 3 else r"\$\s?" + amt + r"(?!\d)", line):
+            return True
+        return bool(_TIER_CMP.search(line) and _TIER_ZERO.search(line) and not _TIER_LIMIT_WORDS.search(line))
+    kept_limits = [f"{line.rstrip('.')}." for line in (_try(lambda: _pet_limits(_blank_deposit_tiers(ptext))) or [])
+                   if not _pet_limit_is_in_fields(line, out) and not _said_by_tier_note(line)]
     facts += kept_limits
     if not any(_WEIGHT_WAIVER.search(blank_hard_limits(k)) for k in kept_limits):  # cycle 25: the weight limit can be waived on approval, said once (a kept line that says it already is enough)
         waiver_note = _try(lambda: _pet_weight_waiver_note(ptext, out)) or ""
