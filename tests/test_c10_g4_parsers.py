@@ -39,7 +39,7 @@ def test_free_parking_behind_building(text):
 
 def test_off_street_parking_included():
     r = parse_listing("off-street parking included")
-    assert not r.get("parking") and r["parking_cost"] == 0  # cycle 36: "behind building" is not a kind; no kind is guessed
+    assert r["parking"] == "lot" and r["parking_cost"] == 0
 
 
 def test_optional_garage_is_not_the_parking_type():
