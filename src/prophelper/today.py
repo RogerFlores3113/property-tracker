@@ -58,6 +58,22 @@ def hard_limit_failed(place: dict[str, Any]) -> bool:
     return any(i.get("hard") and i.get("dealbreaker_status") == "fail" for i in (place.get("score") or {}).get("items") or [])
 
 
+_PET_NOT_FIRM = re.compile(r"waiv|approval|\bask\b|negotiab|case[- ]by[- ]case|\bmay\b|not known|unknown|check", re.I)
+
+
+def hard_musthave_failed(place: dict[str, Any]) -> bool:
+    """Cycle 37: True when the listing firmly rules out something the searcher must have: a hard limit, or the dog or cat (its weight over the stated limit, or
+    the kind not allowed) with nothing saying it can be waived. "Closest so far" is for places that come close, so such a place never sits there."""
+    for i in (place.get("score") or {}).get("items") or []:
+        if i.get("dealbreaker_status") != "fail":
+            continue
+        if i.get("hard"):
+            return True
+        if i.get("kind") == "pets" and not _PET_NOT_FIRM.search(str(i.get("detail") or "")):
+            return True
+    return False
+
+
 def is_near(place: dict[str, Any]) -> bool:
     """A must-have is missed by a little (only because of a guess): a near miss, so not a best fit."""
     score = place.get("score") or {}
@@ -384,8 +400,8 @@ def closest(rows: list[dict[str, Any]], limit: int = TOP_FITS) -> list[dict[str,
             continue
         if score.get("fit") not in ("near_miss", "doesnt_fit"):
             continue
-        if hard_limit_failed(p):
-            continue  # a hard limit is a fail at any minute over, never a near miss
+        if hard_limit_failed(p) or hard_musthave_failed(p):
+            continue  # a hard limit is a fail at any minute over, never a near miss; a pet the listing firmly rules out is no near miss either (cycle 37)
         reasons = [str(r) for r in score.get("fit_reasons") or [] if r]
         out.append({"place": p, "text": "; ".join(reasons) or "Misses a must-have."})
     out.sort(key=lambda r: (-r["place"]["score_total"], _cost_key(r["place"]), r["place"]["title"].lower()))

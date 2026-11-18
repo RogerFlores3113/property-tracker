@@ -49,6 +49,14 @@ _PRESSURE = re.compile(r"\b(act (?:now|fast|today|quickly)|decide today|(?:must|
                        r"won'?t last|many (?:people|applicants) (?:are )?(?:interested|waiting|inquiring)|first come|hurry|"
                        r"(?:today|tonight) only|(?:rent|pay|respond|reply|send)[^.\n]{0,20}\b(?:today|immediately|right away|asap) (?:to|or|before)|"
                        r"going fast|last (?:unit|chance)|several (?:people|others) (?:are )?(?:looking|interested))\b", re.I)
+# cycle 37: rent paid in cash only, or a place with "no lease needed": a real landlord takes a check or a portal payment and gives a written lease
+_CASH_RENT = re.compile(
+    r"(?<!\bno\s)(?<!\bnot\s)\bcash(?:\s*(?:/|,|\bor\b|\band\b|&|\+)\s*(?:personal\s+|cashier'?s?\s+)?(?:checks?|cheques?|money\s+orders?)){0,3}(?:[ \t]+(?:payments?|rent|deposits?|basis|deals?))?[ \t]*(?:only|accepted[ \t]+only|is[ \t]+the[ \t]+only)\b|"
+    r"\b(?:only|just)[ \t]+(?:accept(?:s|ing)?[ \t]+|take[sn]?[ \t]+|takes[ \t]+|want[s]?[ \t]+)?cash\b(?![ \t]*back)|"
+    r"\b(?:pay(?:ing|ment|ments)?|rent|deposit)\b[^.\n]{0,25}\bin[ \t]+cash[ \t]+only\b|"
+    r"\bno[ \t]+(?:written[ \t]+)?(?:lease|contract|paperwork)[ \t]+(?:is[ \t]+)?(?:needed|required|necessary|to[ \t]+sign)\b|"
+    r"\b(?:without|skip(?:ping)?)[ \t]+(?:a[ \t]+|any[ \t]+)?(?:written[ \t]+)?(?:lease|contract)\b|"
+    r"\bno[ \t]+(?:lease|contract)\b(?=[ \t]*(?:[.,;!|)\n]|$))", re.I)
 _BEFORE_SHOWING = re.compile(r"\b(deposit|payment|fee|money|funds)\b[^.\n]{0,70}\b(before|prior to|to (?:secure|hold|reserve|see|view|get the keys))\b[^.\n]{0,40}"
                              r"\b(show|showing|viewing|tour|see|keys?|visit|inspect)|"
                              r"\b(?:no|without|skip)\s+(?:a\s+)?(?:showings?|viewings?|tours?|walk-?throughs?)\b|"
@@ -1150,6 +1158,7 @@ def _rules() -> list[tuple[re.Pattern[str], str]]:
         (_BEFORE_SHOWING, "It asks for a deposit or fee before you have seen the place, or says there are no showings. "
                           "Don't pay before a showing and a lease you have read."),
         (_ABROAD, "The owner is away or can't show the place. A scam often says the owner is out of the country."),
+        (_CASH_RENT, "It wants cash only, or says no lease is needed. Real landlords give a written lease and a receipt, so don't pay in cash for a place with no lease."),
         (_PRESSURE, "It pressures you to decide today. A real place can wait for a tour."),
         (_KEYS_MAIL, "It says the keys will be mailed to you. Don't pay for a place you can't visit."),
         (_PRIVATE_INFO, "It asks for your ID, Social Security number or bank details before you have seen the place. Share those only on a real application, after a tour."),
@@ -1496,6 +1505,8 @@ def local_flags(place: dict[str, Any], peer_prices: Iterable[float] = (), mode: 
                 continue  # only the lawyer wire asks for money: its own line says it, so the general line would repeat it
         if pattern is _ZELLE_ONLY and not buy and covered(_ZELLE_ONLY, _PAYMENT):
             continue  # "wire or Zelle only" in one sentence: the hard-to-undo payment line already says it
+        if pattern is _CASH_RENT and buy:
+            continue  # a purchase has its own cash-only line
         if pattern is _PRESSURE and same_day:
             continue  # the stronger "send money or sign today" sign already says it; one pressure hint is enough
         if buy and pattern is _PAYMENT and _WIRE_LAWYER.search(text) and WIRE_LAWYER_NOTE not in flags:
