@@ -211,3 +211,13 @@ def test_nontech_l7_heavy_dog_deposit_said_once():
     assert len([ln for ln in notes.split("\n") if "500" in ln]) == 1, notes
     assert not any(ln.startswith("Dogs over 50 lb require") for ln in notes.split("\n")), notes
     assert money is not None
+
+
+@pytest.mark.parametrize("t", [
+    "Pets: pet deposit $300, case-by-case approval for dogs over 30 lb",
+    "Cats ok. Dogs over 50 lb considered, $500 deposit.",
+    "Cats ok. Dogs over 50 lb may be approved with a $500 deposit.",
+])
+def test_negative_an_approval_is_not_a_yes_for_dogs(t):
+    r, _n = read("3 bed. Rent $2,400. " + t)
+    assert r.get("pets") != "both" and r.get("pets") != "dogs", r

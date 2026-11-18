@@ -4507,7 +4507,7 @@ def _pets(text: str, weight_rules: bool = True) -> str:
     if weight_rules and not _MAYBE_PETS.search(work):  # cycle 37: "Dogs over 50 lb $500 deposit" and "$500 deposit for dogs over 50 lb" price dogs, so dogs are taken
         for _sm in re.finditer(r"[^.;\n|]+", work):
             _seg = _sm.group(0)
-            if re.search(r"\$\s?\d|\b(?:deposit|dep|fee|rent)\b", _seg) and _heavy_dog_weight(_seg) is not None and not re.search(r"\bno[ \t]+dogs?\b(?![ \t]+(?:over|above|exceeding))|\bdogs?[ \t]*[:\-][ \t]*no\b|\bcats?[ \t]+only\b", _seg):
+            if re.search(r"\$\s?\d|\b(?:deposit|dep|fee|rent)\b", _seg) and _heavy_dog_weight(_seg) is not None and not re.search(r"\bapprov\w*|\bcase[- ]by[- ]case\b|\bconsider\w*|\bnegotiab\w*|\bpermission\b|\bask\b|\bdepend\w*|\bmaybe\b|\bpossibl\w*|\bmay\b", _seg, re.I) and not re.search(r"\bno[ \t]+dogs?\b(?![ \t]+(?:over|above|exceeding))|\bdogs?[ \t]*[:\-][ \t]*no\b|\bcats?[ \t]+only\b", _seg):
                 dogs = True
     if re.search(_CAT_CHARGE, work):
         cats = True  # "Cat fee $150": a charge for cats means cats are taken
