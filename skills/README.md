@@ -26,7 +26,7 @@ terminal, run `prophelper install-skills` (add `--yes` to skip the question) or 
 Claude Code can also take the plugin from this repository:
 
 ```
-/plugin marketplace add rogerflores3113/property-helper
+/plugin marketplace add rogerflores3113/property-tracker
 /plugin install property-helper@property-helper
 ```
 

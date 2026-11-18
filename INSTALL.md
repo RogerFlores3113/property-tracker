@@ -34,7 +34,7 @@ and do not run it again unless it failed.
 macOS or Linux, from any folder:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/rogerflores3113/property-helper/main/install.sh -o "${TMPDIR:-/tmp}/ph-install.sh" && sh "${TMPDIR:-/tmp}/ph-install.sh"
+curl -fsSL https://raw.githubusercontent.com/rogerflores3113/property-tracker/main/install.sh -o "${TMPDIR:-/tmp}/ph-install.sh" && sh "${TMPDIR:-/tmp}/ph-install.sh"
 ```
 
 (It is saved to a file first so that a failed download stops with an error. Do not pipe it
@@ -43,7 +43,7 @@ straight into `sh`.)
 Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/rogerflores3113/property-helper/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/rogerflores3113/property-tracker/main/install.ps1 | iex
 ```
 
 If this repository is already cloned on the computer, run the local script instead:
