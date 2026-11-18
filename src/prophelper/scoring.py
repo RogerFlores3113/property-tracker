@@ -615,6 +615,15 @@ def _says_all_sizes(place: dict[str, Any]) -> bool:
     return False
 
 
+def _prices_heavy_dogs(place: dict[str, Any]) -> bool:
+    """True when the saved listing prices dogs over some weight (a tiered deposit) instead of limiting the weight."""
+    try:
+        from .parsers import has_weight_tiers
+    except Exception:
+        return False
+    return has_weight_tiers(str(place.get("listing_text") or ""))
+
+
 def _refused_pet_kinds(place: dict[str, Any]) -> list[str]:
     """Kinds of pet the saved listing says no to when the pets field is empty ("Pets: no cats"): ["cats"], ["dogs"] or []."""
     try:
@@ -700,6 +709,8 @@ def _score_pets(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any] | 
     if has_dog and weight:
         if w_limit is None and _says_all_sizes(place):
             pass  # cycle 21: "dogs allowed (all sizes!)" says there is no weight limit, so it is not unknown
+        elif w_limit is None and _prices_heavy_dogs(place):
+            pass  # cycle 37: "Dogs over 50 lb: additional $600 deposit" says heavier dogs are taken for a price, so there is no weight limit to ask about
         elif w_limit is None:
             unknown.append("weight limit")
         elif weight > w_limit:
