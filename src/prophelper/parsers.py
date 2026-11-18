@@ -8333,7 +8333,15 @@ def _tenant_pays(text: str) -> str:
     return _ordered_utilities(found) if found else ""
 
 
-_ALL_UTILITIES = ("electric", "gas", "water", "sewer", "trash", "heat")  # what "all utilities" means for a renter who pays them
+_ALL_UTILITIES = ("electric", "gas", "water", "sewer", "trash", "heat")
+
+
+def _all_but(left_out: Any, text: str) -> list[str]:
+    """Cycle 37 (uiuc l7, family l4): "Utilities on us except electric" includes what the listing's words cover (gas, water, sewer, trash); heat is only
+    on the list when the text names heat, because the listing never said it."""
+    named_heat = bool(re.search(r"\bheat(?:ing)?\b", text or "", re.I))
+    guessed = not named_heat and bool(re.search(r"\b(?:on[ \t]+us|we[ \t]+(?:cover|pay)|covered[ \t]+by[ \t]+us|on[ \t]+the[ \t]+house)\b", text or "", re.I))  # only the "on us" wordings: "landlord pays all utilities" names all of them
+    return [w for w in _ALL_UTILITIES if w not in set(left_out) and not (w == "heat" and guessed)]  # what "all utilities" means for a renter who pays them
 
 
 _UTILITY_ALIASES = ((r"\b(?:valet[ -]trash|trash[ -]valet|valet[ -]waste|doorstep (?:trash|garbage))\b", "valet-waste"), (r"\bpg\s*(?:&|and)\s*e\b", "electric and gas"), (r"\bameren\b", "electric and gas"),
@@ -8355,7 +8363,7 @@ _INCL_ABBREV = (re.compile(r"(?<!not )(?<!n't )\bincl(?:uding|uded|\.)?[ \t]+(?:
 _UTIL_INCL_AFTER = re.compile(r"(?<!not )(?<!no )(?<!n't )(?<![\w/-])((?:(?:hot water|water|sewer|trash|garbage|gas|electric|heat|internet|wi-?fi)[ \t]*(?:,|/|&|\+|and)?[ \t]*){1,5}?)[ \t]+incl\b(\.?)(?![ \t]*(?:in|with|for|\())(?![ \t]+(?:hot water|water|sewer|trash|gas|electric|heat|internet|wi-?fi)\b(?![ \t]+(?:tenant|resident|renter|pays?|extra|separate|not|is|are)\b))", re.I)
 
 
-_PROVIDER_FOR_ONE = re.compile(r"\b(?:electric(?:ity)?|power|gas)\b[ \t]*(?:(?:service|bills?|account|supplier|provider|company)[ \t]*)?(?:(?:is|are)[ \t]+)?(?:(?:billed|charged|provided|supplied|served|metered|invoiced)[ \t]+)?(?:directly[ \t]+)?(?:(?:by|from)[ \t]+)?(?:the[ \t]+)?[:\-\u2013=]?[ \t]*(?:(?:provider|supplier|company|utility)[ \t]*(?:is|:)?[ \t]*)?(?:(?:by|from)[ \t]+)?$", re.I)
+_PROVIDER_FOR_ONE = re.compile(r"\b(?:electric(?:ity)?|power|gas)\b[ \t]*\(?[ \t]*(?:(?:service|bills?|account|supplier|provider|company)[ \t]*)?(?:(?:is|are)[ \t]+)?(?:(?:billed|charged|provided|supplied|served|metered|invoiced)[ \t]+)?(?:directly[ \t]+)?(?:(?:by|from)[ \t]+)?(?:the[ \t]+)?[:\-\u2013=]?[ \t]*(?:(?:provider|supplier|company|utility)[ \t]*(?:is|:)?[ \t]*)?(?:(?:by|from)[ \t]+)?$", re.I)
 
 
 def _provider_named_for_one(m: re.Match[str]) -> bool:
@@ -8919,6 +8927,7 @@ def _util_text(text: str) -> str:
     text = _INCL_ABBREV[1].sub("utilities included", text)
     text = _UTIL_INCL_AFTER.sub(lambda m: m.group(1) + " included" + m.group(2), text)  # "HEAT INCL.", "Water/sewer incl" -> "... included"
     text = _INCL_ABBREV[2].sub(lambda m: "includes " + m.group(1), text)
+    text = re.sub(r"\b(electricity|electric|gas|water|sewer|trash)[ \t]*\([ \t]*(?:billed|provided|supplied|served|charged)[ \t]+(?:directly[ \t]+)?(?:by|through|via|from)[ \t]+(?:the[ \t]+)?(?:" + _PROVIDERS + r")[ \t]*\)", r"\1", text, flags=re.I)  # cycle 37: "Tenant pays electric (billed by Ameren)" names the sender of the one bill, as "electric (Ameren)" does
     for pat, word in _UTILITY_ALIASES:
         if word in ("electric and gas", "electric", "gas"):
             pat = r"(?<!through )(?<!via )(?<!thru )(?<!from )(?<!with )" + pat  # "Electric through Ameren" names who the bill is with, not a second utility
@@ -9174,7 +9183,7 @@ def _rubs_named(low: str, words: str) -> tuple[str, float] | None:
 def _provider_billed_names(text: str) -> list[str]:
     """Cycle 36: utilities the listing says a provider bills the tenant for, with no figure of their own: "Electric billed by Ameren", "Gas is billed through Nicor"."""
     out: list[str] = []
-    for clause in re.split(r"\n|;|\.(?=\s|$)", text):
+    for clause in re.split(r"\n|;|\||\.(?=\s|$)", text):
         if "$" in clause and not _TYPICAL_TOTAL_CUE.search(clause.lower()):  # cycle 37: "Electric billed by Ameren, typical total about $130" names the provider; the figure is a typical total
             continue
         for m in re.finditer(r"\b(electric(?:ity)?|gas|water|sewer|trash)\b[ \t]*(?:(?:is|are)[ \t]+)?(?:billed|charged)[ \t]+(?:directly[ \t]+)?(?:by|through|via|from|with)[ \t]+(?:the[ \t]+)?(?:" + _PROVIDERS + r"|utility[ \t]+company|provider)\b", clause, re.I):
@@ -14842,7 +14851,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         gone = [w.strip() for w in kept_out.split(",") if w.strip()]
         named = [w for w in roles["landlord"] if w not in gone]
         # when the listing names what is included ("Heat + water + trash included"), only those are included
-        included = _ordered_utilities(named if roles["landlord"] else [w for w in _ALL_UTILITIES if w not in gone])
+        included = _ordered_utilities(named if roles["landlord"] else _all_but(gone, text))
         pays = _ordered_utilities([w.strip() for w in (pays + ", " + kept_out).split(",") if w.strip()])
     included, pays = _try(lambda: _apply_util_sections(utext, included, pays, facts)) or (included, pays)
     facts.extend(_try(lambda: _periodic_bill_notes(_periodic_src, pays)) or [])
@@ -15042,11 +15051,11 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         extra = [w for w in gone if w != "internet"]
         clash = [w for w in (pays_before.split(", ") if pays_before else []) if w not in gone]
         if extra:
-            included = _ordered_utilities([w for w in _ALL_UTILITIES if w not in extra])
+            included = _ordered_utilities(_all_but(extra, text))
         elif clash:
             # "Everything included except cable ... Electric is separate": the two lines disagree about electric, so it is
             # not called included; the renter pays it and the amount is unknown.
-            included = _ordered_utilities([w for w in _ALL_UTILITIES if w not in clash and w not in gone])
+            included = _ordered_utilities(_all_but(list(clash) + list(gone), text))
             facts.append(f"The listing says everything is included except cable, but it also says {_join_names(clash)} {'is' if len(clash) == 1 else 'are'} extra. "
                          f"{_join_names(clash).capitalize()} {'is' if len(clash) == 1 else 'are'} left as something you pay, with no amount. Ask the landlord what the rent really covers.")
         else:
@@ -15081,7 +15090,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 facts[dup_i - 1] = (f"The listing says utilities are billed back to you (RUBS), about {_money_cents(out['utilities_estimate'])}/month, counted as your utilities estimate. "
                                 + (f"It is for the utilities you pay: {_join_names([w.strip() for w in pays.split(',') if w.strip() and w.strip() != 'cable'])}." if pays and included != "all" and re.search(r"Estimated? \$|Utilities estimate \$", utext) and re.search(r"\b(?:tenants?|residents?|renters?)\b[^.\n]{0,15}\bpays?\b", utext, re.I) else "It does not say which utilities you pay, so ask."))
     _typical_vs_billed(text, roles, out, facts, pays)
-    if every is None and re.search(r"\bcable\b", utext, re.I) and not any("Cable is" in f for f in facts):
+    if every is None and "cable" in roles["tenant"] and not any("Cable is" in f or "pay for cable" in f for f in facts):
+        # cycle 37 (roommates l14): "Tenant responsible for gas, electric, cable": the pay list has no cable choice (it is TV), so a note says the tenant pays it and no amount is counted
+        facts.append("The listing says you pay for cable. Cable is TV, not internet, so it is not on the utilities list and no amount is counted for it. Ask what it costs.")
+    elif every is None and re.search(r"\bcable\b", utext, re.I) and not any("Cable is" in f for f in facts):
         if re.search(r"\bcable\b[^.\n;]{0,25}\b(?:extra|separate|not included|tenant|resident|you|paid|additional)\b|\b(?:extra|separate|not included|tenant|resident|you pay|excluding|except|plus)\b[^.\n;]{0,25}\bcable\b", utext, re.I):
             facts.append("Cable is not included. Cable is TV, not internet, so internet is left blank. Ask whether internet is included.")
     lpa = re.search(r"\b(?:landlord|owner|management|property manager)\s+(?:pays?|covers?)\s+(?:for\s+)?all\b(?:\s+(?:the\s+)?utilit\w*)?(?P<exc>\s+(?:except(?:\s+for)?|other\s+than|besides)\s+[^.\n;]{0,40})?", utext, re.I)
