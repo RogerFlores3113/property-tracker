@@ -4602,6 +4602,9 @@ def _pets_soft_note(text: str) -> str:
         return ""
     names = " and ".join(sp for sp in soft)
     said = _quoted_pieces([q for q in quoted if _MAYBE_PETS.search(q)])
+    if says_hard_limit(said):  # cycle 36 (rule kk): "dogs non-negotiable" is firm, not "case by case"; what it firmly says about dogs is not clear
+        return (f"The listing says something firm about {names} ({said}) but not clearly whether they are allowed. Only the pets it clearly allows are saved, "
+                f"so ask {_ask_who(text)} about {names}.")
     return (f"The listing says {names} are considered case by case ({said}). Only the pets it clearly allows are saved, "
             f"so ask {_ask_who(text)} about {names}.")
 
@@ -4679,7 +4682,7 @@ def _in_pet_sentence(text: str, pos: int) -> bool:
 
 _PC_SKIP = re.compile(r"\b(?:parking|garage|storage|utilit\w*|trash|hoa|internet|cable|application|admin\w*|security|lease|first month|last month|screening|background|move[- ]in)\b", re.I)
 _PC_MONTHLY = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|each[ \t]+month|monthly|(?:de[ \t]+)?renta(?:[ \t]+de[ \t]+mascotas?)?(?:[ \t]+mensual(?:es)?)?\b|mensual(?:es)?\b|(?:al|por|cada)[ \t]+mes\b|/[ \t]*mes\b|(?:pet[ \t]+)?rent\b|(?:pet[ \t]+)?(?:fee|charge)[ \t]+(?:per|a|each|/)[ \t]*(?:month|mo)\b)", re.I)
-_PC_ONE_TIME = re.compile(r"^[ \t]*(?:(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?(?:pet[ \t]+)?fee\b|(?:one[- ]?time|non[- ]?refundable|up[- ]?front)\b(?![ \t]*(?:deposit|pet[ \t]+deposit)))(?![ \t]*(?:/|per[ \t]+month|monthly|a[ \t]+month))", re.I)  # cycle 36: "$400 non-refundable" with no word "fee" is the one-time fee
+_PC_ONE_TIME = re.compile(r"^[ \t]*(?:(?:one[- ]time[ \t]+|non[- ]?refundable[ \t]+)?(?:pet[ \t]+)?fee\b|(?:one[- ]?time|non[- ]?refundable|up[- ]?front)\b(?=[ \t]*(?:$|[,.;)]|and\b|plus\b|\+|pet\b[ \t]*(?:fee\b|charge\b)?[ \t]*(?:$|[,.;)]))))(?![ \t]*(?:/|per[ \t]+month|monthly|a[ \t]+month))", re.I)  # cycle 36: "$400 non-refundable" with no word "fee" is the one-time fee
 
 
 def _pet_clause_charges(text: str) -> dict[str, float]:

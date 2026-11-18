@@ -83,3 +83,17 @@ def test_no_limit_no_failure():
 def test_small_dog_still_fits_a_hard_limit():
     place, it = item("3 bed house. Dogs under 25 lbs, NO exceptions.", {"kind": "dog", "weight": 20, "count": 1})
     assert it["passes"] is not False, it
+
+
+def test_firm_word_about_a_kind_is_not_case_by_case():
+    r = parse_listing("Rent $2,300. Pets: cats ok, dogs non-negotiable.", "", pet_kind="dog")
+    assert r["pets"] == "cats"
+    assert "case by case" not in r["found_in_listing"] and "something firm about dogs" in r["found_in_listing"]
+    r = parse_listing("Rent $2,300. Cats welcome, dogs negotiable.", "", pet_kind="dog")
+    assert r["pets"] == "cats" and "case by case" in r["found_in_listing"]
+
+
+@pytest.mark.parametrize("t", ["Rent $2,300. No dogs, non-negotiable.", "Rent $2,300. No pets. Non-negotiable."])
+def test_a_firm_no_stays_a_no(t):
+    r = parse_listing(t, "", pet_kind="dog")
+    assert r.get("pets") in (None, "none") and "case by case" not in r.get("found_in_listing", "")
