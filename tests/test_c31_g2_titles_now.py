@@ -125,7 +125,7 @@ def test_reduced_to_with_a_saved_rent_gives_one_note(t):
     r = parse_listing(t, "", current={"price": 1500})
     assert r["price"] == 1500  # the rent already saved is kept
     n = notes(r)
-    assert "was corrected to $1,400" in n and "saved on this place is $1,500" in n
+    assert "was reduced to $1,400" in n and "saved on this place is $1,500" in n  # cycle 37: a reduced rent is never called "corrected"
     assert "not counted anywhere" not in n.split("Utilities estimate")[0]
     assert 'Reduced to $1,400' not in n and "Price reduced to" not in n
 
