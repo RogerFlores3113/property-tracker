@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Find on map &middot; Property Helper{% endblock %}
+{% block body %}
+<div class="empty">
+  <h2>Find {{ what }} on the map?</h2>
+  <p>This sends only the address you typed to OpenStreetMap's free lookup service. Turn it on?</p>
+  <p class="fine">It sends the street, city, state and ZIP, and nothing else (no names, notes or listing text). You can turn it off again in Settings. <a href="/privacy#network">Exactly what is sent</a></p>
+  <form method="post" action="{{ action }}" class="inline">
+    <input type="hidden" name="enable" value="1">
+    {% for k, v in fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button class="btn primary" type="submit">Turn on and find</button>
+    <a class="btn" href="{{ back_url }}">Not now</a>
+  </form>
+</div>
+{% endblock %}

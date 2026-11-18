@@ -1,0 +1,64 @@
+{% from "_macros.html" import button %}
+{% set _store = request.app.state.store %}
+{% set _linked = _store.contacts_for_place(place.id) %}
+{% set _linked_ids = _linked|map(attribute='id')|list %}
+{% set _others = _store.list_contacts()|rejectattr('id', 'in', _linked_ids)|list %}
+{% set _waiting = {} %}
+{% for _w in _store.waiting_on_reply() %}{% if _w.contact.id in _linked_ids %}{% set _ = _waiting.update({_w.contact.id: _w}) %}{% endif %}{% endfor %}
+{% set _log = _store.list_contact_log(place_id=place.id) %}
+<section class="card" id="contacts">
+  <h2>People <span class="count">{{ _linked|length }}</span></h2>
+  {% if _linked %}
+  <ul class="items">
+    {% for c in _linked %}
+    <li class="item"><div class="item-main">
+      <a class="item-title" href="/contacts/{{ c.id }}">{{ c.name }}</a>
+      <span class="item-sub">{{ ("Listing agent" if c.role == "seller's agent" and search.mode == 'buy' else c.role|capitalize) }}{% if c.company %} at {{ c.company }}{% endif %}{% if c.phone %} &middot; {{ c.phone }}{% endif %}{% if c.email %} &middot; {{ c.email }}{% endif %}</span>
+      {% if _waiting.get(c.id) %}<span class="badge wait">Waiting on a reply ({{ _waiting[c.id].days }} day{{ 's' if _waiting[c.id].days != 1 }})</span>{% endif %}
+    </div>
+    <div class="item-actions"><form class="inline" method="post" action="/places/{{ place.id }}/contacts/{{ c.id }}/unlink">{{ button("Take off", small=True, aria="Take " ~ c.name ~ " off this place") }}</form></div></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="fine">Nobody linked yet. Add {{ 'the listing agent or your own agent' if search.mode == 'buy' else 'the leasing office or landlord' }} so you can see who still owes you a reply.</p>{% endif %}
+
+  {% if _linked %}
+  <h3>Log a conversation</h3>
+  <form method="post" action="/places/{{ place.id }}/contacts/log" class="stack">
+    <div class="form-grid">
+      <div class="field"><label for="pc-who">With</label><select id="pc-who" name="contact_id">{% for c in _linked %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="pc-dir">Who wrote or called</label><select id="pc-dir" name="direction"><option value="out">I contacted them</option><option value="in">They contacted me</option></select></div>
+      <div class="field"><label for="pc-kind">How</label><select id="pc-kind" name="kind">{% for k in CONTACT_LOG_KINDS %}<option value="{{ k }}">{{ k|capitalize }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="field"><label for="pc-body">What was said</label><textarea id="pc-body" name="body" rows="2"></textarea></div>
+    <p>{{ button("Add to the log", small=True) }}</p>
+  </form>
+  {% endif %}
+  {% if _log %}
+  <ol class="timeline">
+    {% for e in _log[:8] %}
+    <li><span class="fine">{{ e.at|local }} &middot; {{ e.kind }} &middot; {{ 'you wrote' if e.direction == 'out' else 'they wrote' }}</span>{% if e.body %}<br>{{ e.body }}{% endif %}</li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+
+  <details>
+    <summary>Add or link a contact</summary>
+    {% if _others %}
+    <form method="post" action="/places/{{ place.id }}/contacts/link" class="inline-form">
+      <div class="field"><label for="pc-link">Someone already saved</label><select id="pc-link" name="contact_id">{% for c in _others %}<option value="{{ c.id }}">{{ c.name }}{% if c.company %} ({{ c.company }}){% endif %}</option>{% endfor %}</select></div>
+      {{ button("Link", small=True) }}
+    </form>
+    {% endif %}
+    <form method="post" action="/places/{{ place.id }}/contacts" class="stack">
+      <div class="form-grid">
+        <div class="field"><label for="pn-name">Name</label><input id="pn-name" name="name" required maxlength="200"></div>
+        <div class="field"><label for="pn-role">Role</label>{% set _role_opts = [("buyer's agent", "Buyer's agent"), ("seller's agent", "Listing agent"), ("lender", "Lender"), ("inspector", "Inspector"), ("title or closing", "Title or closing"), ("seller", "Seller"), ("other", "Other")] if search.mode == 'buy' else [("landlord", "Landlord"), ("property manager", "Property manager"), ("leasing agent", "Leasing agent"), ("buyer's agent", "Buyer's agent"), ("seller's agent", "Seller's agent"), ("other", "Other")] %}
+        <select id="pn-role" name="role">{% for v, lab in _role_opts %}<option value="{{ v }}"{% if v == ("buyer's agent" if search.mode == 'buy' else 'leasing agent') %} selected{% endif %}>{{ lab }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="pn-company">Company</label><input id="pn-company" name="company" maxlength="200"></div>
+        <div class="field"><label for="pn-email">Email</label><input id="pn-email" type="email" name="email" maxlength="320"></div>
+        <div class="field"><label for="pn-phone">Phone</label><input id="pn-phone" name="phone" maxlength="50"></div>
+      </div>
+      <p>{{ button("Add and link", small=True) }}</p>
+    </form>
+  </details>
+</section>

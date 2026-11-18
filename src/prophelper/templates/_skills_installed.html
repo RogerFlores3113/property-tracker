@@ -1,0 +1,10 @@
+<div class="skills-installed" data-focus tabindex="-1">
+  {% if not result.results %}
+  <p class="flash warn">No AI app was found, so nothing was installed.</p>
+  {% endif %}
+  {% for r in result.results %}
+  <p class="{{ 'flash' if r.ok else 'flash warn' }}"><strong>{{ r.name }}:</strong> {{ r.label }}. {{ r.message }}</p>
+  {% endfor %}
+  {% if result.written %}<p>Start a new chat (or restart Claude Code or Codex) so it picks up the skills.</p>{% endif %}
+</div>
+{% with oob = true %}{% include "_skills_found.html" %}{% endwith %}

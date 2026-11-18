@@ -1,0 +1,25 @@
+<div class="skills-preview" data-focus tabindex="-1">
+  {% if not preview.plans %}
+  <p class="flash warn">No AI app was found, so there is nothing to install. Use "Create the folder and add skills" next to an app above if you use it and want its skills added anyway.</p>
+  {% else %}
+  <h3>These files will be written</h3>
+  <p class="fine">Nothing is written until you press the button below.{% if anyway %} You chose an app we didn't find, so its folder will be created.{% endif %}</p>
+  <ul class="plain skill-files">
+    {% for p in preview.plans %}
+    <li><span class="badge{% if p.label == 'kept' %} warn{% endif %}">{{ p.label }}</span>
+      <span class="skill-app">{{ p.name }}</span> <code>{{ p.shown }}</code>
+      {% if p.reason %}<span class="fine">({{ p.reason }})</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <p class="fine">{{ preview.counts.new }} new, {{ preview.counts.updated }} updated, {{ preview.counts.unchanged }} unchanged{% if preview.counts.kept %}, {{ preview.counts.kept }} kept as it is{% endif %}. A file you edited, or one we didn't write, is never replaced.</p>
+  {% if preview.writes %}
+  <form hx-post="/skills/all/install" hx-target="#skills-result" hx-swap="innerHTML">
+    {% for t in preview.targets %}<input type="hidden" name="targets" value="{{ t }}">{% endfor %}
+    <button class="btn primary" type="submit">Install these files</button>
+    <button class="btn" type="button" data-dismiss=".skills-preview">Cancel</button>
+  </form>
+  {% else %}
+  <p>Everything here is already up to date.</p>
+  {% endif %}
+  {% endif %}
+</div>

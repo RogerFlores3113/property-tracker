@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, empty_state, sample_notice %}
+{% block title %}Board &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head("Board", (search.name if search else "No search yet") ~ ". Drag a card to a new column, or use the stage menu on the card.") %}
+  {{ button("Add a place", href="/add", kind="primary") }}
+{% endcall %}
+{{ sample_notice() }}
+{% if search is none %}
+{{ empty_state("No search yet", "Make a search first (or load the sample data in Settings), then add places to it.", "Start a search", "/search") }}
+{% elif total == 0 %}
+{{ empty_state("No places on your board yet", "Add a place and it shows up in the Saved column. Move it along as things happen.", "Add your first place", "/add") }}
+{% else %}
+<div class="board-tools">
+  <div class="field">
+    <label for="board-filter" class="sr">Filter cards</label>
+    <input id="board-filter" type="search" placeholder="Filter by name or address" autocomplete="off">
+  </div>
+  <label class="check"><input type="checkbox" id="hide-closed"> Hide passed and closed</label>
+  <span id="board-status" class="fine" role="status" aria-live="polite"></span>
+  <a class="btn small" id="csv-link" href="/places.csv?search_id={{ search.id }}" download>Download spreadsheet (CSV)</a>
+</div>
+{% if hidden_dealbreaker or hidden_hand %}
+<p class="fine" id="hidden-note">
+  {% if show_hidden %}Showing {{ (hidden_dealbreaker + hidden_hand)|num }} hidden place{{ 's' if hidden_dealbreaker + hidden_hand != 1 }}. <a href="/board">Hide them again</a>.
+  {% else %}{{ (hidden_dealbreaker + hidden_hand)|num }} hidden{% if hidden_dealbreaker %} ({{ hidden_dealbreaker|num }} miss a must have{% if hidden_hand %}, {{ hidden_hand|num }} hidden by you{% endif %}){% endif %}. <a href="/board?show_hidden=1">Show hidden</a>.{% endif %}
+</p>
+{% endif %}
+<div class="board" id="board" data-board>
+  {% for stage in stages %}
+  {% set cards = columns[stage] %}
+  <section class="col{{ ' closed collapsed' if stage in CLOSED_STAGES }}" data-stage="{{ stage }}" aria-label="{{ stage }}" data-hidden="0">
+    <h2>
+      <span class="col-title"><span class="dot stage-{{ stage|stage_slug }}" aria-hidden="true"></span>{{ stage }} <span class="count" data-count>{{ totals[stage] }}</span></span>
+      {% if stage in CLOSED_STAGES %}<button type="button" class="linklike" data-collapse data-default-collapsed aria-expanded="false" aria-label="Expand the {{ stage }} column">Expand</button>{% endif %}
+    </h2>
+    <div class="col-body" data-drop>
+      {% for p in cards %}{% include "_board_card.html" %}{% endfor %}
+      <p class="col-empty fine">Nothing here</p>
+    </div>
+  </section>
+  {% endfor %}
+</div>
+<p class="fine no-match" id="no-match" hidden>No cards match that filter.</p>
+{% endif %}
+{% endblock %}

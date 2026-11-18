@@ -1,0 +1,16 @@
+{
+  "name": "property-helper",
+  "owner": {
+    "name": "Property Helper"
+  },
+  "metadata": {
+    "description": "Skills that teach your AI app to use Property Helper, an apartment and house hunting tracker that runs on your own computer."
+  },
+  "plugins": [
+    {
+      "name": "property-helper",
+      "source": "./",
+      "description": "Skills that teach your AI app to use Property Helper well: saving places from listings, moving stages, tours, true monthly cost, comparing places and what to do today."
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+*.db-wal
+*.db-shm
+data/
+.env
+!tests/fixtures/*.db
+
+# scratch files at the repo root (saved web pages, throwaway scripts)
+/*.html
+/t[0-9]*.py
+/app[0-9]*.html
+
+# agent worktrees
+.claude/

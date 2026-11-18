@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, empty_state %}
+{% block title %}Backups · Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/data.css">
+<div class="data-page">
+{% call page_head("Backups", "Keep a copy of your places somewhere safe, and put one back if you ever need to.") %}
+  {{ button("Download a backup copy", href="/backup") }}
+{% endcall %}
+
+<section class="card">
+  <h2>Download a backup copy</h2>
+  <p>You get one file, named like <code>property-helper-backup-2026-11-06.db</code>, with all your searches, places, notes, contacts and tours. <strong>Save it somewhere safe, like Dropbox or a USB drive.</strong> If this computer is lost or you move to a new one, that file brings everything back. It does not include your AI key.</p>
+</section>
+
+{% if files_count %}<section class="card">
+  <h2>Documents</h2>
+  <p>The {{ files_count }} document{{ 's' if files_count != 1 }} you added to places ({{ files_folder }}) are not inside the backup copy above. <a href="/backup/files.zip">Download them as a zip</a>.</p>
+</section>{% endif %}
+
+<section class="card" id="restore-file">
+  <h2>Restore from a backup file</h2>
+  <p>Pick a backup file you downloaded earlier (its name starts with <code>property-helper-backup-</code>). The app checks that it is a Property Helper backup, saves a copy of what you have now, and then replaces it.</p>
+  <form method="post" action="/backups/restore-file" enctype="multipart/form-data" class="stack">
+    <div class="field">
+      <label for="backup-file">Backup file</label>
+      <input id="backup-file" name="file" type="file" accept=".db,application/octet-stream" required>
+    </div>
+    {{ button("Restore from this file", kind="primary", title="Your current data is backed up first") }}
+  </form>
+</section>
+
+<h2>Automatic backups</h2>
+<p class="fine">A copy is made before every restore, sample-data removal and delete, so a mistake can be undone.</p>
+{% if backups %}
+<div class="table-wrap"><table>
+  <thead><tr><th>When</th><th>Why</th><th>Places</th><th></th></tr></thead>
+  <tbody>
+  {% for b in backups %}
+    <tr>
+      <td>{{ b.when|local }}</td><td>{{ b.why }}</td>
+      <td>{% if b.ok %}{{ b.places }}{% else %}<span class="fine">can't be read</span>{% endif %}</td>
+      <td>{% if b.ok %}
+        <form method="post" action="/backups/{{ b.name }}/restore">
+          {{ button("Restore", small=True, title="Your current data is backed up first") }}
+        </form>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<p class="fine">Restoring replaces what is in the app now with that copy. Your current data is backed up first, so you can go back.</p>
+{% else %}
+{{ empty_state("No automatic backups yet", "They appear here after your first restore or delete.", "Back to Settings", "/settings") }}
+{% endif %}
+</div>
+{% endblock %}

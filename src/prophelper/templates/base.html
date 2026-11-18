@@ -1,0 +1,46 @@
+{% from "_macros.html" import flash %}<!doctype html>
+{% set _t = setting('theme') %}<html lang="en" data-theme="{{ _t if _t in ('sunset', 'forest-night', 'ocean', 'midnight', 'classic', 'contrast') else 'sunset' }}"{% if setting('color_mode') in ('light', 'dark') %} data-mode="{{ setting('color_mode') }}"{% endif %}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}Property Helper{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/nav.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+{% set path = request.url.path %}
+<body class="{% block bodyclass %}{% endblock %}">
+  <a class="skip" href="#main">Skip to the page</a>
+  <header class="top">
+    <a class="brand" href="/today">Property Helper</a>
+    <nav aria-label="Main">
+      {% for href, label in [('/today', 'Today'), ('/board', 'Board'), ('/map', 'Map'), ('/calendar', 'Calendar'), ('/compare', 'Compare')] %}
+      <a href="{{ href }}" class="{{ 'on' if path == href or (href != '/today' and path.startswith(href ~ '/')) }}"{% if path == href %} aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+    {% set more = [('/contacts', 'Contacts'), ('/checklist', 'Checklist'), ('/search', 'Search'), ('/settings', 'Settings'), ('/privacy', 'Privacy'), ('/connect', 'Connect an AI app'), ('/backups', 'Back up my data')] %}
+    <nav class="right" aria-label="More">
+      <details class="more">
+        <summary class="{{ 'on' if more | selectattr(0, 'equalto', path) | list }}">More</summary>
+        <div class="more-menu">
+          {% for href, label in more %}<a href="{{ href }}" class="{{ 'on' if path == href or path.startswith(href ~ '/') }}"{% if path == href %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+        </div>
+      </details>
+      <a class="btn primary small" href="/add">Add</a>
+    </nav>
+  </header>
+  <main id="main">
+    {% set fq = request.state.flash or {} %}
+    {{ flash(fq.get('flash_error') or fq.get('error'), 'warn') }}
+    {{ flash(fq.get('notice')) }}
+    {% block body %}{% endblock %}
+  </main>
+  <footer class="foot">
+    Your data stays on this computer. The map shows plain pins unless you turn on street pictures from OpenStreetMap. Nothing else is sent unless you turn on address lookup, photos or AI help, or click Open in Claude. No accounts, no tracking.
+    <a href="/privacy">Privacy</a> &middot; <a href="/settings">Settings</a> &middot; <a href="/backups">Back up my data</a> &middot; <a href="/connect">Connect an AI app</a> &middot; v{{ version }}
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

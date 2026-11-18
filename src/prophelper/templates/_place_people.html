@@ -1,0 +1,22 @@
+{% from "_macros.html" import button %}
+{% set _opinions = request.app.state.store.opinion_slots(place.id) %}
+{% if _opinions %}
+<section class="card" id="opinions">
+  <h2>What each of you thinks{% if place.opinions %} <span class="count">Average of {{ place.opinions.count }}: {{ place.opinions.average }} of 5</span>{% endif %}</h2>
+  <p class="fine">Each person gives their own rating from 1 to 5 and a short note. These are your own words. AI apps can read them but never write them. Name the people on the <a href="/search?id={{ place.search_id }}#edit">Search page</a>.</p>
+  <form method="post" action="/places/{{ place.id }}/opinions" class="stack">
+    {% for o in _opinions %}
+    <div class="form-grid">
+      <div class="field"><label for="op-r-{{ loop.index }}">{{ o.person }}'s rating</label>
+        <select id="op-r-{{ loop.index }}" name="rating_{{ loop.index0 }}">
+          <option value="">Not rated</option>
+          {% for n in (1, 2, 3, 4, 5) %}<option value="{{ n }}"{% if o.rating == n %} selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="op-n-{{ loop.index }}">{{ o.person }}'s note</label>
+        <input id="op-n-{{ loop.index }}" name="note_{{ loop.index0 }}" type="text" maxlength="500" value="{{ o.note }}" placeholder="A few words"></div>
+    </div>
+    {% endfor %}
+    <p>{{ button("Save what everyone thinks", small=True) }}</p>
+  </form>
+</section>
+{% endif %}

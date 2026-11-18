@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, score_pill %}
+{% block title %}Map &middot; Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/static/map.css">
+{% call page_head("Map", ("Places in " ~ search.name ~ ". Each pin shows the true monthly cost.") if search else "Your places on a map.") %}
+  {{ button("Back to the board", href="/board") }}
+{% endcall %}
+{% if search is none %}
+<section class="card"><h2>No search yet</h2><p>Make a search and add places to see them here. <a href="/search">Start a search</a>.</p></section>
+{% else %}
+
+<form method="get" action="/map" class="inline-form" aria-label="Rings around an important place">
+  <div class="field"><label for="map-anchor">Rings of 1, 2 and 3 miles around</label>
+    <select id="map-anchor" name="anchor">
+      <option value="0"{% if no_rings|default(false) %} selected{% endif %}>No rings</option>
+      {% for a in anchors %}{% if a.lat is not none and a.lng is not none %}<option value="{{ a.id }}"{% if chosen and chosen.id == a.id %} selected{% endif %}>{{ a.name }}</option>{% endif %}{% endfor %}
+    </select></div>
+  {% if show_hidden %}<input type="hidden" name="show_hidden" value="1">{% endif %}
+  {{ button("Show rings", small=True) }}
+</form>
+{% if not anchors %}<p class="fine">There are no important places yet. <a href="/search#anchors">Add one</a> (your work or school) to get distance rings and commute times.</p>{% endif %}
+
+<div class="map-layout">
+  <div>
+    <div id="map" class="map-box" role="region" aria-label="Map of your places" data-tiles="{{ 1 if tiles else 0 }}"></div>
+    {% if located %}<noscript><p class="fine">The map needs JavaScript. The list below has the same places.</p></noscript>
+    {% else %}<p class="fine">None of your places has a map location yet. Use Find on map on a place page to give it one.</p>{% endif %}
+    {% if tiles %}
+    <p class="fine">The map pictures load from OpenStreetMap, which sees the area you look at. You can turn that off in <a href="/settings#map">Settings</a>.</p>
+    {% else %}
+    <form method="post" action="/map/tiles" class="inline-form">{{ button("Show street map (loads map pictures from OpenStreetMap)", small=True) }}</form>
+    <p class="fine">Pins show on a plain background and nothing is loaded from OpenStreetMap. Pressing the button turns on map pictures; your browser then loads them from OpenStreetMap, which sees the area you look at. You can turn it off again in <a href="/settings#map">Settings</a>.</p>
+    {% endif %}
+    <p class="legend fine" aria-label="Key"><span class="pin-key pin-good">70 or more</span> <span class="pin-key pin-ok">40 to 69</span> <span class="pin-key pin-low">under 40</span> <span class="pin-key pin-none">no score</span> <span class="pin-key pin-anchor">important place</span></p>
+  </div>
+
+  <div>
+    <section class="card" aria-labelledby="loc-h">
+      <h2 id="loc-h">Places on the map <span class="count">{{ located|length }}</span></h2>
+      {% if located %}
+      <ul class="items map-list">
+        {% for p in located %}
+        <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a>{% if p.stage == "Passed" %} <span class="fine">(passed)</span>{% endif %}
+          <span class="item-sub">{{ score_pill(p.score_total, p.band) }} {% if p.cost_total is not none %}{{ p.cost_total|money }}/mo{% else %}no cost yet{% endif %}{% if p.miles is not none and chosen %} &middot; {{ p.miles }} mi from {{ chosen.name }}{% endif %}</span>
+          <span class="fine">{{ p.lat|round(4) }}, {{ p.lng|round(4) }}</span></div></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="fine">No place has a map point yet. Add one below, or press Find on map from address.</p>{% endif %}
+      {% if hidden %}<p class="fine">{{ hidden }} hidden {{ 'place is' if hidden == 1 else 'places are' }} left out. <a href="/map?show_hidden=1{% if chosen %}&amp;anchor={{ chosen.id }}{% endif %}">Show {{ 'it' if hidden == 1 else 'them' }}</a>.</p>
+      {% elif show_hidden %}<p class="fine"><a href="/map{% if chosen %}?anchor={{ chosen.id }}{% endif %}">Hide the hidden places again</a>.</p>{% endif %}
+    </section>
+
+    <section class="card" id="no-location" aria-labelledby="noloc-h">
+      <h2 id="noloc-h">Places without a location <span class="count">{{ unlocated|length }}</span></h2>
+      {% if unlocated %}
+      <p class="fine">Press "Find on map from address" (it sends only the address to OpenStreetMap's free lookup service, and asks you first if lookup is off), or enter the coordinates yourself (right-click a spot in any map app to copy them).</p>
+      <ul class="items">
+        {% for p in unlocated %}
+        <li class="item"><div class="item-main"><a class="item-title" href="/places/{{ p.id }}">{{ p.title }}</a><span class="item-sub">{{ p.address or 'No address yet' }}{% if p.city %}, {{ p.city }}{% endif %}</span>
+          <details class="coords"><summary>Enter coordinates yourself</summary>
+          <form method="post" action="/places/{{ p.id }}/location" class="inline-form">
+            <div class="field"><label for="lat-{{ p.id }}">Latitude</label><input id="lat-{{ p.id }}" name="lat" inputmode="decimal" placeholder="40.1102" required></div>
+            <div class="field"><label for="lng-{{ p.id }}">Longitude</label><input id="lng-{{ p.id }}" name="lng" inputmode="decimal" placeholder="-88.2301" required></div>
+            {{ button("Save location", small=True, aria="Save the location of " ~ p.title) }}
+          </form></details>
+          <form method="post" action="/places/{{ p.id }}/geocode" class="inline">{{ button("Find on map from address", small=True, aria="Find " ~ p.title ~ " on the map from its address", title="Sends only this street address to OpenStreetMap's free lookup service") }}</form>
+        </div></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="fine">Every place shown has a map point.</p>{% endif %}
+    </section>
+  </div>
+</div>
+<script type="application/json" id="map-data">{{ data|tojson }}</script>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if search %}
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/map.js"></script>
+{% endif %}{% endblock %}

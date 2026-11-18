@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>This window is locked &middot; Property Helper</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <div class="empty">
+      <h1>This window is locked</h1>
+      <p>This page is private to your computer, so it needs to be opened by the app itself.</p>
+      {% if frozen %}
+      <p><strong>Open Property Helper again from its icon</strong> (Applications folder, Dock, Start menu or taskbar). It opens a new window that is unlocked.</p>
+      {% else %}
+      <p><strong>Double-click Start Property Helper again and it will open here.</strong> It opens a new, unlocked window in your browser.</p>
+      {% endif %}
+      <p class="fine">Coming from a link in a chat? Property Helper must be open on this computer for that link to work. Start it first, then use the link again.</p>
+      <p class="fine">If you run it from a terminal, <code>prophelper open</code> does the same. You can close this window.</p>
+    </div>
+  </main>
+</body>
+</html>

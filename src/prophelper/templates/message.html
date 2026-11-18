@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% from "_macros.html" import empty_state %}
+{% block title %}{{ title }} &middot; Property Helper{% endblock %}
+{% block body %}
+{{ empty_state(title, message, "Go to Today", "/today") }}
+{% endblock %}

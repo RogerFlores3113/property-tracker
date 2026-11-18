@@ -1,0 +1,36 @@
+/* Settings, import, backups and privacy pages. Uses the colour tokens from style.css. */
+.data-page { max-width: 860px; }
+.data-page h2 { margin-top: 0; }
+.data-page .card { scroll-margin-top: 4.5rem; }
+.data-page .stack > * + * { margin-top: .9rem; }
+.row-fields { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.key-status { display: inline-flex; align-items: center; gap: .4rem; font-weight: 600; }
+.key-status.on { color: var(--good-text); }
+.key-status.off { color: var(--muted); }
+.resume-item { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .8rem; margin-bottom: .6rem; background: var(--surface-2); }
+.resume-item summary { cursor: pointer; font-weight: 600; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.resume-item form { margin-top: .75rem; }
+.link-list { list-style: none; padding: 0; margin: 0; display: grid; gap: .4rem; }
+.path { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88rem; overflow-wrap: anywhere; }
+.checks { display: flex; gap: .5rem; align-items: center; }
+.checks input { width: auto; }
+.checks label { margin: 0; font-weight: 500; }
+.map-grid { display: grid; gap: .6rem .9rem; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.notice-box { background: var(--accent-soft); border-radius: 8px; padding: .75rem 1rem; margin-bottom: 1rem; }
+.notice-box ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+.preview-table td input[type=text] { min-width: 9rem; }
+.preview-table .subject { font-weight: 600; overflow-wrap: anywhere; }
+.preview-table .tick { width: 2.2rem; }
+.preview-table .tick input { width: 1.1rem; height: 1.1rem; }
+.kind { display: inline-block; font-size: .78rem; font-weight: 700; padding: .1rem .5rem; border-radius: 999px; background: var(--surface-2); }
+.kind-rejection { background: var(--s-rejected-bg); color: var(--s-rejected-fg); }
+.kind-interview { background: var(--s-interview-bg); color: var(--s-interview-fg); }
+.kind-offer { background: var(--s-offer-bg); color: var(--s-offer-fg); }
+.kind-confirmation { background: var(--s-applied-bg); color: var(--s-applied-fg); }
+.count-line { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-bottom: .75rem; }
+.count-line strong { font-size: 1.3rem; }
+.privacy-list { padding-left: 1.2rem; }
+.privacy-list li { margin-bottom: .35rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.data-page details.card[open] > summary { margin-bottom: .75rem; }

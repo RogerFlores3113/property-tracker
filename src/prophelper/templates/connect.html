@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head %}
+{% block title %}Connect an AI app · Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/connect.css">
+{% call page_head("Connect an AI app", "Once connected, you can tell your AI app about apartments and houses in plain English and it keeps Property Helper up to date. This is optional. You can always use Add instead.") %}{% endcall %}
+
+<p class="fine" id="chatgpt-shortcut">Use ChatGPT instead of Claude? <a class="btn small" href="#chatgpt">I use ChatGPT</a></p>
+
+{% set claude = apps | selectattr("key", "equalto", "claude") | first %}
+{% set others = apps | rejectattr("key", "equalto", "claude") | list %}
+
+<section class="card connect-card connect-main" id="{{ claude.key }}">
+  <h2>Step 1. Connect {{ claude.name }}
+    {% if claude.connected %}<span class="badge stage-offer">Connected</span>
+    {% elif claude.installed %}<span class="badge">Ready to connect</span>
+    {% else %}<span class="badge">Not installed</span>{% endif %}
+  </h2>
+  <p class="web-warning"><strong>Use the Claude app on this computer. Claude on the web (claude.ai in your browser) can't reach apps on your computer, so it won't work for this.</strong></p>
+  <p>{{ claude.blurb }}</p>
+  <p class="fine">Once connected, Claude can read your notes and ratings on places when you ask Claude about them. Nothing is sent anywhere until you use Claude.</p>
+  <p class="fine"><strong>The short way:</strong> press the button below, then in Claude type <em>Add this listing to Property Helper</em>.</p>
+  <p class="fine">This window stays unlocked for 12 hours after you last used it. If you come back later and it says the window is locked, open Property Helper again from its icon. Claude keeps working either way.</p>
+  {% set missing = not claude.installed and not claude.connected %}
+  {% if missing %}
+  <p class="notice-line">We don't see the Claude app on this computer. Get the Claude app at claude.ai/download, then come back and press the button.</p>
+  {% if claude_code.installed %}<p class="notice-line">We do see Claude Code. If that is what you use, skip this step and use the Claude Code line under <a href="#other-apps">Other apps and details</a>: paste its one line into a terminal, then press Add skills below.</p>{% endif %}
+  {% endif %}
+  {% if status.config_error and not missing %}<p class="flash warn">{{ status.config_error }}</p>{% endif %}
+  {% if status.launch_problem and not missing %}<p class="flash warn">{{ status.launch_problem }}</p>{% endif %}
+  {% if status.entry and status.entry_problems %}<p class="flash warn">Property Helper is in Claude's settings, but it won't start from there. {{ status.entry_problems[0] }} Press Reconnect to fix it.</p>{% endif %}
+  {% if not missing %}
+  <button class="btn primary" type="button" hx-post="/connect/{{ claude.key }}" {% if restarts %}hx-confirm="The Claude app will close and open again. Save anything you are typing there first. Continue?" {% endif %}hx-target="#{{ claude.key }}-result" hx-swap="innerHTML" hx-indicator="#{{ claude.key }}-busy">{{ 'Reconnect' if claude.connected else 'Connect' }} the Claude app</button>
+  {% if status.entry %}<button class="btn" type="button" hx-post="/connect/{{ claude.key }}/test" hx-target="#{{ claude.key }}-result" hx-swap="innerHTML" hx-indicator="#{{ claude.key }}-busy">Test connection</button>{% endif %}
+  <span id="{{ claude.key }}-busy" class="htmx-indicator fine" aria-live="polite">Checking, this can take a few seconds...</span>
+  {% else %}
+  <button class="btn" type="button" disabled aria-disabled="true">Connect the Claude app (install it first)</button>
+  {% endif %}
+  {% if not missing %}
+  {% if restarts %}<p class="fine"><strong>The Claude app will close and open again.</strong> Property Helper is added and tested, then the Claude app is closed the normal way (never forced) and opened again. Then type: <em>Add this listing to Property Helper</em>, and press Add skills below.</p>
+  {% if status.claude_running %}<p class="fine claude-open">The Claude app is open right now. Save anything you are typing there first.</p>{% endif %}
+  {% else %}<p class="fine"><strong>After you press Connect:</strong> {{ quit_text }} Then type: <em>Add this listing to Property Helper</em>, and press Add skills below.</p>
+  {% if status.claude_running %}<p class="fine claude-open">The Claude app is open right now. It only reads its settings when it starts, so quit it completely after connecting.</p>{% endif %}{% endif %}
+  {% endif %}
+  <div id="{{ claude.key }}-result" class="connect-result" aria-live="polite"></div>
+  <details class="fine">
+    <summary>How to disconnect</summary>
+    <p>{{ claude.disconnect }}</p>
+    <details class="advanced-fold">
+      <summary>For advanced users</summary>
+      <p>Settings file: <code>{{ claude.path }}</code>{% if status.store_version %} (the Microsoft Store copy of Claude){% endif %}</p>
+      {% if status.config_error %}<p class="flash warn">{{ status.config_error }}</p>{% endif %}
+      <p class="fine">In a terminal you can run <code>prophelper check-claude</code> for the same check.</p>
+      <button class="btn small" type="button" hx-post="/connect/claude/report" hx-target="#claude-report" hx-swap="innerHTML">Show full report</button>
+      <div id="claude-report" aria-live="polite"></div>
+    </details>
+  </details>
+</section>
+
+{% set show_step = true %}{% set show_plugin = true %}
+{% include "_skills_panel.html" %}
+
+<details class="card" id="other-apps">
+<summary><h2 class="inline-h">Other apps and details</h2></summary>
+<p class="fine">ChatGPT, Claude Code, Codex and LM Studio, what your AI app can do, things to try asking, and the advanced setup. Only if you need them. (Claude Code, Codex and LM Studio are other AI apps; skip them if you only use the Claude app.)</p>
+<section class="card app-picker-card" id="app-picker">
+  <h2>Which AI app do you use?</h2>
+  <div class="app-picker" role="group" aria-label="Which AI app do you use?">
+    <button class="btn small" type="button" data-pick="chatgpt" aria-pressed="false">I use ChatGPT</button>
+    <button class="btn small" type="button" data-pick="claude" aria-pressed="false">I use the Claude app</button>
+    <button class="btn small" type="button" data-pick="claudecode" aria-pressed="false">Claude Code</button>
+    <button class="btn small" type="button" data-pick="codex" aria-pressed="false">Codex</button>
+    <button class="btn small" type="button" data-pick="lmstudio" aria-pressed="false">LM Studio</button>
+    <button class="btn small" type="button" data-pick="all" aria-pressed="true">I'm not sure</button>
+  </div>
+  <p class="fine" id="cards-line"><strong>Where cards show:</strong> the Claude app shows cards (views right in the chat). The ChatGPT desktop app may show them too; if cards don't appear there, you get the same answers as plain text. Claude Code and Codex show plain text instead.</p>
+</section>
+
+<section class="card connect-card app-card" id="chatgpt" data-app="chatgpt">
+  <h2>ChatGPT desktop app</h2>
+  <p>This is for the ChatGPT app on this computer. The ChatGPT website and the ChatGPT phone app can't reach apps on this computer, so they won't work for this.</p>
+  <h3 class="step">1. Connect</h3>
+  <p id="chatgpt-copy"><strong>Not tested yet.</strong> We have not been able to try this in a real ChatGPT app. Connecting Codex on this page also connects the ChatGPT desktop app, because the two share one settings file (not confirmed). If nothing shows up in ChatGPT afterwards, use the steps instead. In ChatGPT, open Settings &gt; MCP servers &gt; Add server &gt; STDIO (the advanced way to add a tool) and enter this command and these arguments:</p>
+  <p class="fine">Command:</p>
+  <pre class="code wrap" id="chatgpt-cmd">{{ stdio_command }}</pre>
+  <button class="btn small" type="button" data-copy="chatgpt-cmd" aria-label="Copy the ChatGPT command">Copy</button>
+  <p class="fine">Arguments:</p>
+  <pre class="code wrap" id="chatgpt-args">{{ stdio_args }}</pre>
+  <button class="btn small" type="button" data-copy="chatgpt-args" aria-label="Copy the ChatGPT arguments">Copy</button>
+  <p class="fine">Environment variable: <code>PROPHELPER_DATA_DIR</code> = <code>{{ stdio_data_dir }}</code></p>
+  <p><button class="btn" type="button" hx-post="/connect/codex" hx-target="#chatgpt-result" hx-swap="innerHTML">Connect through Codex's settings file (not tested yet)</button></p>
+  <div id="chatgpt-result" class="connect-result" aria-live="polite"></div>
+  <h3 class="step">2. Skills</h3>
+  <p class="fine">There are no skills to install for ChatGPT. Connecting is all it needs. Restart ChatGPT after connecting.</p>
+</section>
+
+<section class="card can-do">
+  <h2>What Claude can and can't do</h2>
+  <ul class="plain">
+    <li><strong>It can</strong> add places, move them forward through the stages, log notes and calls, book tours, add contacts, and read your searches and what matters to you to help you compare. It never deletes anything and never changes your own notes.</li>
+    <li><strong>It can't</strong> delete anything. Only you can delete, here in this window.</li>
+    <li>Your data stays on this computer. Claude only sees what it asks for, and sends that to its own AI model.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Try asking</h2>
+  <ul class="plain prompts">
+    {% for p in prompts %}
+    <li><span class="prompt-text" id="prompt-{{ loop.index }}">{{ p }}</span>
+      <button class="btn small" type="button" data-copy="prompt-{{ loop.index }}">Copy</button></li>
+    {% endfor %}
+  </ul>
+</section>
+
+<div class="connect-grid">
+  <section class="card connect-card app-card" id="claudecode" data-app="claudecode">
+    <h3>Claude Code
+      {% if claude_code.connected %}<span class="badge stage-offer">Connected</span>
+      {% elif claude_code.installed %}<span class="badge">Ready to connect</span>
+      {% endif %}
+    </h3>
+    <p>The Claude command in a terminal, for people who code with it.</p>
+    <h4 class="step">1. Connect</h4>
+    <p class="fine">Paste this one line into a terminal:</p>
+    <pre class="code wrap" id="claude-code-cmd">{{ claude_code.command }}</pre>
+    <button class="btn small" type="button" data-copy="claude-code-cmd">Copy</button>
+    <h4 class="step">2. Skills</h4>
+    <p class="fine"><a href="#skills-panel">Add skills</a> adds them to Claude Code (and Codex) with one button.</p>
+  </section>
+  {% for a in others %}
+  <section class="card connect-card app-card" id="{{ a.key }}" data-app="{{ a.key }}">
+    <h3>{{ a.name }}
+      {% if a.connected %}<span class="badge stage-offer">Connected</span>
+      {% elif a.installed %}<span class="badge">Ready to connect</span>
+      {% endif %}
+    </h3>
+    <p>{{ a.blurb }}</p>
+    <h4 class="step">1. Connect</h4>
+    <button class="btn" type="button" hx-post="/connect/{{ a.key }}" hx-target="#{{ a.key }}-result" hx-swap="innerHTML">{{ 'Reconnect' if a.connected else 'Connect' }} {{ a.name }}</button>
+    {% if a.connected %}<button class="btn" type="button" hx-post="/connect/{{ a.key }}/test" hx-target="#{{ a.key }}-result" hx-swap="innerHTML">Test connection</button>{% endif %}
+    <div id="{{ a.key }}-result" class="connect-result" aria-live="polite"></div>
+    <h4 class="step">2. Skills</h4>
+    {% if a.key == "codex" %}<p class="fine"><a href="#skills-panel">Add skills</a> adds them to Codex (and Claude Code) with one button.</p>
+    {% else %}<p class="fine">LM Studio has no skills to install. Connecting is all it needs.</p>{% endif %}
+    <details class="fine">
+      <summary>How to disconnect</summary>
+      <p>{{ a.disconnect }}</p>
+      <details class="advanced-fold">
+        <summary>For advanced users</summary>
+        <p>Settings file: <code>{{ a.path }}</code></p>
+      </details>
+    </details>
+  </section>
+  {% endfor %}
+  <section class="card connect-card app-card" data-app="all">
+    <h3>Anything else</h3>
+    <p class="fine">ChatGPT and Claude in a web browser can't reach apps on your computer. Ollama on its own can't use tools; use it through LM Studio. Apps for developers (Cursor, Windsurf, Jan and others) can use the settings under "Advanced: set it up by hand" below.</p>
+  </section>
+</div>
+<details class="advanced-fold">
+  <summary>Advanced: set it up by hand (MCP settings, for developers)</summary>
+  <p>For apps that take MCP servers, paste this into the app's settings (the "mcpServers" JSON most apps use):</p>
+  <pre class="code" id="json-snip">{{ json_snippet }}</pre>
+  <button class="btn small" type="button" data-copy="json-snip">Copy</button>
+  <p>For Codex, add this to config.toml:</p>
+  <pre class="code" id="codex-snip">{{ codex_snippet }}</pre>
+  <button class="btn small" type="button" data-copy="codex-snip">Copy</button>
+</details>
+</details>
+
+
+
+
+
+<p class="fine"><a href="/skills">Skills page</a> (optional)</p>
+
+<p class="fine">When you press Connect, we save a copy of the app's settings file next to it first (named .bak) and only add our own "property-helper" entry. Everything else in the file stays as it was.</p>
+{% endblock %}
+{% block scripts %}<script src="/static/connect.js" defer></script>{% endblock %}

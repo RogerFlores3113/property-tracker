@@ -1,0 +1,80 @@
+{# The AI help area of a place page. Rendered by routes_ai.py with `place`, `search` and `ai` (key status, features,
+   latest drafts, the prompts that would be sent, the result or error of the last press). #}
+<section id="ai-panel" class="ai-panel card" aria-labelledby="ai-title">
+  <div class="ai-head">
+    <h2 id="ai-title">AI help</h2>
+    {% if place.fit_score is not none %}
+    <span class="fit-badge {{ 'fit-good' if place.fit_score >= 75 else ('fit-mid' if place.fit_score >= 50 else 'fit-low') }}" title="The AI's fit score for what you want">Fit {{ place.fit_score }} / 100</span>
+    {% endif %}
+  </div>
+
+  {% if not ai['key']['set'] %}
+  <p class="ai-note">You don't need a key. Each button below gives you a ready-made prompt to paste into Claude. Or add your own Anthropic key in <a href="/settings#ai">Settings</a> and the answers appear here.</p>
+  {% else %}
+  <div class="fine ai-keystatus">Using your Anthropic key ({{ ai['key']['hint'] }}) and the model {{ ai.model }}.
+    <form method="post" action="/ai/test-key" class="inline"><button type="submit" class="linklike">Test key</button></form>
+    <span class="fine">(sends the word OK and nothing about this place)</span></div>
+  {% endif %}
+  <p class="fine ai-sends">{% if ai['key']['set'] %}Pressing a button sends this place's saved facts, what matters to you in this search, your notes on it, its timeline, the names and roles of people you saved for it, and the listing text you pasted to Anthropic.{% else %}Nothing is sent from here. The prompt you copy holds this place's saved facts, what matters to you in this search, your notes on it, its timeline, the names and roles of people saved for it, and the listing text you pasted.{% endif %} Email addresses and phone numbers are taken out first. The app never sends a message to anyone: drafts are for you to copy.</p>
+  {% if not ai.has_listing %}
+  <p class="flash warn" role="status">No listing text is saved for this place, so answers will only use the facts you typed. Paste the listing text when you add a place to get better help.</p>
+  {% endif %}
+  {% if ai.error %}<p class="flash warn" role="alert">{{ ai.error }}</p>{% endif %}
+  {% if ai.result and ai.result.warning %}<p class="flash warn" role="alert">{{ ai.result.warning }}</p>{% endif %}
+
+  <div class="ai-features">
+    {% for f in ai.features %}
+    <form class="ai-feature" method="post" action="/places/{{ place.id }}/ai/{{ f.slug }}" hx-post="/places/{{ place.id }}/ai/{{ f.slug }}" hx-target="#ai-panel" hx-swap="outerHTML"{% if ai['key']['set'] %} hx-indicator="#ai-busy"{% endif %} hx-disabled-elt="find button">
+      <button class="btn small" type="submit">{{ f.label }}</button>
+      {% if f.slug == 'message' %}
+      <select name="purpose" aria-label="What is the message for?">
+        {% for slug, label in ai.purposes %}<option value="{{ slug }}"{% if slug == ai.purpose %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      {% endif %}
+      <span class="fine">{{ f.help }}</span>
+    </form>
+    {% if ai.prompts.get(f.slug) %}
+    <details class="ai-sent">
+      <summary>Show what will be sent: {{ f.label }}</summary>
+      <textarea readonly rows="6" aria-label="Exactly what is sent to Anthropic for {{ f.label }}">{{ ai.prompts[f.slug] }}</textarea>
+      <p class="fine">This is sent to api.anthropic.com when you press the button{% if f.slug == 'message' %} (shown for "{{ ai.purposes[0][1] }}"; the other choices only change the ask at the top){% endif %}.</p>
+    </details>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% if ai['key']['set'] %}<p id="ai-busy" class="ai-busy" role="status">Working on it. This can take up to a minute.</p>{% endif %}
+
+  {% if ai.result and ai.result.mode == 'prompt' %}
+  <div class="ai-prompt">
+    <h3>Prompt for Claude</h3>
+    <p class="fine">No key is set, so here is the prompt. Copy it into Claude, or open Claude. "Open Claude" puts the prompt text (this place's details, your notes and the listing) in a web address that opens claude.ai in a new tab; nothing is sent until you click it.</p>
+    <textarea id="ai-prompt-text" readonly rows="8">{{ ai.result.prompt }}</textarea>
+    <div class="actions-inline">
+      <button type="button" class="btn small primary" data-copy="#ai-prompt-text">Copy prompt</button>
+      <a class="btn small" href="{{ ai.result.claude_url }}" target="_blank" rel="noopener noreferrer" data-copy="#ai-prompt-text">Open Claude</a>
+    </div>
+    {% if ai.result.truncated %}
+    <p class="fine">This prompt is long, so the link carries a shortened copy. The full prompt is copied to your clipboard when you press either button.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% set fresh = ai.result.draft.id if (ai.result and ai.result.draft) else 0 %}
+  <div class="ai-drafts">
+    {% for f in ai.features %}
+    {% set d = ai.latest.get(f.kind) %}
+    {% if d %}
+    <article class="ai-draft{{ ' fresh' if d.id == fresh }}" aria-label="{{ f.label }}">
+      <header>
+        <h3>{{ f.label }}</h3>
+        <span class="fine">{{ d.created_at|ago }}{% if d.model %} &middot; {{ d.model }}{% endif %}</span>
+      </header>
+      <div class="ai-draft-body" id="draft-body-{{ d.id }}">{{ d.body }}</div>
+      <button type="button" class="btn small" data-copy="#draft-body-{{ d.id }}">Copy</button>
+      {% if f.slug == 'message' %}<p class="fine">Check it and change anything before you send it yourself. The app does not send it.</p>{% endif %}
+      {% if f.slug == 'flags' %}<p class="fine">These are hints. The final call is yours.</p>{% endif %}
+    </article>
+    {% endif %}
+    {% endfor %}
+  </div>
+</section>

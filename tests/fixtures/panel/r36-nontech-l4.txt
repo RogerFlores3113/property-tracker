@@ -1,0 +1,8 @@
+ZILLOW-style: 2 beds, 1.5 baths, 1,100 sqft - Duplex for rent
+$1,450/mo  Est. $1,450
+Address: 1920 Parsons Ave, Columbus, OH 43207
+Pagan luz y gas los inquilinos. No incluye agua ni basura.
+Pets allowed with approval. Cats: $35/mo. Non-negotiable 15 lb limit.
+Security deposit: $1,450. Broker fee half month. Zelle only for the deposit.
+=SUM(A1:A9) application fee
+Parking included. Laundry in building.

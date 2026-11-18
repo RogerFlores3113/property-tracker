@@ -1,0 +1,14 @@
+{
+  "name": "property-helper",
+  "description": "Skills that teach your AI app to use Property Helper well: saving places from listings, moving stages, tours, true monthly cost, comparing places and what to do today.",
+  "author": {
+    "name": "Property Helper"
+  },
+  "homepage": "https://github.com/rogerflores3113/property-helper",
+  "keywords": [
+    "apartments",
+    "housing",
+    "property-helper"
+  ],
+  "skills": "./skills/claude/"
+}

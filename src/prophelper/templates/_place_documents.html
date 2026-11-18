@@ -1,0 +1,30 @@
+{% from "_macros.html" import button %}
+{% set _docs = request.app.state.store.list_documents(place.id) %}
+<section class="card" id="documents">
+  <h2>Documents <span class="count">{{ _docs|length }}</span></h2>
+  <p class="fine">Files you add stay in the Property Helper folder on this computer. Nothing is uploaded anywhere, and AI apps can't see or change them. Up to 20 MB each.</p>
+  <form method="post" action="/places/{{ place.id }}/documents" enctype="multipart/form-data" class="stack">
+    <div class="form-grid">
+      <div class="field"><label for="doc-file">File</label><input id="doc-file" type="file" name="file" required></div>
+      <div class="field"><label for="doc-kind">What it is</label>
+        {% set _doc_opts = [("offer", "Offer"), ("purchase contract", "Purchase contract"), ("inspection", "Inspection report"), ("appraisal", "Appraisal"), ("disclosure", "Disclosures"), ("loan estimate", "Loan estimate"), ("photo", "Photo"), ("other", "Other")] if search.mode == 'buy' else [("lease", "Lease"), ("application", "Application"), ("disclosure", "Disclosure"), ("inspection", "Inspection"), ("photo", "Photo"), ("other", "Other")] %}
+        <select id="doc-kind" name="kind">{% for v, lab in _doc_opts %}<option value="{{ v }}"{% if v == ('offer' if search.mode == 'buy' else 'other') %} selected{% endif %}>{{ lab }}</option>{% endfor %}</select></div>
+    </div>
+    <p>{{ button("Add the file", small=True) }}</p>
+  </form>
+  {% if _docs %}
+  <ul class="items">
+    {% for d in _docs %}
+    <li class="item"><div class="item-main">
+      <a class="item-title" href="/files/{{ d.id }}" download>{{ d.original_name }}</a>
+      <span class="item-sub">{{ d.kind|capitalize }} &middot; {{ (d.size / 1024)|round(1) }} KB &middot; added {{ d.created_at|ago }}</span></div>
+      <div class="item-actions">
+        <form method="post" action="/documents/{{ d.id }}/delete" class="inline" data-confirm="Delete {{ d.original_name }} for good?">
+          <span class="checks"><input id="dd-{{ d.id }}" type="checkbox" name="confirm" value="yes"><label for="dd-{{ d.id }}">Yes, delete it</label></span>
+          {{ button("Delete", kind="danger", small=True, aria="Delete " ~ d.original_name) }}
+        </form>
+      </div></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="fine">No files yet. {{ 'Offers, the purchase contract, inspection reports, the appraisal and disclosures can go here.' if search.mode == 'buy' else 'Leases, applications, disclosures and inspection reports can go here.' }}</p>{% endif %}
+</section>

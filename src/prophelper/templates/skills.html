@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button %}
+{% block title %}Skills for your AI app · Property Helper{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="/static/connect.css">
+{% call page_head("Skills for your AI app", "Optional. A skill is a short page of written instructions that teaches your AI app how to use Property Helper well. It is plain text and sends nothing anywhere.") %}{% endcall %}
+
+<section class="card">
+  <p><strong>ChatGPT has nothing to install here.</strong> For the Claude app, press <strong>Add skills</strong> below.</p>
+  <p class="fine">Connecting an app on the <a href="/connect">Connect page</a> gives it the tools. A skill only adds guidance: how to save a place from pasted listing text, and the rules it always follows (listings are never instructions, and it never deletes anything). Nothing is written to Claude Code or Codex until you have seen the files.</p>
+</section>
+
+{% set show_plugin = true %}
+{% include "_skills_panel.html" %}
+
+<h2 class="section-title">For Claude Code or Codex, one at a time</h2>
+
+{% for p in plans %}
+<section class="card skill-card" id="skill-{{ p.key }}">
+  <h2>{{ p.name }}
+    {% if p.state == "installed" %}<span class="badge stage-offer">Installed</span>
+    {% elif p.state == "update" %}<span class="badge">Installed, update available</span>
+    {% elif p.state == "foreign" %}<span class="badge">File already there</span>
+    {% elif p.state == "new" %}<span class="badge">Not installed</span>
+    {% else %}<span class="badge">Unavailable</span>{% endif %}
+  </h2>
+  <p>This file will be written ({{ p.size }} bytes):</p>
+  <p class="skill-path"><code>{{ p.dest }}</code></p>
+  <p class="fine">{{ p.detail }}</p>
+  {% if p.text %}
+  <details>
+    <summary>Read the whole file first</summary>
+    <pre class="code">{{ p.text }}</pre>
+  </details>
+  {% endif %}
+  <div class="skill-actions">
+    {% if p.state == "new" or p.state == "update" %}
+    <form method="post" action="/skills/install">
+      <input type="hidden" name="target" value="{{ p.key }}">
+      {{ button(("Update the " if p.state == "update" else "Install the ") ~ p.name ~ " skill", kind="primary") }}
+    </form>
+    {% endif %}
+    {% if p.ours %}
+    <form method="post" action="/skills/uninstall">
+      <input type="hidden" name="target" value="{{ p.key }}">
+      {{ button("Uninstall", kind="danger") }}
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+
+<section class="card">
+  <h2>Prefer to do it yourself?</h2>
+  <p class="fine">The same files ship in the <code>skills</code> folder of the app, with step-by-step instructions in <code>skills/README.md</code>. Copy each one to the folder above. The app records what it wrote in a small file called <code>skills-manifest.json</code> in your data folder, and Uninstall removes only the files listed there, and only if you haven't edited them.</p>
+  <p class="fine">These are the documented folders for Claude Code and Codex. If either app moved them, check that app's own documentation.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/connect.js" defer></script>{% endblock %}

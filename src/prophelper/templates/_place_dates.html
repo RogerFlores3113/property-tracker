@@ -1,0 +1,27 @@
+{% from "_macros.html" import button, post_button %}
+{% set _store = request.app.state.store %}
+{% set _dates = _store.list_place_dates(place.id) %}
+{% set _kinds = _store.date_kinds(search.mode) %}
+<section class="card" id="dates">
+  <h2>Key dates <span class="count">{{ _dates|length }}</span></h2>
+  <p class="fine">Deadlines and appointments for this place{% if search.mode == 'buy' %}, like the offer deadline, inspection or closing{% else %}, like the application deadline or when you sent your application{% endif %}. They show on Today and the Calendar.</p>
+  {% if _dates %}
+  <ul class="items">
+    {% for d in _dates %}
+    <li class="item"><div class="item-main"><strong>{{ d.label }}</strong>
+      <span class="item-sub">{{ d.date|day }}{% if d.time %}, {{ d.time }}{% endif %} ({{ d.date|until }}){% if d.note %} &middot; {{ d.note }}{% endif %}</span></div>
+      <div class="item-actions">{{ post_button("/place-dates/%d/delete"|format(d.id), "Remove", aria="Remove " ~ d.label ~ " on " ~ d.date) }}</div></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <form method="post" action="/places/{{ place.id }}/dates" class="stack">
+    <div class="form-grid">
+      <div class="field"><label for="kd-kind">What</label>
+        <select id="kd-kind" name="kind">{% for k in _kinds %}<option value="{{ k }}">{{ k.replace('_', ' ')|capitalize if k != 'move_in' else 'Move-in' }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="kd-day">Day</label><input id="kd-day" type="date" name="day" required></div>
+      <div class="field"><label for="kd-time">Time (optional)</label><input id="kd-time" type="time" name="time"></div>
+      <div class="field wide"><label for="kd-note">Note (optional)</label><input id="kd-note" name="note" maxlength="300"></div>
+    </div>
+    <p>{{ button("Add the date", small=True) }}</p>
+  </form>
+</section>

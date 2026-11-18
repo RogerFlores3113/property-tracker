@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_head, button, field %}
+{% block title %}Application checklist &middot; Property Helper{% endblock %}
+{% block body %}
+{% call page_head("Application checklist", "What a lender and seller usually ask for, so you are ready before you make an offer." if mode == "buy" else "What most landlords ask for, so you are ready before you apply.") %}
+  <a class="btn small" href="#add">Add an item</a>
+{% endcall %}
+<p class="lead">Property Helper keeps this list, not copies of your documents. Keep the papers themselves wherever you keep them now.</p>
+{% if mode != 'buy' %}
+<p class="fine" id="apply-explain">This is your own documents list: "Ready" means you have that paper in hand. Each place also has its own ticks under "Applying here", for what is done for that one place, so the counts can differ.
+  {% if places %}Jump to a place's list: {% for p in places %}<a href="/places/{{ p.id }}#applying">{{ p.title }}</a>{{ ', ' if not loop.last }}{% endfor %}.{% endif %}</p>
+{% endif %}
+
+<section class="card" aria-labelledby="list-h">
+  <h2 id="list-h">{{ done }} of {{ items|length }} ready</h2>
+  {% if items %}<progress max="{{ items|length }}" value="{{ done }}" aria-label="{{ done }} of {{ items|length }} ready"></progress>{% endif %}
+  {% if items %}
+  <ul class="items check-list">
+    {% for i in items %}
+    <li class="item" id="item-{{ i.id }}">
+      <div class="item-main">
+        <span class="item-title{{ ' is-done' if i.done }}">{{ i.label }}{% if i.done %} <span class="badge">Ready</span>{% endif %}</span>
+        {% if i.note %}<span class="item-sub">{{ i.note }}</span>{% endif %}
+        <details>
+          <summary>Edit</summary>
+          <form method="post" action="/checklist/items/{{ i.id }}" class="stack">
+            {{ field("What it is", "label", i.label, required=True, id="cl-label-" ~ i.id) }}
+            {{ field("Note", "note", i.note, id="cl-note-" ~ i.id, hint="For example where the file is, or who to ask.") }}
+            <p>{{ button("Save", kind="primary", small=True) }}</p>
+          </form>
+        </details>
+      </div>
+      <div class="item-actions">
+        <form class="inline" method="post" action="/checklist/items/{{ i.id }}/done">
+          <input type="hidden" name="value" value="{{ '0' if i.done else '1' }}">{{ button("Not ready" if i.done else "Mark ready", small=True, aria=("Mark " ~ i.label ~ " not ready") if i.done else ("Mark " ~ i.label ~ " ready")) }}</form>
+        <form class="inline" method="post" action="/checklist/items/{{ i.id }}/move"><input type="hidden" name="direction" value="up">{{ button("Up", small=True, aria="Move " ~ i.label ~ " up") }}</form>
+        <form class="inline" method="post" action="/checklist/items/{{ i.id }}/move"><input type="hidden" name="direction" value="down">{{ button("Down", small=True, aria="Move " ~ i.label ~ " down") }}</form>
+        <form class="inline" method="post" action="/checklist/items/{{ i.id }}/delete" data-confirm="Remove {{ i.label }} from the list?">{{ button("Remove", kind="danger", small=True, aria="Remove " ~ i.label) }}</form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="fine">The list is empty. Add what a landlord is likely to ask for.</p>{% endif %}
+</section>
+
+{% if missing %}
+<section class="card" aria-labelledby="usual-h">
+  <h2 id="usual-h">The usual {{ 'buyer' if mode == 'buy' else 'renter' }} items</h2>
+  <p class="fine">Not on your list yet: {{ missing|join(', ') }}.</p>
+  <form method="post" action="/checklist/defaults" class="stack"><input type="hidden" name="mode" value="{{ mode }}">
+    <p>{{ button("Add them to my list", small=True) }}</p></form>
+</section>
+{% endif %}
+
+<section class="card" id="add" aria-labelledby="add-h">
+  <h2 id="add-h">Add an item</h2>
+  <form method="post" action="/checklist/items" class="stack">
+    {{ field("What it is", "label", required=True, id="new-label", placeholder=("Letter from my lender" if mode == "buy" else "Letter from my employer")) }}
+    {{ field("Note (optional)", "note", id="new-note") }}
+    <p>{{ button("Add to the list", kind="primary") }}</p>
+  </form>
+</section>
+{% endblock %}
