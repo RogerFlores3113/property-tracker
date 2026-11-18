@@ -737,11 +737,13 @@ def without_quote(flag: str) -> str:
 _TAG = re.compile(r"</?[A-Za-z!?][^>]*(?:>|$)|<\s*/\s*[A-Za-z][^>]*(?:>|$)")
 
 
-def _quote(snippet: str, limit: int = 160) -> str:
+def _quote(snippet: str, limit: int = 160, keep_double: bool = False) -> str:
     """A short, plain copy of a line for a hint: whole tags removed, no markup characters, quotes softened, cut at a word
     boundary with '...'."""
     clean = _TAG.sub(" ", _ZERO_WIDTH.sub("", snippet))  # cycle 31: no stray zero-width characters inside a quote
-    clean = re.sub(r"[\x00-\x1f\x7f<>`{}\\]", " ", clean).replace('"', "'")
+    clean = re.sub(r"[\x00-\x1f\x7f<>`{}\\]", " ", clean)
+    if not keep_double:  # cycle 37 (family l6): a flagged line is quoted in the listing's own words, double quotes included (quote_of cuts only the closing mark that wraps the quote)
+        clean = clean.replace('"', "'")
     clean = " ".join(clean.split())
     if len(clean) <= limit:
         return clean
@@ -781,7 +783,7 @@ def _ai_line(text: str, comments: list[str], original: str = "") -> str | None:
         return lines[0]
     shown = lines[:4]
     width = 90 if len(shown) <= 2 else 60  # every line is quoted (up to four); a short cut keeps the hint readable
-    text_ = " / ".join(_quote(x, width) for x in shown)
+    text_ = " / ".join(_quote(x, width, True) for x in shown)
     return text_ + (f" (and {len(lines) - 4} more)" if len(lines) > 4 else "")
 
 
@@ -899,12 +901,12 @@ def _ai_lines(text: str, comments: list[str], original: str = "") -> list[str] |
         end = min(ends) + (0 if ends and min(ends) in bound else 1) if ends else len(text)
         last_end = end
         shown = plain if text == unsep_plain else text  # cycle 31: a hit found only after " / " gaps were read as spaces is quoted as the listing wrote it
-        quotes.append(_quote(_verbatim(original, plain, shown, begin, end) if original else shown[begin:end]))
+        quotes.append(_quote(_verbatim(original, plain, shown, begin, end) if original else shown[begin:end], keep_double=True))
     if quotes:
         return quotes
     for c in comments:
         if _SYSTEM_IN_COMMENT.search(c):
-            return [_quote(c)]
+            return [_quote(c, keep_double=True)]
     return None
 
 
