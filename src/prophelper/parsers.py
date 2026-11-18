@@ -3329,6 +3329,8 @@ def _parking_kind_words(low: str) -> str:
 
 _PARKING_COUNT_PRICE_RE = re.compile(r"\b(?:\d|one|two|three|four)[ \t]+(?:(?:assigned|reserved|covered|private|surface|off[- ]?street|parking)[ \t]+)*(?:spots?|spaces?|stalls?)\b[^.\n;$]{0,30}?\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))")
 _PARKING_NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4}
+# cycle 37: "2 outdoor spots, $100 each": the count word, up to three describing words, then the spot word (any describing word, not a fixed list)
+_PARKING_EACH_COUNT = re.compile(r"\b(\d|one|two|three|four)[ \t]+(?:[a-z\-]+[ \t,]+){0,3}?(?:spots?|spaces?|stalls?|cars?|vehicles?)\b")
 _PARKING_YEARLY_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*(?:yr|year|annum|y)\b|per[ \t]+(?:year|yr|annum)\b|a[ \t]+year\b|annually\b|yearly\b|annual\b|each[ \t]+year\b|every[ \t]+year\b)")
 _PARKING_EACH_AFTER = re.compile(r"(?:\.\d\d)?[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?[ \t,]*(?:each|apiece|per[ \t]+(?:parking[ \t]+)?(?:spot|space|stall)s?)\b")
 # cycle 36: "$120 per semester", "$120/semester", "$150 each term": a price for part of a year. It is never a monthly cost; a quarter is three months and is converted, the rest is left for a note
@@ -3409,7 +3411,7 @@ def _parking_prices(low: str) -> list[tuple[float, bool, str, str]]:
                 clause = low[a:m.end(1) + len(after_amount)]
             elif not optional and _PARKING_EACH_AFTER.match(after_amount):
                 sentence = low[max(low.rfind(x, 0, m.start(1)) for x in (".", "\n", ";")) + 1:m.end(1) + len(after_amount)]
-                cm = re.search(r"\b(\d|one|two|three|four)[ \t]+(?:(?:assigned|reserved|covered|private|surface|off[- ]?street|required|parking)[ \t,]+)*(?:spots?|spaces?|stalls?|cars?|vehicles?)\b", sentence)
+                cm = _PARKING_EACH_COUNT.search(sentence)
                 n = (_PARKING_NUM_WORDS.get(cm.group(1)) or int(cm.group(1))) if cm else 1
                 if n > 1:
                     value, unit = value * n, "each"
@@ -3458,7 +3460,7 @@ def _parking_general_prices(low: str) -> list[tuple[float, bool, str, str]]:
                 if yearly:
                     value, unit = round(value / 12, 2), "year"
                 elif not optional and re.search(r"\bper[ \t]+(?:parking[ \t]+)?(?:spot|space|stall)\b|\beach\b", near):
-                    cm = re.search(r"\b(\d|one|two|three|four)[ \t]+(?:(?:assigned|reserved|covered|private|surface|off[- ]?street|required|parking)[ \t,]+)*(?:spots?|spaces?|stalls?|cars?|vehicles?)\b", sent)
+                    cm = _PARKING_EACH_COUNT.search(sent)
                     n = (_PARKING_NUM_WORDS.get(cm.group(1)) or int(cm.group(1))) if cm else 1
                     if n > 1:
                         value, unit = value * n, "each"
@@ -4326,7 +4328,7 @@ def _parking_detail_core(text: str, low: str) -> tuple[str, float | None, list[s
         elif not optional and value == required[0] and unit == "year":
             notes.append(f"The listing gives the parking as ${value * 12:,.0f} a year, so ${value:,.2f} a month is counted. Check that the yearly amount is right.")
         elif not optional and value == required[0] and unit == "each":
-            notes.append(f"The listing says the parking is required at that price for each space, so ${value:,.0f} a month (all the spaces) is counted.")
+            notes.append(f"The listing gives the parking price for each space and names more than one space, so ${value:,.0f} a month (all the spaces) is counted.")
     if cost is None and any(o for _v, o, _c, _u in prices) and _PARKING_FREE.search(low):
         cost = 0.0
     if not kind and cost == 0 and _PARKING_FREE.search(low):
