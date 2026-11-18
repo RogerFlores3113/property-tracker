@@ -438,7 +438,7 @@ def _amounts(text: str) -> list[dict[str, Any]]:
                 fee = False  # cycle 34: "$1,500 HOA none" is the rent and then an HOA of none, the figure is not the HOA
         if not fee and _NOT_RENT_EXTRA.search(clause):
             fee = True  # cycle 26: "Second space $200/mo", "extra storage $50/mo", "additional occupant $75": never a rent candidate
-        if fee and value >= 20000 and marker == "" and re.match(r"^\s*(?:hoa|assoc\w*|dues|condo fee)", tail, re.I):
+        if fee and value >= 20000 and marker == "" and re.match(r"^\s*(?:(?:hoa|assoc\w*|dues|condo fee)|(?:(?:(?:property|real[ \t]+estate)[ \t]+)?tax(?:es)?|insurance)(?:[ \t]*[:=\-][ \t]*|[ \t]+)(?:(?:about|approx\.?|around|est\.?|~)[ \t]*)?\$)", tail, re.I):  # cycle 37: and "$299,000 Tax $3,500/yr": the tax label belongs to the next amount
             fee = False  # "$250,000 HOA $310 per month": the HOA label belongs to the next amount, no HOA fee is that big
         if re.match(r"\s*(?:total\s+)?(?:(?:is\s+)?(?:due\s+)?to\s+move[- ]?in\b|(?:is\s+)?due\s+(?:at|before|on)\s+(?:lease\s+)?(?:signing|move[- ]?in)\b|total\s+move[- ]?in\b)", tail, re.I):
             fee = True  # "$2,100 total to move in" is what you pay to get in, never the rent
