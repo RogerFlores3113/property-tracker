@@ -7527,6 +7527,8 @@ def _special_assessment_facts(text: str, buying: bool = False) -> tuple[float | 
     payer = _assessment_payer(text, sentence)
     if _assessment_seller_first(text):
         return None, "", sentence  # cycle 35: the seller pays only the first months; the buyer's monthly share is read by _assessment_monthly
+    if _assessment_seller_lump_first(text):
+        return None, "buyer", sentence  # cycle 36: the seller's one amount comes first and is named in the note; the buyer's monthly figure is read by _assessment_monthly
     if payer == "seller" and _SELLER_FIRST.search(sentence):
         payer = ""  # cycle 35: "seller responsible for first 6 months" is a share of the months, not the whole assessment
     if _assessment_split(text) and amount and abs(_assessment_split(text)[2] - amount) < 0.5:
@@ -7705,6 +7707,67 @@ def _assessment_seller_first(text: str) -> tuple[float, int | None, int, float |
     return None
 
 
+_LF_MONTHLY = r"[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|each[ \t]+month|every[ \t]+month|monthly\b)"
+_LF_AMT = r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?(?!\d)(?!,\d)"
+_LF_SELLER = re.compile(r"\b(?:the[ \t]+)?(?:seller|owner|vendor)(?:'s)?[ \t]+(?:is[ \t]+|will[ \t]+|shall[ \t]+)?(?:pays?|covers?|to[ \t]+pay|paying|handles?|responsible[ \t]+for)[^$\n]{0,60}?" + _LF_AMT
+                        + r"(?![ \t]*(?:/[ \t]*mo|per[ \t]+month|a[ \t]+month|each[ \t]+month|monthly))"
+                        + r"|" + _LF_AMT + r"[^.\n$]{0,40}?(?:paid|covered|handled)[ \t]+by[ \t]+(?:the[ \t]+)?(?:seller|owner|vendor)\b", re.I)
+_LF_BUYER = re.compile(r"\b(?:the[ \t]+)?(?:buyer|purchaser)(?:'s)?[ \t]+(?:pays?|covers?|to[ \t]+pay|will[ \t]+pay|takes?[ \t]+over|paying)[^$\n]{0,40}?" + _LF_AMT + _LF_MONTHLY
+                       + r"|\b(?:the[ \t]+)?(?:buyer|purchaser)(?:'s)?[ \t]+(?:pays?|covers?|to[ \t]+pay|will[ \t]+pay)[ \t]+monthly(?:[ \t]+payments?)?[ \t]+of[ \t]+" + _LF_AMT
+                       + r"|" + _LF_AMT + _LF_MONTHLY + r"[^.\n$]{0,30}?(?:paid|covered)[ \t]+by[ \t]+(?:the[ \t]+)?(?:buyer|purchaser)\b", re.I)
+_LF_ORDER = re.compile(r"\b(?:first|initially|up[ \t]*front|then|after(?:wards|[ \t]+that)?|thereafter|followed[ \t]+by|next|and[ \t]+later)\b", re.I)
+
+
+def _assessment_seller_lump_first(text: str) -> tuple[float, float, int | None, str] | None:
+    """Cycle 36 (buyer l51): "Seller pays special assessment of $6,000 first, then buyer pays $250 per month for 24 months." The seller pays one amount first and the buyer
+    then pays a monthly figure. Returns (the seller's amount, the buyer's monthly, the buyer's months or None, the quoted sentence) or None. Needs the word assessment, the seller's
+    one-time amount before the buyer's monthly amount, and a word of order (first, then, after that). A seller's "first 6 months" is _assessment_seller_first, not this."""
+    if _assessment_seller_first(text):
+        return None
+    pieces = re.split(r"[.\n;](?!\d)", text or "")
+    for i, sent in enumerate(pieces):
+        if not re.search(r"\bassessments?\b", sent, re.I) or re.search(r"\?\s*$", sent):
+            continue
+        whole = sent
+        if not (_LF_SELLER.search(whole) and _LF_BUYER.search(whole)) and i + 1 < len(pieces) and pieces[i + 1].strip() and not re.search(r"\bassessments?\b", pieces[i + 1], re.I):
+            whole = whole + ". " + pieces[i + 1]  # "Special assessment: seller pays $6,000 first" and then a line "Then buyer pays $250 per month for 24 months"
+        sm = _LF_SELLER.search(whole)
+        if not sm:
+            continue
+        bm = _LF_BUYER.search(whole, sm.start() + 1)
+        if not bm or bm.start() < sm.start() or bm.start() < sm.end() - 12:
+            continue
+        if not _LF_ORDER.search(whole[sm.start():bm.end()]):
+            continue
+        lump = _num(next(g for g in sm.groups() if g))
+        monthly = _num(next(g for g in bm.groups() if g))
+        if not lump or not monthly or abs(lump - monthly) < 0.005:
+            continue
+        n = None
+        nm = re.search(r"\b(?:for|x|over)[ \t]+(?:the[ \t]+(?:next|following)[ \t]+)?" + _SF_N + r"[ \t]*(months?|mos?\b|years?|yrs?\b)", whole[bm.end():], re.I) \
+            or re.search(r"\b" + _SF_N + r"[ \t]+monthly[ \t]+(payments?)\b", whole[bm.start():], re.I)
+        if nm:
+            nv = int(nm.group(1)) if nm.group(1).isdigit() else _SF_NUM.get(nm.group(1).lower())
+            if nv:
+                n = nv * (12 if nm.group(2).lower().startswith("y") else 1)
+        return lump, monthly, n, " ".join(whole.split())
+    return None
+
+
+def _assessment_seller_lump_first_note(text: str) -> str:
+    got = _assessment_seller_lump_first(text)
+    if not got:
+        return ""
+    lump, monthly, months, _sent = got
+    length = f" for {months} months ({_money_c(monthly * months)} in all)" if months else ""
+    ends = f" It ends after {months} months, so the monthly cost drops by {_money_c(monthly)} then." if months else " The listing does not say when it ends. Ask."
+    same = (f" The two add up to the same {_money_c(lump)}, so ask whether it is one assessment paid in two ways, and not two assessments."
+            if months and abs(lump - monthly * months) < 1 else "")
+    return (f"The listing says the seller pays a special assessment of {_money_c(lump)} first, and then the buyer pays {_money_c(monthly)} a month{length}. The seller's {_money_c(lump)} is not a cost to you, "
+            f"so it is not counted. Your {_money_c(monthly)} a month is counted in the monthly cost as other monthly fees, from the start, and is not cash at closing.{ends}{same} "
+            "Ask the seller's agent to confirm in writing who pays which part.")
+
+
 def _assessment_seller_first_note(text: str) -> str:
     got = _assessment_seller_first(text)
     if not got:
@@ -7736,6 +7799,8 @@ def _assessment_monthly(text: str) -> tuple[float, int | None] | None:
     """("Assessment for windows: $150/month for 24 months") -> (150, 24). Months is None when the listing gives no length."""
     if (sf := _assessment_seller_first(text)):
         return sf[0], sf[1]  # cycle 35: the buyer's months after the seller's first months
+    if (lf := _assessment_seller_lump_first(text)):
+        return lf[1], lf[2]  # cycle 36: "Seller pays $6,000 first, then buyer pays $250 per month for 24 months": the buyer's monthly figure
     m = re.search(r"\bassessments?\b[^.\n$]{0,40}?\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?\b|per[ \t]+month|a[ \t]+month|monthly|each[ \t]+month)"
                   r"(?:[^.\n]{0,15}?\b(?:for|x|over)[ \t]+(\d{1,3})[ \t]*(?:months?|mos?\b))?", text, re.I)
     if not m:  # "Monthly special assessment of $150", "$150/mo special assessment"
@@ -7828,8 +7893,8 @@ def _assessment_none(text: str) -> bool:
 
 def _assessment_monthly_note(text: str) -> str:
     got = _assessment_monthly(text)
-    if not got or _assessment_seller_first(text):
-        return ""  # cycle 35: the seller-pays-the-first-months case has its own note
+    if not got or _assessment_seller_first(text) or _assessment_seller_lump_first(text):
+        return ""  # cycle 35: the seller-pays-the-first-months case has its own note (cycle 36: so has the seller's amount first, then the buyer's monthly)
     amount, months = got
     length = f" for {months} months (${amount * months:,.0f} in all)" if months else ""
     for sent in re.split(r"[.\n;](?!\d)", text):  # cycle 33: "...$450 per month for 18 months, seller to pay": the payer is named, so the note never says "ask who pays"
@@ -7853,8 +7918,8 @@ def _special_assessment(text: str) -> str:
     if sentence is None:
         return ""
     am = _assessment_amount(sentence, skip_monthly=True)
-    if _assessment_seller_first(text):
-        return ""  # cycle 35: the seller pays the first months only: it has its own note (_assessment_seller_first_note)
+    if _assessment_seller_first(text) or _assessment_seller_lump_first(text):
+        return ""  # cycle 35: the seller pays the first months only: it has its own note (_assessment_seller_first_note); cycle 36: so has the seller's amount first
     if _assessment_split(text):
         return ""  # cycle 33: an even split over months has its own note (_assessment_split_note)
     if am and (sp0 := _assessment_spread(text, True)) and abs(_num(sp0[2].lstrip("$")) - am) < 0.5:
@@ -15492,7 +15557,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 sp_now = _try(lambda: _assessment_spread(text))
                 split_now = _try(lambda: _assessment_split(text))
                 sf_now = _try(lambda: _assessment_seller_first(text))
-                if sf_now and abs(sf_now[0] - amt_m) < 0.01:
+                lf_now = _try(lambda: _assessment_seller_lump_first(text))
+                if lf_now and abs(lf_now[1] - amt_m) < 0.01:
+                    facts.append(_assessment_seller_lump_first_note(text))
+                elif sf_now and abs(sf_now[0] - amt_m) < 0.01:
                     facts.append(_assessment_seller_first_note(text))
                 elif split_now and abs(split_now[0] - amt_m) < 0.01 and months_m == split_now[1]:
                     facts.append(_assessment_split_note(text))
