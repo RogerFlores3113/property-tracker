@@ -8510,6 +8510,31 @@ def _heat_is_gas_words(facts: list[str], text: str) -> list[str]:
     return done
 
 
+_ON_US = re.compile(
+    r"(?:\b(?:all[ \t]+)?(?:the[ \t]+)?utilit(?:y|ies)[ \t]*[:,]?[ \t]*(?:(?:are|is)[ \t]+)?(?:on[ \t]+us|on[ \t]+the[ \t]+house|(?:covered|paid|provided)[ \t]+by[ \t]+us|taken[ \t]+care[ \t]+of[ \t]+by[ \t]+us)"
+    r"|\bwe[ \t]+(?:pay|cover|provide|handle)s?[ \t]+(?:for[ \t]+)?(?:all[ \t]+)?(?:the[ \t]+)?utilit(?:y|ies))"
+    r"(?P<exc>[ \t]*[,:;-]?[ \t]*(?:but(?![ \t]+not)|except(?:[ \t]+for)?|other[ \t]+than|besides)\b)?", re.I)
+
+
+def _utilities_on_us(text: str) -> str:
+    """Cycle 36 (nontech l2, rule ii): "Utilities on us except electric", "We cover all utilities except electric" and "Utilities are on us, except gas and electric" mean the
+    landlord pays every utility but those, the same as "All utilities included except electric"; "Utilities on us." alone is "All utilities included". A question or
+    a condition ("on us if you sign a 12 month lease") sets nothing."""
+    def one(m: re.Match[str]) -> str:
+        end = m.end()
+        stop = [i for i in (text.find(c, end) for c in ".!?\n;") if i != -1]
+        sent_end = min(stop) if stop else len(text)
+        if "?" in text[m.start():sent_end + 1] or re.search(r"\?", text[max(0, m.start() - 60):m.start()].split(".")[-1]):
+            return m.group(0)
+        if m.group("exc"):
+            return "all utilities included except"
+        rest = text[end:sent_end]
+        if rest.strip(" \t,)") != "" and not re.fullmatch(r"[ \t,]*(?:and[ \t]+)?(?:laundry|more|too|as[ \t]+well)?[ \t]*", rest, re.I):
+            return m.group(0)  # "on us if you sign", "on us for the first year": a condition is not a plain included
+        return "all utilities included"
+    return _ON_US.sub(one, text)
+
+
 _SPACE_UTIL_NAME = r"(?:water|sewer|sewage|garbage|trash|gas|electric|electricity|heat)"
 _SPACE_UTIL_RUN = re.compile(
     r"(?<![\w/&+,-])(?P<run>" + _SPACE_UTIL_NAME + r"(?:[ \t]+" + _SPACE_UTIL_NAME + r")+)(?![\w/&+-])"
@@ -8559,6 +8584,7 @@ def _util_text(text: str) -> str:
     text = re.sub(r"[!?]+(?=[ \t]+\S)", ".", text)  # "except electric! Heat + water included" is two sentences
     # "Landlord pays everything but electric" and "Utilities included except electric" mean "all utilities ... except electric"
     text = re.sub(r"\b((?:landlord|owner|management|property manager)[ \t]+(?:pays?|covers?)[ \t]+(?:for[ \t]+)?)(?:everything|all(?:[ \t]+(?:the[ \t]+)?utilit(?:y|ies))?)[ \t]+(?:but(?![ \t]+not)|except(?:[ \t]+for)?|other than|besides)\b", r"\1all utilities except", text, flags=re.I)
+    text = _utilities_on_us(text)
     # "Landlord pays all utilities, tenant electric only total $110" / "(tenant pays electric only)": the landlord pays all but that one, and the figure is the renter's
     def _only_pays(m: re.Match[str]) -> str:
         if not (m.group("o1") or m.group("o2")):
