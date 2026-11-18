@@ -545,9 +545,11 @@ def _dash_title_price(text: str) -> tuple[float, bool] | None:
 
 
 _CORRECTION_CUE = (r"(?:\?+[ \t]*no\b[ \t,:;.!-]*(?:(?:sorry|wait|actually|it'?s)\b[ \t,:;.!-]*)?|\bno[ \t,]+(?:sorry|wait|actually)\b[ \t,:;.!-]*|"
-                   r"\b(?:sorry|actually|oops|correction|my[ \t]+bad)\b[ \t,:;.!-]*(?:(?:no|sorry|actually)\b[ \t,:;.!-]*)?)")
-_CORRECTED_RENT = re.compile(r"(?P<first>(?<![\w.,$#/-])(?:\$[ \t]?)?(?:\d{1,2},\d{3}|\d{3,5}|\d(?:\.\d{1,2})?[ \t]?k)\b[ \t]*(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?|monthly|obo|o\.b\.o\.?|or[ \t]+best[ \t]+offer)?[ \t]*[?!]*)[ \t,;:.-]*"
-                             + _CORRECTION_CUE + r"(?:rent[ \t]+(?:is[ \t]+)?|it'?s[ \t]+|its[ \t]+)?\$?[ \t]?(?P<n>\d{1,2},\d{3}|\d{3,5})(?![\d,]*\d)(?!\.\d)(?![ \t]*(?:sq|sf|ft|bed|br|bd|bath|ba\b|%|deposit|fee|pet|/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person)))", re.I)
+                   r"\(?\b(?:(?:just|only)[ \t]+kidding|kidding|jk|j/k|sorry|actually|oops|correction|typo|my[ \t]+(?:bad|mistake)|i[ \t]+meant|i[ \t]+mean|scratch[ \t]+that|never[ \t]*mind|nvm|wait[ \t]+no)\b[ \t,:;.!-]*"
+                   r"(?:(?:no|sorry|actually|typo|oops|wait|i[ \t]+meant|i[ \t]+mean)\b[ \t,:;.!-]*)?)")  # cycle 37 (rule nn): "just kidding", "I meant", "typo" and the other spoken corrections make the later figure win
+_CORRECTED_RENT = re.compile(r"(?P<first>(?<![\w.,$#/-])(?:\$[ \t]?)?(?:\d{1,2},\d{3}|\d{3,5}|\d(?:\.\d{1,2})?[ \t]?k)\b[ \t]*(?:(?:dollars?|usd|bucks)[ \t]*)?(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?|monthly|obo|o\.b\.o\.?|or[ \t]+best[ \t]+offer)?[ \t]*[?!)]*)[ \t,;:.…-]*"
+                             + _CORRECTION_CUE + r"(?:(?:the[ \t]+)?rent[ \t]+(?:is[ \t]+|should[ \t]+be[ \t]+)?|(?:it|that)(?:'s|[ \t]+is|[ \t]+should[ \t]+be)[ \t]+|its[ \t]+|is[ \t]+)?\$?[ \t]?(?P<n>\d{1,2},\d{3}|\d{3,5})(?![\d,]*\d)(?!\.\d)(?![ \t]*(?:sq|sf|ft|bed|br|bd|bath|ba\b|%|deposit|fee|pet|/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person)))", re.I)
+_CORRECTED_NOT_RENT = re.compile(r"(?:deposit|\bdep\b|fees?|\bpets?\b|hoa|dues|parking|garage|utilit|electric|\bgas\b|water|trash|taxe?s?\b|insurance|application|admin|cleaning|share|per[ \t]+(?:room|bed|person)|each|credit|closing|holding|key|storage)\W{0,12}$", re.I)
 
 
 _UNIT_LABEL = r"(studio\b|\d(?:\.\d)?(?=[ \t-]*(?:br|bd|bds|bed|beds|bedroom|bedrooms)\b))(?:[ \t-]*(?:br|bd|bds|bed|beds|bedroom|bedrooms)\b)?"
@@ -557,14 +559,22 @@ def _unit_price_hits(text: str) -> list[tuple[int, int, float, float]]:
     """Cycle 20: rents given for different bedroom counts in one listing: "3BR is $2,295/mo", "2 bed: $1,290", "$1,290, that is the 2BR",
     "$1,500 for the 1 bedroom". Returns (start, end, bedrooms, monthly amount) for each, in order. Only amounts in the rent range count."""
     found: list[tuple[int, int, float, float]] = []
-    for m in re.finditer(r"(?<![\w$])" + _UNIT_LABEL + r"[ \t]*(?:is|are|:|=|@|at|for|-|\u2013|\u2014|rent(?:s)?(?:[ \t]+(?:is|are|at))?)?[ \t]*(?:only[ \t]+|now[ \t]+|just[ \t]+)?\$\s?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?(?![ \t]*(?:deposit|fee|pet|/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person)))", text, re.I):
+    for m in re.finditer(r"(?<![\w$])" + _UNIT_LABEL + r"[ \t]*(?:(?:is|are|:|=|@|at|for|from|-|\u2013|\u2014|rent(?:s)?(?:[ \t]+(?:is|are|at|for|from))?|(?:starts?|starting|begins?|beginning)(?:[ \t]+(?:at|from))?|goes[ \t]+for|costs?)[ \t]*){0,3}(?:only[ \t]+|now[ \t]+|just[ \t]+|about[ \t]+)?\$\s?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?(?![ \t]*(?:deposit|fee|pet|/[ \t]*(?:bed|room)|per[ \t]+(?:bed|room|person)))", text, re.I):
         found.append((m.start(), m.end(), 0.0 if m.group(1).lower() == "studio" else float(m.group(1)), _num(m.group(2))))
     for m in re.finditer(r"\$\s?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?[^$.\n;]{0,30}?\b(?:that|this|it)(?:'s|[ \t]+is)[ \t]+(?:only[ \t]+)?(?:the[ \t]+|for[ \t]+the[ \t]+)?" + _UNIT_LABEL
-                         + r"|\$\s?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*(?:for|on|is for|is|are)[ \t]+(?:only[ \t]+)?(?:the[ \t]+)?" + _UNIT_LABEL, text, re.I):
+                         + r"|\$\s?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?[ \t]*(?:dollars?|usd|bucks)?[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*(?:for|on|is for|is|are)[ \t]+(?:only[ \t]+)?(?:the[ \t]+|a[ \t]+)?" + _UNIT_LABEL, text, re.I):
         amt, lab = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
         found.append((m.start(), m.end(), 0.0 if lab.lower() == "studio" else float(lab), _num(amt)))
+    for m in re.finditer(r"(?<![\w$.,#/-])(\d{1,2},\d{3})(?!\d|,\d)(?:\.\d\d)?[ \t]*(?:dollars?|usd|bucks)?[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*(?:for|on|is for)[ \t]+(?:only[ \t]+)?(?:the[ \t]+|a[ \t]+)?" + _UNIT_LABEL, text, re.I):
+        found.append((m.start(), m.end(), 0.0 if m.group(2).lower() == "studio" else float(m.group(2)), _num(m.group(1))))  # cycle 37 (rule mm): "3,275 for the 2 bedroom" with no dollar sign
+    _wn = {"one": 1.0, "two": 2.0, "three": 3.0, "four": 4.0}
+    _wl = r"(?:one|two|three|four)[ \t-]+(?:bed|bedroom|bedrooms|br)\b"
+    for m in re.finditer(r"\b(one|two|three|four)[ \t-]+(?:bed|bedroom|bedrooms|br)\b[ \t]*(?:(?:is|are|:|=|@|at|for|from|-|\u2013|\u2014|rents?(?:[ \t]+(?:is|are|at|for|from))?|(?:starts?|starting)(?:[ \t]+(?:at|from))?)[ \t]*){0,3}\$\s?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)", text, re.I):
+        found.append((m.start(), m.end(), _wn[m.group(1).lower()], _num(m.group(2))))
+    for m in re.finditer(r"\$\s?(\d{1,2},\d{3}|\d{3,5})(?!\d|,\d)(?:\.\d\d)?[ \t]*(?:dollars?|usd|bucks)?[ \t]*(?:/[ \t]*mo(?:nth)?|per[ \t]+month|a[ \t]+month|monthly)?[ \t]*(?:for|on|is for)[ \t]+(?:the[ \t]+|a[ \t]+)?(one|two|three|four)[ \t-]+(?:bed|bedroom|bedrooms|br)\b", text, re.I):
+        found.append((m.start(), m.end(), _wn[m.group(2).lower()], _num(m.group(1))))
     found.sort()
-    return [h for h in found if 300 <= h[3] <= 30000]
+    return [h for h in dict.fromkeys(found) if 300 <= h[3] <= 30000]
 
 
 def _unit_prices(text: str) -> list[tuple[float, float]]:
@@ -643,9 +653,11 @@ def _corrected_rent(text: str) -> tuple[float, str] | None:
         if not 300 <= new <= 30000:
             continue
         first = m.group("first").strip(" ?!")
+        if _CORRECTED_NOT_RENT.search(text[max(0, m.start("first") - 30):m.start("first")]):
+            continue  # cycle 37: "Deposit $1,500. Actually $1,200" corrects the deposit, never the rent
         if not re.search(r"\$|k\b|month|/\s*mo|monthly|\bobo\b|o\.b\.o|best\s+offer", first, re.I) and not re.search(r"\brent\b[^.\n]{0,15}$", text[max(0, m.start("first") - 20):m.start("first")], re.I):
             continue
-        return new, first
+        return new, re.sub(r"[ \t]+(?:dollars?|usd|bucks)\b", "", first)
     return None
 
 
@@ -14313,7 +14325,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if price_read is None and not price_range and not buying:
         price_read = _try(lambda: _bare_starting_rent(text))  # "Starting at $3,250": the lowest unit, read with a note below
     su_units = None if buying or price_range else _try(lambda: _stepup_units_note(text, None))  # cycle 32: step-ups for two sizes are read by the step-up reader, not the plain size list
-    unit_pick = None if buying or price_range or su_units or _try(lambda: _two_rents(text)) or _try(lambda: _per_room_split_note(text, price_read)) else _try(lambda: _unit_price_pick(text, _unit_price_beds(text)))
+    unit_pick = None if buying or price_range or su_units or _try(lambda: _two_rents(text)) or _try(lambda: _per_room_split_note(text, price_read)) else _try(lambda: _unit_price_pick(text, _unit_price_beds(text) if _unit_price_beds(text) is not None else (float((current or {}).get('beds')) if isinstance((current or {}).get('beds'), (int, float)) and not isinstance((current or {}).get('beds'), bool) else None)))
     if unit_pick:  # cycle 20: prices for different bedroom counts: the one for this listing's own bedroom count, never the lower one
         price_read = unit_pick[0]
         facts.append(unit_pick[1])
@@ -14383,6 +14395,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         gce = gc_found.get("price") if gc_found else None
         if corr and price_read == corr[0] and gce and gce.get("new") == corr[0] and not promo:
             pass  # cycle 32: "Rent $2,290. CORRECTION: rent is $2,310 not $2,390": the correction step gives the one note and names every earlier rent figure
+        elif corr and unit_pick and unit_pick[2] and price_read != corr[0]:
+            facts.append(f"The listing first says {corr[1]}, then gives prices by size, and the later {_usd(corr[0])} is for another size. "
+                         f"The rent saved is {_usd(price_read)}, the one for this listing's own size, so the {corr[1]} is not used. Check it with the landlord.")  # cycle 37 (rule mm)
         elif corr and price_read == corr[0]:
             facts.append(f"The listing corrects itself: it first says {corr[1]} and then ${corr[0]:,.0f}. The later ${corr[0]:,.0f} is saved as the rent. Check it with the landlord.")
         elif price_read is None:
@@ -14396,7 +14411,9 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             if rent_fix[1] is not None and not any(_usd(rent_fix[1]) in f for f in facts):
                 facts.append(f"The listing corrects the rent. It first said {_usd(rent_fix[1])} and then says {_usd(rent_fix[0])}, so the {_usd(rent_fix[1])} is the old price and is not used. "
                              "Check the rent with the landlord.")
-    if not buying and not price_range and price_read is not None and not (unit_pick or two_prices or su_units or first_months or cond_now or "price" in gc_found):
+    _self_corr = None if buying else _try(lambda: _corrected_rent(text))
+    if not buying and not price_range and price_read is not None and not (unit_pick or two_prices or su_units or first_months or cond_now or "price" in gc_found) \
+            and not (_self_corr and _self_corr[0] == price_read):  # cycle 37 (rule nn): a spoken correction ("just kidding, it is $1,380") makes the later rent win, never the higher of the two
         others = _try(lambda: _other_rent_figures(text, price_read)) or []
         if len(others) != 1 or len(text) > 4000 or re.search(r"^[ \t]*[=_*#-]{4,}[ \t]*$", text, re.M):
             others = []  # several listings pasted together, or more than one other figure: the older readers and notes keep the call
