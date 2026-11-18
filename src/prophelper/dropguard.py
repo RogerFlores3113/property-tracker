@@ -486,7 +486,7 @@ def find_unplaced(text: str, r: dict[str, Any], notes: str) -> list[dict[str, An
             continue  # cycle 35: "Two Bedroom - $1,299 - $1,589": either end of a rent range that the range note explains is no figure left out
         if amount >= 1000 and "deposit" in item.lower() and re.search(rf"(?:rent|/\s*mo|per month|\bmonth)\W{{0,4}}[^.\n]{{0,25}}\${amount:,.0f}|\${amount:,.0f}\s*(?:/\s*mo|per month|a month|monthly)", text, re.I):
             continue  # one place of several: its deposit is the rent of the same place
-        if amount >= 1000 and re.search(r"\brent\b|\b\d(?:\.\d)?\s*(?:br|bd|bed(?:room)?s?|ba)\b|\bper month\b|/\s*mo\b", item + " " + line[:60], re.I) and not re.search(r"deposit|fee|dues|tax|insurance", item, re.I):
+        if amount >= 1000 and re.search(r"\brent(?:a)?\b|\balquiler\b|\b\d(?:\.\d)?\s*(?:br|bd|bed(?:room)?s?|ba)\b|\bper month\b|/\s*mo\b", item + " " + line[:60], re.I) and not re.search(r"deposit|fee|dues|tax|insurance", item, re.I):
             continue  # a rent (a paste of several places has several)
         cat = next((c for c in _CATS if c[1].search(item)), None) or next((c for c in _CATS if c[1].search(line)), None)
         if cat is None:
