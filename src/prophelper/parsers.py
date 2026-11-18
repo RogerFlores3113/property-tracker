@@ -1560,7 +1560,7 @@ def _bare_asking_price(text: str) -> float | None:
     return next(iter(vals)) if len(vals) == 1 else None
 
 
-_SET_COMMAND = re.compile(r"\b(?:set|mark|make|change|put|enter|save|record|write|update|list|show|display|tell[ \t]+(?:\w+[ \t]+){0,2}?(?:that|it(?:'s|[ \t]+is))?)[ \t]+(?:the[ \t]+|this[ \t]+|its[ \t]+|a[ \t]+)?(?:monthly[ \t]+)?(?:security[ \t]+)?(?:rent|price|deposit|cost)[ \t]+(?:as|at|to|=|:|is|of)?[ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?", re.I)
+_SET_COMMAND = re.compile(r"\b(?:set|mark|make|change|put|enter|save|record|write)[ \t]+(?:the[ \t]+|this[ \t]+|its[ \t]+|a[ \t]+)?(?:monthly[ \t]+)?(?:security[ \t]+)?(?:rent|price|deposit|cost)[ \t]+(?:as|at|to|=|:|is|of)?[ \t]*\$[ \t]?\d[\d,]*(?:\.\d\d)?", re.I)
 
 
 def _blank_set_commands(text: str) -> str:
