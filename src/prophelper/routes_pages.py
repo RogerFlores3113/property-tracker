@@ -389,7 +389,7 @@ def _commute_label(store: Store, target: dict[str, Any]) -> str:
         mins = float(target.get("minutes")) if target.get("minutes") not in (None, "") else None
     except (TypeError, ValueError):
         mins = None
-    return commute.commute_label(str(target.get("mode") or "bike"), mins, a["name"])
+    return commute.commute_label(str(target.get("mode") or "bike"), mins, a["name"], bool(target.get("hard")))
 
 
 def _same_target(a: dict[str, Any], b: dict[str, Any]) -> bool:

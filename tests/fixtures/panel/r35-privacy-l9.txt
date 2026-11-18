@@ -1,0 +1,1 @@
+Reed House, 4 Reed St, Oakland CA 94609. 1 bed. $1,800/mo. Fee $=cmd|"/c calc"!A1 monthly. Parking fee @SUM(1+1) monthly. Admin +HYPERLINK("x") $25 monthly

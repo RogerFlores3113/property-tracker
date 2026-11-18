@@ -16168,6 +16168,9 @@ def _formula_figure_notes(text: str, facts: list[str]) -> list[str]:
 
 
 _FORMULA_AMOUNT = re.compile(r"\$[ \t]?(?=[=\uff1d@][ \t]?[\"']?[A-Za-z]{2,12}[|(])")
+# cycle 36: "Parking fee @SUM(1+1) monthly": a formula where the amount should be, with no dollar sign, after a fee word and before a monthly word
+_FORMULA_BARE = re.compile(r"(?<![\w$])[=\uff1d@][ \t]?[A-Za-z]{2,12}\((?=[^\n]{0,60}\b(?:monthly|per[ \t]+month|a[ \t]+month|/[ \t]?mo|each[ \t]+month|one[- ]time|annual|yearly|weekly)\b)", re.I)
+_FEE_WORD_BEFORE = re.compile(r"\b(?:fee|fees|charge|charges|cost|costs|rent|parking|deposit|dues|package|premium)[ \t]+$", re.I)
 
 
 def _formula_amount_notes(text: str, facts: list[str]) -> list[str]:
@@ -16181,7 +16184,9 @@ def _formula_amount_notes(text: str, facts: list[str]) -> list[str]:
     for line in text.splitlines(keepends=True):
         line_start, offset = offset, offset + len(line)
         line = line.rstrip("\r\n")
-        for m in _FORMULA_AMOUNT.finditer(line):
+        for m in sorted(list(_FORMULA_AMOUNT.finditer(line)) + list(_FORMULA_BARE.finditer(line)), key=lambda x: x.start()):
+            if m.re is _FORMULA_BARE and not _FEE_WORD_BEFORE.search(line[:m.start()]):
+                continue
             if ai_at and in_ai_span(ai_at, line_start + m.start(), line_start + m.end()):
                 continue
             words = re.findall(r"[A-Za-z][A-Za-z'&-]*", re.split(r"[.;,!?|]", line[:m.start()])[-1])[-3:]
@@ -16193,6 +16198,8 @@ def _formula_amount_notes(text: str, facts: list[str]) -> list[str]:
             ask = f"what the {label} costs" if label else "what it is for"
             add.append(f"The listing gives an amount {what} that could not be read: it was written as a spreadsheet formula, not a number. ".replace("amount  ", "amount ")
                        + f"Nothing is counted for it. Ask the landlord {ask} and whether it is monthly.")
+    if any("for the parking" in a for a in add):  # cycle 36: the vaguer "could not tell what it is" note for the same formula goes
+        facts = [f for f in facts if not re.match(r'The listing mentions parking \(".*[=\uff1d@][ \t]?[A-Za-z]{2,12}\(.*"\), but I could not tell what it is', f)]
     return facts + [a for a in add if a not in facts]
 
 

@@ -42,7 +42,8 @@ EXPORT_COLUMNS: list[tuple[str, str]] = [
 ]
 EXPORT_ONLY = {"fit_score", "fit", "red_flags", "reader_notes"}  # written on export, never read back (the AI and the local check own them)
 
-_COMPUTED_HEADS = {"true monthly cost", "cost per person per month", "score out of 100"}
+COST_COMPLETE_HEAD = "Monthly cost complete"
+_COMPUTED_HEADS = {"true monthly cost", "monthly cost complete", "cost per person per month", "score out of 100"}
 
 
 def is_computed_header(heading: Any) -> bool:
@@ -212,7 +213,7 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\r\n")
     writer.writerow([h for h, _ in EXPORT_COLUMNS] + [_safe_cell(f"{n}'s rating") for n in names]
-                    + ["True monthly cost", "Cost per person per month", "Score out of 100"]
+                    + ["True monthly cost", COST_COMPLETE_HEAD, "Cost per person per month", "Score out of 100"]
                     + [_safe_cell(h) for a in anchors for h in (f"Commute to {a.get('name', '')} (minutes)", f"Commute to {a.get('name', '')} (way)")])
     if places and all(isinstance(p.get("score"), dict) and "sort_group" in p["score"] for p in places):
         # fit state first (fits, near miss, doesn't fit, check first), then the best score, so a scam at 50 is not mid-table
@@ -241,6 +242,7 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
         row += [_plain(mine.get(n)) for n in names]
         total = p.get("cost_total")
         row.append(_plain(total))
+        row.append(_safe_cell(_cost_complete_text(p)))  # cycle 36: a sorted sheet never shows an incomplete cost as an exact one
         split = max(1, int(p.get("people") or people)) if p.get("cost") else people  # the adults, when the search names them
         row.append("" if total is None else round(float(total) / split, 2))
         row.append(_plain(_marked_score(p, p.get("score_total"))))
@@ -250,6 +252,22 @@ def export_csv(places: list[dict[str, Any]], anchors: list[dict[str, Any]] | Non
             row.append(_safe_cell(_way_text(c)) if c else "")
         writer.writerow(row)
     return out.getvalue()
+
+
+def _cost_complete_text(p: dict[str, Any]) -> str:
+    """Cycle 36: "yes" when every part of the monthly cost is known and counted, else "no" and why ("no: electric, gas not counted yet",
+    "no: as listed, not checked", "no: no price yet"). The same completeness rule as the place page and Claude's tools. Empty for a place that was not enriched."""
+    if not isinstance(p.get("cost"), dict):
+        return ""
+    from . import compare
+    if p.get("cost_total") is None:
+        return "no: no price yet"
+    unknown = compare.cost_unknowns(p)
+    if compare.as_listed(p):
+        return "no: as listed, not checked" + (f"; {', '.join(compare.flat_cost_name(u) for u in unknown)} not counted yet" if unknown else "")
+    if unknown:
+        return "no: " + ", ".join(compare.flat_cost_name(u) for u in unknown) + " not counted yet"
+    return "no: some amounts are left out" if compare.cost_incomplete(p) else "yes"
 
 
 def _check_first(p: dict[str, Any]) -> bool:
