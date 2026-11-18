@@ -1111,6 +1111,10 @@ def superseded_amounts(notes: list[str]) -> set[float]:
     return out
 
 
+_PER_TERM_FIG = re.compile(r"\b(?:per|a|each|every)[ \t-]+(?:semester|term|school[ \t]+year)\b|\b(?:semester|term)[ \t-]+(?:pass|permit|rate|price|fee)\b|\bper-(?:semester|term)\b", re.I)
+_SHARE_FIG = re.compile(r"\b(?:roommate|room)[ \t]+share\b|\beach[ \t]+person'?s[ \t]+share\b|\bshare[ \t]+(?:would[ \t]+be|is)[ \t]+(?:about[ \t]+)?\$|\b(?:per|a)[ \t]+(?:room|roommate|bedroom)\b|\bpor[ \t]+habitaci", re.I)
+
+
 def figure_closed(note: str, start: int, end: int, optional: set[float] | frozenset[float] = frozenset(), superseded: set[float] | frozenset[float] = frozenset()) -> str:
     """Why the figure ``m`` of ``note`` is never a missing monthly amount: "zero", "superseded", "deposit", "explained", "optional" or "" (still open)."""
     fm = _FIG.search(note[start:end])
@@ -1128,6 +1132,8 @@ def figure_closed(note: str, start: int, end: int, optional: set[float] | frozen
     piece = _figure_piece(note, start, end)
     if re.search(r"\bdeposits?\b", piece, re.I) and not re.search(r"\b(?:zelle|venmo|cash ?app|paypal|wire|western union|gift cards?|crypto\w*|bitcoin|send|hold(?:ing)?|before|upfront|up front)\b", piece, re.I) and not re.search(r"^\s*(?:/\s*(?:mo|month)\b|per\s+month|a\s+month|monthly|each\s+month)", note[end:end + 20], re.I):
         return "deposit"  # cycle 28: a deposit is cash at move-in, never a monthly amount left out
+    if _PER_TERM_FIG.search(piece) or _SHARE_FIG.search(piece):
+        return "explained"  # cycle 37: a per-semester price or a roommate share is never a monthly amount left out
     if _EXPL_SECOND.search(piece) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):
         return "optional"
     if re.search(r"\bupgrades?\b|\boptional\b|\bif you want\b|\byour choice\b|\bby request\b|\badd[- ]ons?\b", piece, re.I) and not re.search(r"\b(?:required|mandatory)\b", piece, re.I):

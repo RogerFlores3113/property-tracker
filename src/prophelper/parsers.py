@@ -16969,10 +16969,15 @@ PROMO_SENTENCE = "It is a promo price for the first months, so it is not the reg
 _PROMO_NOT = re.compile(r"\b(?:assessments?|dues|hoa|closing|tax(?:es)?|insurance|buyer|seller|escrow|deposit|fee|pet|parking|application|admin|key|move-?in costs?|first[ \t]+month'?s?[ \t]+rent|first[ \t]+and[ \t]+last|last[ \t]+month)\b", re.I)
 
 
+_PER_TERM_WORDS = re.compile(r"\b(?:per|a|each|every)[ \t-]+(?:semester|term|school[ \t]+year)\b|\b(?:semester|term)[ \t-]+(?:pass|permit|rate|price|fee)\b|\bper-(?:semester|term)\b", re.I)
+
+
 def _uncounted_kind_sentence(phrase: str) -> str:
     """What the safety-net note says about a quoted amount that no field holds: a one-time cost is not in the monthly cost, a
     monthly fee is not counted, and when the line does not say, the generic sentence."""
     one, monthly = bool(_ONE_TIME_WORDS.search(phrase)), bool(_MONTHLY_WORDS.search(phrase))
+    if _PER_TERM_WORDS.search(phrase) and not monthly:
+        return "It is a per-semester or per-term price, so it is not a monthly cost."  # cycle 37: "per-semester pass $600" is never "a monthly fee"
     if _PROMO_FIGURE.search(phrase) and not _PROMO_NOT.search(phrase) and not _SELLER_PAID_WORDS.search(phrase):
         return PROMO_SENTENCE  # cycle 33: "Special: first month only $1,999, then $2,350" names a promo, never "not counted anywhere"
     if _SELLER_PAID_WORDS.search(phrase):
@@ -17047,7 +17052,7 @@ def _only_unplaced(sentence: str, phrase: str, used: set[float], out: dict[str, 
         return sentence
     shown = [f"${a:,.0f}" if float(a).is_integer() else f"${a:,.2f}" for a in left]
     names = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
-    pieces = [x for x in re.split(r"[,;\n]|\bplus\b|\band\b|\*", phrase) if x.strip()]
+    pieces = [x for x in re.split(r"[,;\n]|\bplus\b|\band\b|\bor\b|\*", phrase) if x.strip()]
     mine = " ".join(x for x in pieces if any(a in _dollar_values(x) for a in left))
     kind = _uncounted_kind_sentence(mine) if mine else "It is not counted anywhere."
     if kind == "It is not counted anywhere." and _ONE_TIME_WORDS.search(phrase) and not _MONTHLY_WORDS.search(mine):
