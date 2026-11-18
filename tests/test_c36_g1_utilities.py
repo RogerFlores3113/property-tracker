@@ -297,7 +297,7 @@ ON_US = [
 def test_utilities_on_us_except_electric(body):
     r = P(HEAD + body)
     assert _set(r.get("tenant_pays")) == {"electric"}, (r.get("tenant_pays"), notes(r))
-    assert _set(r.get("utilities_included")) == {"gas", "water", "sewer", "trash", "heat"}, r.get("utilities_included")
+    assert _set(r.get("utilities_included")) == {"gas", "water", "sewer", "trash"}, r.get("utilities_included")  # cycle 37: heat is never named, so it is not guessed
     assert "could not tell who pays" not in notes(r)
 
 
@@ -310,7 +310,7 @@ def test_on_us_except_two_names():
 def test_reviewer_listing_nontech_l2():
     r = P(saved("r35-nontech-l2"))
     assert _set(r["tenant_pays"]) == {"electric"}
-    assert _set(r["utilities_included"]) == {"gas", "water", "sewer", "trash", "heat"}
+    assert _set(r["utilities_included"]) == {"gas", "water", "sewer", "trash"}  # cycle 37: heat is not named
     assert "could not tell who pays" not in notes(r)
 
 
