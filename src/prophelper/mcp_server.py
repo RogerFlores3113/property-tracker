@@ -1213,7 +1213,7 @@ def build_server(store: Store) -> FastMCP:
             crits = store.list_criteria(cur["id"])
             if crits:
                 actx = _label_ctx(store, cur)
-                lines.append("Criteria: " + "; ".join(f"[{c['id']}] {_lab(c['label'] or scoring._auto_label(c['kind'], c['target'], actx), c['kind'])} (weight {c['weight']:g}"
+                lines.append("Criteria: " + "; ".join(f"[{c['id']}] {_lab(scoring.hard_label(c['label'] or scoring._auto_label(c['kind'], c['target'], actx), c['kind'], c['target']), c['kind'])} (weight {c['weight']:g}"
                                                        f"{', deal-breaker' if c['dealbreaker'] else ''})" for c in crits))
             else:
                 lines.append("The current search has no criteria yet, so places have no score. update_search can add some.")
@@ -2134,7 +2134,7 @@ def build_server(store: Store) -> FastMCP:
                 target["anchor_id"] = _anchor(store, target.pop("anchor"), search_id)["id"]
             row = store.add_criterion(search_id, c["kind"], label=c.get("label") or "", weight=c.get("weight", 10),
                                       dealbreaker=c.get("dealbreaker", False), target=target)
-            out.append(f"[{row['id']}] {_lab(row['label'] or scoring._auto_label(row['kind'], row['target'], _label_ctx(store, store.get_search(search_id))), row['kind'])} "
+            out.append(f"[{row['id']}] {_lab(scoring.hard_label(row['label'] or scoring._auto_label(row['kind'], row['target'], _label_ctx(store, store.get_search(search_id))), row['kind'], row['target']), row['kind'])} "
                        f"(weight {row['weight']:g}{', deal-breaker' if row['dealbreaker'] else ''})")
         return out
 

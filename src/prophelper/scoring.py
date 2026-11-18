@@ -96,15 +96,22 @@ def default_label(kind: str, target: dict[str, Any] | None = None, mode: str = "
     return KIND_LABELS.get(kind, kind.title())
 
 
+def hard_label(label: str, kind: str, target: Any) -> str:
+    """Cycle 36 (rule ll): a commute limit the app enforces says so in its own words ("Campus by bike, hard limit"), whatever name it was saved with."""
+    if kind == "commute" and isinstance(target, dict) and target.get("hard") and label and not re.search(r"\bhard\b", label, re.I):
+        return f"{label}, hard limit"
+    return label
+
+
 def _auto_label(kind: str, target: dict[str, Any], ctx: dict[str, Any]) -> str:
     """The label for a criterion saved without one. A commute names its important place, so two never read the same."""
     if kind == "commute":
         anchors = ctx.get("anchors", {})
         if target.get("anchor_id") is None and (target.get("all_anchors") or (len(anchors) > 1 and int(ctx.get("people") or 1) > 1)):
-            return commute_mod.commute_label(target.get("mode") or "bike", _num(target.get("minutes")), "everyone's places")
+            return commute_mod.commute_label(target.get("mode") or "bike", _num(target.get("minutes")), "everyone's places", bool(target.get("hard")))
         a = anchors.get(target.get("anchor_id")) if target.get("anchor_id") is not None else next(iter(anchors.values()), None)
         if a:
-            return commute_mod.commute_label(target.get("mode") or "bike", _num(target.get("minutes")), a["name"])
+            return commute_mod.commute_label(target.get("mode") or "bike", _num(target.get("minutes")), a["name"], bool(target.get("hard")))
     return default_label(kind, target, ctx.get("mode", "rent"))
 
 
@@ -780,7 +787,7 @@ def score_criterion(c: dict[str, Any], place: dict[str, Any], ctx: dict[str, Any
         status = "near"  # over only because of a guess, and by a little: not a hard fail
     else:
         status = "pass" if r["passes"] else "fail"
-    return {"id": c.get("id"), "kind": kind, "label": c.get("label") or _auto_label(kind, c["target"], ctx),
+    return {"id": c.get("id"), "kind": kind, "label": hard_label(c.get("label") or _auto_label(kind, c["target"], ctx), kind, c.get("target")),
             "weight": c.get("weight", 0), "dealbreaker": bool(c.get("dealbreaker")), "dealbreaker_status": status, **r}
 
 
