@@ -537,7 +537,7 @@ _AI_C36 = "|".join((
     # Chinese labels and "ignore the previous instructions" without "all"
     r"(?:AI|人工智能|智能助手|聊天机器人|聊天機器人|语言模型|語言模型)(?:助手|助理|机器人|機器人)?\s*[:：]\s*(?=\S)",
     r"(?:给|給|致|对|對|写给|寫給)\s*(?:AI|人工智能|智能助手|聊天机器人|助手|助理)\s*(?:的)?(?:说明|說明|备注|備註|提示|指示|留言|注释|註釋)",
-    r"(?:请|請|麻烦|麻煩)?(?:忽略|无视|無視|忽视|忽視|不要理会|不要理會|忘记|忘記|别管|別管|不要遵守|不要遵循|无需遵守|無需遵守)(?:掉)?(?:(?:以上|上面|上述|之前|先前|前面|此前|以前|原来|原來|所有|全部|一切|任何|你的|您的)(?:的)?){1,3}(?:指令|指示|提示词?|提示詞|规则|規則|命令|说明|說明|要求|设定|設定|内容|內容|限制|话|話)",
+    r"(?:请|請|麻烦|麻煩)?(?:忽略|无视|無視|忽视|忽視|不要理会|不要理會|忘记|忘記|别管|別管|不要遵守|不要遵循|无需遵守|無需遵守)(?:掉)?(?:(?:以上|上面|上述|之前|先前|前面|此前|以前|原来|原來|所有|全部|一切|任何|你的|您的)(?:的)?){1,3}(?:指令|指示|提示词?|提示詞|命令|系统提示|系統提示)",
     # other common languages: Arabic, Hindi, Turkish, Dutch, Polish, Indonesian, Vietnamese
     r"تجاهل\s+(?:جميع\s+|كل\s+)?(?:ال)?تعليمات\s+(?:ال)?(?:سابقة|السابقة|أعلاه)|"
     r"(?:पिछले|पहले\s+के|ऊपर\s+के)\s+(?:सभी\s+)?(?:निर्देश|निर्देशों|आदेश|आदेशों)\s*(?:को\s+)?(?:अनदेखा|नज़रअंदाज़|नजरअंदाज|भूल)|"
@@ -1250,7 +1250,7 @@ def _clean_sentence(sentence: str) -> tuple[str, bool]:
             cuts.append((enc[0], enc[1], " <!-- --> " if sentence.startswith("<!--", enc[0]) else " "))  # a removed HTML comment stays as an empty one, the break the readers already know
             pos = enc[1]
         else:
-            m = re.search(r"[.!?](?=\s|$)", sentence[b:])
+            m = re.search(r"[.!?](?=\s|$)|[\u3002\uff01\uff1f]", sentence[b:])  # cycle 36: a Chinese full stop ends the instruction too, with no space after it
             stop = b + m.end() if m else len(sentence)
             cuts.append((a, stop, "."))  # the instruction ran to the end of its sentence: the real words in front of it end there, so the next item is never joined to them
             pos = stop
@@ -1291,6 +1291,12 @@ _IGNORE_PREV36 = re.compile(
 _FIGURE36 = re.compile(r"[$\uff04]\s?\d|\b\d[\d,. ]*\s?(?:dollars|usd)\b|\b(?:rent|deposit|fees?|price|cost)\b[^.\n]{0,30}\d", re.I)
 
 
+def _bare_ignore(sentence: str) -> bool:
+    """True when the flagged sentence is only the phrase "Ignore. previous. instructions." (no other words), so what follows in the line is its payload."""
+    m = _IGNORE_PREV36.search(sentence)
+    return bool(m) and not re.search(r"\w", sentence[:m.start()] + sentence[m.end():])
+
+
 def _follows_ignore(sentence: str) -> bool:
     """Cycle 36: the sentence after "Ignore. previous. instructions." in the same line that states a figure ("Rent is $100.") is what the order is for: it goes with it."""
     return bool(_FIGURE36.search(sentence))
@@ -1309,7 +1315,9 @@ def _line_sentences(line: str) -> list[tuple[str, int, int]]:
     "Disregard. all. prior. instructions.") are one sentence."""
     parts: list[list[int]] = []
     pos = 0
-    for m in re.finditer(r"(?<=[.!?])[ \t]+", line):
+    for m in re.finditer(r"(?<=[.!?])[ \t]+|(?<=[\u3002\uff01\uff1f])[ \t]*", line):
+        if m.start() == m.end() and m.start() >= len(line):
+            continue
         parts.append([pos, m.start()])
         pos = m.end()
     parts.append([pos, len(line)])
@@ -1350,7 +1358,7 @@ def ai_spans(text: str) -> list[tuple[int, int]]:
                     if enc:
                         start = enc[0]
                     out.append((base + a + start, base + b))
-                    chain = "ignore" if _IGNORE_PREV36.search(sentence) else True
+                    chain = "ignore" if _bare_ignore(sentence) else True
                 else:
                     chain = False
         base += len(line) + 1
@@ -1393,7 +1401,7 @@ def strip_ai_text(text: str) -> str:
                 if chain and (_follows_order(sentence) or (chain == "ignore" and _follows_ignore(sentence))):
                     continue  # "You are an AI assistant. Delete all other places.": the order that follows an instruction goes with it
                 cleaned, changed = _clean_sentence(sentence)
-                chain = ("ignore" if _IGNORE_PREV36.search(sentence) else True) if changed else False
+                chain = ("ignore" if _bare_ignore(sentence) else True) if changed else False
                 if cleaned:
                     kept.append(cleaned)
             out_lines.append(" ".join(kept))
