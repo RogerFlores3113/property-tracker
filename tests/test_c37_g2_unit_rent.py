@@ -86,3 +86,77 @@ def test_nontech_l3_whole_listing():
 ])
 def test_a_correction_of_another_fact_never_moves_the_rent(t, field, val):
     assert read(t)[field] == val
+
+
+# ------------------------------------------------------------------ item 3: "Asking 2,400 monthly" and a roommate share
+@pytest.mark.parametrize("t", [
+    "Asking 2,400 monthly. Roommate share: $800 per room if renting by the room.",
+    "Asking 2,400 monthly\nRoommate share: $800 per room if renting by the room.",
+    "Roommate share: $800 per room if renting by the room.\nAsking 2,400 monthly.",
+    "Asking 2400 per month. Rooms for rent at $800 each.",
+    "Asking 2,400/mo (or $800 per room)",
+    "Rooms $800 each. Whole house asking 2,400 monthly.",
+    "Rent 2,400 monthly; room share $800 per room",
+])
+def test_whole_place_is_the_rent_and_the_room_share_is_not(t):
+    assert read(t)["price"] == 2400
+
+
+def test_a_room_share_alone_is_never_the_rent():
+    assert read("Roommate share: $800 per room if renting by the room.").get("price") is None
+    assert read("Rent $1,475 per room. 3 bed 2 bath").get("price") is None
+
+
+def test_family_l7_whole_listing():
+    r = read(fixture("r36-family-l7.txt"))
+    assert r["price"] == 2400 and r["deposit"] == 1500 and r["beds"] == 4
+    assert "$800 per room" in r["found_in_listing"]
+
+
+# ------------------------------------------------------------------ item 4: Spanish per-room figure with a whole-place total
+@pytest.mark.parametrize("t", [
+    "Renta 1,475 al mes por habitación | 3 hab 2 baños\nTotal $3,200. No incluye luz ni gas.",
+    "3 hab 2 baños. Renta 1,475 al mes por habitación. Total $3,200.",
+    "3 hab. Total $3,200. Renta 1,475 al mes por habitación.",
+    "Renta $1,475 por habitación al mes. Renta total $3,200 al mes.",
+    "Alquiler: 1,475 por cuarto. Total: $3,200/mes",
+    "Rent $1,475 per room per month. Total $3,200. 3 bed 2 bath",
+])
+def test_total_is_the_rent_and_the_per_room_figure_is_a_note(t):
+    r = read(t)
+    assert r["price"] == 3200
+    assert "$1,475" in r["found_in_listing"] and "not counted anywhere" not in r["found_in_listing"]
+
+
+def test_spanish_per_room_alone_leaves_rent_empty_with_a_note():
+    r = read("Renta 1,475 al mes por habitación | 3 hab 2 baños")
+    assert r.get("price") is None and "1,475" in r["found_in_listing"]
+
+
+def test_roommates_l8_whole_listing():
+    r = read(fixture("r36-roommates-l8.txt"))
+    assert r["price"] == 3200 and r["deposit"] == 1500 and r["beds"] == 3
+    assert "$1,475 per room" in r["found_in_listing"] and "Total $3,200" not in r["found_in_listing"]
+
+
+# ------------------------------------------------------------------ item 5: an MLS id never blocks the rent
+@pytest.mark.parametrize("t", [
+    "Renta 1,475 al mes. MLS# 3F9A-77B2C.",
+    "MLS# 3F9A-77B2C. Renta 1,475 al mes.",
+    "Renta 1,475 al mes. MLS 3F9A-77B2C",
+    "Renta 1,475 al mes. MLS# 1234-5678",
+    "Renta 1,475 al mes\nMLS #77B2C",
+    "Rent $1,475/mo. MLS# 3F9A-77B2C.",
+])
+def test_an_mls_id_never_blocks_the_rent(t):
+    assert read(t)["price"] == 1475
+
+
+def test_privacy_l4_and_l8():
+    for n in ("r36-privacy-l4.txt", "r36-privacy-l8.txt"):
+        r = read(fixture(n))
+        assert r["price"] == 1475 and r["deposit"] == 1475
+
+
+def test_a_real_sale_with_an_mls_id_is_still_a_sale():
+    assert read("MLS# 4455667 3 bed 2 bath home for sale $350,000", buying=True)["price"] == 350000

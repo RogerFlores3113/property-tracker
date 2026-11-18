@@ -95,7 +95,8 @@ _FEE_BEFORE = re.compile(r"\b(?:" + _FEE + r")", re.I)
 _MONTHLY = r"(?:/\s*|per\s+|a\s+|each\s+|every\s+)?(?:mo\b|mos\b|month\b|months\b|monthly\b|mth\b)"
 _RENT_MARK = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r"|/\s*monat\b|/\s*(?:unit|apt)\b|(?:al|por|cada|/)\s*mes\b|/\s*mensual\b|mensual(?:es)?\b|pro\s+monat\b|monatlich\b|par\s+mois\b|/\s*mois\b)", re.I)  # cycle 33: "$1,400 al mes"
 _BR_MARK = re.compile(r"^\s*/\s*(?:\d\s*(?:br|bd|bed)|studio)", re.I)  # Craigslist: "$1100 / 1br - 700ft2"
-_PER_BED = re.compile(r"^\s*\+?\s*(?:/|per)\s*(?:bed|bedroom|person|resident|tenant|student)", re.I)
+_SHARE_BEFORE = re.compile(r"\b(?:roommate|room|your|my|each|per[ \t]+person|tenant|bedroom)[ \t'\u2019s]*(?:share|portion|rate|rent|price|cost)\b[ \t:=\-\u2013\u2014is]*(?:of|about|around|only|just|approx\.?|~)?[ \t]*$", re.I)
+_PER_BED = re.compile(r"^\s*\+?\s*(?:(?:al[ \t]+mes|a[ \t]+month|per[ \t]+month|monthly|mensual|/[ \t]*mo(?:nth)?)\s+)?(?:/|per|por|cada)\s*(?:bed|bedroom|person|resident|tenant|student|room(?:mate)?s?\b|rm\b|head\b|occupant|adult|habitaci|cuarto|rec[a\u00e1]mara|persona|inquilino|hab\b)", re.I)
 _FEE_AFTER_STRICT = re.compile(r"^\s*\+?\s*(?:one[- ]time\s+|non[- ]refundable\s+|refundable\s+|monthly\s+|price\s+)?(?:" + _FEE + r")", re.I)
 _FEE_AFTER_MONTHLY = re.compile(r"^\s*\+?\s*(?:" + _MONTHLY + r")?\s*(?:for\s+|per\s+|-\s*)?(?:pet|parking|garage|storage|utilit|hoa|trash|"
                                 r"internet|cable|amenity|water|insurance|lawn|cleaning|reserved|covered|tax|assessment)(?![a-z]*[ \t]*(?:is[ \t]+|are[ \t]+)?(?:not[ \t]+)?(?:incl\b|included|extra\b|separate))"
@@ -136,7 +137,7 @@ def _sale_text(text: str) -> bool:
     return bool(_SALE_WORDS.search(_SALE_WEAK.sub(" ", text)))
 
 
-_RENT_WORDS = re.compile(r"\b(?:rent|rental|lease|apartment|apt|month|monthly|studio|\d\s*br|\d\s*bed|landlord|tenant|tour)\b", re.I)
+_RENT_WORDS = re.compile(r"\b(?:rent|renta|alquiler|mensual|rental|lease|apartment|apt|month|monthly|studio|\d\s*br|\d\s*bed|landlord|tenant|tour)\b", re.I)
 
 
 def site_name(url: str | None) -> str:
@@ -417,8 +418,8 @@ def _amounts(text: str) -> list[dict[str, Any]]:
         if rm:
             tail, is_range = after[rm.end():], True
         marker = ""
-        if _PER_BED.match(tail):
-            marker = "per bed"
+        if _PER_BED.match(tail) or _SHARE_BEFORE.search(clause[-34:]) or (re.match(r"\s*(?:each|apiece|ea\.?|c/u|cada\s+uno)\b", tail, re.I) and re.search(r"\b(?:rooms?|roommates?|bedrooms?|tenants?|people|persons?)\b", clause[-24:], re.I)):
+            marker = "per bed"  # cycle 37 (rule mm): "Roommate share: $800", "Rooms $800 each" and "$800 per room" are one person's share, never the rent
         elif _RENT_MARK.match(tail) or _BR_MARK.match(tail):
             marker = "monthly"
         fee = bool(_FEE_BEFORE.search(clause)) or bool(re.search(r"\bdep\.[ \t]*$", before, re.I))  # cycle 35: "Dep. $900" (the full stop ended the clause)
@@ -1631,8 +1632,8 @@ def _price(text: str) -> float | None:
     m = re.search(r"(?<![\d.,$#/-])\b(\d{1,2},\d{3}|\d{3,5})\s*(?:dollars|bucks|usd)\s*(?:a|per|/|each|every)\s*(?:month|mo)\b", text, re.I)
     if m and 200 <= _num(m.group(1)) <= 30000:  # "1400 dollars a month"
         return _num(m.group(1))
-    m = re.search(r"(?<![\d.,$#/-])\b(\d{1,2},\d{3}|\d{3,5})[ \t]*(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?)\b", text, re.I)
-    if m and 300 <= _num(m.group(1)) <= 30000 and not _SALE_WORDS.search(text):  # "1,299 a month": a rent written without a dollar sign
+    m = re.search(r"(?<![\d.,$#/-])\b(\d{1,2},\d{3}|\d{3,5})[ \t]*(?:a[ \t]+month|per[ \t]+month|monthly|/[ \t]*mo(?:nth)?)\b", text, re.I)
+    if m and 300 <= _num(m.group(1)) <= 30000 and not _SALE_WORDS.search(text):  # "1,299 a month", cycle 37: "Asking 2,400 monthly": a rent written without a dollar sign
         return _num(m.group(1))
     m = re.search(r"(?<![\w.,$#/-])(\d(?:\.\d{1,2})?)[ \t]?k[ \t]*(?:a[ \t]+month|per[ \t]+month|/[ \t]*mo(?:nth)?|monthly)\b", text, re.I)
     if m and 0.3 <= float(m.group(1)) <= 30 and not _SALE_WORDS.search(text):  # cycle 18: "1.5k a month" is 1,500
@@ -2280,7 +2281,7 @@ def _bare_labelled_rent(text: str) -> float | None:
         after = text[m.end():m.end() + 40]
         if re.match(r"[ \t]*(?:sq|sf|ft|bed|br|bd|bath)", after, re.I):
             continue
-        if re.match(r"[ \t]*(?:/|per|a|each)[ \t]*(?:bed(?:room)?|br|bd|room|person|tenant|resident|student)s?\b", after, re.I):
+        if re.match(r"[ \t]*(?:(?:al[ \t]+mes|a[ \t]+month|per[ \t]+month|monthly|mensual|/[ \t]*mo(?:nth)?)[ \t]+)?(?:/|per|a|each|por|cada)[ \t]*(?:bed(?:room)?|br|bd|room|person|tenant|resident|student|habitaci[o\u00f3]n(?:es)?|cuarto|rec[a\u00e1]mara|persona|inquilino|hab\b)s?\b", after, re.I):
             continue  # one share of the rent, not the whole place
         if re.match(r"[ \t]+\d", after):
             continue  # "FOR RENT 4120 4120 Indianola St": a number that another number follows is part of an address
@@ -2300,11 +2301,11 @@ def _bare_labelled_rent(text: str) -> float | None:
 
 def _bare_per_room_rent(text: str) -> float | None:
     """Cycle 19: "Rent 1,480 per bedroom" with no dollar sign: the one share a listing gives when no whole rent is read."""
-    m = re.search(r"(?<![\w$])(?:monthly[ \t]+)?rent(?:[ \t]*(?:is|of|:|=|-))?[ \t]*(\d{1,2},\d{3}|\d{3,5})(?![\d,.]*\d)(?:\.\d\d)?[ \t]*(?:/|per|a|each)[ \t]*(?:bed(?:room)?|br|bd|room|person|tenant|resident|student)s?\b", text, re.I)
+    m = re.search(r"(?<![\w$])(?:monthly[ \t]+)?(?:rent|renta|alquiler)(?:[ \t]*(?:is|of|es|de|:|=|-))?[ \t]*\$?[ \t]?(\d{1,2},\d{3}|\d{3,5})(?![\d,.]*\d)(?:\.\d\d)?[ \t]*(?:(?:al[ \t]+mes|a[ \t]+month|per[ \t]+month|monthly|mensual|/[ \t]*mo(?:nth)?)[ \t]+)?(?:/|per|a|each|por|cada)[ \t]*(?:bed(?:room)?|br|bd|room|person|tenant|resident|student|habitaci[o\u00f3]n(?:es)?|cuarto|rec[a\u00e1]mara|persona|inquilino|hab\b)s?\b", text, re.I)
     return _num(m.group(1)) if m and 200 <= _num(m.group(1)) <= 30000 else None
 
 
-_PER_ROOM_RENT = re.compile(r"(?<![\d.,#/-])(\$?)(\d{1,2},\d{3}|\d{3,5})[ \t]*(?:/[ \t]*mo(?:nth)?\b|a[ \t]+month|per[ \t]+month|monthly)?[ \t]*(?:/|per|a|each)[ \t]*(?:bed(?:room)?|room|person|tenant|resident|student)s?\b", re.I)
+_PER_ROOM_RENT = re.compile(r"(?<![\d.,#/-])(\$?)(\d{1,2},\d{3}|\d{3,5})[ \t]*(?:/[ \t]*mo(?:nth)?\b|a[ \t]+month|per[ \t]+month|monthly|al[ \t]+mes|mensual)?[ \t]*(?:/|per|a|each|por|cada)[ \t]*(?:bed(?:room)?|room|person|tenant|resident|student|habitaci[o\u00f3]n(?:es)?|cuarto|rec[a\u00e1]mara|persona|inquilino|hab\b)s?\b", re.I)
 _UNIT_RENT = re.compile(r"\b(total|unit|whole[- ]unit|entire[- ]unit|combined|full)[ \t]+(?:monthly[ \t]+)?(?:rent|price)\b[^\d$\n]{0,15}?\$?[ \t]?(\d{1,2},\d{3}|\d{3,5})(?![\d,])", re.I)
 
 
@@ -2315,7 +2316,7 @@ def _two_rents(text: str) -> tuple[str, str, float, str] | None:
     if not pm:
         return None
     per = _num(pm.group(2))
-    for um in _UNIT_RENT.finditer(text):
+    for um in _UNIT_RENT.finditer(re.sub(r"\b(?:renta|alquiler)[ \t]+total\b", "total rent", text, flags=re.I)):  # cycle 37: Spanish "Renta total $3,200"
         unit = _num(um.group(2))
         if unit > per and 300 <= unit <= 30000 and 200 <= per <= 30000:
             kind = "total" if um.group(1).lower() in ("total", "combined", "full") else "unit"
@@ -14230,13 +14231,28 @@ def _pet_adverbs(text: str) -> str:
     return _PET_NOW_VERB.sub("", text)
 
 
+_MLS_ID = re.compile(r"\b(?:MLS|listing|property|ref(?:erence)?)[ \t]*(?:#|no\.?|number|id|num)?[ \t]*[:#]?[ \t]*(?=[A-Za-z0-9-]*\d)[A-Za-z0-9][A-Za-z0-9-]{2,}", re.I)
+_MLS_RENT_CUE = re.compile(r"\b(?:renta|alquiler|rent|per[ \t]+month|a[ \t]+month|al[ \t]+mes|/[ \t]*mo|monthly|lease|tenant|landlord)\b", re.I)
+
+
+def _mls_blank(text: str) -> str:
+    """Cycle 37 (privacy): "Renta 1,475 al mes. MLS# 3F9A-77B2C." The MLS word made the rental look like a sale and the id's digits were read as figures, so the rent
+    was left empty. An MLS or listing id is blanked when the listing talks about rent and has no other sale word."""
+    if not re.search(r"\bMLS\b", text, re.I):
+        return text
+    blank = _MLS_ID.sub(" ", text)
+    if blank == text or _SALE_WORDS.search(blank) or not _MLS_RENT_CUE.search(blank):
+        return text
+    return blank
+
+
 def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None = None, buying: bool = False, pet_kind: str = "", pet_count: Any = None) -> dict[str, Any]:
     """Pull what a pasted listing says. Returns only the fields found. ``current`` (a saved place's fields) is for
     refreshing the reader notes: what is filled there counts as placed, so the notes only hold what is still open.
     ``buying`` is True for a buy search: the listing is then a home for sale, never a rental, and the rent-only readings
     are not used. ``pet_kind`` is the search's pet ("cat", "dog", "both" or none), used to pick a pet charge priced per animal."""
     raw_text = text or ""
-    text = _try(lambda: _redflags_strip(raw_text)) or raw_text  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
+    text = _try(lambda: _redflags_strip(_mls_blank(raw_text))) or _mls_blank(raw_text)  # cycle 34 rule (z): a sentence aimed at an AI tool is never a source of any value
     _periodic_src = text
     title_source = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(raw_text))))))))))) if text != raw_text else None  # the name reader still sees the whole paste: it skips a flagged line itself
     text = _scope_only_brackets(_cooking_gas_clause(_join_semicolon_utility_lists(_pay_list_label(_landlord_idioms(_billed_group_break(_landlord_party_tail(_periodic_bill_payer(_spanish_utilities(_answered_questions(_tidy(text or "")))))))))))  # cycle 33: "Tenant pays electric; gas; water" is one list; cycle 26: "(water and trash only) $60 flat" -> "water/trash $60 flat" for every reader
