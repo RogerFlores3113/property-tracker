@@ -57,7 +57,7 @@ def test_same_kind_two_prices_keeps_the_cheapest():
 
 def test_an_extra_that_is_offered_stays_optional():
     r = read(HEAD + "Parking included. Garage available for $75.")
-    assert (r["parking"], r["parking_cost"]) == ("lot", 0)
+    assert (r.get("parking") or "", r["parking_cost"]) == ("", 0)  # cycle 36: no kind is guessed
     assert "optional" in notes(r)
 
 
@@ -122,7 +122,7 @@ def test_roommates_l6_other_prices_are_not_listed_as_missing():
 def test_free_parking_in_more_wordings_costs_zero(text):
     r = read(HEAD + text)
     assert r["parking_cost"] == 0
-    assert r["parking"] in ("lot", "street")
+    assert (r.get("parking") or "") in ("", "lot", "street")  # cycle 36: "Parking is free." names no kind
 
 
 def test_free_wifi_is_not_free_parking():

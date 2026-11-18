@@ -1924,8 +1924,23 @@ def _conditional_now_price(text: str, rent: float | None) -> tuple[float, str] |
         if 300 <= v <= 30000 and (rent is None or v != rent):
             if re.match(r"(?:with|for)[ \t]+(?:a[ \t]+|an[ \t]+)?(?:\d{1,2}|one|two|three|six|nine|ten|eleven|twelve|thirteen|fourteen|eighteen|twenty[- ]four)[- ]*(?:months?|mos?\b)", m.group("cond"), re.I):
                 continue  # cycle 28: "Rent now $3,195 with 13-month lease" is the price of another lease length, and the lease-length note says so
-            return v, " ".join(m.group("cond").split()).rstrip(" ,:-")
+            return v, " ".join(_finish_cut_quote(text, m.start("cond"), m.end("cond")).split()).rstrip(" ,:-")
     return None
+
+
+def _finish_cut_quote(text: str, start: int, end: int) -> str:
+    """Cycle 36 (uiuc l4): a quote that a length limit cut in the middle of a figure ("promo total $") is finished: the figure and the bracket that is still open are taken
+    in whole, so a note never ends with an empty amount. Only digits, commas, dots between digits, and one closing bracket are added."""
+    quote = text[start:end]
+    while True:
+        m = re.match(r"[\d,]*\d|\.\d\d\b", text[end:end + 14])
+        if not m or not (quote.rstrip().endswith(("$", ",")) or re.search(r"[\d,]$", quote)):
+            break
+        end += m.end()
+        quote = text[start:end]
+    if quote.count("(") > quote.count(")") and text[end:end + 1] == ")":
+        quote += ")"
+    return quote
 
 
 _SPECIAL_AFTER = re.compile(r"^[ \t]*(?:/[ \t]*mo\w*[ \t]*|a[ \t]+month[ \t]*|per[ \t]+month[ \t]*|monthly[ \t]*)?(?:[-\u2013,:(][ \t]*)?(?:only[ \t]+)?"
@@ -2833,7 +2848,7 @@ def _beds_converted(text: str) -> tuple[float, float] | None:
 _SLASH_HOME = re.compile(r"(?<![\d.,$/:-])\b(\d{1,2})[ \t]*/[ \t]*(\d(?:\.\d)?)(?![\d/.])(?=[ \t]*(?:br|ba|bd)?[ \t,-]*(?:single|house|home|condo|townhome|townhouse|duplex|apartment|apt|bungalow|ranch|villa|cottage|loft|flat)\b)")
 
 
-_SLASH_LOOSE = re.compile(r"(?<![\w.,$/:#-])([1-6])[ \t]?/[ \t]?([1-4](?:\.5)?)(?![\w/$%:-]|\.\d|,\d|[ \t]*(?:mile|miles|mi\b|bath|baths|off\b|acre|block|blocks|inch|in\b|month|mo\b|yr|year|%|am\b|pm\b|pets?\b|cats?\b|dogs?\b))")
+_SLASH_LOOSE = re.compile(r"(?<![\w.,$/:#-])([1-6])[ \t]?/[ \t]?([1-4](?:\.5)?)(?![\w/$%:-]|\.\d|,\d|[ \t]*(?:mile|miles|mi\b|bath|baths|off\b|acre|block|blocks|inch|in\b(?![ \t]+[A-Z][a-z])|month|mo\b|yr|year|%|am\b|pm\b|pets?\b|cats?\b|dogs?\b))")  # cycle 36: "3/2 in Bridgeport" is a layout in a place ("3/4 in. thick" is not)
 _SLASH_DATE_BEFORE = re.compile(r"\b(?:avail\w*|date|move|moving|start\w*|begin\w*|by|on|until|till|thru|through|ready|lease|due|from|since|open house|tour|expires?|deadline|posted|updated|built|before|after|today|tomorrow|sat|sun|mon|tue|wed|thu|fri|saturday|sunday|monday|tuesday|wednesday|thursday|friday|signed|renewal|rate|dated?|as of|effective)\b[ \t:]*$", re.I)
 
 
@@ -3282,12 +3297,17 @@ def _dishwasher(text: str) -> int | None:
     return None
 
 
+_PARKING_INDOOR = re.compile(r"\b(?:indoor|underground|enclosed)\b[^.\n;|]{0,20}\b(?:parking|spaces?|spots?|stalls?)\b|\bparking\b[^.\n;|]{0,25}\b(?:indoor|underground)\b", re.I)
+
+
 def _parking_kind_words(low: str) -> str:
     """The parking type from the words around a parking price ("covered spot", "surface lot", "street permit")."""
     if re.search(r"\bgarage\b(?! door)", low):
         return "garage"
     if re.search(r"\bcarports?\b|\bcovered\b", low):
         return "covered"
+    if _PARKING_INDOOR.search(low):
+        return "garage"  # cycle 36 (roommates l10): "1 indoor space REQUIRED" is indoor parking, never a surface lot
     if re.search(r"\b(?:surface|off[- ]?street|assigned|reserved|paved|gravel|on[- ]?site)\b|\blot\b", low):
         return "lot"
     if re.search(r"\bstreet\b", low):
@@ -3317,6 +3337,9 @@ _PARKING_PRICE_RES = (
     # cycle 24: "Covered spot $75", "Reserved indoor garage space: $90": a kind word and a spot word with the price right after (the only parking when nothing else is said)
     re.compile(r"\b(?:covered|garage|carport|reserved|assigned|indoor|underground|attached|private|heated|designated)[ \t]+(?:(?:covered|indoor|garage|underground|reserved|assigned|private|heated|parking|outdoor|surface)[ \t]+)*"
                r"(?:spots?|spaces?|stalls?)[ \t]*[:\-=(,]{0,3}[ \t]*(?:(?:is|are|for|at|only|from|just|costs?|rents?[ \t]+for)[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|included|incl\b|free\b|in[ \t]+(?:the[ \t]+)?rent|one[- ]time|setup|set-up|/\s*\d\s*(?:br|bd|bed)))"),
+    # cycle 36: "1 indoor spot is required ($150/mo)", "one covered space required, $90": a counted spot, its word "required" and then the price
+    re.compile(r"\b(?:\d|one|a|an)[ \t]+(?:(?:indoor|covered|garage|underground|reserved|assigned|private|heated|outdoor|surface|parking)[ \t]+){0,3}"
+               r"(?:spots?|spaces?|stalls?)[ \t]+(?:is[ \t]+|are[ \t]+)?(?:required|mandatory)[ \t:,\-(]{0,4}\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
     # "additional spaces $60": an extra space (optional, so it never counts)
     re.compile(r"\b(?:additional|extra)[ \t]+(?:parking[ \t]+)?(?:spots?|spaces?|stalls?|cars?|vehicles?)[ \t:\-=,]*(?:are[ \t]+|is[ \t]+|for[ \t]+|at[ \t]+|cost[ \t]+)*\$\s?(\d{2,4})(?:\.\d\d)?\b(?!\s*(?:deposit|one[- ]time|setup|set-up))"),
 )
@@ -4077,6 +4100,26 @@ def _parking_spot_kind_unknown(text: str, kind: str, cost: float | None, notes: 
                         "so the kind is left empty. Ask which kind it is."]
 
 
+_PARK_CLAUSE_WORDS = re.compile(r"\b(?:parking|garages?|carports?|driveway|spots?|spaces?|stalls?|lot)\b", re.I)
+
+
+def _parking_lot_unproven(text: str, kind: str, cost: float | None, notes: list[str]) -> tuple[str, list[str]]:
+    """Cycle 36 (roommates l4, l8, l10): the parking kind is never guessed. "Parking included", "Free parking", "Parking available" and "1 spot included" say nothing
+    about the kind, so a lot is saved only when a parking sentence itself carries a lot word (lot, surface, off-street, driveway, assigned, reserved, outdoor, gravel, paved).
+    Otherwise the kind is left empty with one short note."""
+    if kind != "lot":
+        return kind, notes
+    for clause in re.split(r"[.\n;|]+", text):
+        if _PARK_CLAUSE_WORDS.search(clause) and (_PARK_LOT_EVIDENCE.search(clause) or re.search(r"\bstreet\b", clause, re.I)):
+            return kind, notes
+    notes = [n for n in notes if "does not say what kind of parking it is" not in n]
+    if cost == 0:
+        say = "The listing says the parking is included in the rent, so the parking costs $0. "
+    else:
+        say = "The listing mentions parking. "
+    return "", notes + [say + "It does not say what kind of parking it is (lot, covered or garage), so the kind is left empty. Ask which kind it is."]
+
+
 _PARK_EITHER_KIND = r"(?:(?:attached|detached|private|heated|reserved|underground)[ \t]+)?(?:garages?|covered|carports?)(?:[ \t]+parking)?"
 _PARK_EITHER_PRICE = r"\$[ \t]?(\d{1,4}(?:\.\d\d)?)(?![\d,])[ \t]*(?:/[ \t]*mo\w*|per[ \t]+month|a[ \t]+month|monthly)?"
 _PARK_EITHER_LIST = rf"{_PARK_EITHER_KIND}(?:[ \t]*(?:,|/|\bor\b|\band/or\b)[ \t]*{_PARK_EITHER_KIND})+"
@@ -4131,6 +4174,7 @@ def _parking_detail(text: str) -> tuple[str, float | None, list[str]]:
         kind = ""  # cycle 24: "1 deeded parking space" is its own thing: the schema has no deeded kind, so the kind is left empty and named in a note
         notes = notes + ["The listing says the parking is a deeded space" + (" that comes with the home, so there is no monthly parking charge" if cost == 0 else "") + ". "
                          "It does not say if the space is a garage, covered or outdoor, so check which one."]  # cycle 25: no "left empty / ask" words: an included deeded space is not a missing parking cost
+    kind, notes = _parking_lot_unproven(text, kind, cost, notes)
     extra = _try_note(lambda: _parking_unpriced_kind_note(text, cost, notes))
     return kind, cost, zero_notes + notes + extra
 
@@ -13217,8 +13261,23 @@ def _promo_title(title: str) -> bool:
     return bool(_PROMO_TITLE_PHRASE.search(title)) and not _PLAN_CUE.search(title) and not _PROPERTY_NOUN.search(title) and len(title.split()) <= 9
 
 
+_ES_GENERIC_WORDS = frozenset("""se renta alquila alquiler en de del la el un una con y e para casa casas departamento departamentos apartamento apartamentos depto deptos piso condominio duplex d\u00faplex
+estudio estudios recamara recamaras rec\u00e1mara rec\u00e1maras habitacion habitaciones habitaci\u00f3n cuarto cuartos dormitorio dormitorios ba\u00f1o ba\u00f1os bano banos medio hermoso hermosa bonito bonita lindo linda
+amplio amplia nuevo nueva acogedor acogedora moderno moderna espacioso espaciosa renovado renovada excelente barato econ\u00f3mico""".split())
+
+
+def _es_generic_title(title: str) -> bool:
+    """Cycle 36 (family l3): "Casa de 3 rec\u00e1maras y 2 ba\u00f1os" and "Hermoso departamento de 2 rec\u00e1maras" are sales words, a kind of place and a plan: no name at all, so the street address is the title."""
+    words = re.findall(r"[^\W\d_]+", title.lower())
+    if not words or len(words) > 12 or not re.search(r"\b(?:casa|departamento|apartamento|depto|piso|condominio|d[u\u00fa]plex|estudio|rec[a\u00e1]maras?|ba\u00f1os?|banos?|habitaci[o\u00f3]n(?:es)?|dormitorios?)\b", title.lower()):
+        return False
+    return all(w in _ES_GENERIC_WORDS or w in ("x",) for w in words)
+
+
 def _bare_kind_title(title: str, found: dict[str, Any]) -> bool:
     """Cycle 35: "Townhome" or "Apartment for rent" alone names no place; the street address does. "Condo in San Carlos" is the same when San Carlos is the city."""
+    if _es_generic_title(title.strip(" .!")):
+        return True
     m = _BARE_KIND_TITLE.match(title.strip(" .!"))
     if not m:
         return False
@@ -13246,10 +13305,11 @@ def _title(text: str, found: dict[str, Any]) -> str:
         title = re.sub(r"\d*[A-Za-z][A-Za-z']*", lambda m: m.group(0) if m.group(0) in _ALL_CAPS_KEEP or re.fullmatch(r"\d+(?:BR|BA|BD)", m.group(0)) else m.group(0).capitalize(), title)
         title = re.sub(r"^The\b", "The", title)
     title = re.sub(r"[ \t]*[-\u2013\u2014][ \t]*(?:was|now|reduced|asking|from|starting)$", "", title, flags=re.I)  # "Pilsen 3/2 - was $3,600": the price words are not part of the name
+    title = _title_label_tail_cut(_hype_tail_cut(title))
     title = _finish_title(title, text)
-    if title and (_promo_title(title) or _bare_kind_title(title, found)) and not _ADDRESS.match(title):
+    if title and (_promo_title(title) or _bare_kind_title(title, found) or _HYPE_ONLY.match(title)) and not _ADDRESS.match(title):
         addr = str(found.get("address") or "")
-        if _promo_title(title):
+        if _promo_title(title) or _HYPE_ONLY.match(title):
             return addr.split(",")[0] if addr else ""  # cycle 35: an offer is never the name: the street address, else no title
         if addr:
             return addr.split(",")[0]  # cycle 35: "Townhome for rent - 88 Birch Lane" names no place: the street address does
@@ -13262,6 +13322,57 @@ def _title(text: str, found: dict[str, Any]) -> str:
     if title and _BED_RANGE_ONLY.fullmatch(title) and found.get("address"):
         return str(found["address"]).split(",")[0]  # cycle 31: "Brand-new 1 - 2 Beds" names no place: the street address is the title
     return _chatty_title(title, found)
+
+
+_HYPE_TAIL = re.compile(r"[ \t]*[-|:,!\u2013\u2014][ \t]*(?:(?:this[ \t]+one[ \t]+)?(?:won'?t|will[ \t]+not|wont)[ \t]+last|hurry|act[ \t]+(?:fast|now)|must[ \t]+see|don'?t[ \t]+miss(?:[ \t]+(?:this|out))?|call[ \t]+(?:now|today)|"
+                        r"(?:wow|amazing|rare|incredible|unbeatable)(?:[ \t]+(?:deal|find|price|value|steal))?|(?:a[ \t]+)?(?:sweetheart|steal|bargain|great|hot|amazing|unbeatable)[ \t]+(?:deal|price|find|steal)s?|"
+                        r"(?:available|rent|lease)[ \t]+now|just[ \t]+listed|going[ \t]+fast|priced[ \t]+to[ \t]+(?:rent|go)(?:[ \t]+fast)?)[ \t!.]*$", re.I)
+_HYPE_ONLY = re.compile(r"^(?:(?:wow|omg|amazing|great|hot|sweetheart|unbeatable|incredible|rare|must[ \t]+see|don'?t[ \t]+miss(?:[ \t]+this)?|won'?t[ \t]+last|act[ \t]+fast|hurry)[ \t!,.:\-]*)+"
+                        r"(?:deal|price|find|steal|bargain|value|offer|rental|listing|one)?[ \t!.]*$", re.I)
+
+
+def _hype_tail_cut(title: str) -> str:
+    """Cycle 36 (nontech l1): "Cozy 2 Bed Duplex in Clintonville - Won't Last!": the shout at the end is not part of the name. Never cut down to nothing."""
+    cut = _HYPE_TAIL.sub("", title).strip(" ,;:-|!\u2013\u2014")
+    return cut if len(cut) >= 3 and re.search(r"[A-Za-z]{3}", cut) else title
+
+
+def clean_given_title(title: str, address: str = "") -> str:
+    """Cycle 36 (nontech): a title sent through MCP add_place gets the same clean-up as a pasted one: no site label, decoration, shouts, price or label tails,
+    and a title that is only a sales phrase or a bare kind of place ("Sweetheart Deal!", "Townhome", "Casa de 3 recamaras y 2 banos") gives way to the street address.
+    A real name (with its unit number) is kept as sent. With no address a sales-only title is kept as sent."""
+    raw = " ".join(str(title or "").split())
+    if not raw:
+        return str(title or "")
+    t = strip_title_decoration(strip_site_label(raw))
+    tail = _TITLE_PRICE_TAIL.sub("", t).strip(" ,;:-|!\u2013\u2014")
+    if tail != t and len(re.findall(r"[A-Za-z]", tail)) >= 4:
+        t = tail
+    lead = _HYPE_LEAD.sub("", t)
+    if lead != t and len(lead) >= 8:
+        t = lead[:1].upper() + lead[1:]
+    t = _title_label_tail_cut(_hype_tail_cut(t)).strip(" ,;:-|!\u2013\u2014")
+    if len(t) < 3:
+        t = raw
+    street = str(address or "").split(",")[0].strip()
+    if street and not _ADDRESS.match(t) and (_promo_title(t) or _bare_kind_title(t, {"address": street}) or _HYPE_ONLY.match(t) or _marketing_line(t)):
+        return street
+    return t if t != raw else str(title)
+
+
+_TITLE_LABEL_TAIL = re.compile(r"[ \t]*[-|\u2013\u2014/~][ \t]+(?:(?:security|move[- ]in|pet|key)[ \t]+)?(?:dep(?:osit)?s?|rent|price|prices|fees?|app(?:lication)?(?:[ \t]+fees?)?|admin(?:[ \t]+fees?)?|"
+                               r"hoa|taxes|tax|utilities|utils|pets?|parking|available|avail|lease|term|asking)\.?[ \t:]*$", re.I)
+
+
+def _title_label_tail_cut(title: str) -> str:
+    """Cycle 36 (roommates l14): "Ravenswood 3BR/2BA - Dep" is a name followed by the label of a price that was cut off. The label (Dep, Deposit, Rent, Price, Fee) is not part of the name."""
+    out = title
+    for _ in range(3):
+        cut = _TITLE_LABEL_TAIL.sub("", out).strip(" ,;:-|\u2013\u2014")
+        if cut == out or len(cut) < 3 or not re.search(r"[A-Za-z]{3}", cut):
+            break
+        out = cut
+    return out
 
 
 _BED_RANGE_ONLY = re.compile(r"(?:[A-Za-z-]+[ \t]+){0,2}(?:studio|\d)[ \t]*[-\u2013\u2014][ \t]*\d[ \t]*(?:beds?|bedrooms?|brs?|bds?)(?:[ \t]+(?:apartments?|units?|homes?|floor ?plans?))?", re.I)
@@ -13370,6 +13481,18 @@ _GREETING_CUT = re.compile(r"^(?:hi|hello|hey|hiya|howdy|greetings|good[ \t]+(?:
 _GREETING_ADJ = re.compile(r"^(?:(?:gorgeous|beautiful|lovely|stunning|amazing|charming|cute|cozy|adorable|wonderful|fabulous|spacious|sunny|bright)[ \t,]+(?:and[ \t]+)?)+(?=\S)", re.I)
 
 
+_SALE_PRICE_LEAD = re.compile(r"^(?:(?:just[ \t]+)?(?:offered|listed|priced|asking|list[ \t]+price|for[ \t]+sale|price)(?:[ \t]+(?:at|for|price|is))?|only)[ \t]*:?[ \t]*(?:\$|usd[ \t]*)?[ \t]*\d[\d,.]*[ \t]*[kKmM]?(?:[ \t]*(?:obo|firm))?[ \t]*[-|:,\u2013\u2014][ \t]*(?=[A-Za-z])", re.I)
+
+
+def _sale_price_lead_cut(line: str) -> str:
+    """Cycle 36 (buyer l40): "Offered at $315k - Clintonville Cottage Condo", "Listed at $315,000: ...", "For sale $315,000 - ...": the price words in front of a name are not
+    part of the name, so the name behind them is kept (never lost to the street address). Only when something name-like is left."""
+    m = _SALE_PRICE_LEAD.match(line)
+    if m and len(line) - m.end() >= 6:
+        return line[m.end():]
+    return line
+
+
 def _greeting_cut(line: str, found: dict[str, Any] | None = None) -> str:
     """Cycle 34: a greeting and the praise words after it are not part of a name: "Hi!! Gorgeous 2 BR duplex Linden area!!!" -> "2 BR duplex Linden area!!!".
     Only when what is left reads as a place (a plan or a kind of place), else the line is left as it was."""
@@ -13421,6 +13544,7 @@ def _title_raw(text: str, found: dict[str, Any]) -> str:
         line = re.sub(r"^(?:actually|update|updated|correction|edit|edited|note|ps|p\.s\.)[ \t]*[:,][ \t]*(?=\S)", "", line, flags=re.I)  # "Actually: Campustown Flats 1x1"
         if _ai_aimed(raw_line) or _ai_aimed(line):
             continue
+        line = _sale_price_lead_cut(line)  # cycle 36 (buyer l40): "Offered at $315k - Clintonville Cottage Condo": the price words in front are not the name
         line = _greeting_cut(line, found)  # cycle 34: "Hi!! Gorgeous 2 BR duplex Linden area!!!" is a duplex in Linden, never named "Hi Gorgeous ..."
         line = _LABEL_PREFIX.sub("", line, count=1)  # cycle 31: "Zillow-ish listing - Stadium View | 1 Bed | Rent $1,350": the site label goes before the parts are split
         if " | " in line or len(re.findall(r"[ \t]~[ \t]", line)) >= 2:  # "LAKESHORE VILLAS | Sunny 3BR/2BA house, fenced yard": the first part that is not a fact is the name
@@ -13899,6 +14023,43 @@ def _spanish_money_words(text: str) -> str:
     """Cycle 34: Spanish labels for the deposit, parking and pets ("Depósito $1,650", "Estacionamiento $200/mes requerido", "Se permiten gatos") are read as the English
     words they stand for, so the same readers apply. Text with none of those words is returned as it is."""
     return _spanish_translate(text)[0]
+
+
+_QUOTE_MONEY = re.compile(r"\$?\d{1,3}(?:,\d{3})+(?:\.\d\d)?")
+_THOUSANDS_MARK = r"(?:,|[ \u00a0\u202f\u2009])"  # only a comma or a space (or thin or no-break space) is restored; a dot is left as the reader wrote it
+
+
+def _raw_quote_pattern(quote: str) -> "re.Pattern[str]":
+    """A pattern that finds the pasted words of a quote: a figure the reader normalized ("$2,100") is found as the listing wrote it ("2 100", "2.100", "$2100")."""
+    parts: list[str] = []
+    pos = 0
+    for m in _QUOTE_MONEY.finditer(quote):
+        parts.append(re.sub(r"(?:\\\s)+", r"[ \\t]+", re.escape(quote[pos:m.start()])))
+        digits = m.group(0).lstrip("$")
+        cents = ""
+        if re.search(r"\.\d\d$", digits):
+            digits, cents = digits[:-3], re.escape(digits[-3:])
+        parts.append(r"\$?[ \t]?" + _THOUSANDS_MARK.join(re.escape(g) for g in digits.split(",")) + cents)
+        pos = m.end()
+    parts.append(re.sub(r"(?:\\\s)+", r"[ \\t]+", re.escape(quote[pos:])))
+    return re.compile("".join(parts), re.I)
+
+
+def _restore_raw_quotes(facts: list[str], raw: str) -> list[str]:
+    """Cycle 36 (uiuc l8): a note that quotes the listing shows the listing's own words. The reader works on a tidied copy ("2 100 al mes" becomes "$2,100 al mes"), so a quote
+    that is not found word for word in the paste is looked up again with each figure written the way the listing wrote it. Only a quote with a figure in it is touched,
+    and only when the paste holds the restored words on one line."""
+    flat = raw.replace("\r", "")
+    out: list[str] = []
+    for f in facts:
+        def fix(m: "re.Match[str]") -> str:
+            q = m.group(1)
+            if len(q) < 6 or not _QUOTE_MONEY.search(q) or q in flat:
+                return m.group(0)
+            hit = _raw_quote_pattern(q).search(flat)
+            return '"' + " ".join(hit.group(0).split()) + '"' if hit and "\n" not in hit.group(0) else m.group(0)
+        out.append(re.sub(r'"([^"\n]{6,})"', fix, f))
+    return out
 
 
 def _es_restore_notes(facts: list[str], pairs: list[tuple[str, str]], original: str) -> list[str]:
@@ -15917,6 +16078,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     title_text = _strip_rate_lead(title_source if title_source is not None else text)  # cycle 33: "Rate this unit 10/10! Grandview Yard Apartments" names Grandview Yard Apartments
     title = _try(lambda: _title(title_text, out))
     title = _try(lambda: _lead_title(title_text, out, title or "")) or title  # cycle 22: a descriptive name instead of the street address or a policy line
+    title = _title_label_tail_cut(title) if title else title  # cycle 36: "Ravenswood 3BR/2BA - Dep" loses the label of the price that was cut
     title = title or _try(lambda: _street_name_title(text, out))
     title = strip_title_decoration(title or "")
     if title:
@@ -15960,6 +16122,7 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
     if not buying:
         facts = _try(lambda: _formula_figure_notes(text_full, facts)) or facts  # cycle 32: a figure beside formula-like text is named, never silent
         facts = _try(lambda: _formula_amount_notes(text_full, facts)) or facts  # cycle 35: a dollar sign with a formula where the amount should be
+    facts = _try(lambda: _restore_raw_quotes(facts, raw_text)) or facts  # cycle 36 (uiuc l8): a quote keeps the listing's own figure ("2 100 al mes", not "$2,100 al mes")
     facts = _try(lambda: _es_restore_notes(facts, es_pairs, raw_text)) or facts  # cycle 35: a quote shows the listing's own Spanish words, never the English label the reader put in
     if facts:
         out["found_in_listing"] = "\n".join(" ".join(f.split()) for f in facts if f.strip())  # one note per line
@@ -16200,8 +16363,78 @@ def _drop_placed_facts(facts: list[str], out: dict[str, Any], follow: bool = Fal
             f = _follow_fields(f, out)
             if not f:
                 continue
-        kept.append(_one_time_wording(f))
-    return _dedupe_totals([f for f in kept if not _quote_repeat(f, kept, out)])
+        kept.append(_no_empty_amount(_one_time_wording(f)))
+    return _one_concession(_dedupe_totals([f for f in kept if not _quote_repeat(f, kept, out)]))
+
+
+_EMPTY_AMOUNT = re.compile(r"[ \t,;:]*(?:[A-Za-z]+[ \t]+){0,2}\$(?=[.)\"]|[ \t]*$)")
+
+
+def _no_empty_amount(note: str) -> str:
+    """Cycle 36 (uiuc l4): a note never ends with a dollar sign and no amount ("promo total $."). The cut-off words go and the note reads on."""
+    if re.search(r"\$(?=[.)\"]|[ \t]*$)", note):
+        return _EMPTY_AMOUNT.sub("", note)
+    return note
+
+
+_CONC_PAIR = re.compile(r"^The listing gives \$([\d,]+(?:\.\d\d)?) a month as the rent and (?:a net effective rent of )?\$([\d,]+(?:\.\d\d)?)(?: with a concession)?\.")
+_CONC_COND = re.compile(r"^The listing also gives \$([\d,]+(?:\.\d\d)?) a month .*That price depends on the condition")
+_CONC_OFFER = re.compile(r'^The listing offers (?:a discount|a rent concession) \("([^"]+)"\)\. It is a one-time deal, so it is not taken off')
+_CONC_LEASE = re.compile(r"^The listing ties a deal to a (\d{1,2}) month lease\. That is not saved as the lease length")
+
+
+def _one_concession(notes: list[str]) -> list[str]:
+    """Cycle 36 (uiuc l4): one concession gives one note. A listing that says "Half off first month", "$1,420 now with concession (one month free on 14-month lease)"
+    gave five notes that said nearly the same thing. The note that names the rent and the lower figure stays, and the other concession notes are folded into it:
+    the offer's own words and the lease length it needs are added to that one note. Without such a note the first offer note stays and absorbs the rest."""
+    pair = next((i for i, n in enumerate(notes) if _CONC_PAIR.match(n)), None)
+    cond = next((i for i, n in enumerate(notes) if _CONC_COND.match(n)), None)
+    offers = [i for i, n in enumerate(notes) if _CONC_OFFER.match(n)]
+    lease = [i for i, n in enumerate(notes) if _CONC_LEASE.match(n)]
+    main = pair if pair is not None else (cond if cond is not None else (offers[0] if offers else None))
+    if main is None:
+        return notes
+    drop: set[int] = set()
+    quotes: list[str] = []
+    if pair is not None and cond is not None:
+        pm, cm = _CONC_PAIR.match(notes[pair]), _CONC_COND.match(notes[cond])
+        if pm and cm and pm.group(2) == cm.group(1):
+            drop.add(cond)  # the same lower figure, said twice
+            said = re.match(r"The listing also gives \$[\d,.]+ a month (.*?)\. That price depends", notes[cond])
+            if said:
+                lost = [a for a in re.findall(r"\$[\d,]+(?:\.\d\d)?", said.group(1)) if a not in notes[pair]]
+                if lost:
+                    quotes.append(said.group(1))  # a figure only this note held ("promo total $19,880") stays in the one note, in the listing's own words
+    for i in offers:
+        if i != main:
+            drop.add(i)
+        m = _CONC_OFFER.match(notes[i])
+        if m and m.group(1) not in quotes:
+            quotes.append(m.group(1))
+    months = []
+    if lease and (pair is not None or cond is not None or offers):
+        for i in lease:
+            drop.add(i)
+            m = _CONC_LEASE.match(notes[i])
+            if m:
+                months.append(m.group(1))
+    if len(drop) + 1 < 2 and not quotes[1:] and not months:
+        return notes
+    text = notes[main]
+    extra = ""
+    own = [q for q in quotes if q not in text and not any(q.lower() in o.lower() and o != q for o in quotes)]  # a phrase that another quote already holds is not said again
+    if own and main not in offers:
+        extra += " The listing words the offer as " + " and ".join(f'"{q}"' for q in own) + "."
+    elif own and main in offers:
+        extra += " The listing also words it as " + " and ".join(f'"{q}"' for q in own) + "."
+    if months and f"{months[0]} month" not in text:
+        extra += f" The deal needs a {months[0]} month lease; that is not saved as the lease length."
+    out_notes = []
+    for i, n in enumerate(notes):
+        if i in drop:
+            continue
+        out_notes.append(n + extra if i == main else n)
+    return out_notes
 
 
 _SUBTOTAL_NOTE = re.compile(r"The utilities estimate is the two together, \$[\d,]+ a month\.")

@@ -136,9 +136,9 @@ def test_one_weight_limit_still_read_and_cats_dogs_are_not_a_conflict():
 def test_included_space_is_known_free_parking(text):
     r = parse_listing(text, "")
     assert r["parking_cost"] == 0
-    assert r["parking"] in ("lot", "garage", "covered", "street")
+    assert (r.get("parking") or "") in ("", "lot", "garage", "covered", "street")  # cycle 36: the kind of an included space is never guessed
     if "Detached" in text:
-        assert r["parking"] == "lot"
+        assert not r.get("parking")
     r["reader_notes"] = notes(r)
     cost = money.rent_cost(r, False, 1)
     assert "parking cost" not in cost["missing"]

@@ -204,6 +204,7 @@ Many people interested, decide today. Zelle only.
 No dishwasher. Pets: No. No garage. Free parking.
 """,
         "expect": {"price": 1325, "beds": 2, "baths": 1, "sqft": 880, "laundry": "in_building", "dishwasher": 0,
-                   "pets": "none", "parking": "lot", "parking_cost": 0},
+                   "pets": "none", "parking_cost": 0},  # cycle 36: "Free parking" names no kind, so none is saved
+        "absent": ["parking"],
     },
 ]

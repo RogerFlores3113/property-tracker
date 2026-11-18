@@ -35,7 +35,7 @@ from . import commute as commute_mod
 from . import compare as compare_mod
 from . import guards, helpers, redflags, scoring
 from . import stages as st
-from .parsers import clean_city, fallback_title, split_address_unit, split_full_address, street_with_unit
+from .parsers import clean_city, clean_given_title as parsers_clean_given_title, fallback_title, split_address_unit, split_full_address, street_with_unit
 from . import money as money_mod
 from . import movein
 from . import today as today_view
@@ -1329,6 +1329,8 @@ def build_server(store: Store) -> FastMCP:
     def add_place(**kw: Any) -> CallToolResult:
         fields = check_fields(kw)
         read_listing_text(fields)
+        if isinstance(fields.get("title"), str) and fields["title"].strip():
+            fields["title"] = parsers_clean_given_title(fields["title"], str(fields.get("address") or ""))  # cycle 36: the same title clean-up as a pasted listing
         if not any(fields.get(k) for k in ("title", "address", "url")) and fields.get("listing_text"):
             fields["title"] = fallback_title(fields) or None
         if not any(fields.get(k) for k in ("title", "address", "url")):
@@ -1371,6 +1373,8 @@ def build_server(store: Store) -> FastMCP:
                 raise ValueError(f"Place {i} needs to be an object of fields. Nothing was saved.")
             f = check_fields(item, f"Place {i}{_title_part(item)}: ")
             read_listing_text(f)
+            if isinstance(f.get("title"), str) and f["title"].strip():
+                f["title"] = parsers_clean_given_title(f["title"], str(f.get("address") or ""))
             if not any(f.get(k) for k in ("title", "address", "url")) and f.get("listing_text"):
                 f["title"] = fallback_title(f) or None
             if not any(f.get(k) for k in ("title", "address", "url")):
