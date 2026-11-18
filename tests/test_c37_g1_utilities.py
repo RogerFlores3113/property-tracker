@@ -233,3 +233,40 @@ def test_negative_cable_included_makes_no_note():
 def test_negative_cable_internet_is_internet():
     r = P(HEAD + "Tenant pays electric, gas, cable/internet.")
     assert "internet" in _set(r["tenant_pays"])
+
+
+# ------------------------------------- 6. a typical total beside a billed-back figure
+TOTAL_RUBS = [
+    "RUBS for water and sewer $85/mo. Electric billed by ComEd; typical total utilities are $190/mo.",
+    "Electric billed by ComEd; typical total utilities are $190/mo. RUBS for water and sewer $85/mo.",
+    "RUBS for water and sewer $85/mo.\nElectric billed by ComEd.\nTypical total utilities: $190/mo.",
+    "Water and sewer billed back at $85/month. Typical total utilities $190 per month. Electric billed by ComEd.",
+    "Electric billed by ComEd. Typical total utilities about $190/mo. RUBS for water and sewer $85/mo.",
+]
+
+
+@pytest.mark.parametrize("body", TOTAL_RUBS)
+def test_typical_total_is_counted_once_never_added_to_a_billed_back_figure(body):
+    r = P(HEAD + body)
+    assert r["utilities_estimate"] == 190, (r.get("utilities_estimate"), notes(r))
+    assert "probably part of that total" in notes(r)
+    assert "$275" not in notes(r)
+    assert "listed as something you pay, with no amount" not in notes(r)
+
+
+def test_reviewer_listing_roommates_l13_total_once():
+    r = P(saved("r36-roommates-l13"))
+    assert r["utilities_estimate"] == 190
+    assert _set(r["tenant_pays"]) == {"electric", "water", "sewer"}
+    assert notes(r).count("$85") == 1 and "$190" in notes(r)
+    assert "ASSISTANT" not in notes(r)
+
+
+def test_negative_typical_bills_for_other_utilities_are_still_added():
+    r = P(HEAD + "Tenant pays electric, gas, internet. Typical bills $95. Water/sewer/trash billed back at $55/month.")
+    assert r["utilities_estimate"] == 150
+
+
+def test_negative_total_that_leaves_something_out_stays_added():
+    r = P(HEAD + "Tenant pays all utilities except trash. Typical total utilities $120. Trash billed back at $20/month.")
+    assert r["utilities_estimate"] == 140

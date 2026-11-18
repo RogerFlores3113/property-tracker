@@ -9676,6 +9676,15 @@ def _periodic_bill_notes(text: str, pays: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def _plain_total_figure(utext: str, amount: float) -> bool:
+    """True when the figure is written as the plain typical total ("typical total utilities are $190/mo"), with no list of named utilities in its own clause."""
+    num = f"{int(amount):,}" if amount == int(amount) else f"{amount:,.2f}"
+    for c in re.split(r"\n|;|\.(?=\s|$)", utext):
+        if re.search(r"\$[ \t]?" + re.escape(num).replace(",", ",?") + r"(?!\d)", c):
+            return bool(re.search(r"\btotal[ \t]+(?:monthly[ \t]+)?utilit|\butilit\w*[ \t]+total\b", c, re.I)) and not re.search(r"\bfor[ \t]+(?:" + _ROLE_WORD + r")\b", c, re.I)
+    return False
+
+
 _PLAIN_COVER = re.compile(r"\b(?:all|every|everything|including|incl\.?|plus|even|both|them)\b|\btotal[ \t]+(?:of[ \t]+)?utilit", re.I)
 
 
@@ -14908,6 +14917,12 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
                 facts[:] = [f for f in facts if not f.startswith(billed[0].capitalize() + " ") or "flat fee" not in f and "billed back at" not in f]
                 facts.append(f"The listing gives about {_money_cents(tot['amount'])} a month for the utilities you pay, and a {kind_word} {_money_cents(billed[1])} for {_join_names(sorted(flat_names, key=_ALL_UTILITIES.index))}. "
                              f"The {kind_word} amount is part of that total, so it is counted once, in the total.")
+            elif _plain_total_figure(text, tot["amount"]) and not re.search(r"\b(?:except|but|other than|besides)\b", utext, re.I):
+                # cycle 37 (roommates l13, rule oo): "typical total utilities are $190/mo" beside "RUBS for water and sewer $85/mo" is a total: it is counted once, never added to the $85
+                put("utilities_estimate", tot["amount"])
+                facts[:] = [f for f in facts if not f.startswith(billed[0].capitalize() + " ") or "flat fee" not in f and "billed back at" not in f]
+                facts.append(f"The listing gives {_money_cents(tot['amount'])} a month as the typical total for utilities, counted once as your utilities estimate. The {kind_word} {_money_cents(billed[1])} for "
+                             f"{_join_names(sorted(flat_names, key=_ALL_UTILITIES.index))} is probably part of that total. Ask the landlord if it is.")
             else:
                 put("utilities_estimate", round(tot["amount"] + billed[1], 2))
                 facts[:] = [f for f in facts if not f.startswith(billed[0].capitalize() + " ") or "flat fee" not in f and "billed back at" not in f]
@@ -14919,6 +14934,8 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
             # electric, which has no figure of its own, so the electric stays listed as something the tenant pays with no amount and the cost is not complete
             own = {w.strip() for w in billed[0].split(",") if w.strip()} | {w for g in (_try(lambda: _billed_groups(utext)) or []) for w in g[0].split(", ")}
             loose = [w for w in (_try(lambda: _provider_billed_names(text)) or []) if w in pays and w not in own]
+            if loose and flat != billed and _plain_total_figure(text, max(i['amount'] for i in tot_items)) and not re.search(r"\b(?:except|but|other than|besides)\b", utext, re.I):
+                loose = []  # cycle 37: a plain "typical total utilities" covers the electric the provider bills; only a total that names what it leaves out keeps it unpriced
             if loose:
                 facts.append(f"{_join_names(loose).capitalize()} {'is' if len(loose) == 1 else 'are'} listed as something you pay, with no amount of its own. The typical total does not say it includes "
                              f"{'it' if len(loose) == 1 else 'them'}, so ask what {'it' if len(loose) == 1 else 'they'} cost{'s' if len(loose) == 1 else ''}.")
