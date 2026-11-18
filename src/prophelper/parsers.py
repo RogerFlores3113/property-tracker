@@ -6014,6 +6014,36 @@ def _last_month_due(text: str) -> bool:
     return False
 
 
+_DEP_HEDGE = re.compile(r"\b(?:or|whichever|if|otherwise|waive\w*|approved|credit|depend\w*|vari\w*|based|tiers?|up[ \t]+to|as[ \t]+low|from|starting|per|each|months?|pets?|dogs?|cats?|animals?|refundable|non[- ]?refundable|correct\w*|updated?|now|was|were|instead|actually|sorry|typo|reduced|changed|new|before|earlier|previous\w*|old|not|option\w*|alternative|choice|choose|bond|surety|first|last|unit|plan|bed(?:room)?s?|br|studio)\b", re.I)
+
+
+def _conflicting_deposits(dep_src: str, dep: list[float]) -> list[float] | None:
+    """Cycle 37 (rule: conflicts stay unknown): two plain, unhedged deposit lines with different amounts ("Dep $900" in the headline and "$1500 dep" below).
+    Returns the distinct amounts, or None when the listing explains the difference (an "or", a pet or key deposit, a correction, a waiver, a unit size)."""
+    vals = list(dict.fromkeys(dep))
+    if len(vals) < 2:
+        return None
+    for v in vals:
+        pat = re.compile(r"\$\s?" + re.escape(f"{int(v):,}") + r"(?![\d,]|\.\d)|\$\s?" + str(int(v)) + r"(?![\d,]|\.\d)")
+        seen = False
+        for m in pat.finditer(dep_src):
+            a = max([i + 1 for i in (dep_src.rfind(c, 0, m.start()) for c in "\n|;!?") if i >= 0] + [0])
+            sms = list(re.finditer(r"(?<=[a-z])\.(?=\s)", dep_src[a:m.start()]))
+            if sms:
+                a += sms[-1].end()
+            b = min([i for i in (dep_src.find(c, m.end()) for c in "\n|;!?") if i >= 0] + [len(dep_src)])
+            em = re.search(r"\.(?=\s|$)", dep_src[m.end():b])
+            if em:
+                b = m.end() + em.start()
+            sent = dep_src[a:b]
+            if not re.search(r"\bdep(?:osit)?\b|\bsec(?:urity)?\b", sent, re.I) or _DEP_HEDGE.search(sent):
+                return None
+            seen = True
+        if not seen:
+            return None
+    return vals
+
+
 def _deposit_each(text: str) -> float | None:
     """Cycle 17: a deposit given once for several items: "First, last and security deposit required ($2,800 each)", "first month,
     last month and deposit, $1,500 each", "$2,800 each for first, last and security deposit". The amount is what each item
@@ -15460,6 +15490,10 @@ def parse_listing(text: str = "", url: str = "", current: dict[str, Any] | None 
         dep = _money_after(dep_src, r"(?:security |refundable |damage |rental )?deposits?|sec\.?[ \t]*dep\.?", hi=50000, skip_before=r"(?:pet|parking|holding|reservation|key|application|garage|fob|remote|gate|access|mailbox|storage|bike|locker|lock|card|pool|cleaning|escrow|venmo|zelle|paypal|cash\s?app|wire|wired|crypto|bitcoin|gift)\s*$", verbs=True)
         dep = [v for v in dep if v is not None]
         rent_now = out.get("price")
+        dep_conflict = None if _SALE_WORDS.search(text) else _try(lambda: _conflicting_deposits(dep_src, dep))
+        if dep_conflict:  # cycle 37: two different plain deposits are a conflict: the deposit stays empty and both figures are named
+            facts.append(f"The listing gives two different deposits, {' and '.join(_usd(v) for v in dep_conflict[:3])}, and nothing says which one applies, so the deposit is left empty. Ask which one is right.")
+            dep = []
         wm = _DEP_WHICHEVER.search(dep_src) if dep else None
         if wm and not _SALE_WORDS.search(text):  # cycle 26: "$1,000 or 75% of rent, whichever is greater": the rule decides, so the figure alone is not the deposit
             pct = float(wm.group("pct")) / 100.0

@@ -195,3 +195,40 @@ def test_nontech_l7_whole_listing():
     r = read(fixture("r36-nontech-l7.txt"))
     assert r["price"] == 1395 and r["deposit"] == 1395 and r["months_up_front"] == 2
     assert r["pet_deposit"] == 350 and r["pet_rent"] == 40
+
+
+# ------------------------------------------------------------------ item 7: two deposits that disagree
+@pytest.mark.parametrize("t", [
+    "Ravenswood Manor 3BR 2BA - $3,150 - Dep $900\n$1500 dep. Please email to schedule showing.",
+    "Dep $900. 3 bed 2 bath, rent $3,150/mo. $1500 dep.",
+    "Rent $3,150/mo. Security deposit $900. Deposit is $1,500.",
+    "Rent $3,150/mo. Dep $900\nOther line: $1500 dep",
+    "Rent $3,150/mo. $1500 dep. Dep $900",
+    "Rent $3,150/mo. Deposit: $900. $1500 dep.",
+])
+def test_two_different_deposits_stay_unknown_and_both_are_named(t):
+    r = read(t)
+    assert r["price"] == 3150 and r.get("deposit") is None
+    n = r["found_in_listing"]
+    assert "$900" in n and "$1,500" in n and "two different deposits" in n
+
+
+@pytest.mark.parametrize("t,dep", [
+    ("Rent $3,150/mo. Deposit $900. Deposit $900 again.", 900),
+    ("Rent $3,150/mo. Dep $900. Pet dep $500.", 900),
+    ("Rent $3,150/mo. Security deposit $900. Key deposit $50.", 900),
+])
+def test_a_repeat_or_a_named_deposit_is_no_conflict(t, dep):
+    assert read(t)["deposit"] == dep
+
+
+def test_a_hedged_deposit_is_not_called_a_conflict():
+    n = read("Rent $3,150/mo. Security deposit $1,000, or $500 with approved credit.").get("found_in_listing", "")
+    assert "two different deposits" not in n
+
+
+def test_roommates_l13_whole_listing():
+    r = read(fixture("r36-roommates-l13.txt"))
+    assert r["price"] == 3150 and r.get("deposit") is None and r["pet_rent"] == 40
+    n = r["found_in_listing"]
+    assert "$900" in n and "$1,500" in n and "two different deposits" in n
